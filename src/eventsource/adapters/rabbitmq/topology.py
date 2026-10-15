@@ -1,30 +1,8 @@
 """RabbitMQ exchange/queue topology declaration.
 
-Extracted from ``RabbitMQEventBus`` (bus.py) as part of the bus god-class
-decomposition (Task 5). Owns declaring the main exchange, the consumer
-queue, DLQ exchange/queue, and the bindings between them -- plus the
-additional event-type/routing-key bindings exposed on the facade.
-
-The facade still owns the "is connected" concept; this collaborator only
-needs a live channel, obtained via
-:meth:`RabbitMQConnectionManager.require_channel`.
-
-Declaration-ordering invariant: ``declare_all()``/``redeclare()`` are the
-only callers reachable from the public API (via
-``RabbitMQConnectionManager.connect()``'s reconnect-callback run, before
-``_connected`` is set), and they always run after the channel exists and in
-dependency order (DLQ, then exchange, then queue, then binding). The
-``RuntimeError``s raised by ``_declare_exchange``/``_declare_queue``/
-``_declare_dlq`` (no channel) and ``_bind_queue`` (no queue/exchange yet)
-are therefore unreachable through that path -- they exist only because
-these are also invoked directly by tests/monkeypatched callers (see the
-``_declare_*`` delegation methods on ``RabbitMQEventBus``, kept for
-backward compatibility). They are deliberately plain ``RuntimeError``, not
-``EventBusConnectionError``: nothing a well-behaved caller of the *public*
-API can trigger raises them, so there is no user-facing contract to type --
-tripping one means this module's own call-order invariant was violated,
-which is a bug in the caller (test, monkeypatch, or a future internal
-change), not a "you forgot to call connect()" situation.
+Owns declaring the main exchange, the consumer queue, DLQ exchange/queue,
+and the bindings between them, plus additional event-type/routing-key
+bindings exposed on the facade.
 """
 
 from __future__ import annotations
@@ -46,18 +24,14 @@ try:
 except ImportError:  # pragma: no cover - guarded by RabbitMQEventBus construction
     ExchangeType = None  # type: ignore[assignment, misc]
 
-# Named explicitly (not via __name__) so the logger name is stable and
-# matches the facade's pre-extraction "eventsource.adapters.rabbitmq" logger --
-# callers that configure logging by name keep working unchanged.
 logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
 
 class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
     """Declares and owns the RabbitMQ exchange/queue topology.
 
-    Declaration order (matching what ``connect()`` did before extraction):
-    DLQ exchange+queue (if enabled), then main exchange, then consumer
-    queue, then the binding between queue and exchange.
+    Declaration order: DLQ exchange+queue (if enabled), then main exchange,
+    then consumer queue, then the binding between queue and exchange.
     """
 
     def __init__(
@@ -96,12 +70,7 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         return self._dlq_queue
 
     async def declare_all(self) -> None:
-        """Declare exchange, consumer queue, bindings, and DLQ per config flags.
-
-        Runs in the same order ``connect()`` declared topology before
-        extraction: DLQ first (if enabled), then main exchange, then
-        consumer queue, then binding.
-        """
+        """Declare exchange, consumer queue, bindings, and DLQ per config flags."""
         if self._config.enable_dlq:
             await self._declare_dlq()
         await self._declare_exchange()
@@ -109,26 +78,15 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         await self._bind_queue()
 
     async def redeclare(self) -> None:
-        """Reconnect path: re-declare everything (current ``_on_reconnect`` behavior)."""
+        """Re-declare topology after reconnection."""
         await self.declare_all()
 
     async def queue_health(self, queue_name: str) -> QueueInfo | None:
-        """Passively query a queue's message/consumer counts.
+        """Passively query a queue's message and consumer counts.
 
-        Used by both the facade's public ``get_queue_info()`` (for the
-        consumer queue) and its ``health_check()`` (for the consumer queue
-        and, separately, the DLQ queue). Uses passive declaration, so it
-        never creates or modifies the queue.
-
-        Args:
-            queue_name: Name of the queue to query.
-
-        Returns:
-            ``QueueInfo`` with ``state`` "running"/"idle" on success, or
-            ``state="error"`` with ``error`` set if the passive declare
-            raises. Returns ``None`` only if there is no live channel to
-            query with (caller decides what that means -- e.g. "not
-            connected" vs. "not initialized").
+        Returns ``QueueInfo`` with ``state`` "running"/"idle" on success,
+        ``state="error"`` if the passive declare raises, or ``None`` if no
+        live channel is available.
         """
         channel = self._connection.channel
         if channel is None or channel.is_closed:
@@ -174,29 +132,10 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
                 error=str(e),
             )
 
-    # =========================================================================
-    # Exchange and Queue Declaration Methods (moved from bus.py P1-006)
-    # =========================================================================
-
     async def _declare_exchange(self) -> None:
-        """Declare the main event exchange.
-
-        Creates an exchange with the configured type (topic, direct, fanout, or headers)
-        for event routing. The exchange type determines how messages are routed to queues.
-
-        - topic: Route based on routing key patterns (e.g., "order.*", "*.created")
-        - direct: Route to queues with exact routing key match
-        - fanout: Broadcast to all bound queues regardless of routing key
-        - headers: Route based on message header attributes
-
-        Raises:
-            RuntimeError: If called with no channel available -- an
-                internal call-order bug (see module docstring), not a
-                condition reachable by a caller of the public API.
-        """
+        """Declare the main event exchange with the configured exchange type."""
         channel = self._connection.require_channel()
 
-        # Map string to ExchangeType enum
         exchange_type_map = {
             "topic": ExchangeType.TOPIC,
             "direct": ExchangeType.DIRECT,
@@ -226,20 +165,9 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         )
 
     async def _declare_queue(self) -> None:
-        """Declare the consumer queue with optional DLQ configuration.
-
-        Creates a durable queue for this consumer group. If DLQ is enabled,
-        the queue is configured with dead letter exchange arguments so that
-        rejected messages are automatically routed to the DLQ.
-
-        Raises:
-            RuntimeError: If called with no channel available -- an
-                internal call-order bug (see module docstring), not a
-                condition reachable by a caller of the public API.
-        """
+        """Declare the consumer queue with optional DLQ arguments."""
         channel = self._connection.require_channel()
 
-        # Queue arguments for DLQ routing
         arguments: dict[str, Any] = {}
 
         if self._config.enable_dlq:
@@ -264,23 +192,9 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         )
 
     async def _declare_dlq(self) -> None:
-        """Declare dead letter exchange and queue.
-
-        Creates a DLQ exchange and queue for handling messages that fail
-        after max_retries attempts. The DLQ uses a direct exchange type
-        for simple routing based on the original queue name.
-
-        This allows failed messages to be inspected and potentially replayed
-        after fixing the underlying issue.
-
-        Raises:
-            RuntimeError: If called with no channel available -- an
-                internal call-order bug (see module docstring), not a
-                condition reachable by a caller of the public API.
-        """
+        """Declare the dead letter direct exchange, queue, and binding."""
         channel = self._connection.require_channel()
 
-        # Declare DLQ exchange as direct type
         self._dlq_exchange = await channel.declare_exchange(
             name=self._config.dlq_exchange_name,
             type=ExchangeType.DIRECT,
