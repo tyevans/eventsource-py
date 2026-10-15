@@ -1,7 +1,7 @@
 ---
 id: TASK-0251
 title: "Slim rabbitmq fanout, phase3 full migration, memory dlq sql queries, phase3 edge cases, and aggregate type inference tests below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

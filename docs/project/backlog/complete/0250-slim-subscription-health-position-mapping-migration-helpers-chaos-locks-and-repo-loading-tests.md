@@ -1,7 +1,7 @@
 ---
 id: TASK-0250
 title: "Slim subscription health, position mapping queries, migration helpers, chaos locks, and repository loading tests below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

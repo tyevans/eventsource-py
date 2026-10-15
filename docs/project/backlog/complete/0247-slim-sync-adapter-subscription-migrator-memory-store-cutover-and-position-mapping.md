@@ -1,7 +1,7 @@
 ---
 id: TASK-0247
 title: "Slim sync/adapter.py, subscription_migrator_execution.py, memory/store.py, cutover_execution.py, and position_mapping_query.py below 300 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

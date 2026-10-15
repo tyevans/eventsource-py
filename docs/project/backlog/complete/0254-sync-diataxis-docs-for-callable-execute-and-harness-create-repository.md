@@ -1,7 +1,7 @@
 ---
 id: TASK-0254
 title: "Synchronize Diataxis guides for callable repo.execute and InMemoryTestHarness.create_repository / assertions"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

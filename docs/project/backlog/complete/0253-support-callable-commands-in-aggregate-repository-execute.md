@@ -1,7 +1,7 @@
 ---
 id: TASK-0253
 title: "Support callable commands in AggregateRepository.execute and TenantAwareRepository.execute"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
