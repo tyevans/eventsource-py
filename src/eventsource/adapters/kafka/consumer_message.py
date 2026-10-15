@@ -1,7 +1,4 @@
-"""Message processing and deserialization mixin for KafkaConsumerLoop.
-
-Governed by ADR-0002 (<500 lines per module).
-"""
+"""Message processing and deserialization mixin for KafkaConsumerLoop."""
 
 from __future__ import annotations
 
@@ -54,7 +51,6 @@ logger = logging.getLogger("eventsource.bus.kafka")
 class KafkaConsumerMessageMixin:
     """Mixin providing message intake, span extraction, and deserialization."""
 
-    # Collaborator attributes and methods provided by sibling mixins / loop
     _config: KafkaEventBusConfig
     _stats: KafkaEventBusStats
     _metrics: KafkaEventBusMetrics | None
@@ -101,27 +97,18 @@ class KafkaConsumerMessageMixin:
                 },
             )
 
+        msg_meta = {
+            "topic": message.topic,
+            "partition": message.partition,
+            "offset": message.offset,
+        }
         if not event_type_name:
-            logger.error(
-                "Message missing event_type header",
-                extra={
-                    "topic": message.topic,
-                    "partition": message.partition,
-                    "offset": message.offset,
-                },
-            )
+            logger.error("Message missing event_type header", extra=msg_meta)
             if self._consumer:
                 await self._consumer.commit()
             return
 
-        logger.debug(
-            "Processing message",
-            extra={
-                "event_type": event_type_name,
-                "partition": message.partition,
-                "offset": message.offset,
-            },
-        )
+        logger.debug("Processing message", extra={"event_type": event_type_name, **msg_meta})
 
         if self._enable_tracing and PROPAGATION_AVAILABLE and extract is not None:
             context = extract(self._extract_trace_context(message.headers))
@@ -145,10 +132,8 @@ class KafkaConsumerMessageMixin:
             await self._process_message_with_span(message, event_type_name, None)
 
     def _extract_trace_context(
-        self,
-        headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
+        self, headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None
     ) -> dict[str, str]:
-        """Extract OpenTelemetry trace context from message headers."""
         if not headers:
             return {}
         return {
@@ -160,7 +145,6 @@ class KafkaConsumerMessageMixin:
     async def _process_message_with_span(
         self, message: Any, event_type_name: str, span: Any
     ) -> None:
-        """Process message with optional span updates."""
         start_time = time.perf_counter()
         retry_count = self._get_retry_count(message.headers)
 
@@ -186,7 +170,6 @@ class KafkaConsumerMessageMixin:
                     await self._consumer.commit()
                 elif not retained:
                     self._warn_uncommitted(message, "deserialization_error")
-
                 if span is not None and Status is not None and StatusCode is not None:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     span.record_exception(e)
@@ -198,26 +181,22 @@ class KafkaConsumerMessageMixin:
                 span.set_attribute(ATTR_AGGREGATE_ID, str(event.aggregate_id))
                 span.set_attribute(ATTR_AGGREGATE_TYPE, event.aggregate_type)
 
-            handlers = self._handlers_for(type(event))
-            if not handlers:
-                logger.debug("No handlers for event type", extra={"event_type": event_type_name})
-            else:
+            if handlers := self._handlers_for(type(event)):
                 await self._dispatch_to_handlers(event, handlers)
+            else:
+                logger.debug("No handlers for event type", extra={"event_type": event_type_name})
 
             if self._consumer:
                 await self._consumer.commit()
             self._stats.events_processed_success += 1
-
             if span is not None and Status is not None and StatusCode is not None:
                 span.set_status(Status(StatusCode.OK))
             _record_duration()
-
         except Exception as e:
             _record_duration()
             if span is not None and Status is not None and StatusCode is not None:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
-
             dlq_error = (
                 e.failures[0][1]
                 if isinstance(e, HandlerDispatchError) and len(e.failures) == 1
@@ -226,7 +205,6 @@ class KafkaConsumerMessageMixin:
             await self._handle_processing_error(message, dlq_error, retry_count)
 
     def _deserialize_message(self, message: Any) -> DomainEvent:
-        """Deserialize a Kafka message to a DomainEvent using the configured serializer."""
         event_type_name = self._get_header_value(message.headers, "event_type")
         if not event_type_name:
             raise DeserializationError("Message missing event_type header")
@@ -236,18 +214,13 @@ class KafkaConsumerMessageMixin:
         return self._serializer.deserialize(message.value, event_type_name, event_class)
 
     def _get_header_value(
-        self,
-        headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
-        key: str,
+        self, headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None, key: str
     ) -> str | None:
-        """Get a header value by key."""
         return get_header_value(headers, key)
 
     def _get_retry_count(
-        self,
-        headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
+        self, headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None
     ) -> int:
-        """Get the retry count from message headers."""
         value = self._get_header_value(headers, "retry_count")
         if value:
             try:

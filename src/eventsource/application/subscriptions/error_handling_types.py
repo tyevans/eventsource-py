@@ -21,35 +21,19 @@ class ErrorCategory(Enum):
     """Categories of errors for classification."""
 
     TRANSIENT = "transient"
-    """Temporary failures that may succeed on retry (network issues, timeouts)."""
-
     PERMANENT = "permanent"
-    """Failures that will not succeed on retry (validation errors, data issues)."""
-
     INFRASTRUCTURE = "infrastructure"
-    """Infrastructure failures (database down, message broker unavailable)."""
-
     APPLICATION = "application"
-    """Application-level errors (business logic failures, handler bugs)."""
-
     UNKNOWN = "unknown"
-    """Unknown error category (fallback for unclassified errors)."""
 
 
 class ErrorSeverity(Enum):
     """Severity levels determining urgency and escalation path for errors."""
 
     LOW = "low"
-    """Minor errors that don't significantly impact processing."""
-
     MEDIUM = "medium"
-    """Errors that affect some processing but system continues."""
-
     HIGH = "high"
-    """Significant errors that need attention."""
-
     CRITICAL = "critical"
-    """Critical errors requiring immediate attention."""
 
 
 @dataclass(frozen=True)
@@ -146,27 +130,21 @@ class ErrorStats:
     def record_error(self, error_info: ErrorInfo) -> None:
         """Record an error in statistics."""
         self.total_errors += 1
-
         category = error_info.classification.category.value
         self.errors_by_category[category] = self.errors_by_category.get(category, 0) + 1
-
         if error_info.classification.category == ErrorCategory.TRANSIENT:
             self.transient_errors += 1
         else:
             self.permanent_errors += 1
-
         self.errors_by_type[error_info.error_type] = (
             self.errors_by_type.get(error_info.error_type, 0) + 1
         )
-
         if error_info.sent_to_dlq:
             self.dlq_count += 1
-
         now = datetime.now(UTC)
         if self.first_error_at is None:
             self.first_error_at = now
         self.last_error_at = now
-
         self._record_rate_sample()
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,59 +163,26 @@ class ErrorStats:
         }
 
 
-# =============================================================================
-# Error Handling Strategy & Config
-# =============================================================================
-
-
 class ErrorHandlingStrategy(Enum):
-    """
-    Strategy for handling event processing errors.
-
-    Determines what happens when an event fails to process.
-    """
+    """Strategy for handling event processing errors."""
 
     STOP = "stop"
-    """Stop processing immediately on first error."""
-
     CONTINUE = "continue"
-    """Log error and continue with next event."""
-
     RETRY_THEN_CONTINUE = "retry_then_continue"
-    """Retry with backoff, then continue if all retries fail."""
-
     RETRY_THEN_DLQ = "retry_then_dlq"
-    """Retry with backoff, then send to DLQ if all retries fail."""
-
     DLQ_ONLY = "dlq_only"
-    """Send to DLQ immediately without retry."""
 
 
 @dataclass(frozen=True)
 class ErrorHandlingConfig:
-    """
-    Configuration for error handling behavior.
-
-    Controls how errors are classified, handled, and tracked.
-    """
+    """Configuration for error handling behavior."""
 
     strategy: ErrorHandlingStrategy = ErrorHandlingStrategy.RETRY_THEN_CONTINUE
-    """Default strategy for handling errors."""
-
     max_recent_errors: int = 100
-    """Maximum number of recent errors to keep in memory."""
-
     max_errors_before_stop: int | None = None
-    """If set, stop subscription after this many errors."""
-
     error_rate_threshold: float | None = None
-    """If set, trigger alert when error rate (per minute) exceeds this."""
-
     dlq_enabled: bool = True
-    """Whether to send failed events to DLQ."""
-
     notify_on_severity: ErrorSeverity = ErrorSeverity.HIGH
-    """Minimum severity level to trigger callbacks."""
 
 
 ErrorCallback = Callable[[ErrorInfo], Awaitable[None]]
