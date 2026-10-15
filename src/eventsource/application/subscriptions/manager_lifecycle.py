@@ -37,6 +37,10 @@ class ManagerLifecycleMixin:
     checkpoint_repo: SubscriptionPositions
     _tracer: Tracer
 
+    def _select_subscriptions(self, names: list[str] | None) -> list[Any]:
+        all_subs = self._registry.get_all()
+        return all_subs if names is None else [s for s in all_subs if s.name in names]
+
     async def start(
         self, subscription_names: list[str] | None = None, concurrent: bool = True
     ) -> dict[str, Exception | None]:
@@ -44,17 +48,10 @@ class ManagerLifecycleMixin:
         if self._running:
             logger.warning("Subscription manager already running")
             return {}
-
         self._running = True
         self._started_at = datetime.now(UTC)
         self._health_provider.set_started(self._started_at)
-
-        all_subs = self._registry.get_all()
-        subs = (
-            all_subs
-            if subscription_names is None
-            else [sub for sub in all_subs if sub.name in subscription_names]
-        )
+        subs = self._select_subscriptions(subscription_names)
         logger.info(
             "Starting subscription manager",
             extra={"subscription_count": len(subs), "concurrent": concurrent},
@@ -68,15 +65,10 @@ class ManagerLifecycleMixin:
         with self._tracer.span("eventsource.subscription_manager.stop"):
             if not self._running and subscription_names is None:
                 return
-
-            all_subs = self._registry.get_all()
             if subscription_names is None:
-                subs = all_subs
                 self._running = False
                 self._health_provider.clear_started()
-            else:
-                subs = [sub for sub in all_subs if sub.name in subscription_names]
-
+            subs = self._select_subscriptions(subscription_names)
             logger.info(
                 "Stopping subscription manager",
                 extra={"subscription_count": len(subs), "timeout": timeout},
@@ -86,27 +78,22 @@ class ManagerLifecycleMixin:
 
     @property
     def is_running(self) -> bool:
-        """Check if the manager is running."""
         return self._running
 
     def register_signals(self) -> None:
-        """Register signal handlers for graceful shutdown."""
         self._shutdown_coordinator.on_shutdown(self._on_shutdown_signal)
         self._shutdown_coordinator.register_signals()
 
     def unregister_signals(self) -> None:
-        """Unregister signal handlers."""
         self._shutdown_coordinator.unregister_signals()
 
     async def _on_shutdown_signal(self) -> None:
-        """Internal callback invoked when a shutdown signal is trapped."""
         logger.info("Shutdown signal received by SubscriptionManager")
 
     async def run_until_shutdown(self, shutdown_timeout: float | None = None) -> ShutdownResult:
         """Run the manager until a shutdown signal is received."""
         if shutdown_timeout is not None:
             self._shutdown_coordinator.timeout = shutdown_timeout
-
         logger.info(
             "Starting manager in daemon mode",
             extra={
@@ -132,7 +119,6 @@ class ManagerLifecycleMixin:
             self.unregister_signals()
 
     async def _execute_graceful_shutdown(self) -> ShutdownResult:
-        """Execute graceful shutdown sequence."""
         return await self._shutdown_coordinator.shutdown(
             stop_func=self._stop_accepting_events,
             drain_func=self._drain_in_flight_events,
@@ -140,7 +126,6 @@ class ManagerLifecycleMixin:
         )
 
     async def _stop_accepting_events(self) -> None:
-        """Stop accepting new events by stopping all coordinators."""
         logger.info(
             "Stopping event acceptance",
             extra={"subscription_count": len(self._lifecycle.coordinators)},
@@ -148,27 +133,23 @@ class ManagerLifecycleMixin:
         await self.stop()
 
     async def _drain_in_flight_events(self) -> int:
-        """Drain in-flight events from all subscriptions."""
         total_in_flight = 0
         drain_tasks: list[tuple[str, asyncio.Task[int]]] = []
-
         for name, coordinator in self._lifecycle.coordinators.items():
-            if (flow_controller := coordinator.flow_controller) is None:
+            if (fc := coordinator.flow_controller) is None:
                 logger.debug("No flow controller for subscription", extra={"subscription": name})
                 continue
-
-            in_flight = flow_controller.in_flight
-            total_in_flight += in_flight
-            if in_flight > 0:
+            total_in_flight += fc.in_flight
+            if fc.in_flight > 0:
                 logger.info(
                     "Draining in-flight events for subscription",
-                    extra={"subscription": name, "in_flight_count": in_flight},
+                    extra={"subscription": name, "in_flight_count": fc.in_flight},
                 )
-                drain_task = asyncio.create_task(
-                    flow_controller.wait_for_drain(self._shutdown_coordinator.drain_timeout),
+                task = asyncio.create_task(
+                    fc.wait_for_drain(self._shutdown_coordinator.drain_timeout),
                     name=f"drain-{name}",
                 )
-                drain_tasks.append((name, drain_task))
+                drain_tasks.append((name, task))
 
         logger.info(
             "Draining in-flight events",
@@ -181,9 +162,7 @@ class ManagerLifecycleMixin:
             return total_in_flight
 
         try:
-            results = await asyncio.gather(
-                *(task for _, task in drain_tasks), return_exceptions=True
-            )
+            results = await asyncio.gather(*(t for _, t in drain_tasks), return_exceptions=True)
             total_remaining = 0
             for (name, _), result in zip(drain_tasks, results, strict=True):
                 if isinstance(result, BaseException):
@@ -213,11 +192,9 @@ class ManagerLifecycleMixin:
                 )
         except Exception as e:
             logger.error("Error during drain phase", extra={"error": str(e)}, exc_info=True)
-
         return total_in_flight
 
     async def _save_final_checkpoints(self) -> int:
-        """Save final checkpoints for all subscriptions."""
         saved_count = 0
         for name, sub in self._registry.items():
             if sub.last_event_id is None or sub.last_event_type is None:
@@ -225,20 +202,15 @@ class ManagerLifecycleMixin:
                     "Skipping checkpoint save - no event info", extra={"subscription": name}
                 )
                 continue
-
             if (position := sub.last_processed_position) is None:
                 logger.debug(
                     "Skipping checkpoint save - no position to checkpoint",
                     extra={"subscription": name},
                 )
                 continue
-
             try:
                 await self.checkpoint_repo.save_position(
-                    subscription_id=name,
-                    position=position,
-                    event_id=sub.last_event_id,
-                    event_type=sub.last_event_type,
+                    name, position, sub.last_event_id, sub.last_event_type
                 )
                 saved_count += 1
                 logger.debug(
@@ -249,40 +221,32 @@ class ManagerLifecycleMixin:
                 logger.error(
                     "Failed to save checkpoint", extra={"subscription": name, "error": str(e)}
                 )
-
         logger.info("Final checkpoints saved", extra={"checkpoints_saved": saved_count})
         return saved_count
 
     def request_shutdown(self) -> None:
-        """Programmatically request shutdown."""
         self._shutdown_coordinator.request_shutdown()
 
     @property
     def is_shutting_down(self) -> bool:
-        """Check if shutdown has been requested."""
         return self._shutdown_coordinator.is_shutting_down
 
     @property
     def shutdown_phase(self) -> ShutdownPhase:
-        """Get the current shutdown phase."""
         return self._shutdown_coordinator.phase
 
     @property
     def last_shutdown_result(self) -> ShutdownResult | None:
-        """Get the result of the last shutdown operation."""
         return self._last_shutdown_result
 
     def shutdown_coordinator(self) -> ShutdownCoordinator:
-        """Get the underlying ShutdownCoordinator instance."""
         return self._shutdown_coordinator
 
     async def __aenter__(self: Self) -> Self:
-        """Async context manager entry."""
         await self.start()
         return self
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any
     ) -> None:
-        """Async context manager exit."""
         await self.stop()
