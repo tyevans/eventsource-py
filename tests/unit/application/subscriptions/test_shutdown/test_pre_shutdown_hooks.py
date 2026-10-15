@@ -10,33 +10,25 @@ from eventsource.application.subscriptions.shutdown import (
 )
 
 
+async def _noop_hook() -> None:
+    pass
+
+
 class TestPreShutdownHooks:
     """Tests for pre-shutdown hook functionality."""
 
     def test_register_hook(self):
-        """Test registering a pre-shutdown hook."""
         coordinator = ShutdownCoordinator()
-
-        async def hook():
-            pass
-
-        coordinator.on_pre_shutdown(hook, timeout=5.0)
+        coordinator.on_pre_shutdown(_noop_hook, timeout=5.0)
         assert len(coordinator._pre_shutdown_hooks) == 1
 
     def test_register_hook_default_timeout(self):
-        """Test registering a hook with default timeout."""
         coordinator = ShutdownCoordinator()
-
-        async def hook():
-            pass
-
-        coordinator.on_pre_shutdown(hook)
+        coordinator.on_pre_shutdown(_noop_hook)
         assert len(coordinator._pre_shutdown_hooks) == 1
-        # Default timeout is 5.0
         assert coordinator._pre_shutdown_hooks[0][1] == 5.0
 
     def test_register_hook_validates_async(self):
-        """Test that non-async hooks are rejected."""
         coordinator = ShutdownCoordinator()
 
         def sync_hook():
@@ -46,27 +38,16 @@ class TestPreShutdownHooks:
             coordinator.on_pre_shutdown(sync_hook)  # type: ignore[arg-type]
 
     def test_register_hook_validates_timeout_zero(self):
-        """Test that zero timeout is rejected."""
         coordinator = ShutdownCoordinator()
-
-        async def hook():
-            pass
-
         with pytest.raises(ValueError, match="must be positive"):
-            coordinator.on_pre_shutdown(hook, timeout=0)
+            coordinator.on_pre_shutdown(_noop_hook, timeout=0)
 
     def test_register_hook_validates_timeout_negative(self):
-        """Test that negative timeout is rejected."""
         coordinator = ShutdownCoordinator()
-
-        async def hook():
-            pass
-
         with pytest.raises(ValueError, match="must be positive"):
-            coordinator.on_pre_shutdown(hook, timeout=-1)
+            coordinator.on_pre_shutdown(_noop_hook, timeout=-1)
 
     def test_register_multiple_hooks(self):
-        """Test registering multiple hooks."""
         coordinator = ShutdownCoordinator()
 
         async def hook1():
@@ -89,7 +70,6 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_execute_in_order(self):
-        """Test hooks execute in registration order."""
         coordinator = ShutdownCoordinator()
         execution_order = []
 
@@ -107,12 +87,10 @@ class TestPreShutdownHooks:
         coordinator.on_pre_shutdown(hook3)
 
         await coordinator._execute_pre_shutdown_hooks()
-
         assert execution_order == [1, 2, 3]
 
     @pytest.mark.asyncio
     async def test_hook_timeout(self):
-        """Test hook timeout is enforced."""
         coordinator = ShutdownCoordinator()
         completed = False
 
@@ -128,11 +106,10 @@ class TestPreShutdownHooks:
         duration = asyncio.get_event_loop().time() - start
 
         assert not completed
-        assert duration < 0.5  # Much less than 10s
+        assert duration < 0.5
 
     @pytest.mark.asyncio
     async def test_hook_exception_continues_execution(self):
-        """Test that hook exception doesn't stop other hooks."""
         coordinator = ShutdownCoordinator()
         hook3_executed = False
 
@@ -147,12 +124,10 @@ class TestPreShutdownHooks:
         coordinator.on_pre_shutdown(success_hook)
 
         await coordinator._execute_pre_shutdown_hooks()
-
         assert hook3_executed
 
     @pytest.mark.asyncio
     async def test_hooks_execute_before_stopping_phase(self):
-        """Test hooks run before STOPPING phase."""
         coordinator = ShutdownCoordinator()
         phase_at_hook_execution = None
 
@@ -161,22 +136,12 @@ class TestPreShutdownHooks:
             phase_at_hook_execution = coordinator.phase
 
         coordinator.on_pre_shutdown(capture_phase)
-
-        async def stop_func():
-            pass
-
-        await coordinator.shutdown(stop_func=stop_func)
-
+        await coordinator.shutdown(stop_func=_noop_hook)
         assert phase_at_hook_execution == ShutdownPhase.RUNNING
 
     def test_reset_clears_hooks(self):
-        """Test reset clears registered hooks."""
         coordinator = ShutdownCoordinator()
-
-        async def hook():
-            pass
-
-        coordinator.on_pre_shutdown(hook)
+        coordinator.on_pre_shutdown(_noop_hook)
         assert len(coordinator._pre_shutdown_hooks) == 1
 
         coordinator.reset()
@@ -184,15 +149,11 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_no_hooks_execution_is_safe(self):
-        """Test executing with no hooks is safe."""
         coordinator = ShutdownCoordinator()
-
-        # Should not raise
         await coordinator._execute_pre_shutdown_hooks()
 
     @pytest.mark.asyncio
     async def test_hooks_run_during_shutdown_sequence(self):
-        """Test hooks are called as part of shutdown() sequence."""
         coordinator = ShutdownCoordinator()
         hook_executed = False
 
@@ -201,17 +162,11 @@ class TestPreShutdownHooks:
             hook_executed = True
 
         coordinator.on_pre_shutdown(pre_hook)
-
-        async def stop_func():
-            pass
-
-        await coordinator.shutdown(stop_func=stop_func)
-
+        await coordinator.shutdown(stop_func=_noop_hook)
         assert hook_executed
 
     @pytest.mark.asyncio
     async def test_hook_failure_does_not_prevent_shutdown(self):
-        """Test that hook failure does not prevent shutdown from proceeding."""
         coordinator = ShutdownCoordinator()
         stop_called = False
 
@@ -230,7 +185,6 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hook_timeout_does_not_prevent_shutdown(self):
-        """Test that hook timeout does not prevent shutdown from proceeding."""
         coordinator = ShutdownCoordinator()
         stop_called = False
 
@@ -249,7 +203,6 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_multiple_hooks_with_different_timeouts(self):
-        """Test multiple hooks with different individual timeouts."""
         coordinator = ShutdownCoordinator()
         results = []
 
@@ -265,29 +218,23 @@ class TestPreShutdownHooks:
             results.append("medium")
 
         coordinator.on_pre_shutdown(fast_hook, timeout=1.0)
-        coordinator.on_pre_shutdown(slow_hook, timeout=0.1)  # Will timeout
+        coordinator.on_pre_shutdown(slow_hook, timeout=0.1)
         coordinator.on_pre_shutdown(medium_hook, timeout=1.0)
 
         await coordinator._execute_pre_shutdown_hooks()
 
         assert "fast" in results
-        assert "slow" not in results  # Timed out
+        assert "slow" not in results
         assert "medium" in results
 
     @pytest.mark.asyncio
     async def test_hooks_execute_before_drain_and_checkpoint(self):
-        """Test hooks execute before drain and checkpoint phases."""
         coordinator = ShutdownCoordinator()
-        hook_time = None
-        drain_time = None
-        checkpoint_time = None
+        hook_time = drain_time = checkpoint_time = None
 
         async def pre_hook():
             nonlocal hook_time
             hook_time = asyncio.get_event_loop().time()
-
-        async def stop_func():
-            pass
 
         async def drain_func():
             nonlocal drain_time
@@ -301,7 +248,7 @@ class TestPreShutdownHooks:
 
         coordinator.on_pre_shutdown(pre_hook)
         await coordinator.shutdown(
-            stop_func=stop_func,
+            stop_func=_noop_hook,
             drain_func=drain_func,
             checkpoint_func=checkpoint_func,
         )
@@ -309,21 +256,18 @@ class TestPreShutdownHooks:
         assert hook_time is not None
         assert drain_time is not None
         assert checkpoint_time is not None
-        assert hook_time < drain_time
-        assert drain_time < checkpoint_time
+        assert hook_time < drain_time < checkpoint_time
 
 
 class TestPreShutdownHookImports:
     """Tests for pre-shutdown hook type imports."""
 
     def test_import_pre_shutdown_hook_type(self):
-        """Test PreShutdownHook type alias import."""
         from eventsource.application.subscriptions.shutdown import PreShutdownHook
 
         assert PreShutdownHook is not None
 
     def test_pre_shutdown_hook_in_all(self):
-        """Test PreShutdownHook is in __all__."""
         from eventsource.application.subscriptions.shutdown import __all__
 
         assert "PreShutdownHook" in __all__
