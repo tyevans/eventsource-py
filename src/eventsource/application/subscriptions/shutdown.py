@@ -142,78 +142,60 @@ class ShutdownCoordinator:
         self._deadline_manager._shutdown_deadline = deadline
 
     def register_signals(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
-        """Register signal handlers for graceful shutdown (SIGTERM and SIGINT)."""
         self._signal_manager.register_signals(loop)
 
     def unregister_signals(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
-        """Unregister signal handlers."""
         self._signal_manager.unregister_signals(loop)
 
     async def _handle_signal(self, sig: signal.Signals) -> None:
-        """Handle received shutdown signal."""
         await self._signal_manager._handle_signal(sig)
 
     def on_shutdown(self, callback: Callable[[], Awaitable[None]]) -> None:
-        """Register a callback to be invoked when shutdown is requested."""
         self._signal_manager.on_shutdown(callback)
 
     def remove_callback(self, callback: Callable[[], Awaitable[None]]) -> bool:
-        """Remove a registered shutdown callback."""
         return self._signal_manager.remove_callback(callback)
 
     def on_pre_shutdown(self, callback: PreShutdownHook, timeout: float = 5.0) -> None:
-        """Register callback to execute before shutdown begins."""
         self._hook_manager.on_pre_shutdown(callback, timeout)
 
     async def _execute_pre_shutdown_hooks(self) -> None:
-        """Execute all pre-shutdown hooks in registration order."""
         await self._hook_manager.execute_pre_shutdown_hooks()
 
     def on_post_shutdown(self, callback: PostShutdownHook) -> None:
-        """Register callback to execute after shutdown completes."""
         self._hook_manager.on_post_shutdown(callback)
 
     async def _execute_post_shutdown_hooks(self, result: ShutdownResult) -> None:
-        """Execute all post-shutdown hooks with the shutdown result."""
         await self._hook_manager.execute_post_shutdown_hooks(result)
 
     async def wait_for_shutdown(self) -> None:
-        """Wait for shutdown signal."""
         await self._signal_manager.wait_for_shutdown()
 
     def request_shutdown(self, reason: ShutdownReason = ShutdownReason.PROGRAMMATIC) -> None:
-        """Programmatically request shutdown."""
         self._signal_manager.request_shutdown(reason)
 
     def _start_periodic_checkpoints(self, checkpoint_func: Callable[[], Awaitable[int]]) -> None:
-        """Start the periodic checkpoint background task."""
         self._periodic_manager.start(checkpoint_func, lambda: self._phase == ShutdownPhase.DRAINING)
 
     async def _stop_periodic_checkpoints(self) -> None:
-        """Stop the periodic checkpoint background task."""
         await self._periodic_manager.stop()
 
     def set_shutdown_deadline(self, deadline: datetime) -> None:
-        """Set absolute deadline for shutdown completion."""
         self._deadline_manager.set_shutdown_deadline(deadline)
 
     def get_remaining_shutdown_time(self) -> float:
-        """Get seconds remaining until shutdown deadline."""
         return self._deadline_manager.get_remaining_shutdown_time()
 
     @property
     def deadline(self) -> datetime | None:
-        """Get the current shutdown deadline."""
         return self._deadline_manager.deadline
 
     def _get_adjusted_timeouts(self) -> tuple[float, float, float]:
-        """Calculate adjusted phase timeouts based on remaining time."""
         return self._deadline_manager.get_adjusted_timeouts(
             self.drain_timeout, self.checkpoint_timeout
         )
 
     def set_in_flight_count(self, count: int) -> None:
-        """Set the in-flight event count before shutdown drain."""
         self._in_flight_at_start = count
         try:
             record_in_flight_at_shutdown(count)
@@ -222,22 +204,18 @@ class ShutdownCoordinator:
 
     @property
     def is_shutting_down(self) -> bool:
-        """Check if shutdown has been requested."""
         return self._signal_manager.shutdown_requested
 
     @property
     def phase(self) -> ShutdownPhase:
-        """Get current shutdown phase."""
         return self._phase
 
     @property
     def is_forced(self) -> bool:
-        """Check if shutdown was forced."""
         return self._phase == ShutdownPhase.FORCED
 
     @property
     def last_metrics_snapshot(self) -> ShutdownMetricsSnapshot | None:
-        """Get the metrics snapshot from the last shutdown operation."""
         return self._last_metrics_snapshot
 
     def _create_result(
@@ -249,7 +227,6 @@ class ShutdownCoordinator:
         forced: bool,
         error_msg: str | None,
     ) -> ShutdownResult:
-        """Create a ShutdownResult from current state."""
         return create_shutdown_result(
             self,
             start_time,

@@ -85,35 +85,15 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
         return self._channel
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
-        """Create SSL context from configuration.
-
-        Delegates to :func:`create_ssl_context`.
-        """
+        """Create SSL context from configuration (delegates to :func:`create_ssl_context`)."""
         return create_ssl_context(self._config)
 
     def _sanitize_url(self, url: str) -> str:
-        """Remove credentials from URL for logging.
-
-        Delegates to :func:`sanitize_url`.
-        """
+        """Remove credentials from URL for logging (delegates to :func:`sanitize_url`)."""
         return sanitize_url(url)
 
     async def connect(self) -> None:
-        """Connect to RabbitMQ, create the channel, and run reconnect callbacks.
-
-        Establishes connection, creates channel, and runs any registered
-        reconnect callbacks (topology declaration / consumer resumption)
-        for the initial connect too, since those are identical in shape
-        to what happens on reconnect.
-
-        Uses aio-pika's RobustConnection for automatic reconnection support.
-        Sets up the channel with configured prefetch count for flow control.
-        Supports TLS/SSL connections via amqps:// URLs and ssl_context configuration.
-
-        Raises:
-            Exception: If connection or setup fails
-            ssl.SSLError: If SSL/TLS configuration or handshake fails
-        """
+        """Connect to RabbitMQ, create the channel, and run reconnect callbacks."""
         async with self._lock:
             if self._connected:
                 logger.warning("RabbitMQEventBus already connected")
@@ -121,50 +101,31 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
 
             ssl_context: ssl.SSLContext | None = None
             try:
-                # Prepare SSL context if needed
                 ssl_context = self._create_ssl_context()
-
-                # Build connection parameters
                 connect_kwargs: dict[str, Any] = {
                     "heartbeat": self._config.heartbeat,
                     "reconnect_interval": self._config.reconnect_delay,
                 }
-
-                # Add SSL context if TLS is configured
                 if ssl_context is not None:
                     connect_kwargs["ssl_context"] = ssl_context
-
-                # Add additional SSL options if provided
                 if self._config.ssl_options:
                     connect_kwargs.update(self._config.ssl_options)
 
-                # Create robust connection (handles reconnection automatically)
                 self._connection = await aio_pika.connect_robust(
                     self._config.rabbitmq_url,
                     **connect_kwargs,
                 )
-
-                # Register connection callbacks for reconnection handling
-                # Note: aio-pika's type hints are inconsistent with actual usage
                 self._connection.reconnect_callbacks.add(self._on_reconnect)  # type: ignore[arg-type]
                 self._connection.close_callbacks.add(self._on_connection_close)  # type: ignore[arg-type]
 
-                # Create channel (RobustConnection returns RobustChannel)
                 self._channel = await self._connection.channel()
-
-                # Register channel close callback
                 self._channel.close_callbacks.add(self._on_channel_close)
-
-                # Set prefetch count for consumer flow control
                 await self._channel.set_qos(prefetch_count=self._config.prefetch_count)
-
-                # Run registered reconnect callbacks (topology declare, etc.)
                 await self._run_reconnect_callbacks()
 
                 self._connected = True
                 self._stats.connected_at = datetime.now(UTC)
 
-                # Log connection status with TLS info
                 tls_status = "TLS" if ssl_context is not None else "plaintext"
                 logger.info(
                     f"Connected to RabbitMQ ({tls_status}) and initialized topology",
@@ -189,7 +150,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                         "tls_enabled": ssl_context is not None,
                     },
                 )
-                # Clean up partial connection
                 await self.disconnect()
                 raise
 
@@ -204,18 +164,15 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                         "error_type": type(e).__name__,
                     },
                 )
-                # Clean up partial connection
                 await self.disconnect()
                 raise
 
     async def disconnect(self) -> None:
         """Disconnect from RabbitMQ, closing channel and connection cleanly."""
-        # Close channel
         if self._channel and not self._channel.is_closed:
             await self._channel.close()
             self._channel = None
 
-        # Close connection
         if self._connection and not self._connection.is_closed:
             await self._connection.close()
             self._connection = None
@@ -253,18 +210,7 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
         self._connected = False
 
     def health_slice(self) -> dict[str, Any]:
-        """Connection/channel health used by ``RabbitMQEventBus.health_check()``.
-
-        Mirrors the connection- and channel-status checks that used to be
-        inline in the facade's ``health_check`` body. Returns a dict rather
-        than a dataclass so the facade can freely merge it with the
-        queue/DLQ slices without introducing another public model type.
-
-        Returns:
-            Dict with ``healthy`` (bool), ``connection_status`` (str),
-            ``channel_status`` (str), and ``errors`` (list[str]) -- the
-            error messages contributed by this slice, in check order.
-        """
+        """Connection/channel health used by ``RabbitMQEventBus.health_check()``."""
         healthy = True
         errors: list[str] = []
 

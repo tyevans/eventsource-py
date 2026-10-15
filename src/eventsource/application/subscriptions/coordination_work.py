@@ -44,49 +44,23 @@ class WorkRedistributionCoordinator(
     """
     Coordinates work redistribution during instance shutdown.
 
-    This coordinator manages the signaling protocol for work redistribution:
-    - Tracks known peers and their status
-    - Creates shutdown notifications for this instance
-    - Invokes callbacks when peers shutdown or timeout
-    - Optionally integrates with LeaderElector for leadership handoff
-
-    The coordinator does not implement the actual message transport.
-    It provides the protocol and callback infrastructure that can be
-    integrated with any message bus (Redis, RabbitMQ, Kafka, etc.).
-
-    Example:
-        >>> coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        >>> notification = coordinator.create_shutdown_notification(
-        ...     intent=ShutdownIntent.GRACEFUL,
-        ...     subscriptions=["order-projection"],
-        ... )
-        >>> # Publish notification to message bus...
-
-    Attributes:
-        instance_id: Unique identifier for this instance
-        leader_elector: Optional leader elector for leadership handoff
-        heartbeat_timeout_seconds: Seconds before a peer is considered stale
+    Tracks known peers and their status, creates shutdown notifications and
+    heartbeats, invokes callbacks when peers shutdown or timeout, and optionally
+    integrates with LeaderElector for leadership handoff.
     """
 
     instance_id: str
     leader_elector: LeaderElector | None = None
     heartbeat_timeout_seconds: float = 15.0
 
-    # Peer tracking
     _peers: dict[str, PeerInfo] = field(default_factory=dict, repr=False)
-
-    # Callbacks
     _peer_shutdown_callbacks: list[PeerShutdownCallback] = field(default_factory=list, repr=False)
     _heartbeat_callbacks: list[HeartbeatCallback] = field(default_factory=list, repr=False)
     _peer_timeout_callbacks: list[PeerTimeoutCallback] = field(default_factory=list, repr=False)
     _work_assignment_callbacks: list[WorkAssignmentCallback] = field(
         default_factory=list, repr=False
     )
-
-    # Lock for thread safety
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
-
-    # Shutdown state
     _is_shutting_down: bool = field(default=False, repr=False)
     _shutdown_notification: ShutdownNotification | None = field(default=None, repr=False)
 
@@ -108,23 +82,7 @@ class WorkRedistributionCoordinator(
         drain_timeout_seconds: float = 30.0,
         metadata: dict[str, Any] | None = None,
     ) -> ShutdownNotification:
-        """
-        Create a shutdown notification for this instance.
-
-        This method creates the notification and marks this coordinator
-        as shutting down. The caller is responsible for publishing the
-        notification to the coordination topic.
-
-        Args:
-            intent: The reason for shutdown
-            subscriptions: Subscriptions this instance is handling
-            in_flight_count: Number of events currently in flight
-            drain_timeout_seconds: Expected time to complete shutdown
-            metadata: Additional context
-
-        Returns:
-            ShutdownNotification ready for publishing
-        """
+        """Create a shutdown notification for this instance and mark it as shutting down."""
         now = datetime.now(UTC)
         notification = ShutdownNotification(
             instance_id=self.instance_id,
@@ -149,7 +107,6 @@ class WorkRedistributionCoordinator(
                 "drain_timeout_seconds": drain_timeout_seconds,
             },
         )
-
         return notification
 
     def create_heartbeat(
@@ -158,21 +115,8 @@ class WorkRedistributionCoordinator(
         in_flight_count: int = 0,
         load_factor: float = 0.0,
     ) -> HeartbeatMessage:
-        """
-        Create a heartbeat message for this instance.
-
-        Args:
-            subscriptions: Active subscriptions
-            in_flight_count: Current in-flight events
-            load_factor: Current load as fraction (0.0-1.0)
-
-        Returns:
-            HeartbeatMessage ready for publishing
-        """
-        is_leader = False
-        if self.leader_elector is not None:
-            is_leader = self.leader_elector.is_leader
-
+        """Create a heartbeat message for this instance."""
+        is_leader = self.leader_elector.is_leader if self.leader_elector is not None else False
         return HeartbeatMessage(
             instance_id=self.instance_id,
             timestamp=datetime.now(UTC),
@@ -183,25 +127,15 @@ class WorkRedistributionCoordinator(
         )
 
     async def handle_peer_shutdown(self, notification: ShutdownNotification) -> None:
-        """
-        Handle a shutdown notification from a peer.
-
-        Updates peer tracking and invokes registered callbacks.
-
-        Args:
-            notification: Shutdown notification from peer
-        """
+        """Handle a shutdown notification from a peer."""
         if notification.instance_id == self.instance_id:
-            # Ignore our own notification
             return
 
         async with self._lock:
-            # Update or create peer info
-            if notification.instance_id not in self._peers:
-                self._peers[notification.instance_id] = PeerInfo(
-                    instance_id=notification.instance_id
-                )
-            self._peers[notification.instance_id].shutdown_notification = notification
+            peer = self._peers.setdefault(
+                notification.instance_id, PeerInfo(instance_id=notification.instance_id)
+            )
+            peer.shutdown_notification = notification
 
         logger.info(
             "Received peer shutdown notification",
@@ -213,64 +147,40 @@ class WorkRedistributionCoordinator(
             },
         )
 
-        # Invoke callbacks
         for callback in self._peer_shutdown_callbacks:
             try:
                 await callback(notification)
             except Exception as e:
                 logger.error(
                     "Peer shutdown callback failed",
-                    extra={
-                        "peer_id": notification.instance_id,
-                        "error": str(e),
-                    },
+                    extra={"peer_id": notification.instance_id, "error": str(e)},
                     exc_info=True,
                 )
 
     async def handle_heartbeat(self, heartbeat: HeartbeatMessage) -> None:
-        """
-        Handle a heartbeat from a peer.
-
-        Updates peer tracking and invokes registered callbacks.
-
-        Args:
-            heartbeat: Heartbeat message from peer
-        """
+        """Handle a heartbeat from a peer."""
         if heartbeat.instance_id == self.instance_id:
-            # Ignore our own heartbeat
             return
 
         async with self._lock:
-            # Update or create peer info
-            if heartbeat.instance_id not in self._peers:
-                self._peers[heartbeat.instance_id] = PeerInfo(instance_id=heartbeat.instance_id)
-            self._peers[heartbeat.instance_id].last_heartbeat = heartbeat
+            peer = self._peers.setdefault(
+                heartbeat.instance_id, PeerInfo(instance_id=heartbeat.instance_id)
+            )
+            peer.last_heartbeat = heartbeat
 
-        # Invoke callbacks
         for callback in self._heartbeat_callbacks:
             try:
                 await callback(heartbeat)
             except Exception as e:
                 logger.error(
                     "Heartbeat callback failed",
-                    extra={
-                        "peer_id": heartbeat.instance_id,
-                        "error": str(e),
-                    },
+                    extra={"peer_id": heartbeat.instance_id, "error": str(e)},
                     exc_info=True,
                 )
 
     async def handle_work_assignment(self, assignment: WorkAssignment) -> None:
-        """
-        Handle a work assignment from the leader.
-
-        Invokes registered callbacks if the assignment is for this instance.
-
-        Args:
-            assignment: Work assignment message
-        """
+        """Handle a work assignment from the leader."""
         if assignment.target_instance_id != self.instance_id:
-            # Not for us
             return
 
         logger.info(
@@ -282,17 +192,13 @@ class WorkRedistributionCoordinator(
             },
         )
 
-        # Invoke callbacks
         for callback in self._work_assignment_callbacks:
             try:
                 await callback(assignment)
             except Exception as e:
                 logger.error(
                     "Work assignment callback failed",
-                    extra={
-                        "source_instance_id": assignment.source_instance_id,
-                        "error": str(e),
-                    },
+                    extra={"source_instance_id": assignment.source_instance_id, "error": str(e)},
                     exc_info=True,
                 )
 
