@@ -9,8 +9,12 @@ its collaborators (`SubscriptionManager`, `SubscriptionRegistry`,
 `SubscriptionLifecycleManager`, `PauseResumeController`, `HealthCheckProvider`),
 catch-up/live transition (`TransitionCoordinator`), flow control, filtering,
 retry and circuit breaking, error handling, health checks, metrics, graceful
-shutdown, and coordination across instances. Everything listed in
-`eventsource.application.subscriptions.__all__` is public.
+shutdown, and coordination across instances. (`SubscriptionRegistry` supports
+Pythonic container operations including `len(registry)`, `bool(registry)` —
+always `True` even when empty — iteration over registered `Subscription`
+instances, and `in` / `contains(...)` membership lookup by subscription name
+(`str`), `Subscription` instance, or `EventSubscriber` instance.) Everything
+listed in `eventsource.application.subscriptions.__all__` is public.
 
 This page documents two of those areas in full detail:
 
