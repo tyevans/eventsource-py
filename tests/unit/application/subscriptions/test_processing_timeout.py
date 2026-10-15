@@ -30,13 +30,15 @@ class TimeoutTestEvent(DomainEvent):
     data: str = "test"
 
 
-class HangingSubscriber:
+class _BaseTimeoutSubscriber:
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        return [TimeoutTestEvent]
+
+
+class HangingSubscriber(_BaseTimeoutSubscriber):
     def __init__(self) -> None:
         self.handle_started = asyncio.Event()
         self.completed_normally = False
-
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        return [TimeoutTestEvent]
 
     async def handle(self, event: DomainEvent) -> None:
         self.handle_started.set()
@@ -44,14 +46,11 @@ class HangingSubscriber:
         self.completed_normally = True
 
 
-class HangingBatchSubscriber:
+class HangingBatchSubscriber(_BaseTimeoutSubscriber):
     def __init__(self) -> None:
         self.batch_started = asyncio.Event()
         self.completed_normally = False
         self.single_calls: list[DomainEvent] = []
-
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        return [TimeoutTestEvent]
 
     async def handle(self, event: DomainEvent) -> None:
         self.single_calls.append(event)
@@ -62,13 +61,10 @@ class HangingBatchSubscriber:
         self.completed_normally = True
 
 
-class SlowButFineSubscriber:
+class SlowButFineSubscriber(_BaseTimeoutSubscriber):
     def __init__(self, delay: float) -> None:
         self.delay = delay
         self.handled: list[DomainEvent] = []
-
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        return [TimeoutTestEvent]
 
     async def handle(self, event: DomainEvent) -> None:
         await asyncio.sleep(self.delay)
@@ -93,13 +89,10 @@ def event_bus() -> InMemoryEventBus:
 async def add_events(store: InMemoryEventStore, count: int) -> list[DomainEvent]:
     events = []
     for i in range(count):
-        aggregate_id = uuid4()
-        event = TimeoutTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")
-        await store.append(
-            StreamId(aggregate_id=aggregate_id, category="TimeoutAggregate"),
-            [event],
-            ExpectedVersion.no_stream(),
-        )
+        aid = uuid4()
+        event = TimeoutTestEvent(aggregate_id=aid, data=f"event_{i}")
+        stream = StreamId(aggregate_id=aid, category="TimeoutAggregate")
+        await store.append(stream, [event], ExpectedVersion.no_stream())
         events.append(event)
     return events
 
@@ -131,80 +124,63 @@ def _make_catchup_sub(
 
 
 class TestCatchUpRunnerTimeout:
-    """Both catch-up dispatch sites are bounded."""
-
     async def test_hanging_handle_batch_times_out(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        subscriber = HangingBatchSubscriber()
-        subscription = _make_catchup_sub("timeout-sub", subscriber)
+        sub = HangingBatchSubscriber()
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-
+        runner = CatchUpRunner(event_store, checkpoint_repo, _make_catchup_sub("timeout-sub", sub))
         async with asyncio.timeout(10.0):
             await runner.run_until_position(await current(event_store))
-
-        assert subscriber.batch_started.is_set()
-        assert not subscriber.completed_normally
+        assert sub.batch_started.is_set() and not sub.completed_normally
 
     async def test_hanging_handle_times_out(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        subscriber = HangingSubscriber()
-        subscription = _make_catchup_sub("timeout-sub", subscriber)
+        sub = HangingSubscriber()
         await add_events(event_store, 2)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-
+        runner = CatchUpRunner(event_store, checkpoint_repo, _make_catchup_sub("timeout-sub", sub))
         async with asyncio.timeout(10.0):
             await runner.run_until_position(await current(event_store))
-
-        assert subscriber.handle_started.is_set()
-        assert not subscriber.completed_normally
+        assert sub.handle_started.is_set() and not sub.completed_normally
 
     async def test_handler_inside_budget_is_untouched(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        subscriber = SlowButFineSubscriber(delay=0.01)
-        subscription = _make_catchup_sub("ok-sub", subscriber, timeout=5.0)
+        sub = SlowButFineSubscriber(delay=0.01)
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-
-        result = await runner.run_until_position(await current(event_store))
-        assert result.completed
-        assert len(subscriber.handled) == 3
+        sub_obj = _make_catchup_sub("ok-sub", sub, timeout=5.0)
+        result = await CatchUpRunner(event_store, checkpoint_repo, sub_obj).run_until_position(
+            await current(event_store)
+        )
+        assert result.completed and len(sub.handled) == 3
 
     async def test_timeout_is_a_handler_failure_and_stops_when_told(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        subscriber = HangingSubscriber()
-        subscription = _make_catchup_sub("strict-sub", subscriber, continue_on_error=False)
+        sub = HangingSubscriber()
         await add_events(event_store, 2)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-
+        sub_obj = _make_catchup_sub("strict-sub", sub, continue_on_error=False)
         async with asyncio.timeout(10.0):
-            result = await runner.run_until_position(await current(event_store))
-
-        assert not result.completed
-        assert not subscriber.completed_normally
+            result = await CatchUpRunner(event_store, checkpoint_repo, sub_obj).run_until_position(
+                await current(event_store)
+            )
+        assert not result.completed and not sub.completed_normally
 
     async def test_timeout_does_not_checkpoint_past_the_hung_event(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        subscriber = HangingSubscriber()
-        subscription = _make_catchup_sub("nocheckpoint-sub", subscriber, continue_on_error=False)
+        sub = HangingSubscriber()
         await add_events(event_store, 2)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-
+        sub_obj = _make_catchup_sub("nocheckpoint-sub", sub, continue_on_error=False)
         async with asyncio.timeout(10.0):
-            await runner.run_until_position(await current(event_store))
-
-        checkpoint = await checkpoint_repo.get_position(subscription_id="nocheckpoint-sub")
-        assert checkpoint is None
+            await CatchUpRunner(event_store, checkpoint_repo, sub_obj).run_until_position(
+                await current(event_store)
+            )
+        assert await checkpoint_repo.get_position(subscription_id="nocheckpoint-sub") is None
 
 
 class TestLiveRunnerTimeout:
-    """The live runner's single dispatch site is bounded."""
-
     async def test_hanging_handle_times_out(
         self,
         event_bus: InMemoryEventBus,

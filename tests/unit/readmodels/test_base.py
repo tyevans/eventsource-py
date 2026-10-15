@@ -9,6 +9,19 @@ import pytest
 from eventsource.ports.readmodels.model import ReadModel, _camel_to_snake, _pluralize
 
 
+class _SimpleModel(ReadModel):
+    name: str
+
+
+class _OrderModel(ReadModel):
+    number: str
+
+
+class _AmountModel(ReadModel):
+    name: str
+    amount: Decimal
+
+
 class TestCamelToSnake:
     def test_simple_conversion(self) -> None:
         assert _camel_to_snake("OrderSummary") == "order_summary"
@@ -76,11 +89,8 @@ class TestPluralize:
 
 class TestReadModel:
     def test_create_with_required_fields(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-
         model_id = uuid4()
-        model = SimpleModel(id=model_id, name="test")
+        model = _SimpleModel(id=model_id, name="test")
         assert model.id == model_id
         assert model.name == "test"
         assert model.version == 1
@@ -122,32 +132,21 @@ class TestReadModel:
             price: Decimal
 
         custom_names = ProductView.custom_field_names()
-        assert "sku" in custom_names
-        assert "price" in custom_names
+        assert "sku" in custom_names and "price" in custom_names
         for base_field in ("id", "created_at", "updated_at", "version", "deleted_at"):
             assert base_field not in custom_names
 
     def test_is_deleted_false(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-
-        model = SimpleModel(id=uuid4(), name="test")
-        assert model.is_deleted() is False
+        assert _SimpleModel(id=uuid4(), name="test").is_deleted() is False
 
     def test_is_deleted_true(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-
-        model = SimpleModel(id=uuid4(), name="test", deleted_at=datetime.now(UTC))
+        model = _SimpleModel(id=uuid4(), name="test", deleted_at=datetime.now(UTC))
         assert model.is_deleted() is True
 
     def test_model_is_mutable(self) -> None:
-        class SimpleModel(ReadModel):
-            status: str
-
-        model = SimpleModel(id=uuid4(), status="pending")
-        model.status = "completed"
-        assert model.status == "completed"
+        model = _SimpleModel(id=uuid4(), name="pending")
+        model.name = "completed"
+        assert model.name == "completed"
 
     def test_str_representation(self) -> None:
         class OrderModel(ReadModel):
@@ -155,9 +154,7 @@ class TestReadModel:
 
         model_id = uuid4()
         result = str(OrderModel(id=model_id, number="ORD-001"))
-        assert "OrderModel" in result
-        assert str(model_id) in result
-        assert "version=1" in result
+        assert "OrderModel" in result and str(model_id) in result and "version=1" in result
 
     def test_repr_representation(self) -> None:
         class OrderModel(ReadModel):
@@ -168,10 +165,7 @@ class TestReadModel:
             assert expected in result
 
     def test_repr_with_deleted(self) -> None:
-        class OrderModel(ReadModel):
-            number: str
-
-        model = OrderModel(id=uuid4(), number="ORD-001", deleted_at=datetime.now(UTC))
+        model = _OrderModel(id=uuid4(), number="ORD-001", deleted_at=datetime.now(UTC))
         assert "deleted_at=" in repr(model)
 
     def test_from_attributes(self) -> None:
@@ -184,54 +178,29 @@ class TestReadModel:
                 self.version = 1
                 self.deleted_at = None
 
-        class SimpleModel(ReadModel):
-            name: str
-
         source = SourceObject()
-        model = SimpleModel.model_validate(source)
-        assert model.name == "from_attrs"
-        assert model.id == source.id
+        model = _SimpleModel.model_validate(source)
+        assert model.name == "from_attrs" and model.id == source.id
 
     def test_to_dict(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-            amount: Decimal
-
-        model = SimpleModel(id=uuid4(), name="test", amount=Decimal("99.99"))
-        data = model.to_dict()
-        assert isinstance(data["id"], str)
-        assert isinstance(data["created_at"], str)
-        assert data["name"] == "test"
-        assert data["version"] == 1
+        data = _AmountModel(id=uuid4(), name="test", amount=Decimal("99.99")).to_dict()
+        assert isinstance(data["id"], str) and isinstance(data["created_at"], str)
+        assert data["name"] == "test" and data["version"] == 1
 
     def test_json_serialization(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-            amount: Decimal
-
-        model = SimpleModel(id=uuid4(), name="test", amount=Decimal("99.99"))
-        data = model.model_dump(mode="json")
-        assert isinstance(data["id"], str)
-        assert isinstance(data["created_at"], str)
+        data = _AmountModel(id=uuid4(), name="test", amount=Decimal("99.99")).model_dump(
+            mode="json"
+        )
+        assert isinstance(data["id"], str) and isinstance(data["created_at"], str)
         assert data["name"] == "test"
 
     def test_version_default_value(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-
-        assert SimpleModel(id=uuid4(), name="test").version == 1
+        assert _SimpleModel(id=uuid4(), name="test").version == 1
 
     def test_version_validation(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-
         with pytest.raises(ValueError):
-            SimpleModel(id=uuid4(), name="test", version=0)
+            _SimpleModel(id=uuid4(), name="test", version=0)
 
     def test_timestamps_are_utc(self) -> None:
-        class SimpleModel(ReadModel):
-            name: str
-
-        model = SimpleModel(id=uuid4(), name="test")
-        assert model.created_at.tzinfo is not None
-        assert model.updated_at.tzinfo is not None
+        model = _SimpleModel(id=uuid4(), name="test")
+        assert model.created_at.tzinfo is not None and model.updated_at.tzinfo is not None
