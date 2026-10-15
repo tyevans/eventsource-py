@@ -34,15 +34,13 @@ class PositionMapperRecordingMixin:
         mapped_at: datetime | None = None,
     ) -> None:
         """Record a position mapping during bulk copy or dual-write."""
-        with self._tracer.span(
-            "eventsource.position_mapper.record_mapping",
-            {
-                "migration.id": str(migration_id),
-                "source_position": source_position.to_str(),
-                "target_position": target_position.to_str(),
-                "event.id": str(event_id),
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "source_position": source_position.to_str(),
+            "target_position": target_position.to_str(),
+            "event.id": str(event_id),
+        }
+        with self._tracer.span("eventsource.position_mapper.record_mapping", attrs):
             mapping = PositionMapping(
                 migration_id=migration_id,
                 source_position=source_position,
@@ -78,31 +76,16 @@ class PositionMapperRecordingMixin:
         if not mappings:
             return 0
 
-        with self._tracer.span(
-            "eventsource.position_mapper.record_mappings_batch",
-            {
-                "migration.id": str(migration_id),
-                "batch_size": len(mappings),
-            },
-        ):
+        attrs = {"migration.id": str(migration_id), "batch_size": len(mappings)}
+        with self._tracer.span("eventsource.position_mapper.record_mappings_batch", attrs):
             now = mapped_at or datetime.now(UTC)
             position_mappings = [
-                PositionMapping(
-                    migration_id=migration_id,
-                    source_position=source_pos,
-                    target_position=target_pos,
-                    event_id=event_id,
-                    mapped_at=now,
-                )
+                PositionMapping(migration_id, source_pos, target_pos, event_id, now)
                 for source_pos, target_pos, event_id in mappings
             ]
             try:
                 count = await self._repo.create_batch(position_mappings)
-                logger.debug(
-                    "Recorded %d position mappings for migration %s",
-                    count,
-                    migration_id,
-                )
+                logger.debug("Recorded %d position mappings for migration %s", count, migration_id)
                 return count
             except Exception as e:
                 logger.error("Failed to record position mappings batch: %s", e)
@@ -113,57 +96,34 @@ class PositionMapperRecordingMixin:
                 ) from e
 
     async def get_mapping_by_event_id(
-        self,
-        migration_id: UUID,
-        event_id: UUID,
+        self, migration_id: UUID, event_id: UUID
     ) -> PositionMapping | None:
         """Get a position mapping by event ID."""
-        with self._tracer.span(
-            "eventsource.position_mapper.get_mapping_by_event_id",
-            {
-                "migration.id": str(migration_id),
-                "event.id": str(event_id),
-            },
-        ):
+        attrs = {"migration.id": str(migration_id), "event.id": str(event_id)}
+        with self._tracer.span("eventsource.position_mapper.get_mapping_by_event_id", attrs):
             return await self._repo.find_by_event_id(migration_id, event_id)
 
-    async def get_position_bounds(
-        self,
-        migration_id: UUID,
-    ) -> tuple[Position, Position] | None:
+    async def get_position_bounds(self, migration_id: UUID) -> tuple[Position, Position] | None:
         """Get the first and last source positions mapped for a migration."""
         with self._tracer.span(
-            "eventsource.position_mapper.get_position_bounds",
-            {"migration.id": str(migration_id)},
+            "eventsource.position_mapper.get_position_bounds", {"migration.id": str(migration_id)}
         ):
             return await self._repo.get_position_bounds(migration_id)
 
-    async def get_mapping_count(
-        self,
-        migration_id: UUID,
-    ) -> int:
+    async def get_mapping_count(self, migration_id: UUID) -> int:
         """Get the total number of position mappings for a migration."""
         with self._tracer.span(
-            "eventsource.position_mapper.get_mapping_count",
-            {"migration.id": str(migration_id)},
+            "eventsource.position_mapper.get_mapping_count", {"migration.id": str(migration_id)}
         ):
             return await self._repo.count_by_migration(migration_id)
 
-    async def clear_mappings(
-        self,
-        migration_id: UUID,
-    ) -> int:
+    async def clear_mappings(self, migration_id: UUID) -> int:
         """Delete all position mappings for a migration."""
         with self._tracer.span(
-            "eventsource.position_mapper.clear_mappings",
-            {"migration.id": str(migration_id)},
+            "eventsource.position_mapper.clear_mappings", {"migration.id": str(migration_id)}
         ):
             count = await self._repo.delete_by_migration(migration_id)
-            logger.info(
-                "Cleared %d position mappings for migration %s",
-                count,
-                migration_id,
-            )
+            logger.info("Cleared %d position mappings for migration %s", count, migration_id)
             return count
 
 

@@ -16,7 +16,7 @@ from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer
-from eventsource.observability.attributes import (
+from eventsource.observability.attributes import (  # fmt: skip
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
@@ -47,76 +47,49 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
         """Load an aggregate from its snapshot (if valid) and event history."""
         attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: self._aggregate_type}
         with self._tracer.span("eventsource.repository.load", attrs) as span:
-            from_version = 0
-            snapshot = None
-
+            from_version, snapshot = 0, None
             if self._snapshot_store is not None:
                 snapshot = await read_valid_snapshot(
-                    self._snapshot_store,
-                    aggregate_id,
-                    self._aggregate_type,
-                    self._aggregate_factory,
-                )
+                    self._snapshot_store, aggregate_id, self._aggregate_type, self._aggregate_factory
+                )  # fmt: skip
                 if snapshot is not None:
                     from_version = snapshot.version
                     if span:
                         span.set_attribute("snapshot.used", True)
                         span.set_attribute("snapshot.version", from_version)
-                    logger.debug(
-                        "Using snapshot for %s/%s at version %d",
-                        self._aggregate_type,
-                        aggregate_id,
-                        from_version,
-                    )
+                    logger.debug("Using snapshot for %s/%s at version %d", self._aggregate_type, aggregate_id, from_version)  # fmt: skip
 
             stream = self._stream(aggregate_id)
             options = StreamReadOptions(from_version=from_version + 1) if from_version > 0 else None
-            events = [
-                envelope.event async for envelope in self._event_store.read_stream(stream, options)
-            ]
+            events = [env.event async for env in self._event_store.read_stream(stream, options)]
 
             if snapshot is None and not events:
                 raise AggregateNotFoundError(aggregate_id, self._aggregate_type)
 
             aggregate = self._aggregate_factory(aggregate_id)
-
             if snapshot is not None:
                 try:
                     aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
                 except Exception as e:
-                    record_snapshot_miss(
-                        SnapshotMissReason.STATE_RESTORE_FAILED, self._aggregate_type
-                    )
+                    record_snapshot_miss(SnapshotMissReason.STATE_RESTORE_FAILED, self._aggregate_type)  # fmt: skip
                     logger.warning(
-                        "Failed to restore from snapshot for %s/%s: %s. "
-                        "Falling back to full event replay.",
-                        self._aggregate_type,
-                        aggregate_id,
-                        e,
-                        exc_info=True,
-                    )
-                    events = [
-                        envelope.event async for envelope in self._event_store.read_stream(stream)
-                    ]
+                        "Failed to restore from snapshot for %s/%s: %s. Falling back to full event replay.",
+                        self._aggregate_type, aggregate_id, e, exc_info=True,
+                    )  # fmt: skip
+                    events = [env.event async for env in self._event_store.read_stream(stream)]
                     if not events:
                         raise AggregateNotFoundError(aggregate_id, self._aggregate_type) from None
                     aggregate = self._aggregate_factory(aggregate_id)
 
             if events:
                 aggregate.load_from_history(events)
-
             if span:
                 span.set_attribute("events.replayed", len(events))
                 span.set_attribute(ATTR_VERSION, aggregate.version)
-
             logger.debug(
                 "Loaded %s/%s at version %d (snapshot: %s, events replayed: %d)",
-                self._aggregate_type,
-                aggregate_id,
-                aggregate.version,
-                "yes" if snapshot else "no",
-                len(events),
-            )
+                self._aggregate_type, aggregate_id, aggregate.version, "yes" if snapshot else "no", len(events),
+            )  # fmt: skip
             return aggregate
 
     async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
@@ -126,9 +99,7 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
         except AggregateNotFoundError:
             return None
 
-    async def load_many(
-        self, aggregate_ids: Iterable[UUID], *, ignore_missing: bool = False
-    ) -> dict[UUID, TAggregate]:
+    async def load_many(self, aggregate_ids: Iterable[UUID], *, ignore_missing: bool = False) -> dict[UUID, TAggregate]:  # fmt: skip
         """Load multiple aggregates by ID into a mapping keyed by aggregate ID."""
         results: dict[UUID, TAggregate] = {}
         for agg_id in aggregate_ids:

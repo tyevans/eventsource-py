@@ -12,12 +12,8 @@ from eventsource.application.subscriptions.config import CheckpointStrategy
 from eventsource.application.subscriptions.subscriber import settle_handler_result
 from eventsource.application.subscriptions.subscription import Subscription, render_position
 from eventsource.observability import Tracer
-from eventsource.observability.attributes import (
-    ATTR_EVENT_ID,
-    ATTR_EVENT_TYPE,
-    ATTR_POSITION,
-    ATTR_SUBSCRIPTION_NAME,
-)
+
+from eventsource.observability.attributes import ATTR_EVENT_ID, ATTR_EVENT_TYPE, ATTR_POSITION, ATTR_SUBSCRIPTION_NAME  # fmt: skip  # isort: skip
 from eventsource.ports.envelopes import EventEnvelope
 from eventsource.ports.positions import Position
 from eventsource.ports.subscribers import BatchSubscriber
@@ -82,9 +78,8 @@ class LiveDeliveryMixin:
                     await self._call_guarded(op, "handle_batch")
                 except Exception as e:
                     batch_succeeded = False
-                    msg = "Live batch handler failed, falling back to per-event delivery"
-                    ex = {"subscription": self.subscription.name, "batch_size": len(deliverable)}
-                    logger.warning(msg, extra={**ex, "error": str(e)})
+                    ex = {"subscription": self.subscription.name, "batch_size": len(deliverable), "error": str(e)}  # fmt: skip
+                    logger.warning("Live batch handler failed, falling back to per-event delivery", extra=ex)  # fmt: skip
                 else:
                     if self._metrics:
                         per_ev_ms = (time.perf_counter() - start_time) * 1000 / len(deliverable)
@@ -104,30 +99,22 @@ class LiveDeliveryMixin:
             last_env = envelope
             if self._metrics:
                 self._metrics.record_lag(self.subscription.lag)
-            pos = envelope.position or self.subscription.last_processed_position
-            ev = envelope.event
+            pos, ev = envelope.position or self.subscription.last_processed_position, envelope.event
             await self.subscription.record_event_processed(pos, ev.event_id, ev.event_type)
             if envelope.position is not None:
                 await self._maybe_checkpoint_in_batch(envelope.position, ev)
-        is_every_batch = self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
-        if last_env is not None and last_env.position is not None and is_every_batch:
+        if last_env and last_env.position and self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH:  # fmt: skip
             await self._save_checkpoint_with_retry(last_env.position, last_env.event)
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
         """Process one envelope read from the global feed, applying filters."""
         event, position = envelope.event, envelope.position
         sub_name, eid, etype = self.subscription.name, event.event_id, event.event_type
-        span_attrs = {
-            ATTR_SUBSCRIPTION_NAME: sub_name,
-            ATTR_EVENT_ID: str(eid),
-            ATTR_EVENT_TYPE: etype,
-            ATTR_POSITION: render_position(position),
-        }
+        span_attrs = {ATTR_SUBSCRIPTION_NAME: sub_name, ATTR_EVENT_ID: str(eid), ATTR_EVENT_TYPE: etype, ATTR_POSITION: render_position(position)}  # fmt: skip
         with self._tracer.span("eventsource.live_runner.process_event", span_attrs):
             if self._filter and not self._filter.matches(event):
                 self._stats.events_skipped_filtered += 1
-                extra = {"subscription": sub_name, "event_id": str(eid), "event_type": etype}
-                logger.debug("Event filtered out", extra=extra)
+                logger.debug("Event filtered out", extra={"subscription": sub_name, "event_id": str(eid), "event_type": etype})  # fmt: skip
                 if position is not None:
                     await self.subscription.record_event_processed(position, eid, etype)
                 else:
@@ -139,19 +126,15 @@ class LiveDeliveryMixin:
                 try:
                     sub = self.subscription.subscriber
                     if self._batch_only:
-                        batch_sub = cast(BatchSubscriber, sub)
-                        op = lambda: settle_handler_result(batch_sub.handle_batch([event]))  # noqa: E731
-                        await self._call_guarded(op, "handle_batch")
+                        await self._call_guarded(lambda: settle_handler_result(cast(BatchSubscriber, sub).handle_batch([event])), "handle_batch")  # fmt: skip
                     else:
-                        op = lambda: settle_handler_result(sub.handle(event))  # noqa: E731
-                        await self._call_guarded(op, "handle_event")
+                        await self._call_guarded(lambda: settle_handler_result(sub.handle(event)), "handle_event")  # fmt: skip
                     self._stats.events_processed += 1
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
                         self._metrics.record_event_processed(etype, duration_ms)
                         self._metrics.record_lag(self.subscription.lag)
-                    pos = position or self.subscription.last_processed_position
-                    await self.subscription.record_event_processed(pos, eid, etype)
+                    await self.subscription.record_event_processed(position or self.subscription.last_processed_position, eid, etype)  # fmt: skip
                     if position is not None:
                         await self._maybe_checkpoint(position, event)
                 except Exception as e:
@@ -163,8 +146,7 @@ class LiveDeliveryMixin:
                     if not self.config.continue_on_error:
                         raise
                     await self.subscription.record_events_unseen(1)
-                    extra = {"subscription": sub_name, "event_id": str(eid), "error": str(e)}
-                    logger.warning("Live event processing failed, continuing", extra=extra)
+                    logger.warning("Live event processing failed, continuing", extra={"subscription": sub_name, "event_id": str(eid), "error": str(e)})  # fmt: skip
 
 
 __all__ = ["LiveDeliveryMixin"]

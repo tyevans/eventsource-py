@@ -9,11 +9,8 @@ from uuid import UUID
 
 from eventsource.application.migration.consistency import VerificationLevel, VerificationReport
 from eventsource.application.migration.cutover import CutoverManager
-from eventsource.application.migration.exceptions import (
-    MigrationError,
-    MigrationNotFoundError,
-    MigrationStateError,
-)
+
+from eventsource.application.migration.exceptions import MigrationError, MigrationNotFoundError, MigrationStateError  # fmt: skip  # isort: skip
 from eventsource.application.migration.metrics import release_migration_metrics
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import ATTR_MIGRATION_ID, ATTR_MIGRATION_PHASE
@@ -28,10 +25,7 @@ if TYPE_CHECKING:
     from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
     from eventsource.ports.checkpoints import CheckpointRepository
     from eventsource.ports.locks import DistributedLock
-    from eventsource.ports.migration.repositories import (
-        MigrationRepository,
-        TenantRoutingRepository,
-    )
+    from eventsource.ports.migration.repositories import MigrationRepository, TenantRoutingRepository  # fmt: skip  # isort: skip
 
 logger = logging.getLogger(__name__)
 
@@ -59,18 +53,11 @@ class CoordinatorCutoverMixin:
         async def _record_audit(self, entry: m.MigrationAuditEntry) -> None: ...
         async def _notify_status_update(self, migration_id: UUID) -> None: ...
         def _cleanup_status_queues(self, migration_id: UUID) -> None: ...
-        async def verify_consistency(
-            self,
-            migration_id: UUID,
-            *,
-            level: VerificationLevel = ...,
-            sample_percentage: float = ...,
-        ) -> VerificationReport: ...  # fmt: skip
+        async def verify_consistency(self, migration_id: UUID, *, level: VerificationLevel = ..., sample_percentage: float = ...) -> VerificationReport: ...  # fmt: skip
         async def migrate_subscriptions(self, migration_id: UUID) -> MigrationSummary: ...
 
     async def _audit_cutover(self, migration_id: UUID, event_type: m.AuditEventType, new_phase: m.MigrationPhase, details: dict[str, object] | None = None, *, old_phase: m.MigrationPhase = m.MigrationPhase.CUTOVER) -> None:  # fmt: skip
-        entry = m.MigrationAuditEntry(None, migration_id, event_type, old_phase, new_phase, details, None, datetime.now(UTC))  # fmt: skip
-        await self._record_audit(entry)
+        await self._record_audit(m.MigrationAuditEntry(None, migration_id, event_type, old_phase, new_phase, details, None, datetime.now(UTC)))  # fmt: skip
 
     async def trigger_cutover(self, migration_id: UUID, *, timeout_ms: float | None = None) -> m.CutoverResult:  # fmt: skip
         """Trigger cutover for a migration in dual-write phase; rolls back on failure."""
@@ -83,7 +70,6 @@ class CoordinatorCutoverMixin:
                 raise MigrationStateError(msg, migration_id, phase, [m.MigrationPhase.DUAL_WRITE], "trigger_cutover")  # fmt: skip
             if (lag_tracker := self._lag_trackers.get(migration_id)) is None:
                 raise MigrationError("No sync lag tracker found for migration", migration_id=migration_id)  # fmt: skip
-
             mgr = self._get_cutover_manager()
             await self._migration_repo.update_phase(migration_id, m.MigrationPhase.CUTOVER)
             logger.info("Starting cutover for %s, tenant %s", migration_id, migration.tenant_id)
@@ -96,13 +82,10 @@ class CoordinatorCutoverMixin:
         mid, consistency_verified, subscriptions_migrated = migration.id, False, 0
         if migration.config.verify_consistency:
             try:
-                if self._target_stores.get(mid) is not None:
-                    rep = await self.verify_consistency(mid, level=VerificationLevel.HASH, sample_percentage=100.0)  # fmt: skip
-                    consistency_verified = rep.is_consistent
-                    if not rep.is_consistent:
-                        logger.warning("Consistency found %d violations for %s", len(rep.violations), mid)  # fmt: skip
-                else:
+                if self._target_stores.get(mid) is None:
                     logger.warning("Cannot verify consistency: target store not found for %s", mid)
+                elif not (consistency_verified := (rep := await self.verify_consistency(mid, level=VerificationLevel.HASH, sample_percentage=100.0)).is_consistent):  # fmt: skip
+                    logger.warning("Consistency found %d violations for %s", len(rep.violations), mid)  # fmt: skip
             except Exception as e:
                 logger.error("Consistency verification failed for %s: %s", mid, e)
 
