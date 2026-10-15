@@ -1,6 +1,4 @@
-"""
-Shutdown and heartbeat primitives for subscription coordination.
-"""
+"""Shutdown and heartbeat primitives for subscription coordination."""
 
 from __future__ import annotations
 
@@ -9,10 +7,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
-
-# =============================================================================
-# Coordination Topic Constants
-# =============================================================================
 
 COORDINATION_TOPIC_PREFIX = "__eventsource_coordination"
 """Prefix for all coordination topics."""
@@ -27,21 +21,8 @@ WORK_ASSIGNMENT_TOPIC = f"{COORDINATION_TOPIC_PREFIX}.work_assignment"
 """Topic for work assignment messages from leader."""
 
 
-# =============================================================================
-# Shutdown Intent Enumeration
-# =============================================================================
-
-
 class ShutdownIntent(Enum):
-    """
-    The intent behind a shutdown notification.
-
-    Different shutdown intents may require different handling strategies:
-    - GRACEFUL: Normal shutdown, other instances have time to prepare
-    - PREEMPTION: Cloud preemption, limited time to react
-    - HEALTH_FAILURE: Unexpected health failure, may need immediate takeover
-    - MAINTENANCE: Planned maintenance, can be scheduled
-    """
+    """The intent behind a shutdown notification."""
 
     GRACEFUL = "graceful"
     """Normal graceful shutdown (e.g., rolling update, scale-down)."""
@@ -56,45 +37,19 @@ class ShutdownIntent(Enum):
     """Planned maintenance window."""
 
 
-# =============================================================================
-# Shutdown Notification Message
-# =============================================================================
-
-
 @dataclass(frozen=True)
 class ShutdownNotification:
     """
     Notification broadcast when an instance begins shutdown.
-
-    Other instances can use this to:
-    - Stop waiting for the shutting-down instance
-    - Prepare to claim orphaned work
-    - Adjust load expectations
-
-    The notification includes timing information so peers can
-    coordinate their response.
 
     Attributes:
         instance_id: Unique identifier of the shutting-down instance
         intent: The reason for shutdown
         initiated_at: When shutdown was initiated
         expected_completion_at: When shutdown is expected to complete
-        subscriptions: List of subscriptions this instance is handling
+        subscriptions: Subscriptions this instance is handling
         in_flight_count: Number of events currently in flight
         metadata: Additional context (e.g., cloud provider details)
-
-    Example:
-        >>> from datetime import timedelta
-        >>> notification = ShutdownNotification(
-        ...     instance_id="worker-3",
-        ...     intent=ShutdownIntent.PREEMPTION,
-        ...     initiated_at=datetime.now(UTC),
-        ...     expected_completion_at=datetime.now(UTC) + timedelta(seconds=30),
-        ...     subscriptions=["order-projection", "inventory-sync"],
-        ...     in_flight_count=15,
-        ... )
-        >>> notification.time_remaining_seconds
-        29.99...
     """
 
     instance_id: str
@@ -147,10 +102,6 @@ class HeartbeatMessage:
     """
     Heartbeat message for peer health monitoring.
 
-    Instances can broadcast heartbeats to indicate they are alive
-    and processing work. Absence of heartbeats indicates a crashed
-    or network-partitioned instance.
-
     Attributes:
         instance_id: Unique identifier of the instance
         timestamp: When heartbeat was generated
@@ -198,18 +149,7 @@ class HeartbeatMessage:
 
 @dataclass
 class PeerInfo:
-    """
-    Information about a peer instance.
-
-    Tracks the last known state of a peer based on heartbeats
-    and shutdown notifications.
-
-    Attributes:
-        instance_id: Unique identifier of the peer
-        last_heartbeat: Most recent heartbeat received
-        shutdown_notification: Shutdown notification if peer is draining
-        status: Current status of the peer
-    """
+    """Tracks the last known state of a peer based on heartbeats and shutdown notifications."""
 
     instance_id: str
     last_heartbeat: HeartbeatMessage | None = None

@@ -149,12 +149,7 @@ class RabbitMQEventBusConfig:
     max_concurrent_publishes: int = 10
 
     def __post_init__(self) -> None:
-        """Generate consumer name if not provided.
-
-        Creates a unique consumer name by combining the hostname with
-        a truncated UUID to ensure uniqueness across distributed deployments.
-        Format: {hostname}-{uuid[:8]}
-        """
+        """Generate consumer name ({hostname}-{uuid[:8]}) if not provided."""
         if self.consumer_name is None:
             hostname = socket.gethostname()
             unique_id = str(uuid.uuid4())[:8]
@@ -162,101 +157,30 @@ class RabbitMQEventBusConfig:
 
     @property
     def queue_name(self) -> str:
-        """Get the consumer queue name.
-
-        The queue name is derived from the exchange name and consumer group,
-        following the pattern: {exchange_name}.{consumer_group}
-
-        Returns:
-            The queue name for this consumer group.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(
-            ...     exchange_name="orders",
-            ...     consumer_group="analytics"
-            ... )
-            >>> config.queue_name
-            'orders.analytics'
-        """
+        """Get the consumer queue name ({exchange_name}.{consumer_group})."""
         return f"{self.exchange_name}.{self.consumer_group}"
 
     @property
     def dlq_exchange_name(self) -> str:
-        """Get the dead letter exchange name.
-
-        The DLQ exchange name is derived from the main exchange name
-        with a configurable suffix appended.
-
-        Returns:
-            The dead letter exchange name.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(exchange_name="orders")
-            >>> config.dlq_exchange_name
-            'orders_dlq'
-        """
+        """Get the dead letter exchange name ({exchange_name}{dlq_exchange_suffix})."""
         return f"{self.exchange_name}{self.dlq_exchange_suffix}"
 
     @property
     def dlq_queue_name(self) -> str:
-        """Get the dead letter queue name.
-
-        The DLQ queue name is derived from the main queue name
-        with '.dlq' appended.
-
-        Returns:
-            The dead letter queue name.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(
-            ...     exchange_name="orders",
-            ...     consumer_group="analytics"
-            ... )
-            >>> config.dlq_queue_name
-            'orders.analytics.dlq'
-        """
+        """Get the dead letter queue name ({queue_name}.dlq)."""
         return f"{self.queue_name}.dlq"
 
     def get_effective_routing_key(self) -> str:
-        """Get the effective routing key pattern for queue binding.
-
-        If routing_key_pattern is explicitly set, use that. Otherwise,
-        automatically determine the appropriate routing key based on
-        exchange type:
-        - topic: "#" (matches all routing keys)
-        - direct: queue_name (exact match for work queue pattern)
-        - fanout: "" (routing key is ignored for fanout)
-        - headers: "" (routing uses header matching, not routing key)
-
-        Returns:
-            The routing key pattern to use for queue binding.
-
-        Example:
-            >>> config = RabbitMQEventBusConfig(
-            ...     exchange_name="orders",
-            ...     exchange_type="direct",
-            ...     consumer_group="workers"
-            ... )
-            >>> config.get_effective_routing_key()
-            'orders.workers'
-        """
-        # If explicitly set, use that value
+        """Get the effective routing key pattern for queue binding."""
         if self.routing_key_pattern is not None:
             return self.routing_key_pattern
 
-        # Auto-determine based on exchange type
         exchange_type_lower = self.exchange_type.lower()
-
         if exchange_type_lower == "topic":
-            # Topic exchange: use "#" to receive all messages
             return "#"
         elif exchange_type_lower == "direct":
-            # Direct exchange: use queue_name for work queue pattern
-            # This allows multiple consumers on the same queue to compete
             return self.queue_name
         elif exchange_type_lower in ("fanout", "headers"):
-            # Fanout and headers: routing key is ignored
             return ""
         else:
-            # Unknown type: default to topic behavior
             return "#"

@@ -16,20 +16,13 @@ from eventsource.adapters._sql.dialect import (
     uuid_result,
 )
 from eventsource.observability import Tracer, create_tracer
-from eventsource.observability.attributes import (
-    ATTR_EVENT_TYPE,
-    ATTR_PROJECTION_NAME,
-)
+from eventsource.observability.attributes import ATTR_EVENT_TYPE, ATTR_PROJECTION_NAME
 from eventsource.ports.checkpoints import CheckpointData, LagMetrics
 from eventsource.ports.positions import Position
 
 
 class SQLCheckpointRepository:
-    """SQLAlchemy-backed checkpoint repository serving both PostgreSQL and SQLite.
-
-    Stores checkpoints in the `projection_checkpoints` table. Dialect differences
-    are resolved per call via `eventsource.adapters._sql.dialect`.
-    """
+    """SQLAlchemy-backed checkpoint repository serving both PostgreSQL and SQLite."""
 
     def __init__(
         self,
@@ -45,8 +38,7 @@ class SQLCheckpointRepository:
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """Get the last processed event ID for a projection, or None if none exists."""
         with self._tracer.span(
-            "eventsource.checkpoint.get_checkpoint",
-            {ATTR_PROJECTION_NAME: projection_name},
+            "eventsource.checkpoint.get_checkpoint", {ATTR_PROJECTION_NAME: projection_name}
         ):
             query = text(
                 "SELECT last_event_id FROM projection_checkpoints "
@@ -58,18 +50,12 @@ class SQLCheckpointRepository:
                 return uuid_result(row[0]) if row else None
 
     async def update_checkpoint(
-        self,
-        projection_name: str,
-        event_id: UUID,
-        event_type: str,
+        self, projection_name: str, event_id: UUID, event_type: str
     ) -> None:
         """Update the checkpoint for a projection using an idempotent UPSERT."""
         with self._tracer.span(
             "eventsource.checkpoint.update_checkpoint",
-            {
-                ATTR_PROJECTION_NAME: projection_name,
-                ATTR_EVENT_TYPE: event_type,
-            },
+            {ATTR_PROJECTION_NAME: projection_name, ATTR_EVENT_TYPE: event_type},
         ):
             now = datetime.now(UTC)
             async with sql_connection(self._conn, write=True) as conn:
@@ -86,29 +72,27 @@ class SQLCheckpointRepository:
                         events_processed = projection_checkpoints.events_processed + 1,
                         updated_at = EXCLUDED.updated_at
                 """)
-                params = {
-                    "projection_name": projection_name,
-                    "event_id": uuid_param(event_id, dialect),
-                    "event_type": event_type,
-                    "now": ts_param(now, dialect),
-                }
-                await conn.execute(query, params)
+                await conn.execute(
+                    query,
+                    {
+                        "projection_name": projection_name,
+                        "event_id": uuid_param(event_id, dialect),
+                        "event_type": event_type,
+                        "now": ts_param(now, dialect),
+                    },
+                )
 
     async def get_lag_metrics(
-        self,
-        projection_name: str,
-        event_types: list[str] | None = None,
+        self, projection_name: str, event_types: list[str] | None = None
     ) -> LagMetrics | None:
         """Get lag metrics for a projection, or None if no checkpoint exists."""
         with self._tracer.span(
-            "eventsource.checkpoint.get_lag_metrics",
-            {ATTR_PROJECTION_NAME: projection_name},
+            "eventsource.checkpoint.get_lag_metrics", {ATTR_PROJECTION_NAME: projection_name}
         ):
             event_types = event_types or []
             async with sql_connection(self._conn, write=False) as conn:
                 dialect = dialect_of(conn)
                 params: dict[str, object] = {"projection_name": projection_name}
-
                 if dialect is Dialect.POSTGRESQL and event_types:
                     event_filter = "WHERE event_type = ANY(:event_types)"
                     params["event_types"] = event_types
@@ -143,17 +127,16 @@ class SQLCheckpointRepository:
             latest_event_id = str(uuid_result(row[2])) if row[2] is not None else None
             last_processed_at = ts_result(row[5])
             latest_event_time = ts_result(row[3])
-
             raw_lag = (
                 (latest_event_time - last_processed_at).total_seconds()
                 if last_processed_at is not None and latest_event_time is not None
                 else 0.0
             )
-            if (last_event_id and last_event_id == latest_event_id) or raw_lag < 0:
-                lag_seconds = 0.0
-            else:
-                lag_seconds = round(raw_lag, 1)
-
+            lag_seconds = (
+                0.0
+                if (last_event_id and last_event_id == latest_event_id) or raw_lag < 0
+                else round(raw_lag, 1)
+            )
             return LagMetrics(
                 projection_name=row[0],
                 last_event_id=last_event_id,
@@ -166,8 +149,7 @@ class SQLCheckpointRepository:
     async def reset_checkpoint(self, projection_name: str) -> None:
         """Reset the checkpoint for a projection."""
         with self._tracer.span(
-            "eventsource.checkpoint.reset_checkpoint",
-            {ATTR_PROJECTION_NAME: projection_name},
+            "eventsource.checkpoint.reset_checkpoint", {ATTR_PROJECTION_NAME: projection_name}
         ):
             query = text(
                 "DELETE FROM projection_checkpoints WHERE projection_name = :projection_name"
@@ -178,8 +160,7 @@ class SQLCheckpointRepository:
     async def get_position(self, subscription_id: str) -> Position | None:
         """Get last processed global-feed position for a subscription, or None if unset."""
         with self._tracer.span(
-            "eventsource.checkpoint.get_position",
-            {ATTR_PROJECTION_NAME: subscription_id},
+            "eventsource.checkpoint.get_position", {ATTR_PROJECTION_NAME: subscription_id}
         ):
             query = text(
                 "SELECT position_token FROM projection_checkpoints "
@@ -191,11 +172,7 @@ class SQLCheckpointRepository:
                 return Position.from_str(row[0]) if row and row[0] is not None else None
 
     async def save_position(
-        self,
-        subscription_id: str,
-        position: Position,
-        event_id: UUID,
-        event_type: str,
+        self, subscription_id: str, position: Position, event_id: UUID, event_type: str
     ) -> None:
         """Save checkpoint with an opaque global-feed position using an idempotent UPSERT."""
         with self._tracer.span(
@@ -225,14 +202,16 @@ class SQLCheckpointRepository:
                         position_token = EXCLUDED.position_token,
                         updated_at = EXCLUDED.updated_at
                 """)
-                params = {
-                    "subscription_id": subscription_id,
-                    "event_id": uuid_param(event_id, dialect),
-                    "event_type": event_type,
-                    "now": ts_param(now, dialect),
-                    "position_token": position.to_str(),
-                }
-                await conn.execute(query, params)
+                await conn.execute(
+                    query,
+                    {
+                        "subscription_id": subscription_id,
+                        "event_id": uuid_param(event_id, dialect),
+                        "event_type": event_type,
+                        "now": ts_param(now, dialect),
+                        "position_token": position.to_str(),
+                    },
+                )
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """Get all projection checkpoints ordered by projection_name."""
@@ -240,12 +219,10 @@ class SQLCheckpointRepository:
             query = text("""
                 SELECT projection_name, last_event_id, last_event_type,
                        last_processed_at, events_processed, position_token
-                FROM projection_checkpoints
-                ORDER BY projection_name
+                FROM projection_checkpoints ORDER BY projection_name
             """)
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query)
-                rows = result.fetchall()
+                rows = (await conn.execute(query)).fetchall()
 
             return [
                 CheckpointData(

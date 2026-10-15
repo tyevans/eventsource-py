@@ -37,12 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 class CheckpointTrackingProjection(EventSubscriber, ABC):
-    """
-    Base class for projections with automatic checkpoint tracking, retry, and DLQ.
-
-    Subclasses must implement ``subscribed_to()`` and ``_process_event()``,
-    and may override ``_truncate_read_models()`` for reset.
-    """
+    """Base class for projections with automatic checkpoint tracking, retry, and DLQ."""
 
     def __init__(
         self,
@@ -56,10 +51,8 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         self._projection_name = self.__class__.__name__
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-
         self._checkpoint_repo: ProjectionCheckpoints | None = checkpoint_repo
         self._dlq_repo: DLQRepository | None = dlq_repo
-
         if retry_policy is not None:
             self._retry_policy = retry_policy
         else:
@@ -67,10 +60,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
             self._retry_policy = ExponentialBackoffRetryPolicy(
                 config=RetryConfig(
-                    max_retries=2,
-                    initial_delay=2.0,
-                    exponential_base=2.0,
-                    jitter=0.1,
+                    max_retries=2, initial_delay=2.0, exponential_base=2.0, jitter=0.1
                 )
             )
 
@@ -89,13 +79,16 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     async def _handle_with_retry(self, event: DomainEvent, span: Span | None) -> None:
         """Execute event handling with configured retry policy."""
         max_attempts = self._retry_policy.max_retries + 1
-
+        base_extra = {
+            "projection": self._projection_name,
+            "event_id": str(event.event_id),
+            "event_type": event.event_type,
+        }
         for attempt in range(max_attempts):
             try:
                 # Only _process_event belongs in this try block so unrelated failures
                 # are not treated as poison events.
                 await self._process_event(event)
-
             except Exception as e:
                 logger.error(
                     "Projection %s failed to process event %s (attempt %d/%d): %s",
@@ -106,22 +99,17 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                     e,
                     exc_info=True,
                     extra={
-                        "projection": self._projection_name,
-                        "event_id": str(event.event_id),
-                        "event_type": event.event_type,
+                        **base_extra,
                         "attempt": attempt + 1,
                         "max_attempts": max_attempts,
                         "error": str(e),
                     },
                 )
-
                 if not self._retry_policy.should_retry(attempt, e):
                     if span is not None:
                         span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
-
-                    sent_to_dlq = False
-                    if self._dlq_repo is not None:
-                        sent_to_dlq = await send_to_dlq(
+                    sent_to_dlq = (
+                        await send_to_dlq(
                             self._dlq_repo,
                             self._projection_name,
                             event,
@@ -129,41 +117,29 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                             attempt + 1,
                             self._tracer,
                         )
-                    log_extra = {
+                        if self._dlq_repo is not None
+                        else False
+                    )
+                    log_extra = {**base_extra, "retry_count": attempt + 1}
+                    msg = (
+                        "Event %s sent to DLQ after %d attempts"
+                        if sent_to_dlq
+                        else "Event %s failed permanently after %d attempts; NO DLQ entry was recorded"
+                    )
+                    logger.critical(msg, event.event_id, attempt + 1, extra=log_extra)
+                    raise
+                backoff = self._retry_policy.get_backoff(attempt)
+                logger.info(
+                    "Retrying in %.1f seconds...",
+                    backoff,
+                    extra={
                         "projection": self._projection_name,
                         "event_id": str(event.event_id),
-                        "event_type": event.event_type,
-                        "retry_count": attempt + 1,
-                    }
-                    if sent_to_dlq:
-                        logger.critical(
-                            "Event %s sent to DLQ after %d attempts",
-                            event.event_id,
-                            attempt + 1,
-                            extra=log_extra,
-                        )
-                    else:
-                        logger.critical(
-                            "Event %s failed permanently after %d attempts; "
-                            "NO DLQ entry was recorded",
-                            event.event_id,
-                            attempt + 1,
-                            extra=log_extra,
-                        )
-                    raise
-                else:
-                    backoff = self._retry_policy.get_backoff(attempt)
-                    logger.info(
-                        "Retrying in %.1f seconds...",
-                        backoff,
-                        extra={
-                            "projection": self._projection_name,
-                            "event_id": str(event.event_id),
-                            "backoff_seconds": backoff,
-                        },
-                    )
-                    await asyncio.sleep(backoff)
-                    continue
+                        "backoff_seconds": backoff,
+                    },
+                )
+                await asyncio.sleep(backoff)
+                continue
 
             # Checkpointing happens outside the retry loop because a checkpoint-store
             # failure is a liveness problem, not a poison event: retrying it would
@@ -174,24 +150,20 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                 self._projection_name,
                 event.event_id,
                 event.event_type,
-                extra={
-                    "projection": self._projection_name,
-                    "event_id": str(event.event_id),
-                    "event_type": event.event_type,
-                },
+                extra=base_extra,
             )
             return
 
     async def _record_checkpoint_after_success(self, event: DomainEvent, span: Span | None) -> None:
         """Record the checkpoint for an event the projection already applied."""
-        checkpoint_repo = self._checkpoint_repo
-        if checkpoint_repo is None:
+        if self._checkpoint_repo is None:
             if span is not None:
                 span.set_attribute("checkpoint.updated", False)
             return
-
         try:
-            await record_checkpoint(checkpoint_repo, self._projection_name, event, self._tracer)
+            await record_checkpoint(
+                self._checkpoint_repo, self._projection_name, event, self._tracer
+            )
         except Exception as e:
             if span is not None:
                 span.set_attribute("checkpoint.updated", False)
@@ -212,14 +184,12 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                 },
             )
             raise
-
         if span is not None:
             span.set_attribute("checkpoint.updated", True)
 
     @abstractmethod
     async def _process_event(self, event: DomainEvent) -> None:
         """Process event in projection-specific way (implemented by subclasses)."""
-        pass
 
     async def get_checkpoint(self) -> str | None:
         """Get last processed event ID, or None if no checkpoint exists or tracking disabled."""
@@ -251,7 +221,6 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
     async def _truncate_read_models(self) -> None:
         """Truncate read model tables for this projection (default no-op)."""
-        pass
 
     @property
     def projection_name(self) -> str:

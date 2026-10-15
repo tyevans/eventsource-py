@@ -1,9 +1,4 @@
-"""
-Repository pattern for event-sourced aggregates.
-
-Repositories provide a clean interface for loading and saving aggregates,
-abstracting away the details of event store operations.
-"""
+"""Repository pattern for event-sourced aggregates."""
 
 from __future__ import annotations
 
@@ -51,25 +46,8 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
     """
     Repository for event-sourced aggregates.
 
-    Provides a clean abstraction for loading aggregates from event history
-    and persisting new events. Handles coordination between aggregates,
-    the event store, optional publishers, and optional snapshot stores.
-
-    Features:
-    - Load aggregates by reconstituting state from events
-    - Save aggregates by persisting uncommitted events
-    - Optional event publishing after successful save
-    - Optimistic locking via event store
-    - Optional snapshot support ("sync", "background", or "manual")
-
-    Example:
-        >>> store = InMemoryEventStore()
-        >>> repo = AggregateRepository(event_store=store, aggregate_factory=OrderAggregate)
-        >>> order = OrderAggregate(uuid4())
-        >>> order.create(customer_id=uuid4())
-        >>> await repo.save(order)
-        >>> loaded = await repo.load(order.aggregate_id)
-        >>> assert loaded.version == order.version
+    Coordinates loading aggregates from event history (and optional snapshots),
+    persisting uncommitted events with optimistic locking, and optional publishing.
     """
 
     def __init__(
@@ -90,26 +68,9 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         """
         Initialize the repository.
 
-        ``aggregate_type`` is inferred from ``aggregate_factory.aggregate_type``
-        (single source of truth).
-
-        Args:
-            event_store: Event store port for appending and reading this aggregate's stream.
-            aggregate_factory: Class to instantiate when loading aggregates.
-            event_publisher: Optional publisher for broadcasting events.
-            snapshot_store: Optional snapshot store for state caching.
-            snapshot_threshold: Number of events between automatic snapshots.
-            snapshot_mode: When to create snapshots ("sync", "background", "manual").
-            snapshot_policy: Optional SnapshotPolicy controlling *when* to snapshot
-                (mutually exclusive with snapshot_mode/snapshot_threshold).
-            snapshot_scheduler: Optional SnapshotScheduler controlling *how* the
-                snapshot write executes (mutually exclusive with snapshot_mode/threshold).
-            tracer: Optional custom Tracer instance.
-            enable_tracing: If True and OpenTelemetry is available, emit traces.
-
-        Raises:
-            ValueError: If aggregate_type cannot be inferred from the factory, or
-                both policy/scheduler and mode/threshold are provided.
+        ``aggregate_type`` is inferred from ``aggregate_factory.aggregate_type``.
+        Raises ``ValueError`` if ``aggregate_type`` cannot be inferred or both
+        policy/scheduler and mode/threshold snapshot parameters are provided.
         """
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
@@ -144,12 +105,7 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
             self._snapshot_scheduler = ImmediateScheduler()
 
     def _infer_aggregate_type(self, factory: type[TAggregate]) -> str:
-        """
-        Infer aggregate_type from factory's aggregate_type attribute.
-
-        Raises:
-            ValueError: If inference fails with helpful error message.
-        """
+        """Infer aggregate_type from factory's aggregate_type attribute."""
         if hasattr(factory, "aggregate_type"):
             inferred = factory.aggregate_type
             if isinstance(inferred, str) and inferred not in ("", "Unknown"):
@@ -183,30 +139,14 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         return self._event_publisher
 
     async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
-        """
-        Get an aggregate if it exists, or return None if not found.
-
-        Args:
-            aggregate_id: ID of the aggregate
-
-        Returns:
-            The loaded aggregate if events exist, or None if not found.
-        """
+        """Get an aggregate if it exists, or return None if not found."""
         try:
             return await self.load(aggregate_id)
         except AggregateNotFoundError:
             return None
 
     async def exists(self, aggregate_id: UUID) -> bool:
-        """
-        Check if an aggregate exists.
-
-        Args:
-            aggregate_id: ID of the aggregate to check
-
-        Returns:
-            True if aggregate has events, False otherwise.
-        """
+        """Check if an aggregate exists."""
         return await super().exists(aggregate_id)
 
     async def execute(
@@ -216,20 +156,7 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         *,
         create_if_missing: bool = True,
     ) -> TAggregate:
-        """
-        Load (or create) an aggregate, execute a command on it, and save.
-
-        ``command`` may be either a callable ``(TAggregate) -> Any`` invoked
-        directly with the loaded aggregate (works with any ``AggregateRoot``
-        or ``DeclarativeAggregate``), or a command value dispatched via
-        ``aggregate.execute(command)`` / ``aggregate.apply_command(command)``
-        (e.g. ``DeciderAggregate``).
-
-        Raises:
-            AggregateNotFoundError: If ``create_if_missing=False`` and missing.
-            TypeError: If ``command`` is not callable and the aggregate does
-                not define ``execute`` or ``apply_command``.
-        """
+        """Load (or create) an aggregate, execute a command on it, and save."""
         if create_if_missing:
             aggregate = await self.load_or_create(aggregate_id)
         else:
