@@ -15,6 +15,19 @@ from eventsource.ports.migration.models import (
 )
 
 
+def _make_coordinator(
+    migration_repo: AsyncMock | MagicMock | None = None,
+    routing_repo: AsyncMock | MagicMock | None = None,
+) -> MigrationCoordinator:
+    return MigrationCoordinator(
+        source_store=MagicMock(),
+        migration_repo=migration_repo or MagicMock(),
+        routing_repo=routing_repo or MagicMock(),
+        router=MagicMock(),
+        enable_tracing=False,
+    )
+
+
 class TestRollbackCutover:
     """Tests for MigrationCoordinator._rollback_cutover() method."""
 
@@ -22,7 +35,6 @@ class TestRollbackCutover:
     async def test_rollback_updates_phase_to_dual_write(self) -> None:
         """Test _rollback_cutover updates phase back to DUAL_WRITE."""
         migration_id = uuid4()
-
         migration = Migration(
             id=migration_id,
             tenant_id=uuid4(),
@@ -30,19 +42,8 @@ class TestRollbackCutover:
             target_store_id="dedicated",
             phase=MigrationPhase.CUTOVER,
         )
-
-        migration_repo = AsyncMock()
-        migration_repo.update_phase = AsyncMock()
-        migration_repo.record_error = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=MagicMock(),
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
+        migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
+        coordinator = _make_coordinator(migration_repo=migration_repo)
         result = CutoverResult(
             success=False,
             duration_ms=100.0,
@@ -58,7 +59,6 @@ class TestRollbackCutover:
     async def test_rollback_records_error(self) -> None:
         """Test _rollback_cutover records error message."""
         migration_id = uuid4()
-
         migration = Migration(
             id=migration_id,
             tenant_id=uuid4(),
@@ -66,19 +66,8 @@ class TestRollbackCutover:
             target_store_id="dedicated",
             phase=MigrationPhase.CUTOVER,
         )
-
-        migration_repo = AsyncMock()
-        migration_repo.update_phase = AsyncMock()
-        migration_repo.record_error = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=MagicMock(),
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
+        migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
+        coordinator = _make_coordinator(migration_repo=migration_repo)
         result = CutoverResult(
             success=False,
             duration_ms=100.0,
@@ -100,7 +89,6 @@ class TestCompleteCutover:
     async def test_complete_cutover_updates_phase(self) -> None:
         """Test _complete_cutover updates phase to COMPLETED."""
         migration_id = uuid4()
-
         migration = Migration(
             id=migration_id,
             tenant_id=uuid4(),
@@ -108,18 +96,8 @@ class TestCompleteCutover:
             target_store_id="dedicated",
             phase=MigrationPhase.CUTOVER,
         )
-
-        migration_repo = AsyncMock()
-        migration_repo.update_phase = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=MagicMock(),
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
+        migration_repo = AsyncMock(update_phase=AsyncMock())
+        coordinator = _make_coordinator(migration_repo=migration_repo)
         coordinator._lag_trackers[migration_id] = MagicMock()
         coordinator._target_stores[migration_id] = MagicMock()
 
@@ -141,7 +119,6 @@ class TestCompleteCutover:
         clear_metrics_registry()
         migration_id = uuid4()
         tenant_id = uuid4()
-
         migration = Migration(
             id=migration_id,
             tenant_id=tenant_id,
@@ -149,17 +126,8 @@ class TestCompleteCutover:
             target_store_id="dedicated",
             phase=MigrationPhase.CUTOVER,
         )
-
-        migration_repo = AsyncMock()
-        migration_repo.update_phase = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=MagicMock(),
-            router=MagicMock(),
-            enable_tracing=False,
-        )
+        migration_repo = AsyncMock(update_phase=AsyncMock())
+        coordinator = _make_coordinator(migration_repo=migration_repo)
 
         get_migration_metrics(str(migration_id), str(tenant_id))
         tracker = ActiveMigrationsTracker.get_instance()
@@ -177,15 +145,7 @@ class TestCleanupMigrationResources:
     def test_cleanup_removes_lag_tracker(self) -> None:
         """Test cleanup removes lag tracker."""
         migration_id = uuid4()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=MagicMock(),
-            routing_repo=MagicMock(),
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
+        coordinator = _make_coordinator()
         coordinator._lag_trackers[migration_id] = MagicMock()
         coordinator._target_stores[migration_id] = MagicMock()
 
@@ -196,17 +156,8 @@ class TestCleanupMigrationResources:
 
     def test_cleanup_handles_missing_resources(self) -> None:
         """Test cleanup handles missing resources gracefully."""
-        migration_id = uuid4()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=MagicMock(),
-            routing_repo=MagicMock(),
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
-        coordinator._cleanup_migration_resources(migration_id)
+        coordinator = _make_coordinator()
+        coordinator._cleanup_migration_resources(uuid4())
 
 
 class TestAbortMigrationCleansUpP2Resources:
@@ -217,7 +168,6 @@ class TestAbortMigrationCleansUpP2Resources:
         """Test abort_migration cleans up lag tracker."""
         migration_id = uuid4()
         tenant_id = uuid4()
-
         migration = Migration(
             id=migration_id,
             tenant_id=tenant_id,
@@ -227,23 +177,13 @@ class TestAbortMigrationCleansUpP2Resources:
             events_copied=100,
             started_at=datetime.now(UTC),
         )
-
-        migration_repo = AsyncMock()
-        migration_repo.get = AsyncMock(return_value=migration)
-        migration_repo.update_phase = AsyncMock()
-        migration_repo.record_error = AsyncMock()
-
-        routing_repo = AsyncMock()
-        routing_repo.clear_migration_state = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=MagicMock(),
-            enable_tracing=False,
+        migration_repo = AsyncMock(
+            get=AsyncMock(return_value=migration),
+            update_phase=AsyncMock(),
+            record_error=AsyncMock(),
         )
-
+        routing_repo = AsyncMock(clear_migration_state=AsyncMock())
+        coordinator = _make_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
         coordinator._lag_trackers[migration_id] = MagicMock()
         coordinator._target_stores[migration_id] = MagicMock()
 
@@ -261,7 +201,6 @@ class TestFailMigrationCleansUpP2Resources:
         """Test _fail_migration cleans up lag tracker."""
         migration_id = uuid4()
         tenant_id = uuid4()
-
         migration = Migration(
             id=migration_id,
             tenant_id=tenant_id,
@@ -269,22 +208,9 @@ class TestFailMigrationCleansUpP2Resources:
             target_store_id="dedicated",
             phase=MigrationPhase.DUAL_WRITE,
         )
-
-        migration_repo = AsyncMock()
-        migration_repo.update_phase = AsyncMock()
-        migration_repo.record_error = AsyncMock()
-
-        routing_repo = AsyncMock()
-        routing_repo.clear_migration_state = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=MagicMock(),
-            enable_tracing=False,
-        )
-
+        migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
+        routing_repo = AsyncMock(clear_migration_state=AsyncMock())
+        coordinator = _make_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
         coordinator._lag_trackers[migration_id] = MagicMock()
         coordinator._target_stores[migration_id] = MagicMock()
 
@@ -303,11 +229,6 @@ class TestStartMigrationStoresTargetStore:
         tenant_id = uuid4()
         target_store = AsyncMock()
         target_store_id = "dedicated-tenant"
-
-        migration_repo = AsyncMock()
-        migration_repo.get_by_tenant = AsyncMock(return_value=None)
-        migration_repo.create = AsyncMock()
-
         migration_id = uuid4()
         created_migration = Migration(
             id=migration_id,
@@ -317,22 +238,19 @@ class TestStartMigrationStoresTargetStore:
             phase=MigrationPhase.BULK_COPY,
             started_at=datetime.now(UTC),
         )
-        migration_repo.get = AsyncMock(return_value=created_migration)
-        migration_repo.update_phase = AsyncMock()
-
-        routing_repo = AsyncMock()
-        routing_repo.get_or_default = AsyncMock(
-            return_value=TenantRouting(tenant_id=tenant_id, store_id="default")
+        migration_repo = AsyncMock(
+            get_by_tenant=AsyncMock(return_value=None),
+            create=AsyncMock(),
+            get=AsyncMock(return_value=created_migration),
+            update_phase=AsyncMock(),
         )
-        routing_repo.set_migration_state = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            source_store=MagicMock(),
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=MagicMock(),
-            enable_tracing=False,
+        routing_repo = AsyncMock(
+            get_or_default=AsyncMock(
+                return_value=TenantRouting(tenant_id=tenant_id, store_id="default")
+            ),
+            set_migration_state=AsyncMock(),
         )
+        coordinator = _make_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
 
         with patch.object(coordinator, "_run_bulk_copy", new_callable=AsyncMock):
             migration = await coordinator.start_migration(
