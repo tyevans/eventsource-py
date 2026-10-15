@@ -9,10 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from eventsource.application.migration.exceptions import (
-    MigrationError,
-    MigrationNotFoundError,
-)
+from eventsource.application.migration.exceptions import MigrationError, MigrationNotFoundError
 from eventsource.application.migration.metrics import release_migration_metrics
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import ATTR_MIGRATION_ID
@@ -70,19 +67,14 @@ class CoordinatorControlMixin:
     async def pause_migration(self, migration_id: UUID) -> None:
         """Pause an in-progress migration after the current batch completes."""
         with self._tracer.span(
-            "eventsource.coordinator.pause_migration",
-            {ATTR_MIGRATION_ID: str(migration_id)},
+            "eventsource.coordinator.pause_migration", {ATTR_MIGRATION_ID: str(migration_id)}
         ):
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
-
             if migration.phase.is_terminal:
                 raise MigrationError(
-                    "Cannot pause a completed migration",
-                    migration_id=migration_id,
+                    "Cannot pause a completed migration", migration_id=migration_id
                 )
-
             if migration.is_paused:
                 logger.debug("Migration %s is already paused", migration_id)
                 return
@@ -91,27 +83,19 @@ class CoordinatorControlMixin:
                 copier.pause()
 
             await self._migration_repo.set_paused(
-                migration_id,
-                paused=True,
-                reason="Operator requested",
+                migration_id, paused=True, reason="Operator requested"
             )
             logger.info("Paused migration %s", migration_id)
 
     async def resume_migration(self, migration_id: UUID) -> None:
         """Resume a paused migration and its tracked in-process copier if present."""
         with self._tracer.span(
-            "eventsource.coordinator.resume_migration",
-            {ATTR_MIGRATION_ID: str(migration_id)},
+            "eventsource.coordinator.resume_migration", {ATTR_MIGRATION_ID: str(migration_id)}
         ):
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
-
             if not migration.is_paused:
-                raise MigrationError(
-                    "Migration is not paused",
-                    migration_id=migration_id,
-                )
+                raise MigrationError("Migration is not paused", migration_id=migration_id)
 
             if copier := self._active_copiers.get(migration_id):
                 copier.resume()
@@ -120,30 +104,23 @@ class CoordinatorControlMixin:
             logger.info("Resumed migration %s", migration_id)
 
     async def abort_migration(
-        self,
-        migration_id: UUID,
-        reason: str | None = None,
+        self, migration_id: UUID, reason: str | None = None
     ) -> MigrationResult:
         """Abort and rollback a migration, restoring normal tenant routing."""
         with self._tracer.span(
-            "eventsource.coordinator.abort_migration",
-            {ATTR_MIGRATION_ID: str(migration_id)},
+            "eventsource.coordinator.abort_migration", {ATTR_MIGRATION_ID: str(migration_id)}
         ):
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
-
             if migration.phase.is_terminal:
                 raise MigrationError(
-                    "Cannot abort a completed migration",
-                    migration_id=migration_id,
+                    "Cannot abort a completed migration", migration_id=migration_id
                 )
 
             if copier := self._active_copiers.pop(migration_id, None):
                 copier.cancel()
 
-            task = self._active_tasks.pop(migration_id, None)
-            if task and not task.done():
+            if (task := self._active_tasks.pop(migration_id, None)) and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -156,7 +133,6 @@ class CoordinatorControlMixin:
             await self._migration_repo.update_phase(migration_id, MigrationPhase.ABORTED)
             if reason:
                 await self._migration_repo.record_error(migration_id, f"Aborted: {reason}")
-
             logger.info("Aborted migration %s: %s", migration_id, reason)
 
             await self._record_audit(
@@ -172,13 +148,13 @@ class CoordinatorControlMixin:
                 )
             )
             self._cleanup_status_queues(migration_id)
-            migration = await self._migration_repo.get(migration_id)
+            updated = await self._migration_repo.get(migration_id)
 
             return MigrationResult(
                 migration_id=migration_id,
                 success=False,
-                duration_seconds=self._calculate_duration(migration),
-                events_migrated=migration.events_copied if migration else 0,
+                duration_seconds=self._calculate_duration(updated),
+                events_migrated=updated.events_copied if updated else 0,
                 final_phase=MigrationPhase.ABORTED,
                 error_message=reason,
             )
@@ -208,6 +184,4 @@ class CoordinatorControlMixin:
         self._cleanup_status_queues(migration.id)
 
 
-__all__ = [
-    "CoordinatorControlMixin",
-]
+__all__ = ["CoordinatorControlMixin"]

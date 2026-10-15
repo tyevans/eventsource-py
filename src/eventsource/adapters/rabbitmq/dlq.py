@@ -1,20 +1,7 @@
-"""RabbitMQ dead letter queue administration.
+"""RabbitMQ dead letter queue administration (inspecting, counting, replaying, purging).
 
-Extracted from ``RabbitMQEventBus`` (bus.py) as part of the bus god-class
-decomposition (Task 8). Owns inspecting, counting, replaying, and purging
-messages in the dead letter queue.
-
-The facade still owns the public ``get_dlq_messages`` / ``get_dlq_message_count``
-/ ``replay_dlq_message`` / ``purge_dlq`` signatures and delegates to this
-collaborator, which reads the live channel via
-:meth:`RabbitMQConnectionManager.require_channel` and the main exchange via
-:attr:`RabbitMQTopology.exchange`.
-
-**Note for auditors:** the four ``require_channel()`` calls in this module
-resemble the untyped-raise sites corrected elsewhere in the RabbitMQ adapter,
-but they are not the same finding. Each is preceded by a connection check that
-returns a graceful empty result, so the raising path is unreachable from a
-disconnected bus. They were reviewed and deliberately left alone.
+Note: ``require_channel()`` calls below are preceded by connection/channel checks
+that return graceful empty results when disconnected.
 """
 
 from __future__ import annotations
@@ -36,8 +23,6 @@ except ImportError:  # pragma: no cover - guarded by RabbitMQEventBus constructi
     DeliveryMode = None  # type: ignore[assignment, misc]
     Message = None  # type: ignore[assignment, misc]
 
-# Named explicitly so the logger name is stable and matches the facade's
-# pre-extraction "eventsource.adapters.rabbitmq" logger.
 logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
 
@@ -55,19 +40,23 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
         self._connection = connection
         self._topology = topology
         self._stats = stats
-
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
-    async def get_messages(self, limit: int = 100) -> list[DLQMessage]:
-        """Get messages from the dead letter queue for inspection without removing them.
+    def _log_dlq_error(self, message: str, exc: Exception) -> None:
+        self._logger.error(
+            f"{message}: {exc}",
+            exc_info=True,
+            extra={
+                "dlq_queue": self._config.dlq_queue_name,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
 
-        Retrieves messages using basic.get and rejects with requeue=True to preserve them.
-        Note: Not atomic under concurrent DLQ consumers. Returns empty list if disconnected,
-        DLQ disabled, channel uninitialized, or on error.
-        """
+    async def get_messages(self, limit: int = 100) -> list[DLQMessage]:
+        """Get messages from the dead letter queue for inspection without removing them."""
         if not self._connection._connected or not self._config.enable_dlq:
             return []
-
         if not self._connection.channel:
             self._logger.warning(
                 "Cannot get DLQ messages: channel not initialized",
@@ -87,14 +76,13 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
 
                 headers: dict[str, object] = dict(message.headers or {})
                 body = message.body.decode("utf-8")
-
-                dlq_retry_count_value = headers.get("x-dlq-retry-count")
-                if dlq_retry_count_value is None:
+                retry_val = headers.get("x-dlq-retry-count")
+                if retry_val is None:
                     dlq_retry_count = None
-                elif isinstance(dlq_retry_count_value, int):
-                    dlq_retry_count = dlq_retry_count_value
+                elif isinstance(retry_val, int):
+                    dlq_retry_count = retry_val
                 else:
-                    dlq_retry_count = int(str(dlq_retry_count_value))
+                    dlq_retry_count = int(str(retry_val))
 
                 def _hdr(key: str, h: dict[str, object] = headers) -> str | None:
                     val = h.get(key)
@@ -125,26 +113,14 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
                 },
             )
         except Exception as e:
-            self._logger.error(
-                f"Failed to get DLQ messages: {e}",
-                exc_info=True,
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
+            self._log_dlq_error("Failed to get DLQ messages", e)
 
         return messages
 
     async def get_message_count(self) -> int:
-        """Get the number of messages waiting in the dead letter queue via passive declaration.
-
-        Returns 0 if disconnected, DLQ disabled, channel uninitialized, or on error.
-        """
+        """Get the number of messages waiting in the dead letter queue via passive declaration."""
         if not self._connection._connected or not self._config.enable_dlq:
             return 0
-
         if not self._connection.channel:
             self._logger.warning(
                 "Cannot get DLQ count: channel not initialized",
@@ -162,25 +138,13 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
             )
             return count
         except Exception as e:
-            self._logger.error(
-                f"Failed to get DLQ message count: {e}",
-                exc_info=True,
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
+            self._log_dlq_error("Failed to get DLQ message count", e)
             return 0
 
     async def purge(self) -> int:
-        """Irreversibly remove all messages from the dead letter queue and return purged count.
-
-        Returns 0 if disconnected, DLQ disabled, channel uninitialized, or on error.
-        """
+        """Irreversibly remove all messages from the dead letter queue and return purged count."""
         if not self._connection._connected or not self._config.enable_dlq:
             return 0
-
         if not self._connection.channel:
             self._logger.warning(
                 "Cannot purge DLQ: channel not initialized",
@@ -199,15 +163,7 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
             )
             return purged_count
         except Exception as e:
-            self._logger.error(
-                f"Failed to purge DLQ: {e}",
-                exc_info=True,
-                extra={
-                    "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
+            self._log_dlq_error("Failed to purge DLQ", e)
             return 0
 
 
