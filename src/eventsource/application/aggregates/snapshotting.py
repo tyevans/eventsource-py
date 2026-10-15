@@ -96,10 +96,10 @@ class EveryNEvents:
             raise ValueError(f"EveryNEvents requires n >= 1, got {self.n}")
 
     def should_snapshot(self, aggregate: AggregateRoot[Any], events_since_snapshot: int) -> bool:
-        if aggregate.version <= 0:
-            return False
-        version_before = aggregate.version - events_since_snapshot
-        return aggregate.version // self.n > version_before // self.n
+        return (
+            aggregate.version > 0
+            and aggregate.version // self.n > (aggregate.version - events_since_snapshot) // self.n
+        )
 
 
 @dataclass(frozen=True)
@@ -116,20 +116,16 @@ async def take_snapshot(
     """Build and persist a snapshot of the aggregate. Errors propagate to caller."""
     schema_version = getattr(type(aggregate), "schema_version", 1)
     snapshot = Snapshot(
-        aggregate_id=aggregate.aggregate_id,
-        aggregate_type=aggregate_type,
-        version=aggregate.version,
-        state=aggregate._serialize_state(),
-        schema_version=schema_version,
-        created_at=datetime.now(UTC),
+        aggregate.aggregate_id,
+        aggregate_type,
+        aggregate.version,
+        aggregate._serialize_state(),
+        schema_version,
+        datetime.now(UTC),
     )
     await store.save_snapshot(snapshot)
     logger.info(
-        "Created snapshot for %s/%s at version %d (schema_version=%d)",
-        aggregate_type,
-        aggregate.aggregate_id,
-        snapshot.version,
-        schema_version,
+        f"Created snapshot for {aggregate_type}/{aggregate.aggregate_id} at version {snapshot.version} (schema_version={schema_version})"
     )
     return snapshot
 
@@ -146,19 +142,13 @@ async def read_valid_snapshot(
     except SnapshotDeserializationError as e:
         record_snapshot_miss(SnapshotMissReason.DESERIALIZATION_ERROR, aggregate_type)
         logger.warning(
-            "Corrupt snapshot for %s/%s: %s. Falling back to event replay.",
-            aggregate_type,
-            aggregate_id,
-            e,
+            f"Corrupt snapshot for {aggregate_type}/{aggregate_id}: {e}. Falling back to event replay."
         )
         return None
     except Exception as e:
         record_snapshot_miss(SnapshotMissReason.STORE_ERROR, aggregate_type)
         logger.warning(
-            "Error loading snapshot for %s/%s: %s. Falling back to event replay.",
-            aggregate_type,
-            aggregate_id,
-            e,
+            f"Error loading snapshot for {aggregate_type}/{aggregate_id}: {e}. Falling back to event replay."
         )
         return None
     if snapshot is None:
@@ -168,20 +158,11 @@ async def read_valid_snapshot(
     if snapshot.schema_version != expected:
         record_snapshot_miss(SnapshotMissReason.SCHEMA_MISMATCH, aggregate_type)
         logger.info(
-            "Snapshot schema version mismatch for %s/%s: "
-            "snapshot has v%d, aggregate expects v%d. "
-            "Falling back to full event replay.",
-            aggregate_type,
-            aggregate_id,
-            snapshot.schema_version,
-            expected,
+            f"Snapshot schema version mismatch for {aggregate_type}/{aggregate_id}: snapshot has v{snapshot.schema_version}, aggregate expects v{expected}. Falling back to full event replay."
         )
         return None
     logger.debug(
-        "Loaded valid snapshot for %s/%s at version %d",
-        aggregate_type,
-        aggregate_id,
-        snapshot.version,
+        f"Loaded valid snapshot for {aggregate_type}/{aggregate_id} at version {snapshot.version}"
     )
     return snapshot
 
@@ -191,11 +172,7 @@ class SnapshotScheduler(Protocol):
     """Decides *how* a snapshot write executes: inline or in background."""
 
     async def schedule(
-        self,
-        write: Coroutine[Any, Any, Snapshot],
-        *,
-        aggregate_type: str,
-        aggregate_id: UUID,
+        self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None: ...
 
     @property
@@ -208,20 +185,13 @@ class ImmediateScheduler:
     """Awaits the write inline; failures are logged and swallowed."""
 
     async def schedule(
-        self,
-        write: Coroutine[Any, Any, Snapshot],
-        *,
-        aggregate_type: str,
-        aggregate_id: UUID,
+        self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None:
         try:
             return await write
         except Exception as e:
             logger.warning(
-                "Failed to create snapshot for %s/%s: %s",
-                aggregate_type,
-                aggregate_id,
-                e,
+                f"Failed to create snapshot for {aggregate_type}/{aggregate_id}: {e}",
                 exc_info=True,
             )
             return None
@@ -241,30 +211,20 @@ class BackgroundScheduler:
         self._tasks = BackgroundTaskManager()
 
     async def schedule(
-        self,
-        write: Coroutine[Any, Any, Snapshot],
-        *,
-        aggregate_type: str,
-        aggregate_id: UUID,
+        self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None:
         self._tasks.submit(self._guarded(write, aggregate_type, aggregate_id))
         return None
 
     async def _guarded(
-        self,
-        write: Coroutine[Any, Any, Snapshot],
-        aggregate_type: str,
-        aggregate_id: UUID,
+        self, write: Coroutine[Any, Any, Snapshot], aggregate_type: str, aggregate_id: UUID
     ) -> None:
         try:
             await write
-            logger.debug("Background snapshot created for %s/%s", aggregate_type, aggregate_id)
+            logger.debug(f"Background snapshot created for {aggregate_type}/{aggregate_id}")
         except Exception as e:
             logger.warning(
-                "Background snapshot creation failed for %s/%s: %s",
-                aggregate_type,
-                aggregate_id,
-                e,
+                f"Background snapshot creation failed for {aggregate_type}/{aggregate_id}: {e}",
                 exc_info=True,
             )
 

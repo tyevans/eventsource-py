@@ -1,27 +1,7 @@
-"""
-Retry policy abstraction for projection event processing.
+"""Retry policy abstraction for projection event processing.
 
-This module provides configurable retry behavior for projections,
-addressing the Single Responsibility Principle violation where
-retry logic was embedded in CheckpointTrackingProjection.
-
-The module reuses the existing RetryConfig from subscriptions.retry
-for consistency across the codebase.
-
-Example:
-    >>> from eventsource.application.projections.retry import (
-    ...     ProjectionRetryPolicy,
-    ...     ExponentialBackoffRetryPolicy,
-    ... )
-    >>>
-    >>> # Use default retry settings
-    >>> policy = ExponentialBackoffRetryPolicy()
-    >>>
-    >>> # Or customize
-    >>> from eventsource.application.subscriptions.retry import RetryConfig
-    >>> policy = ExponentialBackoffRetryPolicy(
-    ...     config=RetryConfig(max_retries=5, initial_delay=1.0)
-    ... )
+Provides configurable retry behavior for projections, reusing RetryConfig
+from subscriptions.retry for consistency across the codebase.
 """
 
 import logging
@@ -34,98 +14,40 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class ProjectionRetryPolicy(Protocol):
-    """
-    Protocol for retry policies in projections.
+    """Protocol for retry policies in projections.
 
-    Defines the interface for determining retry behavior when
-    event processing fails. Implementations can provide different
-    strategies (exponential backoff, fixed delay, no retry, etc.)
-
-    This abstraction allows retry behavior to be:
-    - Configured independently of projection logic
-    - Tested in isolation
-    - Swapped without modifying projection code
+    Defines the interface for determining retry behavior when event processing fails.
     """
 
     @property
     def max_retries(self) -> int:
-        """
-        Maximum number of retry attempts.
-
-        Does not include the initial attempt, so max_retries=3
-        means up to 4 total attempts (1 initial + 3 retries).
-        """
+        """Maximum number of retry attempts (excluding initial attempt)."""
         ...
 
     def get_backoff(self, attempt: int) -> float:
-        """
-        Calculate the delay before the next retry attempt.
-
-        Args:
-            attempt: The current attempt number (0-based).
-                    After first failure, attempt=0.
-
-        Returns:
-            Delay in seconds before the next attempt.
-        """
+        """Calculate delay in seconds before the next retry attempt (0-based)."""
         ...
 
     def should_retry(self, attempt: int, error: Exception) -> bool:
-        """
-        Determine if a retry should be attempted.
-
-        Args:
-            attempt: The current attempt number (0-based)
-            error: The exception that caused the failure
-
-        Returns:
-            True if another retry should be attempted, False otherwise.
-        """
+        """Determine if another retry should be attempted (0-based attempt)."""
         ...
 
 
 class ExponentialBackoffRetryPolicy:
-    """
-    Retry policy with exponential backoff.
+    """Retry policy with exponential backoff using RetryConfig and calculate_backoff.
 
-    Uses the existing RetryConfig and calculate_backoff from
-    subscriptions.retry for consistency.
-
-    Default settings match the original CheckpointTrackingProjection:
-    - max_retries: 3
-    - initial_delay: 2.0 seconds (was RETRY_BACKOFF_BASE)
-    - exponential_base: 2.0
-
-    Backoff progression (default): 2s, 4s, 8s
-
-    Example:
-        >>> policy = ExponentialBackoffRetryPolicy()
-        >>> policy.max_retries
-        3
-        >>> policy.get_backoff(0)  # After first failure
-        2.0  # Plus jitter
-        >>> policy.get_backoff(1)  # After second failure
-        4.0  # Plus jitter
+    Default settings match CheckpointTrackingProjection:
+    max_retries=3, initial_delay=2.0s, exponential_base=2.0, jitter=0.0.
     """
 
     def __init__(self, config: RetryConfig | None = None) -> None:
-        """
-        Initialize the retry policy.
-
-        Args:
-            config: Retry configuration. If None, uses defaults that
-                   match the original CheckpointTrackingProjection behavior:
-                   - max_retries=3
-                   - initial_delay=2.0
-                   - exponential_base=2.0
-                   - jitter=0.0 (deterministic for projection processing)
-        """
+        """Initialize the retry policy with optional RetryConfig."""
         self._config = config or RetryConfig(
             max_retries=3,
             initial_delay=2.0,
             max_delay=60.0,
             exponential_base=2.0,
-            jitter=0.0,  # Projections use deterministic backoff
+            jitter=0.0,
         )
 
     @property
@@ -139,33 +61,11 @@ class ExponentialBackoffRetryPolicy:
         return self._config
 
     def get_backoff(self, attempt: int) -> float:
-        """
-        Calculate backoff delay for the given attempt.
-
-        Uses exponential backoff with optional jitter.
-
-        Args:
-            attempt: Current attempt number (0-based)
-
-        Returns:
-            Delay in seconds
-        """
+        """Calculate backoff delay in seconds for the given 0-based attempt."""
         return calculate_backoff(attempt, self._config)
 
     def should_retry(self, attempt: int, error: Exception) -> bool:
-        """
-        Determine if retry should be attempted.
-
-        Currently retries all exceptions up to max_retries.
-        Subclasses can override to filter by exception type.
-
-        Args:
-            attempt: Current attempt number (0-based)
-            error: The exception that occurred
-
-        Returns:
-            True if retry should be attempted
-        """
+        """Determine if retry should be attempted (retries all exceptions up to max_retries)."""
         return attempt < self._config.max_retries
 
     def __repr__(self) -> str:
@@ -178,19 +78,7 @@ class ExponentialBackoffRetryPolicy:
 
 
 class NoRetryPolicy:
-    """
-    Retry policy that never retries.
-
-    Useful for:
-    - Testing failure handling without delays
-    - Fail-fast scenarios
-    - When retries are handled at a higher level
-
-    Example:
-        >>> policy = NoRetryPolicy()
-        >>> policy.should_retry(0, ValueError("test"))
-        False
-    """
+    """Retry policy that never retries (useful for fail-fast or testing)."""
 
     @property
     def max_retries(self) -> int:
@@ -210,39 +98,14 @@ class NoRetryPolicy:
 
 
 class FilteredRetryPolicy:
-    """
-    Retry policy that filters which exceptions to retry.
-
-    Wraps another policy and adds exception type filtering.
-    Only retries if the exception is an instance of one of the
-    allowed exception types.
-
-    Example:
-        >>> from eventsource.application.subscriptions.retry import TRANSIENT_EXCEPTIONS
-        >>>
-        >>> # Only retry transient failures
-        >>> policy = FilteredRetryPolicy(
-        ...     base_policy=ExponentialBackoffRetryPolicy(),
-        ...     retryable_exceptions=TRANSIENT_EXCEPTIONS,
-        ... )
-        >>> policy.should_retry(0, ConnectionError("timeout"))
-        True
-        >>> policy.should_retry(0, ValueError("invalid"))
-        False
-    """
+    """Retry policy that wraps a base policy and filters which exception types to retry."""
 
     def __init__(
         self,
         base_policy: ProjectionRetryPolicy,
         retryable_exceptions: tuple[type[Exception], ...],
     ) -> None:
-        """
-        Initialize the filtered retry policy.
-
-        Args:
-            base_policy: The underlying retry policy to delegate to
-            retryable_exceptions: Tuple of exception types to retry
-        """
+        """Initialize with underlying base_policy and tuple of retryable_exceptions."""
         self._base_policy = base_policy
         self._retryable_exceptions = retryable_exceptions
 
@@ -256,16 +119,7 @@ class FilteredRetryPolicy:
         return self._base_policy.get_backoff(attempt)
 
     def should_retry(self, attempt: int, error: Exception) -> bool:
-        """
-        Check if exception is retryable and base policy allows retry.
-
-        Args:
-            attempt: Current attempt number (0-based)
-            error: The exception that occurred
-
-        Returns:
-            True only if exception is retryable and within retry limit
-        """
+        """Check if exception is retryable and base policy allows retry."""
         if not isinstance(error, self._retryable_exceptions):
             return False
         return self._base_policy.should_retry(attempt, error)
@@ -275,7 +129,6 @@ class FilteredRetryPolicy:
         return f"FilteredRetryPolicy(base={self._base_policy!r}, exceptions={exception_names})"
 
 
-# Default policy that matches original CheckpointTrackingProjection behavior
 DEFAULT_RETRY_POLICY = ExponentialBackoffRetryPolicy()
 
 

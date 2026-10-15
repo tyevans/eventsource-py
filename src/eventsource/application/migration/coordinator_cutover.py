@@ -61,44 +61,31 @@ class CoordinatorCutoverMixin:
     _subscription_summaries: dict[UUID, MigrationSummary]
     _enable_tracing: bool
 
-    async def _record_audit(self, entry: MigrationAuditEntry) -> None:
-        raise NotImplementedError
+    if TYPE_CHECKING:
 
-    async def _notify_status_update(self, migration_id: UUID) -> None:
-        raise NotImplementedError
-
-    def _cleanup_status_queues(self, migration_id: UUID) -> None:
-        raise NotImplementedError
-
-    async def verify_consistency(
-        self,
-        migration_id: UUID,
-        *,
-        level: VerificationLevel = VerificationLevel.HASH,
-        sample_percentage: float = 100.0,
-    ) -> VerificationReport:
-        raise NotImplementedError
-
-    async def migrate_subscriptions(
-        self,
-        migration_id: UUID,
-        subscription_names: list[str] | None = None,
-        *,
-        dry_run: bool = False,
-    ) -> MigrationSummary:
-        raise NotImplementedError
+        async def _record_audit(self, entry: MigrationAuditEntry) -> None: ...
+        async def _notify_status_update(self, migration_id: UUID) -> None: ...
+        def _cleanup_status_queues(self, migration_id: UUID) -> None: ...
+        async def verify_consistency(
+            self,
+            migration_id: UUID,
+            *,
+            level: VerificationLevel = ...,
+            sample_percentage: float = ...,
+        ) -> VerificationReport: ...
+        async def migrate_subscriptions(self, migration_id: UUID) -> MigrationSummary: ...
 
     async def _audit_cutover(
         self,
         migration_id: UUID,
         event_type: AuditEventType,
-        old_phase: MigrationPhase,
         new_phase: MigrationPhase,
         details: dict[str, object] | None = None,
+        *,
+        old_phase: MigrationPhase = MigrationPhase.CUTOVER,
     ) -> None:
-        now = datetime.now(UTC)
         entry = MigrationAuditEntry(
-            None, migration_id, event_type, old_phase, new_phase, details, None, now
+            None, migration_id, event_type, old_phase, new_phase, details, None, datetime.now(UTC)
         )
         await self._record_audit(entry)
 
@@ -111,8 +98,7 @@ class CoordinatorCutoverMixin:
             ATTR_MIGRATION_PHASE: MigrationPhase.CUTOVER.value,
         }
         with self._tracer.span("eventsource.coordinator.trigger_cutover", span_attrs):
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             if migration.phase != MigrationPhase.DUAL_WRITE:
                 raise MigrationStateError(
@@ -122,8 +108,7 @@ class CoordinatorCutoverMixin:
                     [MigrationPhase.DUAL_WRITE],
                     "trigger_cutover",
                 )
-            lag_tracker = self._lag_trackers.get(migration_id)
-            if lag_tracker is None:
+            if (lag_tracker := self._lag_trackers.get(migration_id)) is None:
                 raise MigrationError(
                     "No sync lag tracker found for migration", migration_id=migration_id
                 )
@@ -136,8 +121,8 @@ class CoordinatorCutoverMixin:
             await self._audit_cutover(
                 migration_id,
                 AuditEventType.CUTOVER_INITIATED,
-                MigrationPhase.DUAL_WRITE,
                 MigrationPhase.CUTOVER,
+                old_phase=MigrationPhase.DUAL_WRITE,
             )
             result = await cutover_manager.execute_cutover(
                 migration_id=migration_id,
@@ -199,17 +184,13 @@ class CoordinatorCutoverMixin:
         logger.info(
             f"Cutover completed for migration {migration.id}: tenant {migration.tenant_id} now routes to {migration.target_store_id} (consistency_verified={consistency_verified}, subscriptions_migrated={subscriptions_migrated})"
         )
-        details = {
+        details: dict[str, object] = {
             "target_store_id": migration.target_store_id,
             "consistency_verified": consistency_verified,
             "subscriptions_migrated": subscriptions_migrated,
         }
         await self._audit_cutover(
-            migration.id,
-            AuditEventType.CUTOVER_COMPLETED,
-            MigrationPhase.CUTOVER,
-            MigrationPhase.COMPLETED,
-            details,
+            migration.id, AuditEventType.CUTOVER_COMPLETED, MigrationPhase.COMPLETED, details
         )
         self._lag_trackers.pop(migration.id, None)
         self._target_stores.pop(migration.id, None)
@@ -218,72 +199,58 @@ class CoordinatorCutoverMixin:
 
     async def _rollback_cutover(self, migration: Migration, result: CutoverResult) -> None:
         await self._migration_repo.update_phase(migration.id, MigrationPhase.DUAL_WRITE)
-        if result.error_message:
-            await self._migration_repo.record_error(
-                migration.id, f"Cutover failed: {result.error_message}"
-            )
+        if msg := result.error_message:
+            await self._migration_repo.record_error(migration.id, f"Cutover failed: {msg}")
         logger.warning(f"Cutover rolled back for migration {migration.id}: {result.error_message}")
         await self._audit_cutover(
             migration.id,
             AuditEventType.CUTOVER_ROLLED_BACK,
-            MigrationPhase.CUTOVER,
             MigrationPhase.DUAL_WRITE,
             {"error_message": result.error_message},
         )
         await self._notify_status_update(migration.id)
 
     def _get_cutover_manager(self) -> CutoverManager:
-        if self._cutover_manager is not None:
-            return self._cutover_manager
-        if self._lock_manager is None:
-            raise MigrationError(
-                "Cannot perform cutover: lock_manager not provided to coordinator. "
-                "Provide a lock manager (e.g. PostgreSQLLockManager) when creating "
-                "the coordinator to enable cutover operations."
+        if self._cutover_manager is None:
+            if self._lock_manager is None:
+                raise MigrationError(
+                    "Cannot perform cutover: lock_manager not provided to coordinator. Provide a lock manager (e.g. PostgreSQLLockManager) when creating the coordinator to enable cutover operations."
+                )
+            self._cutover_manager = CutoverManager(
+                self._lock_manager,
+                self._router,
+                self._routing_repo,
+                enable_tracing=self._enable_tracing,
             )
-        self._cutover_manager = CutoverManager(
-            self._lock_manager,
-            self._router,
-            self._routing_repo,
-            enable_tracing=self._enable_tracing,
-        )
         return self._cutover_manager
 
     def _lag_anchor(self, migration: Migration) -> Position | None:
-        interceptor = self._interceptors.get(migration.id)
-        if interceptor is None:
+        if (interceptor := self._interceptors.get(migration.id)) is None:
             return migration.last_source_position
         return interceptor.safe_lag_anchor(migration.last_source_position)
 
     async def get_sync_lag(self, migration_id: UUID) -> SyncLag | None:
         """Get current sync lag for a migration."""
-        migration = await self._migration_repo.get(migration_id)
-        if migration is None:
+        if (migration := await self._migration_repo.get(migration_id)) is None:
             raise MigrationNotFoundError(migration_id)
-        lag_tracker = self._lag_trackers.get(migration_id)
-        if lag_tracker is None:
+        if (lag_tracker := self._lag_trackers.get(migration_id)) is None:
             return None
         return await lag_tracker.calculate_lag(since=self._lag_anchor(migration))
 
     async def is_cutover_ready(self, migration_id: UUID) -> tuple[bool, str | None]:
         """Check if a migration is ready for cutover."""
-        migration = await self._migration_repo.get(migration_id)
-        if migration is None:
+        if (migration := await self._migration_repo.get(migration_id)) is None:
             raise MigrationNotFoundError(migration_id)
         if migration.phase != MigrationPhase.DUAL_WRITE:
             return False, f"Migration is in {migration.phase.value} phase, expected DUAL_WRITE"
-        lag_tracker = self._lag_trackers.get(migration_id)
-        if lag_tracker is None:
+        if (lag_tracker := self._lag_trackers.get(migration_id)) is None:
             return False, "No sync lag tracker found for migration"
-
         await lag_tracker.calculate_lag(since=self._lag_anchor(migration))
         if lag_tracker.is_sync_ready():
             return True, None
-        lag_events = lag_tracker.current_lag.events if lag_tracker.current_lag else "unknown"
-        return (
-            False,
-            f"Sync lag too high: {lag_events} events (max: {migration.config.cutover_max_lag_events})",
-        )
+        lag = lag_tracker.current_lag.events if lag_tracker.current_lag else "unknown"
+        max_lag = migration.config.cutover_max_lag_events
+        return False, f"Sync lag too high: {lag} events (max: {max_lag})"
 
 
 __all__ = ["CoordinatorCutoverMixin"]
