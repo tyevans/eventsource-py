@@ -1,18 +1,17 @@
-"""Public API surface tests.
-
-Asserts that every name intended for top-level export actually imports
-from `eventsource` and appears in `eventsource.__all__`. Also pins the
-blessed store surface: after the legacy `eventsource.stores` package was
-retired, each store name at top level has exactly one referent -- a port
-value object or an adapter class -- and the legacy names are gone.
-"""
+"""Public API surface tests for top-level exports and retired legacy packages."""
 
 import pytest
 
 import eventsource
+import eventsource.adapters.memory.outbox as memory_outbox
+import eventsource.adapters.memory.store as memory_store
+import eventsource.adapters.postgresql as pg_adapters
+import eventsource.adapters.sqlite as sqlite_adapters
+import eventsource.domain.event as domain_event
+import eventsource.domain.event_registry as domain_registry
+import eventsource.domain.exceptions as domain_exceptions
+import eventsource.ports as ports
 
-# Names that must be importable from the top-level package and present
-# in __all__.
 CORE_RINGS_EXPORTS = [
     "StreamId",
     "Position",
@@ -57,8 +56,6 @@ CORE_RINGS_EXPORTS = [
     "PostgreSQLOutboxRepository",
 ]
 
-# Spec section 4.2: names retired with the legacy store surface. None of
-# them may be reachable from the top-level package any more.
 DEAD_NAMES = [
     "EventStore",
     "EventStream",
@@ -97,84 +94,52 @@ class TestBlessedStoreSurface:
     """Spec section 4.1: one referent per name. The ports and adapters own them all."""
 
     def test_top_level_expected_version_is_the_port_vo(self) -> None:
-        from eventsource.ports import ExpectedVersion
-
-        assert eventsource.ExpectedVersion is ExpectedVersion
+        assert eventsource.ExpectedVersion is ports.ExpectedVersion
 
     def test_top_level_read_direction_is_the_port_enum(self) -> None:
-        from eventsource.ports import ReadDirection
-
-        assert eventsource.ReadDirection is ReadDirection
+        assert eventsource.ReadDirection is ports.ReadDirection
 
     def test_top_level_append_result_is_the_port_vo(self) -> None:
-        from eventsource.ports import AppendResult
-
-        assert eventsource.AppendResult is AppendResult
+        assert eventsource.AppendResult is ports.AppendResult
 
     def test_top_level_event_publisher_is_the_port_protocol(self) -> None:
-        from eventsource.ports import EventPublisher
-
-        assert eventsource.EventPublisher is EventPublisher
+        assert eventsource.EventPublisher is ports.EventPublisher
 
     def test_top_level_in_memory_event_store_is_the_memory_adapter(self) -> None:
-        from eventsource.adapters.memory.store import InMemoryEventStore
-
-        assert eventsource.InMemoryEventStore is InMemoryEventStore
+        assert eventsource.InMemoryEventStore is memory_store.InMemoryEventStore
 
     def test_top_level_sqlite_event_store_is_the_sqlite_adapter(self) -> None:
-        from eventsource.adapters.sqlite import SQLiteEventStore
-
-        assert eventsource.SQLiteEventStore is SQLiteEventStore
+        assert eventsource.SQLiteEventStore is sqlite_adapters.SQLiteEventStore
 
     def test_top_level_postgresql_event_store_is_the_postgresql_adapter(self) -> None:
-        from eventsource.adapters.postgresql import PostgreSQLEventStore
-
-        assert eventsource.PostgreSQLEventStore is PostgreSQLEventStore
+        assert eventsource.PostgreSQLEventStore is pg_adapters.PostgreSQLEventStore
 
     def test_top_level_outbox_repository_is_the_port_protocol(self) -> None:
-        from eventsource.ports import OutboxRepository
-
-        assert eventsource.OutboxRepository is OutboxRepository
+        assert eventsource.OutboxRepository is ports.OutboxRepository
 
     def test_top_level_outbox_entry_is_the_port_vo(self) -> None:
-        from eventsource.ports import OutboxEntry
-
-        assert eventsource.OutboxEntry is OutboxEntry
+        assert eventsource.OutboxEntry is ports.OutboxEntry
 
     def test_top_level_outbox_stats_is_the_port_vo(self) -> None:
-        from eventsource.ports import OutboxStats
-
-        assert eventsource.OutboxStats is OutboxStats
+        assert eventsource.OutboxStats is ports.OutboxStats
 
     def test_top_level_in_memory_outbox_is_the_memory_adapter(self) -> None:
-        from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
-
-        assert eventsource.InMemoryOutboxRepository is InMemoryOutboxRepository
+        assert eventsource.InMemoryOutboxRepository is memory_outbox.InMemoryOutboxRepository
 
     def test_top_level_postgresql_outbox_is_the_postgresql_adapter(self) -> None:
-        from eventsource.adapters.postgresql import PostgreSQLOutboxRepository
-
-        assert eventsource.PostgreSQLOutboxRepository is PostgreSQLOutboxRepository
+        assert eventsource.PostgreSQLOutboxRepository is pg_adapters.PostgreSQLOutboxRepository
 
     def test_top_level_domain_event_is_the_domain_entity(self) -> None:
-        from eventsource.domain.event import DomainEvent
-
-        assert eventsource.DomainEvent is DomainEvent
+        assert eventsource.DomainEvent is domain_event.DomainEvent
 
     def test_top_level_event_registry_is_the_domain_registry(self) -> None:
-        from eventsource.domain.event_registry import EventRegistry
-
-        assert eventsource.EventRegistry is EventRegistry
+        assert eventsource.EventRegistry is domain_registry.EventRegistry
 
     def test_top_level_event_type_not_found_error_is_the_domain_exception(self) -> None:
-        from eventsource.domain.exceptions import EventTypeNotFoundError
-
-        assert eventsource.EventTypeNotFoundError is EventTypeNotFoundError
+        assert eventsource.EventTypeNotFoundError is domain_exceptions.EventTypeNotFoundError
 
     def test_top_level_duplicate_event_type_error_is_the_domain_exception(self) -> None:
-        from eventsource.domain.exceptions import DuplicateEventTypeError
-
-        assert eventsource.DuplicateEventTypeError is DuplicateEventTypeError
+        assert eventsource.DuplicateEventTypeError is domain_exceptions.DuplicateEventTypeError
 
 
 class TestLegacyStoreSurfaceIsGone:
@@ -182,8 +147,7 @@ class TestLegacyStoreSurfaceIsGone:
 
     def test_dead_names_are_gone_from_the_public_api(self) -> None:
         for name in DEAD_NAMES:
-            assert not hasattr(eventsource, name), f"eventsource.{name} should not exist"
-            assert name not in eventsource.__all__
+            assert not hasattr(eventsource, name) and name not in eventsource.__all__
 
     def test_legacy_stores_package_is_not_importable(self) -> None:
         with pytest.raises(ModuleNotFoundError):

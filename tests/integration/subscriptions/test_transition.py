@@ -12,7 +12,6 @@ pytestmark = pytest.mark.asyncio
 
 
 async def position_after(store, n: int):
-    """The token of the nth (1-based) event in the feed."""
     envelopes = [e async for e in store.read_all()]
     position = envelopes[n - 1].position
     assert position is not None
@@ -20,8 +19,6 @@ async def position_after(store, n: int):
 
 
 class TestSeamlessTransition:
-    """Tests for seamless catch-up to live transition."""
-
     async def test_seamless_transition(
         self,
         in_memory_event_store,
@@ -29,20 +26,17 @@ class TestSeamlessTransition:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test seamless transition from catch-up to live."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
-        success = await projection.wait_for_events(50)
-        assert success, f"Expected 50 events, got {projection.event_count}"
+        assert await projection.wait_for_events(50)
         for i in range(50, 60):
             await publish_live_event(
                 in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}", amount=100.0 + i
             )
-        success = await projection.wait_for_events(60)
-        assert success, f"Expected 60 events, got {projection.event_count}"
+        assert await projection.wait_for_events(60)
         assert projection.event_count == 60
 
     async def test_transition_maintains_order(
@@ -52,7 +46,6 @@ class TestSeamlessTransition:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test event order is maintained across transition."""
         await populate_event_store(in_memory_event_store, 30)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
@@ -67,8 +60,6 @@ class TestSeamlessTransition:
 
 
 class TestNoDuplicatesDuringTransition:
-    """Tests ensuring no duplicate events during transition."""
-
     async def test_no_duplicate_events(
         self,
         in_memory_event_store,
@@ -76,15 +67,13 @@ class TestNoDuplicatesDuringTransition:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test no events are duplicated during transition."""
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         assert await projection.wait_for_events(100)
-        assert projection.event_count == 100
-        assert not projection.has_duplicates()
+        assert projection.event_count == 100 and not projection.has_duplicates()
         event_ids = [str(e.event_id) for e in projection.events]
         assert len(event_ids) == len(set(event_ids))
 
@@ -95,7 +84,6 @@ class TestNoDuplicatesDuringTransition:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test no duplicates when live events arrive during catch-up."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
@@ -105,13 +93,10 @@ class TestNoDuplicatesDuringTransition:
         for i in range(50, 60):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}")
         await projection.wait_for_events(60)
-        assert projection.event_count == 60
-        assert not projection.has_duplicates()
+        assert projection.event_count == 60 and not projection.has_duplicates()
 
 
 class TestNoGapDuringTransition:
-    """Tests ensuring no events are lost during transition."""
-
     async def test_no_gap_during_transition(
         self,
         in_memory_event_store,
@@ -119,7 +104,6 @@ class TestNoGapDuringTransition:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test no events are lost during transition."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
@@ -144,7 +128,6 @@ class TestNoGapDuringTransition:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test handling continuous event stream during transition."""
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
@@ -166,8 +149,6 @@ class TestNoGapDuringTransition:
 
 
 class TestTransitionWithMultipleSubscribers:
-    """Tests for transition with multiple subscribers."""
-
     async def test_multiple_subscribers_receive_all_events(
         self,
         in_memory_event_store,
@@ -175,7 +156,6 @@ class TestTransitionWithMultipleSubscribers:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test multiple subscribers each receive all events."""
         await populate_event_store(in_memory_event_store, 50)
         projection1 = CollectingProjection(name="Projection1")
         projection2 = CollectingProjection(name="Projection2")
@@ -194,8 +174,6 @@ class TestTransitionWithMultipleSubscribers:
 
 
 class TestTransitionPhases:
-    """Tests for transition phase handling."""
-
     async def test_subscription_state_after_transition(
         self,
         in_memory_event_store,
@@ -203,7 +181,6 @@ class TestTransitionPhases:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test subscription is in LIVE state after successful transition."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
@@ -218,7 +195,6 @@ class TestTransitionPhases:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test position is tracked correctly during transition."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))

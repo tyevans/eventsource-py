@@ -16,8 +16,6 @@ from eventsource.domain.event import DomainEvent
 
 
 class PublisherTestEvent(DomainEvent):
-    """Sample event used to exercise the publisher."""
-
     aggregate_type: str = "Order"
     event_type: str = "OrderCreated"
     aggregate_id: UUID = uuid4()
@@ -71,9 +69,7 @@ class TestPublishOne:
         exchange = mock.AsyncMock()
         publisher, _ = _publisher(config, stats, exchange)
         event = PublisherTestEvent(aggregate_id=uuid4())
-
         await publisher.publish_one(event)
-
         exchange.publish.assert_awaited_once()
         _, kwargs = exchange.publish.call_args
         assert kwargs["routing_key"] == serialization.get_routing_key(event)
@@ -82,30 +78,23 @@ class TestPublishOne:
         self, config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
     ) -> None:
         publisher, _ = _publisher(config, stats)
-        event = PublisherTestEvent(aggregate_id=uuid4())
-
-        await publisher.publish_one(event)
-
+        await publisher.publish_one(PublisherTestEvent(aggregate_id=uuid4()))
         assert stats.events_published == 1
 
     async def test_publish_one_wait_for_confirm_true_increments_confirms(
         self, config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
     ) -> None:
         publisher, _ = _publisher(config, stats)
-        event = PublisherTestEvent(aggregate_id=uuid4())
-
-        await publisher.publish_one(event, wait_for_confirm=True)
-
+        await publisher.publish_one(PublisherTestEvent(aggregate_id=uuid4()), wait_for_confirm=True)
         assert stats.publish_confirms == 1
 
     async def test_publish_one_wait_for_confirm_false_does_not_increment_confirms(
         self, config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
     ) -> None:
         publisher, _ = _publisher(config, stats)
-        event = PublisherTestEvent(aggregate_id=uuid4())
-
-        await publisher.publish_one(event, wait_for_confirm=False)
-
+        await publisher.publish_one(
+            PublisherTestEvent(aggregate_id=uuid4()), wait_for_confirm=False
+        )
         assert stats.publish_confirms == 0
 
     async def test_publish_one_raises_when_exchange_not_initialized(
@@ -113,10 +102,8 @@ class TestPublishOne:
     ) -> None:
         publisher, topology = _publisher(config, stats)
         topology.exchange = None
-        event = PublisherTestEvent(aggregate_id=uuid4())
-
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
-            await publisher.publish_one(event)
+            await publisher.publish_one(PublisherTestEvent(aggregate_id=uuid4()))
 
 
 class TestPublishBatch:
@@ -127,25 +114,19 @@ class TestPublishBatch:
         exchange.publish = mock.AsyncMock(side_effect=RuntimeError("boom"))
         publisher, _ = _publisher(config, stats, exchange)
         events = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(3)]
-
         with pytest.raises(BatchPublishError) as exc_info:
             await publisher.publish_batch(events)
-
-        assert exc_info.value.results["total"] == 3
-        assert exc_info.value.results["failed"] == 3
+        assert exc_info.value.results["total"] == 3 and exc_info.value.results["failed"] == 3
         assert len(exc_info.value.errors) == 3
 
     async def test_publish_batch_returns_stats_on_success(
         self, config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
     ) -> None:
         publisher, _ = _publisher(config, stats)
-        events = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(4)]
-
-        result = await publisher.publish_batch(events)
-
-        assert result["total"] == 4
-        assert result["published"] == 4
-        assert result["failed"] == 0
+        result = await publisher.publish_batch(
+            [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(4)]
+        )
+        assert (result["total"], result["published"], result["failed"]) == (4, 4, 0)
 
     async def test_publish_batch_sequential_preserves_order(
         self, config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
@@ -154,36 +135,20 @@ class TestPublishBatch:
         exchange = mock.AsyncMock()
 
         async def _record_publish(message: object, routing_key: str) -> None:
-            # routing_key encodes nothing about order directly, so track via
-            # the message body ordering the publisher passed to us.
             call_order.append(len(call_order))
 
         exchange.publish = mock.AsyncMock(side_effect=_record_publish)
         publisher, _ = _publisher(config, stats, exchange)
         events = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(5)]
-
         result = await publisher.publish_batch(events, preserve_order=True)
-
-        assert result["published"] == 5
-        assert call_order == list(range(5))
+        assert result["published"] == 5 and call_order == list(range(5))
 
 
 class TestPublishConcurrencyBound:
     async def test_max_concurrent_publishes_holds_across_two_concurrent_publish_many_calls(
         self, stats: RabbitMQEventBusStats
     ) -> None:
-        """config.max_concurrent_publishes must bound in-flight publishes for
-        the *publisher instance*, not per publish_many() call.
-
-        Regression test: _publish_chunk_concurrent used to build its own
-        `asyncio.Semaphore(max_concurrent)` on every call, so two concurrent
-        publish_many() calls (e.g. two overlapping publish_batch() callers)
-        each got their own ceiling and the true bound was
-        max_concurrent_publishes x number of concurrent callers. A single
-        publish_many() call alone cannot distinguish the two implementations
-        -- this test drives two overlapping calls and asserts the combined
-        peak never exceeds the configured ceiling.
-        """
+        """max_concurrent_publishes bounds in-flight publishes across concurrent publish_many calls."""
         max_concurrent = 3
         config = RabbitMQEventBusConfig(
             rabbitmq_url="amqp://guest:guest@localhost:5672/",
@@ -192,9 +157,7 @@ class TestPublishConcurrencyBound:
             publish_chunk_size=100,
             max_concurrent_publishes=max_concurrent,
         )
-
-        in_flight = 0
-        peak_in_flight = 0
+        in_flight, peak_in_flight = 0, 0
         lock = asyncio.Lock()
 
         async def _slow_publish(message: object, routing_key: str) -> None:
@@ -209,20 +172,8 @@ class TestPublishConcurrencyBound:
         exchange = mock.AsyncMock()
         exchange.publish = mock.AsyncMock(side_effect=_slow_publish)
         publisher, _ = _publisher(config, stats, exchange)
-
         events_a = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(10)]
         events_b = [PublisherTestEvent(aggregate_id=uuid4()) for _ in range(10)]
-
-        await asyncio.gather(
-            publisher.publish_many(events_a),
-            publisher.publish_many(events_b),
-        )
-
-        assert peak_in_flight <= max_concurrent, (
-            f"peak concurrent publishes {peak_in_flight} exceeded "
-            f"max_concurrent_publishes={max_concurrent} across two concurrent "
-            "publish_many() calls"
-        )
-        # Sanity: the bound was actually exercised, not trivially satisfied
-        # by too little work ever overlapping.
+        await asyncio.gather(publisher.publish_many(events_a), publisher.publish_many(events_b))
+        assert peak_in_flight <= max_concurrent
         assert peak_in_flight == max_concurrent

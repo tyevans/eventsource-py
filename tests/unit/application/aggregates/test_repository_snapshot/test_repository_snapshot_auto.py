@@ -16,28 +16,37 @@ from tests.unit.application.aggregates.test_repository_snapshot._fixtures import
 )
 
 
+@pytest.fixture
+def event_store() -> InMemoryEventStore:
+    return InMemoryEventStore(event_registry=_REGISTRY)
+
+
+@pytest.fixture
+def snapshot_store() -> InMemorySnapshotStore:
+    return InMemorySnapshotStore()
+
+
+def _make_repo(
+    event_store: InMemoryEventStore,
+    snapshot_store: InMemorySnapshotStore | MagicMock | None = None,
+    **kwargs: object,
+) -> AggregateRepository[TestAggregate]:
+    return AggregateRepository(
+        event_store=event_store,
+        aggregate_factory=TestAggregate,
+        snapshot_store=snapshot_store,  # type: ignore[arg-type]
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
 class TestRepositoryAutoSnapshot:
     """Test automatic snapshot creation at threshold."""
-
-    @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore(event_registry=_REGISTRY)
-
-    @pytest.fixture
-    def snapshot_store(self) -> InMemorySnapshotStore:
-        return InMemorySnapshotStore()
 
     @pytest.mark.asyncio
     async def test_auto_snapshot_at_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=3,
-            snapshot_mode="sync",
-        )
+        repo = _make_repo(event_store, snapshot_store, snapshot_threshold=3, snapshot_mode="sync")
         aggregate_id = uuid4()
         for i in range(3):
             aggregate = TestAggregate(aggregate_id) if i == 0 else await repo.load(aggregate_id)
@@ -46,19 +55,13 @@ class TestRepositoryAutoSnapshot:
 
         assert snapshot_store.snapshot_count == 1
         snapshot = await snapshot_store.get_snapshot(aggregate_id, "Test")
-        assert snapshot is not None
-        assert snapshot.version == 3
+        assert snapshot is not None and snapshot.version == 3
 
     @pytest.mark.asyncio
     async def test_no_snapshot_below_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=10,
-        )
+        repo = _make_repo(event_store, snapshot_store, snapshot_threshold=10)
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test")
         await repo.save(aggregate)
@@ -68,13 +71,7 @@ class TestRepositoryAutoSnapshot:
     async def test_no_auto_snapshot_in_manual_mode(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=1,
-            snapshot_mode="manual",
-        )
+        repo = _make_repo(event_store, snapshot_store, snapshot_threshold=1, snapshot_mode="manual")
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test")
         await repo.save(aggregate)
@@ -84,13 +81,7 @@ class TestRepositoryAutoSnapshot:
     async def test_snapshot_at_multiples_of_threshold(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=5,
-            snapshot_mode="sync",
-        )
+        repo = _make_repo(event_store, snapshot_store, snapshot_threshold=5, snapshot_mode="sync")
         aggregate_id = uuid4()
         aggregate = TestAggregate(aggregate_id)
         for _ in range(10):
@@ -98,21 +89,13 @@ class TestRepositoryAutoSnapshot:
         await repo.save(aggregate)
 
         snapshot = await snapshot_store.get_snapshot(aggregate_id, "Test")
-        assert snapshot is not None
-        assert snapshot.version == 10
+        assert snapshot is not None and snapshot.version == 10
 
     @pytest.mark.asyncio
     async def test_snapshots_happen_when_saves_never_land_on_a_multiple(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        """A stream saving a constant number of events per save must still snapshot."""
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_threshold=5,
-            snapshot_mode="sync",
-        )
+        repo = _make_repo(event_store, snapshot_store, snapshot_threshold=5, snapshot_mode="sync")
         aggregate_id = uuid4()
         for save in range(4):
             aggregate = TestAggregate(aggregate_id) if save == 0 else await repo.load(aggregate_id)
@@ -120,25 +103,18 @@ class TestRepositoryAutoSnapshot:
                 aggregate.increment()
             await repo.save(aggregate)
 
-        assert snapshot_store.snapshot_count > 0, (
-            "twelve events at a threshold of five produced no snapshot"
-        )
+        assert snapshot_store.snapshot_count > 0
         snapshot = await snapshot_store.get_snapshot(aggregate_id, "Test")
-        assert snapshot is not None
-        assert snapshot.version >= 5
+        assert snapshot is not None and snapshot.version >= 5
 
     @pytest.mark.asyncio
     async def test_snapshot_failure_doesnt_fail_save(self, event_store: InMemoryEventStore) -> None:
-        mock_snapshot_store = MagicMock()
-        mock_snapshot_store.get_snapshot = AsyncMock(return_value=None)
-        mock_snapshot_store.save_snapshot = AsyncMock(side_effect=Exception("Snapshot error"))
-
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=mock_snapshot_store,
-            snapshot_threshold=1,
-            snapshot_mode="sync",
+        mock_snapshot_store = MagicMock(
+            get_snapshot=AsyncMock(return_value=None),
+            save_snapshot=AsyncMock(side_effect=Exception("Snapshot error")),
+        )
+        repo = _make_repo(
+            event_store, mock_snapshot_store, snapshot_threshold=1, snapshot_mode="sync"
         )
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test")
@@ -149,54 +125,34 @@ class TestRepositoryAutoSnapshot:
 class TestRepositoryManualSnapshot:
     """Test manual snapshot creation."""
 
-    @pytest.fixture
-    def event_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore(event_registry=_REGISTRY)
-
-    @pytest.fixture
-    def snapshot_store(self) -> InMemorySnapshotStore:
-        return InMemorySnapshotStore()
-
     @pytest.mark.asyncio
     async def test_create_snapshot_returns_snapshot(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
+        repo = _make_repo(event_store, snapshot_store)
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test")
         aggregate._uncommitted_events.clear()
 
         snapshot = await repo.create_snapshot(aggregate)
         assert snapshot is not None
-        assert snapshot.aggregate_id == aggregate.aggregate_id
-        assert snapshot.aggregate_type == "Test"
-        assert snapshot.version == 1
-        assert snapshot.schema_version == 1
+        assert (snapshot.aggregate_id, snapshot.aggregate_type) == (aggregate.aggregate_id, "Test")
+        assert (snapshot.version, snapshot.schema_version) == (1, 1)
         assert snapshot.state["value"] == "test"
 
     @pytest.mark.asyncio
     async def test_create_snapshot_raises_without_store(
         self, event_store: InMemoryEventStore
     ) -> None:
-        repo = AggregateRepository(event_store=event_store, aggregate_factory=TestAggregate)
-        aggregate = TestAggregate(uuid4())
+        repo = _make_repo(event_store)
         with pytest.raises(RuntimeError, match="snapshot_store"):
-            await repo.create_snapshot(aggregate)
+            await repo.create_snapshot(TestAggregate(uuid4()))
 
     @pytest.mark.asyncio
     async def test_create_snapshot_works_in_manual_mode(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-            snapshot_mode="manual",
-        )
+        repo = _make_repo(event_store, snapshot_store, snapshot_mode="manual")
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test")
         aggregate._uncommitted_events.clear()
@@ -207,11 +163,7 @@ class TestRepositoryManualSnapshot:
     async def test_create_snapshot_overwrites_existing(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
-        repo = AggregateRepository(
-            event_store=event_store,
-            aggregate_factory=TestAggregate,
-            snapshot_store=snapshot_store,
-        )
+        repo = _make_repo(event_store, snapshot_store)
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("first")
         aggregate._uncommitted_events.clear()
@@ -223,5 +175,6 @@ class TestRepositoryManualSnapshot:
 
         assert snapshot_store.snapshot_count == 1
         snapshot = await snapshot_store.get_snapshot(aggregate.aggregate_id, "Test")
-        assert snapshot.version == 2
-        assert snapshot.state["value"] == "second"
+        assert (
+            snapshot is not None and snapshot.version == 2 and snapshot.state["value"] == "second"
+        )

@@ -73,6 +73,11 @@ def harness() -> InMemoryTestHarness:
     return InMemoryTestHarness()
 
 
+async def _read_stream(harness: InMemoryTestHarness, agg_id):
+    stream_id = StreamId(aggregate_id=agg_id, category="Account")
+    return [e async for e in harness.event_store.read_stream(stream_id)]
+
+
 class TestMultiAggregateGivenEvents:
     async def test_given_events_accepts_single_event(self, harness: InMemoryTestHarness) -> None:
         agg_id = uuid4()
@@ -81,12 +86,7 @@ class TestMultiAggregateGivenEvents:
         )
         await given_events(harness, event)
 
-        envelopes = [
-            e
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=agg_id, category="Account")
-            )
-        ]
+        envelopes = await _read_stream(harness, agg_id)
         assert len(envelopes) == 1
         assert envelopes[0].event.owner == "alice"
 
@@ -110,24 +110,12 @@ class TestMultiAggregateGivenEvents:
         ]
         await given_events(harness, events)
 
-        stream1 = [
-            e
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=id_1, category="Account")
-            )
-        ]
-        stream2 = [
-            e
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=id_2, category="Account")
-            )
-        ]
+        stream1 = await _read_stream(harness, id_1)
+        stream2 = await _read_stream(harness, id_2)
         assert len(stream1) == 2
-        assert stream1[0].event.owner == "alice"
-        assert stream1[1].event.amount == 50.0
+        assert stream1[0].event.owner == "alice" and stream1[1].event.amount == 50.0
         assert len(stream2) == 2
-        assert stream2[0].event.owner == "bob"
-        assert stream2[1].event.amount == 100.0
+        assert stream2[0].event.owner == "bob" and stream2[1].event.amount == 100.0
 
     async def test_given_events_multi_step_incremental_seeding(
         self, harness: InMemoryTestHarness
@@ -156,14 +144,8 @@ class TestMultiAggregateGivenEvents:
             ],
         )
 
-        stream1 = [
-            e
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=id_1, category="Account")
-            )
-        ]
-        assert len(stream1) == 2
-        assert stream1[1].event.amount == 75.0
+        stream1 = await _read_stream(harness, id_1)
+        assert len(stream1) == 2 and stream1[1].event.amount == 75.0
 
     async def test_given_events_with_explicit_expected_version(
         self, harness: InMemoryTestHarness
@@ -176,13 +158,7 @@ class TestMultiAggregateGivenEvents:
             ),
             expected_version=ExpectedVersion.no_stream(),
         )
-        stream = [
-            e
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=id_1, category="Account")
-            )
-        ]
-        assert len(stream) == 1
+        assert len(await _read_stream(harness, id_1)) == 1
 
     async def test_multi_aggregate_command_evaluation(self, harness: InMemoryTestHarness) -> None:
         id_1, id_2 = uuid4(), uuid4()
@@ -199,27 +175,12 @@ class TestMultiAggregateGivenEvents:
         )
 
         agg1 = AccountAggregate(id_1)
-        agg1_events = [
-            e.event
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=id_1, category="Account")
-            )
-        ]
-        agg1.load_from_history(agg1_events)
-
+        agg1.load_from_history([e.event for e in await _read_stream(harness, id_1)])
         agg2 = AccountAggregate(id_2)
-        agg2_events = [
-            e.event
-            async for e in harness.event_store.read_stream(
-                StreamId(aggregate_id=id_2, category="Account")
-            )
-        ]
-        agg2.load_from_history(agg2_events)
+        agg2.load_from_history([e.event for e in await _read_stream(harness, id_2)])
 
-        new_events_1 = when_command(agg1, lambda a: a.deposit(50.0))
-        new_events_2 = when_command(agg2, lambda a: a.deposit(100.0))
-        await harness.event_bus.publish(new_events_1)
-        await harness.event_bus.publish(new_events_2)
+        await harness.event_bus.publish(when_command(agg1, lambda a: a.deposit(50.0)))
+        await harness.event_bus.publish(when_command(agg2, lambda a: a.deposit(100.0)))
 
         e1 = then_event_published(harness, MoneyDeposited, aggregate_id=id_1, amount=50.0)
         assert e1.aggregate_id == id_1
