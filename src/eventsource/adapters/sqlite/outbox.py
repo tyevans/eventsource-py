@@ -1,13 +1,4 @@
-"""
-SQLite outbox repository for transactional event publishing.
-
-The outbox pattern ensures events are reliably published even if the event bus
-is temporarily unavailable. Events are persisted transactionally with the
-aggregate changes, then published asynchronously by a background worker.
-
-This adapter reads and writes `event_outbox` rows using the schema in
-`src/eventsource/migrations/templates/sqlite/outbox.sql`.
-"""
+"""SQLite outbox repository for transactional event publishing (`event_outbox` table)."""
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -31,29 +22,7 @@ if TYPE_CHECKING:
 
 
 class SQLiteOutboxRepository:
-    """
-    SQLite implementation of outbox repository.
-
-    Stores outbox events in the `event_outbox` table.
-
-    SQLite-specific adaptations:
-    - UUIDs stored as TEXT (36 characters, hyphenated format)
-    - Timestamps stored as TEXT in ISO 8601 format
-    - Uses `?` positional parameters instead of named parameters
-    - Cleanup cutoffs are computed in Python as UTC isoformat and bound as parameters
-    - Uses `SUM(CASE WHEN ... THEN 1 ELSE 0 END)` instead of `COUNT(*) FILTER`
-
-    Example:
-        >>> async with aiosqlite.connect("events.db") as db:
-        ...     repo = SQLiteOutboxRepository(db)
-        ...     outbox_id = await repo.add_event(event)
-        ...
-        >>> # Later, in the publisher worker:
-        >>> pending = await repo.get_pending_events(limit=100)
-        >>> for entry in pending:
-        ...     # Publish to event bus
-        ...     await repo.mark_published(entry.id)
-    """
+    """SQLite implementation of the outbox repository (`event_outbox` table)."""
 
     def __init__(
         self,
@@ -61,14 +30,7 @@ class SQLiteOutboxRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the outbox repository.
-
-        Args:
-            connection: aiosqlite database connection
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize the outbox repository with an `aiosqlite` connection."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._connection = connection
@@ -84,15 +46,7 @@ class SQLiteOutboxRepository:
             return datetime.now(UTC)
 
     async def add_event(self, event: DomainEvent) -> UUID:
-        """
-        Add an event to the outbox for publishing.
-
-        Args:
-            event: Domain event to publish
-
-        Returns:
-            Outbox record ID (generated UUID)
-        """
+        """Add an event to the outbox for publishing and return its outbox UUID."""
         with self._tracer.span(
             "eventsource.outbox.add",
             {
@@ -105,16 +59,11 @@ class SQLiteOutboxRepository:
         ):
             outbox_id = uuid4()
             now = datetime.now(UTC)
-
             event_data = outbox_event_data(event)
 
             await self._connection.execute(
-                """
-                INSERT INTO event_outbox
-                    (id, event_id, event_type, aggregate_id, aggregate_type,
-                     tenant_id, event_data, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                """,
+                "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
+                "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
                 (
                     str(outbox_id),
                     str(event.event_id),
@@ -127,25 +76,13 @@ class SQLiteOutboxRepository:
                 ),
             )
             await self._connection.commit()
-
             return outbox_id
 
     async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
-        """
-        Get pending events that need to be published.
-
-        Args:
-            limit: Maximum number of events to return
-
-        Returns:
-            List of OutboxEntry instances
-        """
+        """Return up to `limit` pending outbox entries ordered by creation time."""
         with self._tracer.span(
             "eventsource.outbox.get_pending",
-            {
-                "limit": limit,
-                ATTR_DB_SYSTEM: "sqlite",
-            },
+            {"limit": limit, ATTR_DB_SYSTEM: "sqlite"},
         ) as span:
             cursor = await self._connection.execute(
                 """
@@ -180,39 +117,20 @@ class SQLiteOutboxRepository:
             return entries
 
     async def mark_published(self, outbox_id: UUID) -> None:
-        """
-        Mark an outbox event as successfully published.
-
-        Args:
-            outbox_id: Outbox record ID
-        """
+        """Mark an outbox event as successfully published."""
         with self._tracer.span(
             "eventsource.outbox.mark_published",
-            {
-                "outbox.id": str(outbox_id),
-                ATTR_DB_SYSTEM: "sqlite",
-            },
+            {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "sqlite"},
         ):
             now = datetime.now(UTC)
             await self._connection.execute(
-                """
-                UPDATE event_outbox
-                SET status = 'published',
-                    published_at = ?
-                WHERE id = ?
-                """,
+                "UPDATE event_outbox SET status = 'published', published_at = ? WHERE id = ?",
                 (now.isoformat(), str(outbox_id)),
             )
             await self._connection.commit()
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
-        """
-        Increment retry count for a failed publishing attempt.
-
-        Args:
-            outbox_id: Outbox record ID
-            error: Error message (optional)
-        """
+        """Increment retry count for a failed publishing attempt."""
         with self._tracer.span(
             "eventsource.outbox.increment_retry",
             {
@@ -222,24 +140,13 @@ class SQLiteOutboxRepository:
             },
         ):
             await self._connection.execute(
-                """
-                UPDATE event_outbox
-                SET retry_count = retry_count + 1,
-                    last_error = ?
-                WHERE id = ?
-                """,
+                "UPDATE event_outbox SET retry_count = retry_count + 1, last_error = ? WHERE id = ?",
                 (error, str(outbox_id)),
             )
             await self._connection.commit()
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
-        """
-        Mark an outbox event as permanently failed.
-
-        Args:
-            outbox_id: Outbox record ID
-            error: Error message
-        """
+        """Mark an outbox event as permanently failed."""
         with self._tracer.span(
             "eventsource.outbox.mark_failed",
             {
@@ -249,53 +156,22 @@ class SQLiteOutboxRepository:
             },
         ):
             await self._connection.execute(
-                """
-                UPDATE event_outbox
-                SET status = 'failed',
-                    last_error = ?
-                WHERE id = ?
-                """,
+                "UPDATE event_outbox SET status = 'failed', last_error = ? WHERE id = ?",
                 (error, str(outbox_id)),
             )
             await self._connection.commit()
 
     async def cleanup_published(self, days: int = 7) -> int:
-        """
-        Clean up published events older than specified days.
-
-        Args:
-            days: Number of days to retain published events
-
-        Returns:
-            Number of records deleted
-        """
+        """Delete published events older than `days` and return the deleted count."""
         with self._tracer.span(
             "eventsource.outbox.cleanup",
-            {
-                "older_than_days": days,
-                ATTR_DB_SYSTEM: "sqlite",
-            },
+            {"older_than_days": days, ATTR_DB_SYSTEM: "sqlite"},
         ) as span:
-            # The cutoff is computed in Python and bound as a parameter,
-            # not delegated to SQLite's datetime('now', ...) -- that
-            # function returns a space-separated, sub-second-less string
-            # ("2026-07-31 18:08:33"), while published_at is written as
-            # this adapter's own datetime.now(UTC).isoformat() output
-            # ('T'-separated, with microseconds and a UTC offset). TEXT
-            # comparison between the two formats is not the ordering
-            # either format alone would give: 'T' (0x54) sorts after ' '
-            # (0x20), so published_at never compares less than
-            # datetime('now', ...) for any cutoff computed within the
-            # same wall-clock second. Binding the same isoformat() the
-            # column was written with keeps both sides of the TEXT
-            # comparison in one format.
+            # Compute cutoff in Python with isoformat() ('T'-separated) so TEXT comparison
+            # matches how published_at is written (unlike SQLite's space-separated datetime('now')).
             cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
             cursor = await self._connection.execute(
-                """
-                DELETE FROM event_outbox
-                WHERE status = 'published'
-                  AND published_at < ?
-                """,
+                "DELETE FROM event_outbox WHERE status = 'published' AND published_at < ?",
                 (cutoff,),
             )
             await self._connection.commit()
@@ -305,17 +181,11 @@ class SQLiteOutboxRepository:
             return deleted
 
     async def get_stats(self) -> OutboxStats:
-        """
-        Get outbox statistics.
-
-        Returns:
-            OutboxStats with outbox metrics
-        """
+        """Return aggregate statistics for the outbox."""
         with self._tracer.span(
             "eventsource.outbox.get_stats",
             {ATTR_DB_SYSTEM: "sqlite"},
         ):
-            # SQLite doesn't support FILTER clause, use CASE WHEN instead
             cursor = await self._connection.execute(
                 """
                 SELECT
@@ -329,7 +199,6 @@ class SQLiteOutboxRepository:
             )
             row = await cursor.fetchone()
 
-            # Aggregate query always returns a row, but values may be NULL
             if row is None:
                 return OutboxStats(
                     pending_count=0,
@@ -339,7 +208,6 @@ class SQLiteOutboxRepository:
                     avg_retries=0.0,
                 )
 
-            # Parse oldest_pending from ISO 8601 string to datetime
             oldest_pending = None
             if row[3]:
                 try:
