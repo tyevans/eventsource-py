@@ -7,7 +7,11 @@ domain behavior through public frontdoors without database or broker setup:
   testing of `DeciderAggregate`s and pure `(decide, evolve, initial_state)`
   triples, including `.then_event_types(*EventClasses)`, `.then_events(*EventClasses)`,
   `.then_event(EventCls, **expected_fields)`, and `.then_no_events()`.
+- **`EventBuilder`** with `EventBuilder(EventCls, **fields)` and
+  `EventBuilder.build_many(count, *, start_version=None)` for constructing
+  individual test events and auto-versioned event sequences with minimal boilerplate.
 - **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
+  `await harness.append_events(*events, expected_version=None)`,
   `harness.snapshot_store`, and `harness.assertions` (`EventAssertions` wrapper
   over `harness.published_events`) for pre-wired repository and bus testing.
 - **`RecordingEventBus.assertions`** (`bus.assertions.assert_event_published(...)`,
@@ -231,16 +235,78 @@ In multi-aggregate scenarios where commands target distinct aggregate IDs, pass
 `aggregate_id=...` to `.then_state(..., aggregate_id=first_id)` to assert the
 state of a specific aggregate instance.
 
+## Building test events with `EventBuilder`
+
+`EventBuilder` constructs `DomainEvent` instances with auto-generated defaults
+for `aggregate_id`, `event_id`, `aggregate_version` (default `1`), and
+`occurred_at`.
+
+### Passing initial keyword fields to `EventBuilder(EventCls, **fields)`
+
+Pass event payload and metadata fields directly to `EventBuilder(EventCls, **fields)`
+instead of calling `.with_field(...)` or `.with_fields(...)` separately:
+
+```python
+from uuid import uuid4
+from eventsource.testing import EventBuilder
+
+
+def test_event_builder_initial_fields() -> None:
+    cid = uuid4()
+
+    event = EventBuilder(OrderCreated, customer_id=cid, total=99.99).build()
+
+    assert event.customer_id == cid
+    assert event.total == 99.99
+    assert event.aggregate_version == 1
+```
+
+You can still chain `.with_aggregate_id(...)`, `.with_version(...)`, or
+`.with_fields(...)` on top of initial keyword fields when needed.
+
+### Building auto-versioned sequences with `EventBuilder.build_many`
+
+Use `EventBuilder.build_many(count, *, start_version=None)` to generate a list
+of `count` events for the same aggregate with sequentially incrementing
+`aggregate_version` values (starting from `start_version` when provided, or the
+builder's configured `aggregate_version`, which defaults to `1`):
+
+```python
+from uuid import uuid4
+from eventsource.testing import EventBuilder
+
+
+def test_event_builder_build_many() -> None:
+    order_id = uuid4()
+
+    # Versions 1, 2, 3
+    events = EventBuilder(ItemAdded, item="Widget").build_many(3)
+    assert [e.aggregate_version for e in events] == [1, 2, 3]
+
+    # Versions 2, 3, 4 on a specific aggregate_id
+    follow_up = (
+        EventBuilder(ItemAdded, aggregate_id=order_id, item="Gadget")
+        .build_many(3, start_version=2)
+    )
+    assert [e.aggregate_version for e in follow_up] == [2, 3, 4]
+    assert all(e.aggregate_id == order_id for e in follow_up)
+```
+
 ## Pre-wired repositories, snapshots, and assertions with `InMemoryTestHarness`
 
 `InMemoryTestHarness` bundles in-memory infrastructure (`event_store`,
 `event_bus`, `checkpoint_repo`, `dlq_repo`, and `snapshot_store`) with helper
-methods for wiring aggregate repositories and asserting published domain events:
+methods for seeding events, wiring aggregate repositories, and asserting
+published domain events:
 
 - **`harness.create_repository(OrderAggregate, snapshot_threshold=..., with_snapshots=...)`**:
   creates an `AggregateRepository` pre-wired with `harness.event_store`,
   `harness.event_bus`, and `harness.snapshot_store` (when `with_snapshots=True`
   or `snapshot_threshold` is specified) with tracing disabled for fast tests.
+- **`await harness.append_events(*events, expected_version=None)`**:
+  seeds one or more pre-existing events (or sequences of events) into
+  `harness.event_store`, automatically grouped by `(aggregate_id, aggregate_type)`
+  stream and using `ExpectedVersion.any_()` when `expected_version` is omitted.
 - **`harness.snapshot_store`**: provides a pre-configured `InMemorySnapshotStore`
   that is reset alongside all other components when `harness.reset()` is called.
 - **`harness.assertions`**: returns an `EventAssertions` wrapper over
@@ -284,6 +350,42 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     snapshot = await harness.snapshot_store.get_snapshot(order_id, "Order")
     assert snapshot is not None
     assert snapshot.version == 2
+```
+
+### Seeding pre-existing events with `harness.append_events`
+
+When testing repositories, projections, or read models against historical state,
+use `await harness.append_events(*events, expected_version=None)` to seed
+pre-existing events directly into `harness.event_store` without manually
+constructing `StreamId` or `ExpectedVersion`:
+
+```python
+from uuid import uuid4
+from eventsource.testing import EventBuilder, InMemoryTestHarness
+
+
+async def test_seed_events_with_harness_append_events() -> None:
+    harness = InMemoryTestHarness()
+    repo = harness.create_repository(OrderAggregate)
+
+    order_id = uuid4()
+    customer_id = uuid4()
+
+    created = EventBuilder(
+        OrderCreated,
+        aggregate_id=order_id,
+        customer_id=customer_id,
+    ).build()
+    items = EventBuilder(
+        ItemAdded,
+        aggregate_id=order_id,
+        item="Widget",
+    ).build_many(2, start_version=2)
+
+    await harness.append_events(created, *items)
+
+    order = await repo.load(order_id)
+    assert order.version == 3
 ```
 
 ## Asserting recorded events with `RecordingEventBus.assertions`
