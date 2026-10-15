@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 
 from eventsource.domain.exceptions import CommandRejectedError
 from eventsource.testing import DeciderScenario
+from eventsource.testing.scenario import Scenario
 from tests.unit.domain.test_decider_aggregate import (
     Account,
     AccountOpened,
@@ -27,6 +28,24 @@ class TestGivenWhenThen:
             .when(DepositMoney(account_id=agg_id, amount=5.0))
             .then_events(MoneyDeposited)
         )
+
+    def test_then_event_types_on_scenario_and_decider_scenario(self) -> None:
+        for cls in (DeciderScenario, Scenario):
+            agg_id = uuid4()
+            res = (
+                cls(Account)
+                .when_all(
+                    OpenAccount(account_id=agg_id, owner="alice"),
+                    DepositMoney(account_id=agg_id, amount=5.0),
+                )
+                .then_event_types(AccountOpened, MoneyDeposited)
+            )
+            assert isinstance(res, cls)
+            with pytest.raises(AssertionError, match="Expected event types .* got"):
+                res.then_event_types(AccountOpened)
+            rejected = cls(Account).when(DepositMoney(account_id=uuid4(), amount=5.0))
+            with pytest.raises(AssertionError, match="Expected event types .* but command raised"):
+                rejected.then_event_types(MoneyDeposited)
 
     def test_then_events_fails_on_wrong_type(self) -> None:
         agg_id = uuid4()
@@ -81,6 +100,8 @@ class TestGivenWhenThen:
     def test_when_before_then_required(self) -> None:
         with pytest.raises(AssertionError, match="when"):
             DeciderScenario(Account).then_events(AccountOpened)
+        with pytest.raises(AssertionError, match="when"):
+            DeciderScenario(Account).then_event_types(AccountOpened)
 
     def test_when_clears_stale_error_from_prior_rejection(self) -> None:
         scenario = DeciderScenario(Account).when(DepositMoney(account_id=uuid4(), amount=5.0))
@@ -91,89 +112,61 @@ class TestGivenWhenThen:
 
 class TestMultiAggregateDeciderScenario:
     def test_multi_aggregate_state_isolation(self) -> None:
-        id_1 = uuid4()
-        id_2 = uuid4()
-
+        id_1, id_2 = uuid4(), uuid4()
         scenario = DeciderScenario(Account).given(
             AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"),
             AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"),
             MoneyDeposited(aggregate_id=id_1, aggregate_version=2, amount=100.0),
             MoneyDeposited(aggregate_id=id_2, aggregate_version=2, amount=50.0),
         )
-
-        # States are isolated per aggregate ID
         assert scenario.get_state(id_1).owner == "alice"
         assert scenario.get_state(id_1).balance == 100.0
         assert scenario.get_state(id_2).owner == "bob"
         assert scenario.get_state(id_2).balance == 50.0
 
-        # Command for aggregate 1 evaluates against aggregate 1's state
-        scenario.when(DepositMoney(account_id=id_1, amount=25.0))
-        scenario.then_events(MoneyDeposited)
+        scenario.when(DepositMoney(account_id=id_1, amount=25.0)).then_events(MoneyDeposited)
         assert len(scenario.events) == 1
         assert scenario.events[0].aggregate_id == id_1
         assert scenario.events[0].amount == 25.0
 
-        # Command for aggregate 2 evaluates against aggregate 2's state
-        scenario.when(DepositMoney(account_id=id_2, amount=10.0))
-        scenario.then_events(MoneyDeposited)
+        scenario.when(DepositMoney(account_id=id_2, amount=10.0)).then_events(MoneyDeposited)
         assert len(scenario.events) == 1
         assert scenario.events[0].aggregate_id == id_2
         assert scenario.events[0].amount == 10.0
 
     def test_multi_aggregate_explicit_aggregate_id(self) -> None:
-        id_1 = uuid4()
-        id_2 = uuid4()
-
+        id_1, id_2 = uuid4(), uuid4()
         scenario = DeciderScenario(Account).given(
             AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"),
             AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"),
         )
-
-        # Deposit using explicit aggregate_id kwarg
         scenario.when(DepositMoney(account_id=id_1, amount=15.0), aggregate_id=id_1)
         scenario.then_events(MoneyDeposited)
         assert scenario.events[0].aggregate_id == id_1
 
     def test_command_targeting_fresh_aggregate_in_multi_aggregate_scenario(self) -> None:
-        id_1 = uuid4()
-        id_2 = uuid4()
-
+        id_1, id_2 = uuid4(), uuid4()
         scenario = DeciderScenario(Account).given(
             AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice")
         )
-
-        # Command targets new aggregate id_2 (not in history)
-        scenario.when(OpenAccount(account_id=id_2, owner="bob"))
-        scenario.then_events(AccountOpened)
+        scenario.when(OpenAccount(account_id=id_2, owner="bob")).then_events(AccountOpened)
         assert scenario.events[0].aggregate_id == id_2
 
     def test_states_property_and_state_property_in_multi_aggregate(self) -> None:
-        id_1 = uuid4()
-        id_2 = uuid4()
-
+        id_1, id_2 = uuid4(), uuid4()
         scenario = DeciderScenario(Account)
-        # Empty scenario returns initial state
         assert scenario.state.is_open is False
-
         scenario.given(AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"))
-        # Single aggregate returns that state
         assert scenario.state.owner == "alice"
-
         scenario.given(AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"))
-        # Multi-aggregate .states dict returns all states
         assert len(scenario.states) == 2
         assert scenario.states[id_1].owner == "alice"
         assert scenario.states[id_2].owner == "bob"
-
-        # .state raises ValueError when ambiguous (multiple aggregates and no last target)
         with pytest.raises(ValueError, match="Multiple aggregate states exist"):
             _ = scenario.state
 
     def test_unresolvable_aggregate_id_raises_value_error(self) -> None:
-        id_1 = uuid4()
-        id_2 = uuid4()
-
+        id_1, id_2 = uuid4(), uuid4()
         scenario = DeciderScenario(Account).given(
             AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"),
             AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"),
@@ -186,9 +179,7 @@ class TestMultiAggregateDeciderScenario:
             scenario.when(UnknownCommand())
 
     def test_given_accepts_nested_sequences(self) -> None:
-        id_1 = uuid4()
-        id_2 = uuid4()
-
+        id_1, id_2 = uuid4(), uuid4()
         events_batch = [
             AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"),
             AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"),
@@ -239,10 +230,8 @@ class TestWhenAllAndThenState:
     def test_then_state_fails_on_mismatch_or_false_predicate(self) -> None:
         agg_id = uuid4()
         scenario = DeciderScenario(Account).when(OpenAccount(account_id=agg_id, owner="alice"))
-
         with pytest.raises(AssertionError, match="state predicate"):
             scenario.then_state(lambda s: s.balance > 0)
-
         with pytest.raises(AssertionError, match="expected state"):
             scenario.then_state(AccountState(owner="bob", balance=0.0, is_open=True))
 
@@ -273,7 +262,7 @@ class TestGivenCommands:
         assert scenario.events[0].amount == 15.0
 
     def test_given_commands_chained_with_given_and_when_all_in_any_order(self) -> None:
-        agg_1 = uuid4()
+        agg_1, agg_2 = uuid4(), uuid4()
         (
             DeciderScenario(Account)
             .given(AccountOpened(aggregate_id=agg_1, aggregate_version=1, owner="alice"))
@@ -285,8 +274,6 @@ class TestGivenCommands:
             .then_events(MoneyDeposited, MoneyDeposited)
             .then_state(AccountState(owner="alice", balance=40.0, is_open=True))
         )
-
-        agg_2 = uuid4()
         (
             DeciderScenario(Account)
             .given_commands(OpenAccount(account_id=agg_2, owner="bob"))
@@ -322,9 +309,7 @@ class TestGivenCommands:
             ),
         ]
         when_cmd = DepositMoney(account_id=agg_id, amount=final_deposit)
-
         by_commands = DeciderScenario(Account).given_commands(*commands).when(when_cmd)
         by_events = DeciderScenario(Account).given(*events).when(when_cmd)
-
         assert by_commands.state == by_events.state
         assert [type(e) for e in by_commands.events] == [type(e) for e in by_events.events]
