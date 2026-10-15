@@ -20,192 +20,121 @@ class TestSubscriptionErrorHandler:
 
     @pytest.fixture
     def handler(self) -> SubscriptionErrorHandler:
-        """Create test error handler."""
-        return SubscriptionErrorHandler(
-            subscription_name="TestSubscription",
-        )
+        return SubscriptionErrorHandler(subscription_name="TestSubscription")
 
     @pytest.fixture
     def handler_with_dlq(self, mock_dlq_repo: AsyncMock) -> SubscriptionErrorHandler:
-        """Create test error handler with DLQ."""
         return SubscriptionErrorHandler(
             subscription_name="TestSubscription",
             config=ErrorHandlingConfig(
-                strategy=ErrorHandlingStrategy.RETRY_THEN_DLQ,
-                dlq_enabled=True,
+                strategy=ErrorHandlingStrategy.RETRY_THEN_DLQ, dlq_enabled=True
             ),
             dlq_repo=mock_dlq_repo,
         )
 
     @pytest.mark.asyncio
     async def test_handle_error_basic(self, handler: SubscriptionErrorHandler):
-        """Test basic error handling."""
-        error = ValueError("Test error")
-
-        error_info = await handler.handle_error(error)
-
+        error_info = await handler.handle_error(ValueError("Test error"))
         assert error_info.error_type == "ValueError"
         assert error_info.error_message == "Test error"
         assert error_info.subscription_name == "TestSubscription"
 
     @pytest.mark.asyncio
-    async def test_handle_error_with_envelope(
-        self,
-        handler: SubscriptionErrorHandler,
-    ):
-        """Test error handling with envelope context."""
-        error = ValueError("Test error")
-
+    async def test_handle_error_with_envelope(self, handler: SubscriptionErrorHandler):
         event = MagicMock()
         event.event_id = uuid4()
         event.event_type = "OrderCreated"
         envelope = MagicMock()
         envelope.event = event
         envelope.position = pos(42)
-
-        error_info = await handler.handle_error(error, envelope=envelope)
-
+        error_info = await handler.handle_error(ValueError("Test error"), envelope=envelope)
         assert error_info.event_id == event.event_id
         assert error_info.event_type == "OrderCreated"
         assert error_info.position == pos(42)
 
     @pytest.mark.asyncio
     async def test_handle_error_without_envelope_has_no_position(
-        self,
-        handler: SubscriptionErrorHandler,
+        self, handler: SubscriptionErrorHandler
     ):
-        """With no envelope there is no position -- None, not a sentinel."""
         error_info = await handler.handle_error(ValueError("Test error"))
-
         assert error_info.position is None
 
     @pytest.mark.asyncio
-    async def test_handle_error_updates_stats(
-        self,
-        handler: SubscriptionErrorHandler,
-    ):
-        """Test that handling error updates statistics."""
-        error = ConnectionError("Connection failed")
-
-        await handler.handle_error(error)
-
+    async def test_handle_error_updates_stats(self, handler: SubscriptionErrorHandler):
+        await handler.handle_error(ConnectionError("Connection failed"))
         assert handler.stats.total_errors == 1
         assert handler.stats.transient_errors == 1
         assert handler.total_errors == 1
 
     @pytest.mark.asyncio
-    async def test_handle_error_tracks_recent_errors(
-        self,
-        handler: SubscriptionErrorHandler,
-    ):
-        """Test that recent errors are tracked."""
-        error = ValueError("Test error")
-
-        await handler.handle_error(error)
-
+    async def test_handle_error_tracks_recent_errors(self, handler: SubscriptionErrorHandler):
+        await handler.handle_error(ValueError("Test error"))
         assert len(handler.recent_errors) == 1
         assert handler.recent_errors[0].error_type == "ValueError"
 
     @pytest.mark.asyncio
     async def test_recent_errors_limited(self, handler: SubscriptionErrorHandler):
-        """Test that recent errors are limited."""
         handler.config = ErrorHandlingConfig(max_recent_errors=5)
-
         for i in range(10):
             await handler.handle_error(ValueError(f"Error {i}"))
-
         assert len(handler.recent_errors) == 5
-        # Should keep most recent
         assert handler.recent_errors[0].error_message == "Error 5"
         assert handler.recent_errors[-1].error_message == "Error 9"
 
     @pytest.mark.asyncio
     async def test_handle_error_sends_to_dlq(
-        self,
-        handler_with_dlq: SubscriptionErrorHandler,
-        mock_dlq_repo: AsyncMock,
+        self, handler_with_dlq: SubscriptionErrorHandler, mock_dlq_repo: AsyncMock
     ):
-        """Test that permanent errors are sent to DLQ."""
-        error = ValueError("Invalid data")  # Non-retryable error
-
-        await handler_with_dlq.handle_error(error)
-
+        await handler_with_dlq.handle_error(ValueError("Invalid data"))
         mock_dlq_repo.add_failed_event.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handle_error_does_not_send_transient_to_dlq(
-        self,
-        handler_with_dlq: SubscriptionErrorHandler,
-        mock_dlq_repo: AsyncMock,
+        self, handler_with_dlq: SubscriptionErrorHandler, mock_dlq_repo: AsyncMock
     ):
-        """Test that transient errors are not sent to DLQ."""
-        error = ConnectionError("Connection failed")  # Retryable error
-
-        await handler_with_dlq.handle_error(error)
-
+        await handler_with_dlq.handle_error(ConnectionError("Connection failed"))
         mock_dlq_repo.add_failed_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_error_callback(self, handler: SubscriptionErrorHandler):
-        """Test registering error callback."""
         callback = AsyncMock()
         handler.on_error(callback)
-
         await handler.handle_error(ValueError("Test"))
-
         callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_category_callback(self, handler: SubscriptionErrorHandler):
-        """Test category-specific callback."""
         callback = AsyncMock()
         handler.on_category(ErrorCategory.APPLICATION, callback)
-
-        await handler.handle_error(ValueError("Test"))  # APPLICATION category
-
+        await handler.handle_error(ValueError("Test"))
         callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_severity_callback(self, handler: SubscriptionErrorHandler):
-        """Test severity-specific callback."""
         callback = AsyncMock()
         handler.on_severity(ErrorSeverity.HIGH, callback)
-
-        await handler.handle_error(TypeError("Test"))  # HIGH severity
-
+        await handler.handle_error(TypeError("Test"))
         callback.assert_called_once()
 
     def test_should_continue(self, handler: SubscriptionErrorHandler):
-        """Test should_continue with no limit."""
         assert handler.should_continue() is True
 
     @pytest.mark.asyncio
     async def test_should_continue_with_limit(self):
-        """Test should_continue with error limit."""
         config = ErrorHandlingConfig(max_errors_before_stop=5)
-        handler = SubscriptionErrorHandler(
-            subscription_name="Test",
-            config=config,
-        )
-
+        handler = SubscriptionErrorHandler(subscription_name="Test", config=config)
         for _ in range(4):
             await handler.handle_error(ValueError("Test"))
-
         assert handler.should_continue() is True
-
         await handler.handle_error(ValueError("Test"))
-
         assert handler.should_continue() is False
 
     def test_should_retry(self, handler: SubscriptionErrorHandler):
-        """Test should_retry method."""
         assert handler.should_retry(ConnectionError("test")) is True
         assert handler.should_retry(ValueError("test")) is False
 
     def test_get_health_status(self, handler: SubscriptionErrorHandler):
-        """Test getting health status."""
         status = handler.get_health_status()
-
         assert "healthy" in status
         assert "warnings" in status
         assert "errors" in status
@@ -213,14 +142,10 @@ class TestSubscriptionErrorHandler:
 
     @pytest.mark.asyncio
     async def test_clear_stats(self, handler: SubscriptionErrorHandler):
-        """Test clearing statistics."""
         await handler.handle_error(ValueError("Test"))
-
         assert handler.total_errors == 1
         assert len(handler.recent_errors) == 1
-
         await handler.clear_stats()
-
         assert handler.total_errors == 0
         assert len(handler.recent_errors) == 0
 
@@ -229,7 +154,6 @@ class TestModuleImports:
     """Tests for module imports."""
 
     def test_import_from_error_handling(self):
-        """Test all exports are importable."""
         from eventsource.application.subscriptions.error_handling import (
             ErrorCategory,
             ErrorClassification,

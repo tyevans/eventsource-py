@@ -104,22 +104,16 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
         if self._state:
             items, key = dict(self._state.items), str(event.product_id)
             qty = items[key].quantity + event.quantity if key in items else event.quantity
-            items[key] = CartItem(
-                product_id=event.product_id,
-                product_name=event.product_name,
-                quantity=qty,
-                unit_price=event.unit_price,
-            )
+            data = event.model_dump(include={"product_id", "product_name", "unit_price"})
+            items[key] = CartItem(quantity=qty, **data)
             self._state = self._state.model_copy(update={"items": items, "status": "active"})
 
     @handles(ItemRemovedFromCart)
     def _on_item_removed(self, event: ItemRemovedFromCart) -> None:
         if self._state:
-            items = dict(self._state.items)
-            items.pop(str(event.product_id), None)
-            self._state = self._state.model_copy(
-                update={"items": items, "status": "active" if items else "empty"}
-            )
+            items = {k: v for k, v in self._state.items.items() if k != str(event.product_id)}
+            status = "active" if items else "empty"
+            self._state = self._state.model_copy(update={"items": items, "status": status})
 
     @handles(ItemQuantityChanged)
     def _on_quantity_changed(self, event: ItemQuantityChanged) -> None:
@@ -132,33 +126,26 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
     @handles(CartCheckedOut)
     def _on_cart_checked_out(self, event: CartCheckedOut) -> None:
         if self._state:
-            updates = {
-                "status": "checked_out",
-                "checked_out_at": event.occurred_at,
-                "order_id": event.order_id,
-            }
-            self._state = self._state.model_copy(update=updates)
+            updates = {"status": "checked_out", "checked_out_at": event.occurred_at}
+            self._state = self._state.model_copy(update={**updates, "order_id": event.order_id})
 
     @handles(CartAbandoned)
     def _on_cart_abandoned(self, event: CartAbandoned) -> None:
         if self._state:
             self._state = self._state.model_copy(update={"status": "abandoned"})
 
-    def _require_state(self, verb: str = "modify") -> ShoppingCartState:
+    def _require_state(
+        self, verb: str = "modify", allowed: tuple[str, ...] = ("empty", "active")
+    ) -> ShoppingCartState:
         if not self.state:
             raise ValueError("Cart does not exist")
-        if self.state.status not in ("empty", "active"):
+        if self.state.status not in allowed:
             raise ValueError(f"Cannot {verb} {self.state.status} cart")
         return self.state
 
     def _emit(self, event_cls: type[DomainEvent], **kwargs: object) -> None:
-        self.apply_event(
-            event_cls(
-                aggregate_id=self.aggregate_id,
-                aggregate_version=self.get_next_version(),
-                **kwargs,
-            )
-        )
+        ver = self.get_next_version()
+        self.apply_event(event_cls(aggregate_id=self.aggregate_id, aggregate_version=ver, **kwargs))
 
     def create(self, customer_id: UUID) -> None:
         if self.version > 0:
@@ -173,13 +160,8 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
             raise ValueError("Quantity must be positive")
         if unit_price < 0:
             raise ValueError("Price cannot be negative")
-        self._emit(
-            ItemAddedToCart,
-            product_id=product_id,
-            product_name=product_name,
-            quantity=quantity,
-            unit_price=unit_price,
-        )
+        item = {"product_id": product_id, "product_name": product_name, "quantity": quantity}
+        self._emit(ItemAddedToCart, **item, unit_price=unit_price)
 
     def remove_item(self, product_id: UUID) -> None:
         state = self._require_state("remove items from")
@@ -202,21 +184,15 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
         )
 
     def checkout(self) -> UUID:
-        if not self.state:
-            raise ValueError("Cart does not exist")
-        if self.state.status != "active":
-            raise ValueError(f"Cannot checkout {self.state.status} cart")
-        if not self.state.items:
+        state = self._require_state("checkout", ("active",))
+        if not state.items:
             raise ValueError("Cannot checkout empty cart")
         order_id = uuid4()
-        self._emit(CartCheckedOut, order_id=order_id, total_amount=self.state.total_amount)
+        self._emit(CartCheckedOut, order_id=order_id, total_amount=state.total_amount)
         return order_id
 
     def abandon(self, reason: str = "User abandoned") -> None:
-        if not self.state:
-            raise ValueError("Cart does not exist")
-        if self.state.status in ("checked_out", "abandoned"):
-            raise ValueError(f"Cannot abandon {self.state.status} cart")
+        self._require_state("abandon")
         self._emit(CartAbandoned, reason=reason)
 
 
