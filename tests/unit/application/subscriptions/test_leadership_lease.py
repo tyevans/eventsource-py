@@ -22,9 +22,7 @@ from eventsource.application.subscriptions import (
     SubscriptionState,
     verify_leadership_lease,
 )
-from eventsource.application.subscriptions.coordination import (
-    WorkRedistributionCoordinator,
-)
+from eventsource.application.subscriptions.coordination import WorkRedistributionCoordinator
 from eventsource.application.subscriptions.lifecycle import SubscriptionLifecycleManager
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry, register_event
@@ -141,10 +139,7 @@ class TestSubscriptionLifecycleManagerLeadership:
         test_subscription: Subscription,
     ) -> None:
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=None,
+            event_store, event_bus, checkpoint_repo, leader_elector=None
         )
         assert await lifecycle.verify_leadership_lease() is True
         await lifecycle.start_subscription(test_subscription)
@@ -160,12 +155,8 @@ class TestSubscriptionLifecycleManagerLeadership:
     ) -> None:
         elector = InMemoryLeaderElector("instance-alpha")
         await elector.try_acquire()
-
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=elector,
+            event_store, event_bus, checkpoint_repo, leader_elector=elector
         )
         await lifecycle.start_subscription(test_subscription)
         assert test_subscription.state == SubscriptionState.LIVE
@@ -180,15 +171,10 @@ class TestSubscriptionLifecycleManagerLeadership:
     ) -> None:
         elector = ExpiringLeaseLeaderElector("follower-node", initial_leader=False)
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=elector,
+            event_store, event_bus, checkpoint_repo, leader_elector=elector
         )
-
         with pytest.raises(TransitionError) as exc_info:
             await lifecycle.start_subscription(test_subscription)
-
         assert "unauthorized cluster transition blocked" in str(exc_info.value)
         assert "follower-node" in str(exc_info.value)
         assert test_subscription.state == SubscriptionState.ERROR
@@ -202,17 +188,11 @@ class TestSubscriptionLifecycleManagerLeadership:
     ) -> None:
         elector = ExpiringLeaseLeaderElector("leader-expired", initial_leader=True)
         elector.expire_lease()
-
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=elector,
+            event_store, event_bus, checkpoint_repo, leader_elector=elector
         )
-
         with pytest.raises(TransitionError) as exc_info:
             await lifecycle.start_subscription(test_subscription)
-
         assert "unauthorized cluster transition blocked" in str(exc_info.value)
         assert test_subscription.state == SubscriptionState.ERROR
 
@@ -226,17 +206,11 @@ class TestSubscriptionLifecycleManagerLeadership:
         elector = InMemoryLeaderElector("worker-1")
         await elector.try_acquire()
         await elector.force_lose_leadership()
-
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=elector,
+            event_store, event_bus, checkpoint_repo, leader_elector=elector
         )
-
         with pytest.raises(TransitionError):
             await lifecycle.start_subscription(test_subscription)
-
         assert test_subscription.state == SubscriptionState.ERROR
 
     async def test_start_all_captures_lease_expiration_error(
@@ -248,14 +222,9 @@ class TestSubscriptionLifecycleManagerLeadership:
     ) -> None:
         elector = ExpiringLeaseLeaderElector("cluster-leader", initial_leader=True)
         elector.expire_lease()
-
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=elector,
+            event_store, event_bus, checkpoint_repo, leader_elector=elector
         )
-
         results = await lifecycle.start_all([test_subscription])
         assert test_subscription.name in results
         assert isinstance(results[test_subscription.name], TransitionError)
@@ -269,14 +238,9 @@ class TestSubscriptionLifecycleManagerLeadership:
     ) -> None:
         elector = ExpiringLeaseLeaderElector("failing-backend", initial_leader=True)
         elector.simulate_backend_error(ConnectionError("Advisory lock lost connection to Postgres"))
-
         lifecycle = SubscriptionLifecycleManager(
-            event_store=event_store,
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            leader_elector=elector,
+            event_store, event_bus, checkpoint_repo, leader_elector=elector
         )
-
         assert await lifecycle.verify_leadership_lease() is False
         with pytest.raises(TransitionError):
             await lifecycle.start_subscription(test_subscription)
@@ -288,16 +252,9 @@ class TestWorkRedistributionCoordinatorLeadership:
     async def test_create_work_assignment_succeeds_when_leader(self) -> None:
         elector = InMemoryLeaderElector("leader-node")
         await elector.try_acquire()
-
-        coordinator = WorkRedistributionCoordinator(
-            instance_id="leader-node",
-            leader_elector=elector,
-        )
-
+        coordinator = WorkRedistributionCoordinator("leader-node", leader_elector=elector)
         assignment = await coordinator.create_work_assignment(
-            target_instance_id="worker-node-1",
-            subscriptions=["projection-orders"],
-            priority=5,
+            target_instance_id="worker-node-1", subscriptions=["projection-orders"], priority=5
         )
         assert assignment.target_instance_id == "worker-node-1"
         assert assignment.subscriptions == ("projection-orders",)
@@ -305,52 +262,33 @@ class TestWorkRedistributionCoordinatorLeadership:
         assert assignment.priority == 5
 
     async def test_create_work_assignment_uncoordinated_succeeds(self) -> None:
-        coordinator = WorkRedistributionCoordinator(
-            instance_id="standalone-node",
-            leader_elector=None,
-        )
-
+        coordinator = WorkRedistributionCoordinator("standalone-node", leader_elector=None)
         assignment = await coordinator.create_work_assignment(
-            target_instance_id="peer-1",
-            subscriptions=["projection-1"],
+            target_instance_id="peer-1", subscriptions=["projection-1"]
         )
         assert assignment.target_instance_id == "peer-1"
 
     async def test_create_work_assignment_raises_when_lease_expired(self) -> None:
         elector = ExpiringLeaseLeaderElector("split-brain-leader", initial_leader=True)
         elector.expire_lease()
-
-        coordinator = WorkRedistributionCoordinator(
-            instance_id="split-brain-leader",
-            leader_elector=elector,
-        )
-
+        coordinator = WorkRedistributionCoordinator("split-brain-leader", leader_elector=elector)
         with pytest.raises(TransitionError) as exc_info:
             await coordinator.create_work_assignment(
-                target_instance_id="worker-2",
-                subscriptions=["orders"],
+                target_instance_id="worker-2", subscriptions=["orders"]
             )
         assert "cannot issue work assignment" in str(exc_info.value)
 
     async def test_initiate_leadership_handoff_verifies_renewal(self) -> None:
         elector = InMemoryLeaderElector("leader-1")
         await elector.try_acquire()
-
-        coordinator = WorkRedistributionCoordinator(
-            instance_id="leader-1",
-            leader_elector=elector,
-        )
+        coordinator = WorkRedistributionCoordinator("leader-1", leader_elector=elector)
         assert await coordinator.initiate_leadership_handoff() is True
         assert elector.is_leader is False
 
     async def test_initiate_leadership_handoff_skips_when_lease_expired(self) -> None:
         elector = ExpiringLeaseLeaderElector("leader-lost", initial_leader=True)
         elector.expire_lease()
-
-        coordinator = WorkRedistributionCoordinator(
-            instance_id="leader-lost",
-            leader_elector=elector,
-        )
+        coordinator = WorkRedistributionCoordinator("leader-lost", leader_elector=elector)
         assert await coordinator.initiate_leadership_handoff() is False
 
 
