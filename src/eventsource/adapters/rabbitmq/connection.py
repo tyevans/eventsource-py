@@ -94,14 +94,23 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                 self._stats.connected_at = datetime.now(UTC)
                 tls_on = ssl_context is not None
                 tls_status = "TLS" if tls_on else "plaintext"
-                info_ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name}
-                info_ex.update(queue=cfg.queue_name, consumer_group=cfg.consumer_group)
-                info_ex.update(dlq_enabled=cfg.enable_dlq, tls_enabled=tls_on)
+                info_ex = {
+                    "rabbitmq_url": s_url,
+                    "exchange": cfg.exchange_name,
+                    "queue": cfg.queue_name,
+                    "consumer_group": cfg.consumer_group,
+                    "dlq_enabled": cfg.enable_dlq,
+                    "tls_enabled": tls_on,
+                }
                 msg = f"Connected to RabbitMQ ({tls_status}) and initialized topology"
                 logger.info(msg, extra=info_ex)
             except ssl.SSLError as e:
-                ex = {"rabbitmq_url": s_url, "error": str(e), "error_type": type(e).__name__}
-                ex["tls_enabled"] = ssl_context is not None
+                ex: dict[str, Any] = {
+                    "rabbitmq_url": s_url,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "tls_enabled": ssl_context is not None,
+                }
                 logger.error(f"SSL error connecting to RabbitMQ: {e}", exc_info=True, extra=ex)
                 await self.disconnect()
                 raise
