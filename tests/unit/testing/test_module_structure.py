@@ -7,13 +7,13 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+import eventsource.testing
+from eventsource.domain.aggregate import AggregateRoot
+from eventsource.domain.event import DomainEvent
+
 
 class TestModuleImportable:
-    """Tests that the testing module and submodules are importable."""
-
     def test_module_importable(self) -> None:
-        import eventsource.testing
-
         assert eventsource.testing is not None
 
     def test_builder_module_importable(self) -> None:
@@ -38,8 +38,6 @@ class TestModuleImportable:
 
 
 class TestClassesImportable:
-    """Tests that all classes can be imported from the testing module."""
-
     def test_event_builder_importable(self) -> None:
         from eventsource.testing import EventBuilder
 
@@ -57,8 +55,6 @@ class TestClassesImportable:
 
 
 class TestBDDHelpersImportable:
-    """Tests that all BDD helpers can be imported from the testing module."""
-
     def test_given_events_importable(self) -> None:
         from eventsource.testing import given_events
 
@@ -99,35 +95,31 @@ class TestBDDHelpersImportable:
             when_command,
         )
 
-        assert given_events is not None
-        assert when_command is not None
-        assert then_event_published is not None
-        assert then_no_events_published is not None
-        assert then_event_sequence is not None
-        assert then_event_count is not None
+        helpers = (
+            given_events,
+            when_command,
+            then_event_published,
+            then_no_events_published,
+            then_event_sequence,
+            then_event_count,
+        )
+        assert None not in helpers
 
 
 class TestAllExports:
-    """Tests that __all__ contains all expected exports."""
-
     def test_all_exports_defined(self) -> None:
         from eventsource.testing import __all__
 
-        assert __all__ is not None
-        assert isinstance(__all__, list)
+        assert __all__ is not None and isinstance(__all__, list)
 
     def test_all_contains_no_duplicates_or_stale_names(self) -> None:
-        import eventsource.testing
         from eventsource.testing import __all__
 
         assert len(__all__) == len(set(__all__)), "__all__ contains duplicate entries"
         for name in __all__:
-            assert hasattr(eventsource.testing, name), (
-                f"__all__ lists '{name}' but it is not an attribute of eventsource.testing"
-            )
+            assert hasattr(eventsource.testing, name), f"'{name}' missing from eventsource.testing"
 
     def test_all_contains_every_public_export(self) -> None:
-        import eventsource.testing
         from eventsource.testing import __all__
 
         public_attrs = {
@@ -136,32 +128,23 @@ class TestAllExports:
             if not name.startswith("_")
             and not isinstance(getattr(eventsource.testing, name), types.ModuleType)
         }
-        missing = public_attrs - set(__all__)
-        assert not missing, f"Public attributes missing from __all__: {missing}"
+        assert not (public_attrs - set(__all__))
 
     def test_all_exports_are_importable(self) -> None:
-        import eventsource.testing
         from eventsource.testing import __all__
 
         for name in __all__:
-            obj = getattr(eventsource.testing, name, None)
-            assert obj is not None, f"Export '{name}' is None or missing"
+            assert getattr(eventsource.testing, name, None) is not None, f"Export '{name}' missing"
 
 
 class TestPortConformanceSuitesReExported:
-    """The port conformance suites are part of the public testing surface."""
-
     def test_port_suites_importable_from_testing(self) -> None:
-        import eventsource.testing
         from eventsource.testing import conformance_ports
 
-        missing = [
-            name for name in conformance_ports.__all__ if not hasattr(eventsource.testing, name)
-        ]
+        missing = [n for n in conformance_ports.__all__ if not hasattr(eventsource.testing, n)]
         assert not missing, f"conformance_ports suites not re-exported: {missing}"
 
     def test_port_suites_are_the_same_objects(self) -> None:
-        import eventsource.testing
         from eventsource.testing import conformance_ports
 
         for name in conformance_ports.__all__:
@@ -170,38 +153,30 @@ class TestPortConformanceSuitesReExported:
     def test_port_suites_listed_in_all(self) -> None:
         from eventsource.testing import __all__, conformance_ports
 
-        missing = set(conformance_ports.__all__) - set(__all__)
-        assert not missing, f"conformance_ports suites missing from __all__: {missing}"
+        assert not (set(conformance_ports.__all__) - set(__all__))
 
     def test_named_suite_import_works(self) -> None:
         from eventsource.testing import AppenderConformance, StreamReaderConformance
 
-        assert AppenderConformance is not None
-        assert StreamReaderConformance is not None
+        assert AppenderConformance is not None and StreamReaderConformance is not None
 
 
 class TestImplementationStatus:
-    """Tests that all components are fully implemented."""
-
     def test_event_builder_is_implemented(self) -> None:
-        from eventsource.domain.event import DomainEvent
         from eventsource.testing import EventBuilder
 
         class TestEvent(DomainEvent):
             aggregate_type: str = "Test"
 
         builder = EventBuilder(TestEvent)
-        assert builder is not None
-        assert isinstance(builder.build(), TestEvent)
+        assert builder is not None and isinstance(builder.build(), TestEvent)
 
     def test_harness_is_implemented(self) -> None:
         from eventsource.testing import InMemoryTestHarness
 
         harness = InMemoryTestHarness()
-        assert harness is not None
-        assert harness.event_store is not None
-        assert harness.event_bus is not None
-        assert harness.published_events == []
+        assert harness is not None and harness.event_store is not None
+        assert harness.event_bus is not None and harness.published_events == []
 
     def test_assertions_is_implemented(self) -> None:
         from eventsource.testing import EventAssertions
@@ -217,8 +192,6 @@ class TestImplementationStatus:
         await given_events(InMemoryTestHarness(), [])
 
     def test_when_command_is_implemented(self) -> None:
-        from eventsource.domain.aggregate import AggregateRoot
-        from eventsource.domain.event import DomainEvent
         from eventsource.testing import when_command
 
         class TestState(BaseModel):
@@ -236,11 +209,9 @@ class TestImplementationStatus:
             def do_nothing(self) -> None:
                 pass
 
-        events = when_command(TestAggregate(uuid4()), lambda a: a.do_nothing())
-        assert events == []
+        assert when_command(TestAggregate(uuid4()), lambda a: a.do_nothing()) == []
 
     def test_then_event_published_is_implemented(self) -> None:
-        from eventsource.domain.event import DomainEvent
         from eventsource.testing import InMemoryTestHarness, then_event_published
 
         class TestEvent(DomainEvent):
@@ -257,8 +228,6 @@ class TestImplementationStatus:
 
 
 class TestTypeAnnotations:
-    """Tests that type annotations are present and valid."""
-
     def test_event_builder_has_type_parameter(self) -> None:
         from eventsource.testing import EventBuilder
 
@@ -274,7 +243,4 @@ class TestTypeAnnotations:
 
         for func in [given_events, when_command, then_event_published, then_no_events_published]:
             sig = inspect.signature(func)
-            has_annotations = any(
-                p.annotation != inspect.Parameter.empty for p in sig.parameters.values()
-            )
-            assert has_annotations, f"{func.__name__} missing type hints"
+            assert any(p.annotation != inspect.Parameter.empty for p in sig.parameters.values())

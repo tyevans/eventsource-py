@@ -6,11 +6,7 @@ import pytest
 
 from eventsource.application.subscriptions import SubscriptionConfig
 
-from .conftest import (
-    CollectingProjection,
-    populate_event_store,
-    publish_live_event,
-)
+from .conftest import CollectingProjection, populate_event_store, publish_live_event
 
 pytestmark = pytest.mark.asyncio
 
@@ -36,19 +32,15 @@ class TestSeamlessTransition:
         """Test seamless transition from catch-up to live."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         success = await projection.wait_for_events(50)
         assert success, f"Expected 50 events, got {projection.event_count}"
-
         for i in range(50, 60):
             await publish_live_event(
                 in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}", amount=100.0 + i
             )
-
         success = await projection.wait_for_events(60)
         assert success, f"Expected 60 events, got {projection.event_count}"
         assert projection.event_count == 60
@@ -63,15 +55,12 @@ class TestSeamlessTransition:
         """Test event order is maintained across transition."""
         await populate_event_store(in_memory_event_store, 30)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await projection.wait_for_events(30)
 
         for i in range(30, 40):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}")
-
         await projection.wait_for_events(40)
         for i in range(40):
             assert projection.events[i].order_number == f"ORD-{i:05d}"
@@ -90,16 +79,12 @@ class TestNoDuplicatesDuringTransition:
         """Test no events are duplicated during transition."""
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
-        success = await projection.wait_for_events(100)
-        assert success
+        assert await projection.wait_for_events(100)
         assert projection.event_count == 100
         assert not projection.has_duplicates()
-
         event_ids = [str(e.event_id) for e in projection.events]
         assert len(event_ids) == len(set(event_ids))
 
@@ -113,19 +98,12 @@ class TestNoDuplicatesDuringTransition:
         """Test no duplicates when live events arrive during catch-up."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await projection.wait_for_events(50)
 
-        live_events = []
         for i in range(50, 60):
-            event = await publish_live_event(
-                in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}"
-            )
-            live_events.append(event)
-
+            await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}")
         await projection.wait_for_events(60)
         assert projection.event_count == 60
         assert not projection.has_duplicates()
@@ -144,9 +122,7 @@ class TestNoGapDuringTransition:
         """Test no events are lost during transition."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         start_task = asyncio.create_task(subscription_manager.start())
 
         for i in range(50, 75):
@@ -156,16 +132,10 @@ class TestNoGapDuringTransition:
             await asyncio.sleep(0.01)
 
         await start_task
-        success = await projection.wait_for_events(75, timeout=10.0)
-        assert success, f"Expected 75 events, got {projection.event_count}"
+        assert await projection.wait_for_events(75, timeout=10.0)
         assert projection.event_count >= 75
-
-        order_numbers = sorted([e.order_number for e in projection.events])
-        for i, order_num in enumerate(order_numbers):
-            expected = f"ORD-{i:05d}"
-            assert order_num == expected, (
-                f"Gap at position {i}: expected {expected}, got {order_num}"
-            )
+        for i, order_num in enumerate(sorted(e.order_number for e in projection.events)):
+            assert order_num == f"ORD-{i:05d}", f"Gap at position {i}: got {order_num}"
 
     async def test_continuous_event_stream_during_transition(
         self,
@@ -177,9 +147,7 @@ class TestNoGapDuringTransition:
         """Test handling continuous event stream during transition."""
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
 
         async def publish_continuously():
             for i in range(100, 150):
@@ -192,11 +160,8 @@ class TestNoGapDuringTransition:
         await subscription_manager.start()
         await publish_task
 
-        success = await projection.wait_for_events(150, timeout=15.0)
-        assert success, f"Expected 150 events, got {projection.event_count}"
-
-        order_numbers = sorted([e.order_number for e in projection.events])
-        for i, order_num in enumerate(order_numbers):
+        assert await projection.wait_for_events(150, timeout=15.0)
+        for i, order_num in enumerate(sorted(e.order_number for e in projection.events)):
             assert order_num == f"ORD-{i:05d}"
 
 
@@ -214,26 +179,18 @@ class TestTransitionWithMultipleSubscribers:
         await populate_event_store(in_memory_event_store, 50)
         projection1 = CollectingProjection(name="Projection1")
         projection2 = CollectingProjection(name="Projection2")
-
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection1, config, name="Projection1")
         await subscription_manager.subscribe(projection2, config, name="Projection2")
         await subscription_manager.start()
 
-        success1 = await projection1.wait_for_events(50)
-        success2 = await projection2.wait_for_events(50)
-        assert success1 and success2
-
+        assert await projection1.wait_for_events(50) and await projection2.wait_for_events(50)
         for i in range(50, 60):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}")
-
         await projection1.wait_for_events(60)
         await projection2.wait_for_events(60)
-
-        assert projection1.event_count == 60
-        assert projection2.event_count == 60
-        assert not projection1.has_duplicates()
-        assert not projection2.has_duplicates()
+        assert projection1.event_count == 60 and projection2.event_count == 60
+        assert not projection1.has_duplicates() and not projection2.has_duplicates()
 
 
 class TestTransitionPhases:
@@ -249,14 +206,10 @@ class TestTransitionPhases:
         """Test subscription is in LIVE state after successful transition."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await projection.wait_for_events(50)
-
-        subscription = subscription_manager.get_subscription("CollectingProjection")
-        assert subscription.state.value == "live"
+        assert subscription_manager.get_subscription("CollectingProjection").state.value == "live"
 
     async def test_position_tracking_during_transition(
         self,
@@ -268,13 +221,8 @@ class TestTransitionPhases:
         """Test position is tracked correctly during transition."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await projection.wait_for_events(50)
-
-        subscription = subscription_manager.get_subscription("CollectingProjection")
-        assert subscription.last_processed_position >= await position_after(
-            in_memory_event_store, 50
-        )
+        sub = subscription_manager.get_subscription("CollectingProjection")
+        assert sub.last_processed_position >= await position_after(in_memory_event_store, 50)
