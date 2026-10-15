@@ -26,22 +26,16 @@ from eventsource.ports.handlers import (
 
 
 class AdditionalTestEvent(DomainEvent):
-    """Test event for unit tests."""
-
     aggregate_type: str = "Test"
     data: str = ""
 
 
 class AnotherCoverageEvent(DomainEvent):
-    """Another test event."""
-
     aggregate_type: str = "Test"
     value: int = 0
 
 
 class TestProjectionAbstractMethods:
-    """Tests for abstract projection methods."""
-
     def test_projection_requires_handle_implementation(self):
         with pytest.raises(TypeError):
 
@@ -71,8 +65,6 @@ class TestProjectionAbstractMethods:
 
 
 class TestCheckpointTrackingProjectionDLQFailure:
-    """Tests for DLQ write failure handling."""
-
     @pytest.mark.asyncio
     async def test_dlq_write_failure_is_logged(self):
         class TestProjection(CheckpointTrackingProjection):
@@ -87,11 +79,11 @@ class TestCheckpointTrackingProjectionDLQFailure:
             async def reset(self):
                 pass
 
-        failing_dlq = AsyncMock()
-        failing_dlq.add_failed_event = AsyncMock(side_effect=Exception("DLQ write failed"))
+        failing_dlq = AsyncMock(
+            add_failed_event=AsyncMock(side_effect=Exception("DLQ write failed"))
+        )
         projection = TestProjection(
-            checkpoint_repo=InMemoryCheckpointRepository(),
-            dlq_repo=failing_dlq,
+            checkpoint_repo=InMemoryCheckpointRepository(), dlq_repo=failing_dlq
         )
         event = AdditionalTestEvent(aggregate_id=uuid4(), data="test")
 
@@ -102,8 +94,6 @@ class TestCheckpointTrackingProjectionDLQFailure:
 
 
 class TestDeclarativeProjectionEdgeCases:
-    """Tests for DeclarativeProjection edge cases."""
-
     @pytest.mark.asyncio
     async def test_handler_with_self_only(self):
         class SelfOnlyProjection(DeclarativeProjection):
@@ -122,14 +112,11 @@ class TestDeclarativeProjectionEdgeCases:
                 self.events.clear()
 
         proj = SelfOnlyProjection()
-        event = AdditionalTestEvent(aggregate_id=uuid4(), data="test")
-        await proj.handle(event)
+        await proj.handle(AdditionalTestEvent(aggregate_id=uuid4(), data="test"))
         assert len(proj.events) == 1
 
 
 class TestAsyncEventHandlerABC:
-    """Tests for AsyncEventHandler abstract base class."""
-
     def test_can_handle_default_implementation(self):
         class MyHandler(AsyncEventHandler):
             def event_types(self):
@@ -139,15 +126,11 @@ class TestAsyncEventHandlerABC:
                 pass
 
         handler = MyHandler()
-        test_event = AdditionalTestEvent(aggregate_id=uuid4())
-        another_event = AnotherCoverageEvent(aggregate_id=uuid4())
-        assert handler.can_handle(test_event) is True
-        assert handler.can_handle(another_event) is False
+        assert handler.can_handle(AdditionalTestEvent(aggregate_id=uuid4())) is True
+        assert handler.can_handle(AnotherCoverageEvent(aggregate_id=uuid4())) is False
 
 
 class TestAggregateRootAbstractMethods:
-    """Tests for AggregateRoot abstract methods."""
-
     def test_aggregate_root_requires_apply_implementation(self):
         with pytest.raises(TypeError):
 
@@ -168,11 +151,7 @@ class TestAggregateRootAbstractMethods:
 
 
 class TestDeclarativeAggregateClass:
-    """Tests for DeclarativeAggregate."""
-
     def test_declarative_aggregate_with_no_handlers(self):
-        """Test declarative aggregate with no handlers ignores events when opted in."""
-
         class EmptyAggregate(DeclarativeAggregate[dict]):
             aggregate_type = "EmptyAggregate"
             unregistered_event_handling = "ignore"
@@ -181,21 +160,17 @@ class TestDeclarativeAggregateClass:
                 return {}
 
         agg = EmptyAggregate(uuid4())
-        event = AdditionalTestEvent(aggregate_id=agg.aggregate_id, data="test")
-        agg._apply(event)
+        agg._apply(AdditionalTestEvent(aggregate_id=agg.aggregate_id, data="test"))
         assert agg.state is None or agg.state == {}
 
 
 class TestProtocolCompliance:
-    """Tests for protocol compliance."""
-
     def test_event_handler_protocol_with_async_method(self):
         class AsyncHandler:
             async def handle(self, event: DomainEvent) -> None:
                 pass
 
-        handler = AsyncHandler()
-        assert isinstance(handler, EventHandler)
+        assert isinstance(AsyncHandler(), EventHandler)
 
     def test_event_subscriber_protocol(self):
         class MySubscriber:
@@ -205,5 +180,4 @@ class TestProtocolCompliance:
             async def handle(self, event):
                 pass
 
-        subscriber = MySubscriber()
-        assert isinstance(subscriber, FlexibleEventSubscriber)
+        assert isinstance(MySubscriber(), FlexibleEventSubscriber)

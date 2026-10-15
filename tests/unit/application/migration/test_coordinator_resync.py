@@ -47,11 +47,8 @@ def _migration(phase: MigrationPhase, config: MigrationConfig | None = None) -> 
 async def _record_one_mirror_failure(
     interceptor: DualWriteInterceptor, stream: StreamId, event: DomainEvent
 ) -> None:
-    """Force exactly one mirror failure through `interceptor`, then restore it."""
     real_target = interceptor._target
-    failing_target = AsyncMock()
-    failing_target.append = AsyncMock(side_effect=Exception("mirror unavailable"))
-    interceptor._target = failing_target
+    interceptor._target = AsyncMock(append=AsyncMock(side_effect=Exception("mirror unavailable")))
     try:
         await interceptor.append(stream, [event], ExpectedVersion.any_())
     finally:
@@ -64,8 +61,7 @@ class TestBuildCopierWiring:
         coordinator = MigrationCoordinator(
             **coordinator_deps, position_mapper=mapper, enable_tracing=False
         )
-        migration = _migration(MigrationPhase.BULK_COPY)
-        copier = coordinator._build_copier(migration, AsyncMock())
+        copier = coordinator._build_copier(_migration(MigrationPhase.BULK_COPY), AsyncMock())
         assert copier._position_mapper is mapper
 
     def test_mapper_is_withheld_when_mapping_is_disabled(self, coordinator_deps: dict) -> None:
@@ -75,8 +71,7 @@ class TestBuildCopierWiring:
         migration = _migration(
             MigrationPhase.BULK_COPY, MigrationConfig(position_mapping_enabled=False)
         )
-        copier = coordinator._build_copier(migration, AsyncMock())
-        assert copier._position_mapper is None
+        assert coordinator._build_copier(migration, AsyncMock())._position_mapper is None
 
     def test_no_mapper_on_the_coordinator_means_no_mapper_on_the_copier(
         self, coordinator_deps: dict
@@ -89,11 +84,9 @@ class TestBuildCopierWiring:
         self, coordinator_deps: dict
     ) -> None:
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-        migration = _migration(MigrationPhase.DUAL_WRITE)
-        target = AsyncMock()
+        migration, target = _migration(MigrationPhase.DUAL_WRITE), AsyncMock()
         coordinator._target_stores[migration.id] = target
-        copier = coordinator._build_copier(migration)
-        assert copier._target is target
+        assert coordinator._build_copier(migration)._target is target
 
     def test_missing_target_store_raises(self, coordinator_deps: dict) -> None:
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
@@ -130,23 +123,21 @@ class TestDefaultPathRecordsMappings:
         migration = _migration(MigrationPhase.BULK_COPY, config)
         source = InMemoryEventStore(event_registry=make_conformance_registry())
         target = InMemoryEventStore(event_registry=make_conformance_registry())
-        aggregate_id = uuid4()
-        stream = StreamId(aggregate_id=aggregate_id, category="Conformance")
-        await source.append(
-            stream,
-            [
-                ConformanceEvent(aggregate_id=aggregate_id, tenant_id=migration.tenant_id)
-                for _ in range(3)
-            ],
-            ExpectedVersion.no_stream(),
-        )
+        agg_id = uuid4()
+        stream = StreamId(aggregate_id=agg_id, category="Conformance")
+        evts = [
+            ConformanceEvent(aggregate_id=agg_id, tenant_id=migration.tenant_id) for _ in (1, 2, 3)
+        ]
+        await source.append(stream, evts, ExpectedVersion.no_stream())
         coordinator_deps["source_store"] = source
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
-        coordinator_deps["migration_repo"].set_events_total = AsyncMock()
-        coordinator_deps["migration_repo"].update_progress = AsyncMock()
-        coordinator_deps["migration_repo"].record_error = AsyncMock()
-        mapper = AsyncMock()
-        mapper.record_mapping = AsyncMock()
+        repo = coordinator_deps["migration_repo"]
+        repo.get = AsyncMock(return_value=migration)
+        repo.set_events_total, repo.update_progress, repo.record_error = (
+            AsyncMock(),
+            AsyncMock(),
+            AsyncMock(),
+        )
+        mapper = AsyncMock(record_mapping=AsyncMock())
         coordinator = MigrationCoordinator(
             **coordinator_deps, position_mapper=mapper, enable_tracing=False
         )
@@ -171,40 +162,31 @@ class TestResyncThenStrictCutover:
         migration = _migration(MigrationPhase.DUAL_WRITE)
         source = InMemoryEventStore(event_registry=make_conformance_registry())
         target = InMemoryEventStore(event_registry=make_conformance_registry())
-        aggregate_id = uuid4()
-        stream = StreamId(aggregate_id=aggregate_id, category="Conformance")
-        await source.append(
-            stream,
-            [ConformanceEvent(aggregate_id=aggregate_id, tenant_id=migration.tenant_id)],
-            ExpectedVersion.no_stream(),
-        )
+        agg_id = uuid4()
+        stream = StreamId(aggregate_id=agg_id, category="Conformance")
+        evt = ConformanceEvent(aggregate_id=agg_id, tenant_id=migration.tenant_id)
+        await source.append(stream, [evt], ExpectedVersion.no_stream())
 
         async def _update_progress(
-            migration_id: UUID,
-            events_copied: int,
-            last_source_position: object,
-            last_target_position: object,
+            migration_id: UUID, events_copied: int, last_src: object, last_tgt: object
         ) -> None:
-            migration.last_source_position = last_source_position  # type: ignore[assignment]
+            migration.last_source_position = last_src  # type: ignore[assignment]
 
         coordinator_deps["source_store"] = source
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
-        coordinator_deps["migration_repo"].set_events_total = AsyncMock()
-        coordinator_deps["migration_repo"].update_progress = AsyncMock(side_effect=_update_progress)
-        coordinator_deps["migration_repo"].record_error = AsyncMock()
-
+        repo = coordinator_deps["migration_repo"]
+        repo.get = AsyncMock(return_value=migration)
+        repo.set_events_total, repo.record_error = AsyncMock(), AsyncMock()
+        repo.update_progress = AsyncMock(side_effect=_update_progress)
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
         coordinator._target_stores[migration.id] = target
         interceptor = coordinator._install_interceptor(migration, target)
-
         await _record_one_mirror_failure(
             interceptor,
             stream,
-            ConformanceEvent(aggregate_id=aggregate_id, tenant_id=migration.tenant_id),
+            ConformanceEvent(aggregate_id=agg_id, tenant_id=migration.tenant_id),
         )
         assert interceptor.safe_lag_anchor(migration.last_source_position) != (
             await source.current_position()
         )
-        remaining = await coordinator.run_resync_pass(migration.id)
-        assert remaining == 0
+        assert await coordinator.run_resync_pass(migration.id) == 0
         assert coordinator._lag_anchor(migration) == migration.last_source_position

@@ -39,11 +39,8 @@ def _setup_aio_pika_mocks(mock_aio_pika: MagicMock) -> AsyncMock:
 
 
 class TestOpenTelemetryTracing:
-    """Tests for OpenTelemetry tracing integration (P3-001)."""
-
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration with tracing enabled."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -53,7 +50,6 @@ class TestOpenTelemetryTracing:
 
     @pytest.fixture
     def config_no_tracing(self) -> RabbitMQEventBusConfig:
-        """Create test configuration with tracing disabled."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -62,20 +58,17 @@ class TestOpenTelemetryTracing:
         )
 
     def test_otel_available_exported(self) -> None:
-        """Test that OTEL_AVAILABLE is properly exported."""
         assert isinstance(OTEL_AVAILABLE, bool)
 
     def test_tracer_is_none_when_tracing_disabled(
         self, config_no_tracing: RabbitMQEventBusConfig
     ) -> None:
-        """Test that _tracer is disabled when tracing is disabled."""
         bus = RabbitMQEventBus(config=config_no_tracing)
         assert bus._publisher._tracer is not None
         assert bus._publisher._tracer.enabled is False
         assert bus._publisher._enable_tracing is False
 
     def test_tracer_set_when_enabled_and_available(self, config: RabbitMQEventBusConfig) -> None:
-        """Test that _tracer is set when enabled and available."""
         bus = RabbitMQEventBus(config=config)
         assert bus._publisher._tracer is not None
         if OTEL_AVAILABLE:
@@ -89,7 +82,6 @@ class TestOpenTelemetryTracing:
     async def test_publish_creates_span_when_tracing_enabled(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that publish creates a span when tracing is enabled."""
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
@@ -97,8 +89,7 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        mock_tracer = MagicMock()
-        mock_span = MagicMock()
+        mock_tracer, mock_span = MagicMock(), MagicMock()
         mock_tracer.start_span.return_value = mock_span
         bus._publisher._tracer = mock_tracer
 
@@ -111,7 +102,6 @@ class TestOpenTelemetryTracing:
     async def test_publish_span_has_correct_attributes(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that publish span includes correct attributes."""
         from eventsource.observability.attributes import (
             ATTR_EVENT_TYPE,
             ATTR_MESSAGING_DESTINATION,
@@ -125,13 +115,11 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        mock_tracer = MagicMock()
-        mock_span = MagicMock()
+        mock_tracer, mock_span = MagicMock(), MagicMock()
         mock_tracer.start_span.return_value = mock_span
         bus._publisher._tracer = mock_tracer
 
         await bus.publish([_make_test_event()])
-
         call_args = mock_tracer.start_span.call_args
         assert "eventsource.event_bus.publish" in call_args[0][0]
         attributes = call_args[1]["attributes"]
@@ -145,7 +133,6 @@ class TestOpenTelemetryTracing:
     async def test_publish_no_span_when_tracing_disabled(
         self, mock_aio_pika: MagicMock, config_no_tracing: RabbitMQEventBusConfig
     ) -> None:
-        """Test that publish does not create span when tracing is disabled."""
         mock_exchange = _setup_aio_pika_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config_no_tracing)
         await bus.connect()
@@ -162,18 +149,15 @@ class TestOpenTelemetryTracing:
     async def test_publish_span_records_exception_on_error(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that publish span records exception when publish fails."""
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
         mock_exchange = _setup_aio_pika_mocks(mock_aio_pika)
         mock_exchange.publish = AsyncMock(side_effect=Exception("Publish failed"))
-
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        mock_tracer = MagicMock()
-        mock_span = MagicMock()
+        mock_tracer, mock_span = MagicMock(), MagicMock()
         mock_tracer.start_span.return_value = mock_span
         bus._publisher._tracer = mock_tracer
 
@@ -186,23 +170,19 @@ class TestOpenTelemetryTracing:
     def test_create_message_with_tracing_injects_context(
         self, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that _create_message_with_tracing injects trace context."""
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
         event = _make_test_event()
         bus = RabbitMQEventBus(config=config)
-
         with patch("eventsource.adapters.rabbitmq.serialization.inject") as mock_inject:
             message = bus._create_message_with_tracing(event, MagicMock())
             mock_inject.assert_called_once()
             assert message is not None
 
     def test_create_message_with_tracing_without_span(self, config: RabbitMQEventBusConfig) -> None:
-        """Test that _create_message_with_tracing works without span."""
         event = _make_test_event()
         bus = RabbitMQEventBus(config=config)
-
         with patch("eventsource.adapters.rabbitmq.serialization.inject") as mock_inject:
             message = bus._create_message_with_tracing(event, None)
             mock_inject.assert_not_called()
