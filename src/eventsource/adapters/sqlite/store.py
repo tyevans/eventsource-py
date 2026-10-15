@@ -1,9 +1,4 @@
-"""SQLite adapter implementing the five store ports (`FullEventStore`).
-
-Positions are minted from `events.global_position` via `IntPositionCodec`.
-SQLite writers are serialized on a single shared connection under `_lock`,
-so no safe-horizon gap handling is required.
-"""
+"""SQLite adapter implementing `FullEventStore` (serialized under `_lock`, `IntPositionCodec`)."""
 
 from __future__ import annotations
 
@@ -66,20 +61,15 @@ class SQLiteEventStore:
         outbox_enabled: bool = False,
     ) -> None:
         if not AIOSQLITE_AVAILABLE:
-            raise ImportError(
-                "aiosqlite is required for SQLiteEventStore. "
-                "Install with: pip install eventsource[sqlite]"
-            )
-        self._database = database
-        self._event_registry = event_registry or default_registry
-        self._wal_mode = wal_mode
-        self._busy_timeout = busy_timeout
+            msg = "aiosqlite is required for SQLiteEventStore. Install with: pip install eventsource[sqlite]"
+            raise ImportError(msg)
+        self._database, self._event_registry = database, event_registry or default_registry
+        self._wal_mode, self._busy_timeout = wal_mode, busy_timeout
         self._outbox_enabled = outbox_enabled
         self._connection: aiosqlite.Connection | None = None
         self._store_id = store_id or f"sqlite:{database}"
         self._codec = IntPositionCodec(self._store_id)
-        self._lock = asyncio.Lock()
-        self._init_lock = asyncio.Lock()
+        self._lock, self._init_lock = asyncio.Lock(), asyncio.Lock()
 
     @property
     def store_id(self) -> str:
@@ -100,10 +90,8 @@ class SQLiteEventStore:
             try:
                 conn = await aiosqlite.connect(self._database)
             except (aiosqlite.Error, OSError) as e:
-                raise EventStoreConnectionError(
-                    f"could not open the SQLite database at {self._database!r}: {e}",
-                    store=type(self).__name__,
-                ) from e
+                msg = f"could not open the SQLite database at {self._database!r}: {e}"
+                raise EventStoreConnectionError(msg, store=type(self).__name__) from e
             await conn.execute("PRAGMA foreign_keys = ON")
             await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
             if self._wal_mode:
@@ -135,14 +123,9 @@ class SQLiteEventStore:
             msg = f"Unclosed {type(self).__name__} ({db!r}) {self!r}; call 'await store.close()' or use 'async with'"
             warnings.warn(msg, ResourceWarning, stacklevel=2, source=self)
 
-    async def _max_version(
-        self, conn: aiosqlite.Connection, aggregate_id: str, category: str
-    ) -> int:
-        cursor = await conn.execute(
-            "SELECT COALESCE(MAX(version), 0) FROM events WHERE aggregate_id = ? AND aggregate_type = ?",
-            (aggregate_id, category),
-        )
-        row = await cursor.fetchone()
+    async def _max_version(self, conn: aiosqlite.Connection, aid: str, category: str) -> int:
+        sql = "SELECT COALESCE(MAX(version), 0) FROM events WHERE aggregate_id = ? AND aggregate_type = ?"
+        row = await (await conn.execute(sql, (aid, category))).fetchone()
         return row[0] if row else 0
 
     async def append(
@@ -160,14 +143,16 @@ class SQLiteEventStore:
                 seen_in_batch: set[UUID] = set()
                 for event in events:
                     if event.event_id in seen_in_batch:
-                        raise DuplicateEventError(
-                            f"event_id {event.event_id} already exists in the store"
-                        )
+                        msg = f"event_id {event.event_id} already exists in the store"
+                        raise DuplicateEventError(msg)
                     seen_in_batch.add(event.event_id)
 
-                version = current_version
-                first_position: Position | None = None
-                now = datetime.now(UTC).isoformat()
+                version, first_position, now = current_version, None, datetime.now(UTC).isoformat()
+                sql = (
+                    "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, "
+                    "tenant_id, actor_id, version, timestamp, payload, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                )
                 for event in events:
                     version += 1
                     eid, etype, actor = str(event.event_id), event.event_type, event.actor_id
@@ -175,12 +160,7 @@ class SQLiteEventStore:
                     occ = event.occurred_at.isoformat()
                     payload = json_dumps(event.model_dump(mode="json"))
                     vals = (eid, etype, category, aid, tid, actor, version, occ, payload, now)
-                    cursor = await conn.execute(
-                        "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, "
-                        "tenant_id, actor_id, version, timestamp, payload, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        vals,
-                    )
+                    cursor = await conn.execute(sql, vals)
                     if first_position is None:
                         first_position = self._codec.encode(cursor.lastrowid or 0)
                     if self._outbox_enabled:
@@ -190,17 +170,14 @@ class SQLiteEventStore:
                 return AppendResult(stream=stream, new_version=version, position=first_position)
             except aiosqlite.IntegrityError as e:
                 await conn.rollback()
-                error_str = str(e).lower()
-                if "event_id" in error_str:
-                    raise DuplicateEventError(
-                        f"an event_id in this batch already exists in the store: {e}"
-                    ) from e
-                if "unique" in error_str and (
-                    "aggregate_id" in error_str or "version" in error_str
-                ):
-                    actual_version = await self._max_version(conn, aid, category)
+                err = str(e).lower()
+                if "event_id" in err:
+                    msg = f"an event_id in this batch already exists in the store: {e}"
+                    raise DuplicateEventError(msg) from e
+                if "unique" in err and ("aggregate_id" in err or "version" in err):
+                    actual = await self._max_version(conn, aid, category)
                     raise OptimisticLockError(
-                        stream.aggregate_id, describe_expected(expected), actual_version
+                        stream.aggregate_id, describe_expected(expected), actual
                     ) from e
                 raise
             except BaseException:
@@ -210,7 +187,6 @@ class SQLiteEventStore:
     async def _write_to_outbox(
         self, conn: aiosqlite.Connection, event: DomainEvent, category: str, now: str
     ) -> None:
-        """Write one outbox row for `event` on `conn` inside the append transaction."""
         eid, aid = str(event.event_id), str(event.aggregate_id)
         tid = str(event.tenant_id) if event.tenant_id else None
         data = json_dumps(outbox_event_data(event))
@@ -244,10 +220,8 @@ class SQLiteEventStore:
     async def event_exists(self, event_id: UUID) -> bool:
         conn = await self._conn()
         async with self._lock:
-            cursor = await conn.execute(
-                "SELECT 1 FROM events WHERE event_id = ? LIMIT 1", (str(event_id),)
-            )
-            return await cursor.fetchone() is not None
+            sql = "SELECT 1 FROM events WHERE event_id = ? LIMIT 1"
+            return await (await conn.execute(sql, (str(event_id),))).fetchone() is not None
 
     def read_all(
         self, from_position: Position | None = None, options: FeedReadOptions | None = None
@@ -258,8 +232,7 @@ class SQLiteEventStore:
         self, from_position: Position | None, options: FeedReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         pos_val = self._codec.value_of(from_position) if from_position is not None else None
-        sql, params = build_read_all_query(pos_val, options)
-        async for env in self._fetch_envelopes(sql, params):
+        async for env in self._fetch_envelopes(*build_read_all_query(pos_val, options)):
             yield env
 
     async def current_position(self) -> Position | None:

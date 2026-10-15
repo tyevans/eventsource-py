@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from eventsource.application.subscriptions.runners.catchup import CatchUpRunner
 from eventsource.application.subscriptions.runners.live import LiveRunner
-from eventsource.application.subscriptions.subscription import (
-    Subscription,
-    render_position,
-)
+from eventsource.application.subscriptions.subscription import Subscription, render_position
 from eventsource.application.subscriptions.transition_models import (
     TransitionPhase,
     TransitionResult,
@@ -49,13 +46,13 @@ class TransitionExecutionMixin:
         _catchup_runner: CatchUpRunner | None
         _live_runner: LiveRunner | None
 
-    async def execute(self) -> TransitionResult:
-        """
-        Execute the catch-up to live transition.
+    def _set_phase(self, phase: TransitionPhase, span: Any) -> None:
+        self._phase = phase
+        if span:
+            span.set_attribute(ATTR_SUBSCRIPTION_PHASE, phase.value)
 
-        Returns:
-            TransitionResult with transition statistics and outcome
-        """
+    async def execute(self) -> TransitionResult:
+        """Execute the catch-up to live transition."""
         with self._tracer.span(
             "eventsource.transition_coordinator.execute",
             {
@@ -63,18 +60,13 @@ class TransitionExecutionMixin:
                 ATTR_POSITION: render_position(self.subscription.last_processed_position),
             },
         ) as span:
-            catchup_processed = 0
-            buffer_processed = 0
+            catchup_processed = buffer_processed = 0
 
             try:
-                # Phase 1: Initial setup and watermark
-                self._phase = TransitionPhase.INITIAL_CATCHUP
+                self._set_phase(TransitionPhase.INITIAL_CATCHUP, span)
                 self._watermark = watermark = await self.event_store.current_position()
-
-                if span:
-                    if (token := render_position(self._watermark)) is not None:
-                        span.set_attribute(ATTR_WATERMARK, token)
-                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
+                if span and (token := render_position(self._watermark)) is not None:
+                    span.set_attribute(ATTR_WATERMARK, token)
 
                 logger.info(
                     "Transition starting",
@@ -98,8 +90,7 @@ class TransitionExecutionMixin:
                         },
                     )
                     await self._start_live_directly()
-                    if span:
-                        span.set_attribute(ATTR_SUBSCRIPTION_PHASE, TransitionPhase.LIVE.value)
+                    self._set_phase(TransitionPhase.LIVE, span)
                     return TransitionResult(
                         success=True,
                         catchup_events_processed=0,
@@ -108,11 +99,7 @@ class TransitionExecutionMixin:
                         phase_reached=TransitionPhase.LIVE,
                     )
 
-                # Phase 2: Subscribe to live events (buffering)
-                self._phase = TransitionPhase.LIVE_SUBSCRIBED
-                if span:
-                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
-
+                self._set_phase(TransitionPhase.LIVE_SUBSCRIBED, span)
                 self._live_runner = LiveRunner(
                     event_bus=self.event_bus,
                     checkpoint_repo=self.checkpoint_repo,
@@ -120,28 +107,21 @@ class TransitionExecutionMixin:
                     subscription=self.subscription,
                 )
                 await self._live_runner.start(buffer_events=True)
-
                 logger.debug(
                     "Live subscription started (buffering)",
                     extra={"subscription": self.subscription.name},
                 )
 
-                # Phase 3: Catch up to watermark
-                self._phase = TransitionPhase.FINAL_CATCHUP
-                if span:
-                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
-
+                self._set_phase(TransitionPhase.FINAL_CATCHUP, span)
                 self._catchup_runner = CatchUpRunner(
                     event_store=self.event_store,
                     checkpoint_repo=self.checkpoint_repo,
                     subscription=self.subscription,
                 )
-
                 catchup_result = await self._catchup_runner.run_until_position(
                     target_position=watermark
                 )
                 catchup_processed = catchup_result.events_processed
-
                 if catchup_result.error:
                     raise TransitionError(
                         f"Catch-up failed: {catchup_result.error}"
@@ -161,29 +141,17 @@ class TransitionExecutionMixin:
                     },
                 )
 
-                # Phase 4: Process buffered events
-                self._phase = TransitionPhase.PROCESSING_BUFFER
-                if span:
-                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
-
+                self._set_phase(TransitionPhase.PROCESSING_BUFFER, span)
                 buffer_processed = await self._live_runner.process_buffer()
-
                 if span:
                     span.set_attribute(ATTR_EVENTS_PROCESSED, buffer_processed)
 
                 logger.info(
                     "Buffer processed",
-                    extra={
-                        "subscription": self.subscription.name,
-                        "processed": buffer_processed,
-                    },
+                    extra={"subscription": self.subscription.name, "processed": buffer_processed},
                 )
 
-                # Phase 5: Switch to live mode
-                self._phase = TransitionPhase.LIVE
-                if span:
-                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
-
+                self._set_phase(TransitionPhase.LIVE, span)
                 await self._live_runner.disable_buffer()
 
                 logger.info(
@@ -207,11 +175,7 @@ class TransitionExecutionMixin:
                 )
 
             except Exception as e:
-                self._phase = TransitionPhase.FAILED
-
-                if span:
-                    span.set_attribute(ATTR_SUBSCRIPTION_PHASE, self._phase.value)
-
+                self._set_phase(TransitionPhase.FAILED, span)
                 logger.error(
                     "Transition failed",
                     extra={
@@ -221,9 +185,7 @@ class TransitionExecutionMixin:
                     },
                     exc_info=True,
                 )
-
                 await self._cleanup()
-
                 return TransitionResult(
                     success=False,
                     catchup_events_processed=catchup_processed,
@@ -248,13 +210,11 @@ class TransitionExecutionMixin:
         """Clean up resources after failure or stop."""
         if self._catchup_runner and self._catchup_runner.is_running:
             await self._catchup_runner.stop()
-
         if self._live_runner is not None:
             if self._live_runner.is_running:
                 await self._live_runner.stop()
             else:
                 await self._live_runner.clear_buffer()
-
         await self.subscription.reconcile_lag(0)
 
     async def stop(self) -> None:
@@ -268,12 +228,8 @@ class TransitionExecutionMixin:
         ):
             logger.info(
                 "Stopping transition",
-                extra={
-                    "subscription": self.subscription.name,
-                    "phase": self._phase.value,
-                },
+                extra={"subscription": self.subscription.name, "phase": self._phase.value},
             )
-
             await self._cleanup()
 
 
