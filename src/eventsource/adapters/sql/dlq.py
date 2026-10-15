@@ -47,14 +47,7 @@ class SQLDLQRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """
-        Initialize the DLQ repository.
-
-        Args:
-            conn: Database connection or engine
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize the DLQ repository with a database connection/engine and optional tracer."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self.conn = conn
@@ -70,17 +63,7 @@ class SQLDLQRepository:
         error: Exception,
         retry_count: int = 0,
     ) -> None:
-        """
-        Add or update a failed event in the DLQ.
-
-        Args:
-            event_id: Event ID that failed
-            projection_name: Name of projection that failed to process it
-            event_type: Type of event
-            event_data: Event data as dict
-            error: Exception that occurred
-            retry_count: Number of retry attempts
-        """
+        """Add or update a failed event in the DLQ."""
         with self._tracer.span(
             "eventsource.dlq.add",
             {
@@ -128,21 +111,8 @@ class SQLDLQRepository:
         status: str = "failed",
         limit: int = 100,
     ) -> list[DLQEntry]:
-        """
-        Get failed events from the DLQ.
-
-        Args:
-            projection_name: Filter by projection name (optional)
-            status: Filter by status (default: "failed")
-            limit: Maximum number of events to return
-
-        Returns:
-            List of DLQEntry instances
-        """
-        span_attributes: dict[str, Any] = {
-            "limit": limit,
-            "status_filter": status,
-        }
+        """Get failed events from the DLQ filtered by optional projection_name and status."""
+        span_attributes: dict[str, Any] = {"limit": limit, "status_filter": status}
         if projection_name:
             span_attributes[ATTR_PROJECTION_NAME] = projection_name
 
@@ -155,7 +125,6 @@ class SQLDLQRepository:
                 params["projection_name"] = projection_name
 
             where_clause = " AND ".join(where_clauses)
-
             query = text(f"""
                 SELECT id, event_id, projection_name, event_type, event_data,
                        error_message, error_stacktrace, retry_count,
@@ -174,19 +143,8 @@ class SQLDLQRepository:
             return [self._row_to_entry(row, dialect) for row in rows]
 
     async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
-        """
-        Get a specific failed event by its DLQ ID.
-
-        Args:
-            dlq_id: DLQ record ID
-
-        Returns:
-            DLQEntry instance, or None if not found
-        """
-        with self._tracer.span(
-            "eventsource.dlq.get_by_id",
-            {"dlq.id": str(dlq_id)},
-        ):
+        """Get a specific failed event by its DLQ ID, or None if not found."""
+        with self._tracer.span("eventsource.dlq.get_by_id", {"dlq.id": str(dlq_id)}):
             query = text("""
                 SELECT id, event_id, projection_name, event_type, event_data,
                        error_message, error_stacktrace, retry_count,
@@ -210,23 +168,13 @@ class SQLDLQRepository:
             return entry
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
-        """
-        Mark a DLQ entry as resolved.
-
-        Args:
-            dlq_id: DLQ record ID
-            resolved_by: User ID or identifier of resolver
-        """
+        """Mark a DLQ entry as resolved."""
+        resolved_by_str = str(resolved_by) if resolved_by else None
         with self._tracer.span(
             "eventsource.dlq.resolve",
-            {
-                "dlq.id": str(dlq_id),
-                "resolved_by": str(resolved_by) if resolved_by else None,
-            },
+            {"dlq.id": str(dlq_id), "resolved_by": resolved_by_str},
         ):
             now = datetime.now(UTC)
-            resolved_by_str = str(resolved_by) if resolved_by else None
-
             query = text("""
                 UPDATE dead_letter_queue
                 SET status = 'resolved',
@@ -247,32 +195,14 @@ class SQLDLQRepository:
                 )
 
     async def mark_retrying(self, dlq_id: int | str) -> None:
-        """
-        Mark a DLQ entry as being retried.
-
-        Args:
-            dlq_id: DLQ record ID
-        """
-        with self._tracer.span(
-            "eventsource.dlq.retry",
-            {"dlq.id": str(dlq_id)},
-        ):
-            query = text("""
-                UPDATE dead_letter_queue
-                SET status = 'retrying'
-                WHERE id = :dlq_id
-            """)
-
+        """Mark a DLQ entry as being retried."""
+        with self._tracer.span("eventsource.dlq.retry", {"dlq.id": str(dlq_id)}):
+            query = text("UPDATE dead_letter_queue SET status = 'retrying' WHERE id = :dlq_id")
             async with sql_connection(self.conn, write=True) as conn:
                 await conn.execute(query, {"dlq_id": dlq_id})
 
     async def get_failure_stats(self) -> DLQStats:
-        """
-        Get aggregate statistics about DLQ health.
-
-        Returns:
-            DLQStats with failure statistics
-        """
+        """Get aggregate statistics about DLQ health."""
         with self._tracer.span("eventsource.dlq.get_stats", {}):
             query = text("""
                 SELECT
@@ -291,12 +221,7 @@ class SQLDLQRepository:
             return row_to_dlq_stats(row)
 
     async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
-        """
-        Get failure counts grouped by projection.
-
-        Returns:
-            List of ProjectionFailureCount for each affected projection
-        """
+        """Get failure counts grouped by projection."""
         with self._tracer.span("eventsource.dlq.get_projection_counts", {}):
             query = text("""
                 SELECT
@@ -317,21 +242,12 @@ class SQLDLQRepository:
             return rows_to_projection_failure_counts(list(rows))
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:
-        """
-        Delete resolved events older than specified days.
-
-        Args:
-            older_than_days: Delete resolved events older than this many days
-
-        Returns:
-            Number of events deleted
-        """
+        """Delete resolved events older than specified days and return deleted count."""
         with self._tracer.span(
             "eventsource.dlq.delete_resolved",
             {"older_than_days": older_than_days},
         ):
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
-
             query = text("""
                 DELETE FROM dead_letter_queue
                 WHERE status = 'resolved'

@@ -76,12 +76,7 @@ class CoordinatorCopyMixin:
         migration: Migration,
         target_store: FullEventStore,
     ) -> None:
-        """
-        Run the bulk copy phase.
-
-        Installs the DualWriteInterceptor FIRST, then streams historical
-        events from source to target store.
-        """
+        """Install DualWriteInterceptor first, then stream historical events to target."""
         with self._tracer.span(
             "eventsource.coordinator.run_bulk_copy",
             {
@@ -90,17 +85,13 @@ class CoordinatorCopyMixin:
                 ATTR_MIGRATION_PHASE: MigrationPhase.BULK_COPY.value,
             },
         ):
-            # Install the interceptor BEFORE the copy pass starts
             interceptor = self._install_interceptor(migration, target_store)
-
             copier = self._build_copier(migration, target_store)
-
             self._active_copiers[migration.id] = copier
             phase_start = time.monotonic()
 
             try:
                 completed = await self._run_copy_pass(copier, migration)
-
                 rounds = 0
                 while completed:
                     current = await self._migration_repo.get(migration.id)
@@ -131,21 +122,14 @@ class CoordinatorCopyMixin:
                     completed = await self._run_copy_pass(copier, current)
 
                 if completed:
-                    # Transition to dual-write phase (P2-005)
                     await self._transition_to_dual_write(migration, target_store)
 
             except asyncio.CancelledError:
                 logger.info("Bulk copy cancelled for migration %s", migration.id)
                 raise
-
             except Exception as e:
-                logger.error(
-                    "Bulk copy failed for migration %s: %s",
-                    migration.id,
-                    e,
-                )
+                logger.error("Bulk copy failed for migration %s: %s", migration.id, e)
                 await self._fail_migration(migration, str(e))
-
             finally:
                 get_migration_metrics(
                     str(migration.id), str(migration.tenant_id)
@@ -154,11 +138,9 @@ class CoordinatorCopyMixin:
                 self._active_tasks.pop(migration.id, None)
 
     def _build_copier(
-        self,
-        migration: Migration,
-        target_store: FullEventStore | None = None,
+        self, migration: Migration, target_store: FullEventStore | None = None
     ) -> BulkCopier:
-        """Construct the migration's BulkCopier -- the only place that does."""
+        """Construct the migration's BulkCopier."""
         store = target_store or self._target_stores.get(migration.id)
         if store is None:
             raise MigrationError(
@@ -169,7 +151,6 @@ class CoordinatorCopyMixin:
             )
 
         mapper = self._position_mapper if migration.config.position_mapping_enabled else None
-
         return BulkCopier(
             self._source_store,
             store,
@@ -190,9 +171,7 @@ class CoordinatorCopyMixin:
 
             if migration.phase != MigrationPhase.DUAL_WRITE:
                 raise MigrationStateError(
-                    message=(
-                        f"Cannot run a resync pass: migration is in {migration.phase.value} phase"
-                    ),
+                    message=f"Cannot run a resync pass: migration is in {migration.phase.value} phase",
                     migration_id=migration_id,
                     current_phase=migration.phase,
                     expected_phases=[MigrationPhase.DUAL_WRITE],
@@ -245,7 +224,6 @@ class CoordinatorCopyMixin:
     async def _run_copy_pass(self, copier: BulkCopier, migration: Migration) -> bool:
         """Run one copier pass, streaming progress to status observers."""
         last_progress: BulkCopyProgress | None = None
-
         async for progress in copier.run(migration):
             last_progress = progress
             await self._notify_status_update(migration.id)
@@ -295,8 +273,7 @@ class CoordinatorCopyMixin:
             },
         ):
             self._install_interceptor(migration, target_store)
-
-            lag_tracker = SyncLagTracker(
+            self._lag_trackers[migration.id] = SyncLagTracker(
                 source_store=self._source_store,
                 target_store=target_store,
                 config=migration.config,
@@ -304,13 +281,8 @@ class CoordinatorCopyMixin:
                 migration_id=migration.id,
                 enable_tracing=self._enable_tracing,
             )
-            self._lag_trackers[migration.id] = lag_tracker
 
-            await self._migration_repo.update_phase(
-                migration.id,
-                MigrationPhase.DUAL_WRITE,
-            )
-
+            await self._migration_repo.update_phase(migration.id, MigrationPhase.DUAL_WRITE)
             await self._routing_repo.set_migration_state(
                 migration.tenant_id,
                 TenantMigrationState.DUAL_WRITE,
@@ -331,10 +303,7 @@ class CoordinatorCopyMixin:
                     occurred_at=datetime.now(UTC),
                 )
             )
-
             await self._notify_status_update(migration.id)
 
 
-__all__ = [
-    "CoordinatorCopyMixin",
-]
+__all__ = ["CoordinatorCopyMixin"]

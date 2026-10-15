@@ -51,70 +51,24 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
     Repository for event-sourced aggregates.
 
     Provides a clean abstraction for loading aggregates from event history
-    and persisting new events. Handles the coordination between aggregates
-    and the event store.
+    and persisting new events. Handles coordination between aggregates,
+    the event store, optional publishers, and optional snapshot stores.
 
     Features:
     - Load aggregates by reconstituting state from events
     - Save aggregates by persisting uncommitted events
     - Optional event publishing after successful save
     - Optimistic locking via event store
-    - **Optional snapshot support for fast aggregate loading**
-
-    The repository uses a factory pattern to create aggregate instances,
-    allowing for proper dependency injection and testing.
-
-    Snapshot Configuration:
-        To enable snapshotting, provide a snapshot_store and optionally
-        configure when snapshots are created:
-
-        >>> from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
-        >>>
-        >>> repo = AggregateRepository(
-        ...     event_store=event_store,
-        ...     aggregate_factory=OrderAggregate,
-        ...     # aggregate_type inferred from OrderAggregate.aggregate_type
-        ...     # Snapshot configuration
-        ...     snapshot_store=InMemorySnapshotStore(),
-        ...     snapshot_threshold=100,  # Create snapshot every 100 events
-        ...     snapshot_mode="sync",    # "sync" | "background" | "manual"
-        ... )
-
-    Snapshot Modes:
-        - "sync": Create snapshot synchronously after save (default).
-                 Simplest and most predictable, but adds latency to saves.
-        - "background": Create snapshot asynchronously in background task.
-                       Best for high-throughput scenarios.
-        - "manual": Never create snapshots automatically.
-                   Use create_snapshot() method explicitly.
+    - Optional snapshot support ("sync", "background", or "manual")
 
     Example:
-        >>> from eventsource import AggregateRepository, InMemoryEventStore
-        >>>
         >>> store = InMemoryEventStore()
-        >>> repo = AggregateRepository(
-        ...     event_store=store,
-        ...     aggregate_factory=OrderAggregate,
-        ...     # aggregate_type inferred from OrderAggregate.aggregate_type
-        ... )
-        >>>
-        >>> # Create and save new aggregate
+        >>> repo = AggregateRepository(event_store=store, aggregate_factory=OrderAggregate)
         >>> order = OrderAggregate(uuid4())
         >>> order.create(customer_id=uuid4())
         >>> await repo.save(order)
-        >>>
-        >>> # Load existing aggregate
         >>> loaded = await repo.load(order.aggregate_id)
         >>> assert loaded.version == order.version
-
-    Attributes:
-        _event_store: The event store for persistence
-        _aggregate_factory: Factory (class) for creating aggregate instances
-        _aggregate_type: String identifier for the aggregate type
-        _event_publisher: Optional publisher for event distribution
-        _snapshot_store: Optional snapshot store for state caching
-        _snapshot_threshold: Events between automatic snapshots
-        _snapshot_mode: When to create snapshots ("sync", "background", "manual")
     """
 
     def __init__(
@@ -135,83 +89,35 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         """
         Initialize the repository.
 
-        The aggregate_type is always inferred from the
-        aggregate_factory.aggregate_type class attribute -- the factory's
-        class attribute is the single source of truth. There is no way to
-        override it here, so it can never diverge from the value stamped
-        onto the aggregate's events.
+        ``aggregate_type`` is inferred from ``aggregate_factory.aggregate_type``
+        (single source of truth).
 
         Args:
-            event_store: Event store port for appending and reading this aggregate's stream
+            event_store: Event store port for appending and reading this aggregate's stream.
             aggregate_factory: Class to instantiate when loading aggregates.
-                          Its aggregate_type class attribute is used as the
-                          type name (e.g., 'Order').
-            event_publisher: Optional publisher for broadcasting events
+            event_publisher: Optional publisher for broadcasting events.
             snapshot_store: Optional snapshot store for state caching.
-                          When provided, enables snapshot-aware loading.
             snapshot_threshold: Number of events between automatic snapshots.
-                              If None, snapshots are only created manually or
-                              when explicitly calling create_snapshot().
-                              Example: 100 means create snapshot every 100 events.
-            snapshot_mode: When to create snapshots:
-                          - "sync": Immediately after save (blocking)
-                          - "background": Asynchronously after save
-                          - "manual": Only via explicit create_snapshot() call
-                          Default is "sync" for simplicity.
-            snapshot_policy: Optional SnapshotPolicy controlling *when* to
-                          snapshot. Mutually exclusive with snapshot_mode/
-                          snapshot_threshold. Use for custom policies beyond
-                          the built-in mode/threshold knobs.
-            snapshot_scheduler: Optional SnapshotScheduler controlling *how*
-                          the snapshot write executes. Mutually exclusive
-                          with snapshot_mode/snapshot_threshold.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
+            snapshot_mode: When to create snapshots ("sync", "background", "manual").
+            snapshot_policy: Optional SnapshotPolicy controlling *when* to snapshot
+                (mutually exclusive with snapshot_mode/snapshot_threshold).
+            snapshot_scheduler: Optional SnapshotScheduler controlling *how* the
+                snapshot write executes (mutually exclusive with snapshot_mode/threshold).
+            tracer: Optional custom Tracer instance.
             enable_tracing: If True and OpenTelemetry is available, emit traces.
-                          Defaults to True for consistency with other components.
-                          Ignored if tracer is explicitly provided.
 
         Raises:
-            ValueError: If aggregate_type cannot be inferred from the factory.
-
-        Example with inference:
-            >>> class OrderAggregate(DeclarativeAggregate[OrderState]):
-            ...     aggregate_type = "Order"
-            ...
-            >>> repo = AggregateRepository(
-            ...     event_store=store,
-            ...     aggregate_factory=OrderAggregate,
-            ...     # aggregate_type inferred from OrderAggregate.aggregate_type
-            ... )
-
-        Example with snapshot support:
-            >>> repo = AggregateRepository(
-            ...     event_store=PostgreSQLEventStore(session_factory),
-            ...     aggregate_factory=OrderAggregate,
-            ...     # aggregate_type inferred
-            ...     snapshot_store=PostgreSQLSnapshotStore(session_factory),
-            ...     snapshot_threshold=100,
-            ...     snapshot_mode="background",
-            ... )
-
-        Note:
-            If snapshot_store is provided but snapshot_threshold is None,
-            snapshots must be created manually via create_snapshot().
-            This is useful when you want control over exactly when
-            snapshots are taken (e.g., after major state transitions).
+            ValueError: If aggregate_type cannot be inferred from the factory, or
+                both policy/scheduler and mode/threshold are provided.
         """
-        # Initialize tracing via composition (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
 
         self._event_store = event_store
         self._aggregate_factory = aggregate_factory
         self._event_publisher = event_publisher
-
-        # aggregate_type is always inferred from the factory's class attribute
         self._aggregate_type = self._infer_aggregate_type(aggregate_factory)
 
-        # Snapshot configuration (exposed via public properties)
         self._snapshot_store = snapshot_store
         self._snapshot_threshold = snapshot_threshold
         self._snapshot_mode = snapshot_mode
@@ -240,29 +146,15 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         """
         Infer aggregate_type from factory's aggregate_type attribute.
 
-        Attempts to read the aggregate_type class attribute from the factory.
-        Rejects an empty string, and the attribute being altogether unset now
-        raises AggregateTypeNotSetError at construction time before this
-        method ever sees the factory (aggregate_type has no default).
-
-        Args:
-            factory: The aggregate factory (class)
-
-        Returns:
-            The inferred aggregate type string
-
         Raises:
-            ValueError: If inference fails with helpful error message
+            ValueError: If inference fails with helpful error message.
         """
-        # Check for aggregate_type attribute
         if hasattr(factory, "aggregate_type"):
             inferred = factory.aggregate_type
             if isinstance(inferred, str) and inferred not in ("", "Unknown"):
                 return inferred
 
-        # Inference failed - provide helpful error
         factory_name = factory.__name__ if hasattr(factory, "__name__") else str(factory)
-
         raise ValueError(
             f"Cannot infer aggregate_type from {factory_name}. "
             f"Add an 'aggregate_type' class attribute to your aggregate class:\n"
@@ -299,21 +191,9 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         """
         Load (or create) an aggregate, execute a command on it, and save.
 
-        Args:
-            aggregate_id: ID of the aggregate to target
-            command: Command to execute against the aggregate
-            create_if_missing: If True (default), uses ``load_or_create``;
-                if False, uses ``load`` (raising ``AggregateNotFoundError``
-                when missing).
-
-        Returns:
-            The aggregate after command execution and persistence
-
         Raises:
-            AggregateNotFoundError: If ``create_if_missing=False`` and the
-                aggregate does not exist
-            TypeError: If the aggregate does not define ``execute(command)``
-                or ``apply_command(command)``
+            AggregateNotFoundError: If ``create_if_missing=False`` and missing.
+            TypeError: If the aggregate does not define ``execute`` or ``apply_command``.
         """
         if create_if_missing:
             aggregate = await self.load_or_create(aggregate_id)

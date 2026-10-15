@@ -37,21 +37,11 @@ class DomainEvent(BaseModel):
     Events are immutable and capture everything needed to reconstruct state.
     All fields except event-specific payload are included in this base class.
 
-    The event_type field is automatically set to the class name if not
-    explicitly provided. Rely on that: do not declare event_type by hand.
-    A declaration whose value equals the class name is pure noise, and one
-    that differs silently decouples the wire name from the class name.
-
-    Declare it explicitly in exactly one situation -- the wire name must
-    differ from the class name, because it is fixed by an existing stored
-    event or an external contract you do not control. Renaming a published
-    event type is a breaking change; the explicit field is how you keep the
-    old name while the class moves on.
-
-    Auto-derivation behavior:
-        - If event_type is not defined or is empty, uses class name
-        - If event_type differs from class name, logs a warning
-        - Warning can be suppressed with suppress_event_type_warning = True
+    The ``event_type`` field is automatically set to the class name if not
+    explicitly provided. Declare it explicitly only when the wire name must
+    differ from the class name (e.g., pinned by stored events or an external
+    contract), and set ``suppress_event_type_warning = True`` to silence the
+    mismatch warning.
 
     Attributes:
         event_id: Unique identifier for this event instance
@@ -67,33 +57,6 @@ class DomainEvent(BaseModel):
         causation_id: ID of the event that caused this event
         metadata: Additional event metadata dictionary
         suppress_event_type_warning: Class variable to suppress mismatch warning
-
-    Example without explicit event_type (auto-derived):
-        >>> from uuid import uuid4
-        >>>
-        >>> class OrderCreated(DomainEvent):
-        ...     aggregate_type: str = "Order"
-        ...     order_number: str
-        ...     customer_id: UUID
-        ...
-        >>> event = OrderCreated(
-        ...     aggregate_id=uuid4(),
-        ...     order_number="ORD-001",
-        ...     customer_id=uuid4(),
-        ... )
-        >>> assert event.event_type == "OrderCreated"
-
-    Example with explicit event_type (only when the wire name is pinned by
-    already-stored events or an external contract):
-        >>> class OrderCreated(DomainEvent):
-        ...     event_type: str = "order_created_v2"
-        ...     aggregate_type: str = "Order"
-        ...     suppress_event_type_warning = True  # Silence mismatch warning
-        ...     order_number: str
-        ...     customer_id: UUID
-        ...
-        >>> event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4())
-        >>> assert event.event_type == "order_created_v2"
     """
 
     model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
@@ -102,10 +65,7 @@ class DomainEvent(BaseModel):
     suppress_event_type_warning: ClassVar[bool] = False
 
     # Event metadata
-    event_id: EventId = Field(
-        default_factory=uuid4,
-        description="Unique event identifier",
-    )
+    event_id: EventId = Field(default_factory=uuid4, description="Unique event identifier")
     event_type: str = Field(
         default="",
         description="Type of event (auto-derived from class name if not set)",
@@ -135,19 +95,15 @@ class DomainEvent(BaseModel):
         description="Version of aggregate after this event",
     )
 
-    # Multi-tenancy (optional for library)
+    # Multi-tenancy, actor, correlation/causation, and metadata
     tenant_id: TenantId | None = Field(
         default=None,
         description="Tenant this event belongs to (optional)",
     )
-
-    # Actor (who caused the event)
     actor_id: str | None = Field(
         default=None,
         description="User/system that triggered this event",
     )
-
-    # Correlation and causation for event chains
     correlation_id: CorrelationId = Field(
         default_factory=uuid4,
         description="ID linking related events across aggregates",
@@ -156,8 +112,6 @@ class DomainEvent(BaseModel):
         default=None,
         description="ID of the event that caused this event",
     )
-
-    # Additional metadata
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional event metadata",
@@ -167,33 +121,21 @@ class DomainEvent(BaseModel):
         """
         Hook called when DomainEvent is subclassed.
 
-        Auto-derives event_type from class name if not explicitly set.
-        Logs warning if explicit event_type differs from class name
-        (can be suppressed with suppress_event_type_warning = True).
-
-        This method runs at class definition time and modifies the Field
-        default for event_type to be the class name, eliminating the need
-        to manually specify event_type = "ClassName" in every event class.
+        Logs warning if explicit ``event_type`` differs from class name
+        (unless ``suppress_event_type_warning = True``).
         """
         super().__init_subclass__(**kwargs)
 
-        # Check if event_type was explicitly set in this class (not inherited)
-        # We look at __annotations__ and class __dict__ to detect if the field
-        # was declared in this specific class
         explicit_type: str | None = None
         has_explicit_type = False
 
-        # Check if event_type is in this class's own __dict__
-        # This catches both: event_type: str = "SomeName" and event_type = "SomeName"
         if "event_type" in cls.__dict__:
             value = cls.__dict__["event_type"]
             if isinstance(value, str):
                 explicit_type = value
                 has_explicit_type = True
 
-        # If explicitly set, check if it matches class name and warn if not
         if has_explicit_type and explicit_type and explicit_type != cls.__name__:
-            # Check if warning should be suppressed
             suppress = getattr(cls, "suppress_event_type_warning", False)
             if not suppress:
                 logger.warning(
@@ -206,13 +148,8 @@ class DomainEvent(BaseModel):
 
     @model_validator(mode="after")
     def _validate_aggregate_type(self) -> Self:
-        # An after-validator (not a field_validator) so a class-level default
-        # (`aggregate_type: str = "Order"`, the common declaration style) is
-        # checked too -- pydantic skips validating field defaults unless
-        # validate_default=True is set, which would re-validate every field
-        # on every construction (measured ~15% construction overhead).
-        # After-validators always see the final instance value regardless of
-        # how it was supplied, at no extra per-field cost.
+        # After-validator so class-level defaults (`aggregate_type: str = "Order"`)
+        # are checked without enabling validate_default=True across all fields.
         v = self.aggregate_type
         if not _CATEGORY_REGEX.match(v):
             raise ValueError(
@@ -227,15 +164,8 @@ class DomainEvent(BaseModel):
         """
         Canonical wire name for this event class.
 
-        Resolution: a non-empty explicit ``event_type`` field default
-        (declared on this class or inherited from a parent's explicit
-        declaration), else the class name. Single source of truth shared
-        by instance construction (_ensure_event_type) and EventRegistry —
-        do not derive the name from ``model_fields`` anywhere else.
-
-        Safe to call only after class creation completes (i.e. never from
-        ``__init_subclass__``, where ``cls.model_fields`` still belongs to
-        the parent).
+        Returns a non-empty explicit ``event_type`` field default if declared,
+        else the class name. Safe to call only after class creation completes.
         """
         field_info = cls.model_fields.get("event_type")
         if field_info is not None and isinstance(field_info.default, str) and field_info.default:
@@ -245,20 +175,9 @@ class DomainEvent(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _ensure_event_type(cls, data: Any) -> Any:
-        """
-        Ensure event_type is set even when constructing from dict.
-
-        This validator runs before Pydantic model construction and
-        ensures the event_type field is populated with the canonical
-        event_type_name() if not provided in the input data.
-
-        This handles cases like:
-        - OrderCreated.model_validate({"aggregate_id": ..., ...})
-        - OrderCreated.from_dict({...})
-        - OrderCreated(**data) where data is a dict without event_type
-        """
+        """Ensure event_type is set when constructing from a dictionary."""
         if isinstance(data, dict) and not data.get("event_type"):
-            data = dict(data)  # Copy to avoid mutating caller input
+            data = dict(data)
             data["event_type"] = cls.event_type_name()
         return data
 
@@ -284,15 +203,7 @@ class DomainEvent(BaseModel):
         )
 
     def with_causation(self, causing_event: DomainEvent) -> Self:
-        """
-        Create a copy of this event with causation tracking from another event.
-
-        Args:
-            causing_event: The event that caused this event
-
-        Returns:
-            New event instance with causation_id and correlation_id set
-        """
+        """Create a copy of this event with causation tracking from another event."""
         return self.model_copy(
             update={
                 "causation_id": causing_event.event_id,
@@ -301,28 +212,11 @@ class DomainEvent(BaseModel):
         )
 
     def with_metadata(self, **kwargs: Any) -> Self:
-        """
-        Create a copy of this event with additional metadata.
-
-        Args:
-            **kwargs: Key-value pairs to add to metadata
-
-        Returns:
-            New event instance with updated metadata
-        """
-        new_metadata = {**self.metadata, **kwargs}
-        return self.model_copy(update={"metadata": new_metadata})
+        """Create a copy of this event with additional metadata."""
+        return self.model_copy(update={"metadata": {**self.metadata, **kwargs}})
 
     def with_aggregate_version(self, version: int) -> Self:
-        """
-        Create a copy of this event with a specific aggregate version.
-
-        Args:
-            version: The aggregate version after this event
-
-        Returns:
-            New event instance with updated aggregate_version
-        """
+        """Create a copy of this event with a specific aggregate version."""
         return self.model_copy(update={"aggregate_version": version})
 
     def to_dict(self) -> dict[str, Any]:
