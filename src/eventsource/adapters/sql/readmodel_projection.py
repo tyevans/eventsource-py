@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from eventsource.adapters.sql.projection import DatabaseProjection
 from eventsource.application.projections.base import TenantFilter
@@ -43,7 +43,6 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:
-        """Initialize the read model projection."""
         super().__init__(
             session_factory=session_factory,
             checkpoint_repo=checkpoint_repo,
@@ -83,7 +82,6 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
                 self._current_repository = None
 
     async def _create_repository(self, conn: AsyncConnection) -> ReadModelRepository[TModel]:
-        """Create a dialect-appropriate repository instance for the current connection."""
         from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 
         dialect_name = conn.dialect.name
@@ -92,8 +90,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
 
             from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 
-            raw_conn = await conn.get_raw_connection()
-            driver_conn = raw_conn.driver_connection
+            driver_conn = (await conn.get_raw_connection()).driver_connection
             if driver_conn is None or not isinstance(driver_conn, AiosqliteConnection):
                 raise RuntimeError(f"Expected aiosqlite Connection but got {type(driver_conn)}")
             return SQLiteReadModelRepository(
@@ -101,27 +98,24 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             )
 
         if dialect_name != "postgresql":
+            extra = {ATTR_PROJECTION_NAME: self._projection_name, "dialect": dialect_name}
             logger.warning(
-                "Unknown dialect %s, using PostgreSQL repository",
-                dialect_name,
-                extra={ATTR_PROJECTION_NAME: self._projection_name, "dialect": dialect_name},
+                "Unknown dialect %s, using PostgreSQL repository", dialect_name, extra=extra
             )
         return PostgreSQLReadModelRepository(
             conn, self._model_class, enable_tracing=self._enable_tracing
         )
 
     async def _process_event(self, event: DomainEvent) -> None:
-        """Route event to handler with repository context."""
         handler_info = self._handler_registry.get_handler(type(event))
         if handler_info is None:
             await self._handler_registry.dispatch(event, context=None)
             return
-
-        handler_name = handler_info.handler_name
+        hname = handler_info.handler_name
         span_attrs = {
             ATTR_PROJECTION_NAME: self._projection_name,
             ATTR_EVENT_TYPE: type(event).__name__,
-            ATTR_HANDLER_NAME: handler_name,
+            ATTR_HANDLER_NAME: hname,
         }
         with self._tracer.span("eventsource.projection.handler", span_attrs):
             if handler_info.param_count == 1:
@@ -129,16 +123,14 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             else:
                 if (repo := self._current_repository) is None:
                     raise RuntimeError(
-                        f"Handler {handler_name} requires repository but none available. "
+                        f"Handler {hname} requires repository but none available. "
                         f"Ensure you call handle() rather than _process_event() directly."
                     )
                 await self._handler_registry.dispatch(event, context=repo)
 
     async def _truncate_read_models(self) -> None:
-        """Truncate read model table via repository during reset()."""
         async with self._session_factory() as session, session.begin():
-            conn = await session.connection()
-            repo = await self._create_repository(conn)
+            repo = await self._create_repository(await session.connection())
             count = await repo.truncate()
             table = self._model_class.table_name()
             extra = {
@@ -149,18 +141,10 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             msg = "ReadModelProjection %s truncated %d records from %s"
             logger.info(msg, self._projection_name, count, table, extra=extra)
 
-    @property
-    def model_class(self) -> type[TModel]:
-        """Get the model class this projection manages."""
-        return self._model_class
-
-    @property
-    def repository(self) -> ReadModelRepository[TModel] | None:
-        """Get the current repository instance (only available during handle())."""
-        return self._current_repository
+    model_class: Any = property(lambda self: self._model_class)
+    repository: Any = property(lambda self: self._current_repository)
 
     def __repr__(self) -> str:
-        """Return string representation for debugging."""
         tracing = "enabled" if self._enable_tracing else "disabled"
         return (
             f"{self.__class__.__name__}(model={self._model_class.__name__}, "

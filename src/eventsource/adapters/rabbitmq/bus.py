@@ -51,15 +51,10 @@ try:
 except ImportError:
     RABBITMQ_AVAILABLE = False
     aio_pika = None  # type: ignore[assignment]
-    Message = None  # type: ignore[assignment, misc]
-    DeliveryMode = None  # type: ignore[assignment, misc]
-    AbstractChannel = None  # type: ignore[assignment, misc]
-    AbstractConnection = None  # type: ignore[assignment, misc]
-    AbstractExchange = None  # type: ignore[assignment, misc]
-    AbstractIncomingMessage = None  # type: ignore[assignment, misc]
-    AbstractQueue = None  # type: ignore[assignment, misc]
-    AbstractRobustChannel = None  # type: ignore[assignment, misc]
-    AbstractRobustConnection = None  # type: ignore[assignment, misc]
+    Message = DeliveryMode = None  # type: ignore[assignment, misc]
+    AbstractChannel = AbstractConnection = AbstractExchange = None  # type: ignore[assignment, misc]
+    AbstractIncomingMessage = AbstractQueue = None  # type: ignore[assignment, misc]
+    AbstractRobustChannel = AbstractRobustConnection = None  # type: ignore[assignment, misc]
 
 logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
@@ -83,33 +78,24 @@ class RabbitMQEventBus(
         *,
         tracer: Tracer | None = None,
     ) -> None:
-        """Initialize the RabbitMQ event bus."""
         if not RABBITMQ_AVAILABLE:
             raise RabbitMQNotAvailableError()
-
         super().__init__(event_registry=event_registry)
-
         self._config = config or RabbitMQEventBusConfig()
         self._stats = RabbitMQEventBusStats()
-
         self._connection_manager = RabbitMQConnectionManager(config=self._config, stats=self._stats)
         self._connection_manager._is_consuming = lambda: self._consumer._consuming
-
         self._topology = RabbitMQTopology(config=self._config, connection=self._connection_manager)
         self._connection_manager.on_reconnect(self._topology.redeclare)
-
         self._retry_policy = RetryPolicy(
             base_delay=self._config.retry_base_delay,
             max_delay=self._config.retry_max_delay,
             jitter=self._config.retry_jitter,
             max_retries=self._config.max_retries,
         )
-
         self._shutdown_initiated: bool = False
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
-
         tracer_instance = tracer or create_tracer(__name__, self._config.enable_tracing)
-
         self._publisher = RabbitMQPublisher(
             config=self._config,
             connection=self._connection_manager,
@@ -118,7 +104,6 @@ class RabbitMQEventBus(
             tracer=tracer_instance,
             enable_tracing=tracer_instance.enabled,
         )
-
         self._consumer = RabbitMQConsumer(
             config=self._config,
             connection=self._connection_manager,
@@ -130,7 +115,6 @@ class RabbitMQEventBus(
             tracer=tracer_instance,
             enable_tracing=tracer_instance.enabled,
         )
-
         self._dlq_admin = RabbitMQDLQAdmin(
             config=self._config,
             connection=self._connection_manager,
@@ -140,17 +124,14 @@ class RabbitMQEventBus(
 
     @property
     def config(self) -> RabbitMQEventBusConfig:
-        """Get the configuration."""
         return self._config
 
     @property
     def is_connected(self) -> bool:
-        """Check if connected to RabbitMQ."""
         return self._connection_manager.is_connected
 
     @property
     def is_consuming(self) -> bool:
-        """Check if currently consuming events."""
         return self._consumer.is_consuming
 
 

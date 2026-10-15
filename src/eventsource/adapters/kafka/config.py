@@ -11,6 +11,12 @@ from typing import Any
 
 logger = logging.getLogger("eventsource.bus.kafka")
 
+_SANITIZED = (
+    "bootstrap_servers topic_prefix consumer_group consumer_name security_protocol "
+    "sasl_mechanism sasl_username ssl_cafile ssl_certfile ssl_check_hostname "
+    "enable_dlq enable_tracing enable_metrics"
+)
+
 
 @dataclass
 class KafkaEventBusConfig:
@@ -56,29 +62,27 @@ class KafkaEventBusConfig:
         self._validate_security_config()
 
     def _validate_security_config(self) -> None:
-        valid_protocols = {"PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"}
-        if self.security_protocol not in valid_protocols:
-            msg = f"Invalid security_protocol: {self.security_protocol}. Must be one of: {valid_protocols}"
-            raise ValueError(msg)
-        if self.security_protocol.startswith("SASL_"):
-            valid_mechanisms = {"PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"}
-            if not self.sasl_mechanism:
-                raise ValueError(f"sasl_mechanism required for {self.security_protocol}")
-            if self.sasl_mechanism not in valid_mechanisms:
-                msg = f"Invalid sasl_mechanism: {self.sasl_mechanism}. Must be one of: {valid_mechanisms}"
-                raise ValueError(msg)
+        protos = {"PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"}
+        if (sp := self.security_protocol) not in protos:
+            raise ValueError(f"Invalid security_protocol: {sp}. Must be one of: {protos}")
+        if sp.startswith("SASL_"):
+            mechs = {"PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"}
+            if not (sm := self.sasl_mechanism):
+                raise ValueError(f"sasl_mechanism required for {sp}")
+            if sm not in mechs:
+                raise ValueError(f"Invalid sasl_mechanism: {sm}. Must be one of: {mechs}")
             if not self.sasl_username or not self.sasl_password:
                 raise ValueError("sasl_username and sasl_password required for SASL authentication")
-        if self.security_protocol in ("SSL", "SASL_SSL"):
+        if sp in ("SSL", "SASL_SSL"):
             if self.ssl_certfile and not self.ssl_keyfile:
                 raise ValueError("ssl_keyfile required when ssl_certfile is provided (mTLS)")
             if self.ssl_keyfile and not self.ssl_certfile:
                 raise ValueError("ssl_certfile required when ssl_keyfile is provided (mTLS)")
-        if self.security_protocol == "PLAINTEXT":
+        if sp == "PLAINTEXT":
             logger.warning("Using PLAINTEXT security protocol - not recommended for production")
-        if self.security_protocol == "SASL_PLAINTEXT":
+        if sp == "SASL_PLAINTEXT":
             logger.warning("Using SASL without SSL - credentials sent in plain text")
-        if "SSL" in self.security_protocol and not self.ssl_check_hostname:
+        if "SSL" in sp and not self.ssl_check_hostname:
             logger.warning("SSL hostname verification disabled - vulnerable to MITM attacks")
 
     @property
@@ -90,32 +94,22 @@ class KafkaEventBusConfig:
         return f"{self.topic_name}{self.dlq_topic_suffix}"
 
     def get_producer_config(self) -> dict[str, Any]:
-        config: dict[str, Any] = {
-            "bootstrap_servers": self.bootstrap_servers,
-            "acks": self.acks,
-            "compression_type": self.compression_type,
-            "max_batch_size": self.producer_max_batch_bytes,
-            "linger_ms": self.linger_ms,
-        }
-        self._add_security_config(config)
-        return config
+        bs, c = self.bootstrap_servers, self.compression_type
+        cfg: dict[str, Any] = {"bootstrap_servers": bs, "acks": self.acks, "compression_type": c}
+        cfg.update(max_batch_size=self.producer_max_batch_bytes, linger_ms=self.linger_ms)
+        self._add_security_config(cfg)
+        return cfg
 
     def get_consumer_config(self, **overrides: Any) -> dict[str, Any]:
-        config: dict[str, Any] = {
-            "bootstrap_servers": self.bootstrap_servers,
-            "group_id": self.consumer_group,
-            "client_id": self.consumer_name,
-            "auto_offset_reset": self.auto_offset_reset,
-            "session_timeout_ms": self.session_timeout_ms,
-            "heartbeat_interval_ms": self.heartbeat_interval_ms,
-            "max_poll_interval_ms": self.max_poll_interval_ms,
-            "fetch_max_bytes": self.fetch_max_bytes,
-            "max_partition_fetch_bytes": self.max_partition_fetch_bytes,
-            "enable_auto_commit": False,
-        }
-        self._add_security_config(config)
-        config.update(overrides)
-        return config
+        bs, grp, cid = self.bootstrap_servers, self.consumer_group, self.consumer_name
+        cfg: dict[str, Any] = {"bootstrap_servers": bs, "group_id": grp, "client_id": cid}
+        keys = "auto_offset_reset session_timeout_ms heartbeat_interval_ms max_poll_interval_ms"
+        for k in (*keys.split(), "fetch_max_bytes", "max_partition_fetch_bytes"):
+            cfg[k] = getattr(self, k)
+        cfg["enable_auto_commit"] = False
+        self._add_security_config(cfg)
+        cfg.update(overrides)
+        return cfg
 
     def get_security_config(self) -> dict[str, Any]:
         config: dict[str, Any] = {}
@@ -123,16 +117,12 @@ class KafkaEventBusConfig:
         return config
 
     def _add_security_config(self, config: dict[str, Any]) -> None:
+        m, u, p = self.sasl_mechanism, self.sasl_username, self.sasl_password
+        ca, cert, key = self.ssl_cafile, self.ssl_certfile, self.ssl_keyfile
+        opt = {"sasl_mechanism": m, "sasl_plain_username": u, "sasl_plain_password": p}
+        opt.update(ssl_cafile=ca, ssl_certfile=cert, ssl_keyfile=key)
         config["security_protocol"] = self.security_protocol
-        optional = {
-            "sasl_mechanism": self.sasl_mechanism,
-            "sasl_plain_username": self.sasl_username,
-            "sasl_plain_password": self.sasl_password,
-            "ssl_cafile": self.ssl_cafile,
-            "ssl_certfile": self.ssl_certfile,
-            "ssl_keyfile": self.ssl_keyfile,
-        }
-        config.update({k: v for k, v in optional.items() if v})
+        config.update({k: v for k, v in opt.items() if v})
         if "SSL" in self.security_protocol:
             config["ssl_check_hostname"] = self.ssl_check_hostname
 
@@ -149,20 +139,7 @@ class KafkaEventBusConfig:
         return context
 
     def get_sanitized_config(self) -> dict[str, Any]:
-        return {
-            "bootstrap_servers": self.bootstrap_servers,
-            "topic_prefix": self.topic_prefix,
-            "consumer_group": self.consumer_group,
-            "consumer_name": self.consumer_name,
-            "security_protocol": self.security_protocol,
-            "sasl_mechanism": self.sasl_mechanism,
-            "sasl_username": self.sasl_username,
-            "sasl_password": "***" if self.sasl_password else None,
-            "ssl_cafile": self.ssl_cafile,
-            "ssl_certfile": self.ssl_certfile,
-            "ssl_keyfile": "***" if self.ssl_keyfile else None,
-            "ssl_check_hostname": self.ssl_check_hostname,
-            "enable_dlq": self.enable_dlq,
-            "enable_tracing": self.enable_tracing,
-            "enable_metrics": self.enable_metrics,
-        }
+        res = {k: getattr(self, k) for k in _SANITIZED.split()}
+        res["sasl_password"] = "***" if self.sasl_password else None
+        res["ssl_keyfile"] = "***" if self.ssl_keyfile else None
+        return res
