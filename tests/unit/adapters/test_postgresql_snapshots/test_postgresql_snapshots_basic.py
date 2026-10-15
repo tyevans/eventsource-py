@@ -29,15 +29,10 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         sample_snapshot: Snapshot,
     ) -> None:
-        """Test saving a snapshot."""
         mock_session.execute.return_value = create_mock_result()
-
         await store.save_snapshot(sample_snapshot)
-
-        # Verify execute was called with INSERT ... ON CONFLICT
         mock_session.execute.assert_called_once()
-        call_args = mock_session.execute.call_args
-        sql_text = str(call_args[0][0])
+        sql_text = str(mock_session.execute.call_args[0][0])
         assert "INSERT INTO snapshots" in sql_text
         assert "ON CONFLICT" in sql_text
         assert "DO UPDATE SET" in sql_text
@@ -49,27 +44,18 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         sample_snapshot: Snapshot,
     ) -> None:
-        """Test that save_snapshot passes correct parameters."""
         mock_session.execute.return_value = create_mock_result()
-
         await store.save_snapshot(sample_snapshot)
-
-        call_args = mock_session.execute.call_args
-        params = call_args[0][1]
+        params = mock_session.execute.call_args[0][1]
         assert params["aggregate_id"] == sample_snapshot.aggregate_id
         assert params["aggregate_type"] == sample_snapshot.aggregate_type
         assert params["version"] == sample_snapshot.version
         assert params["schema_version"] == sample_snapshot.schema_version
         assert params["created_at"] == sample_snapshot.created_at
-        # State should be JSON-encoded
         assert '"value":"test"' in params["state"] or '"value": "test"' in params["state"]
 
     @pytest.mark.asyncio
-    async def test_async_context_manager(
-        self,
-        store: PostgreSQLSnapshotStore,
-    ) -> None:
-        """Test PostgreSQLSnapshotStore supports async with context manager."""
+    async def test_async_context_manager(self, store: PostgreSQLSnapshotStore) -> None:
         from eventsource.ports.lifecycle import SupportsAsyncContextManager, SupportsClose
 
         assert isinstance(store, SupportsClose)
@@ -84,15 +70,12 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         sample_snapshot: Snapshot,
     ) -> None:
-        """Test getting an existing snapshot."""
         row = create_snapshot_row(sample_snapshot)
         mock_session.execute.return_value = create_mock_result([row])
-
         result = await store.get_snapshot(
             sample_snapshot.aggregate_id,
             sample_snapshot.aggregate_type,
         )
-
         assert result is not None
         assert result.aggregate_id == sample_snapshot.aggregate_id
         assert result.aggregate_type == sample_snapshot.aggregate_type
@@ -107,13 +90,10 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test getting a non-existent snapshot returns None."""
         mock_result = MagicMock()
         mock_result.fetchone.return_value = None
         mock_session.execute.return_value = mock_result
-
         result = await store.get_snapshot(aggregate_id, "TestAggregate")
-
         assert result is None
 
     @pytest.mark.asyncio
@@ -123,19 +103,15 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test getting snapshot with JSON string state (vs dict)."""
         row = MagicMock()
         row.aggregate_id = aggregate_id
         row.aggregate_type = "TestAggregate"
         row.version = 5
         row.schema_version = 1
-        row.state = '{"value": "from_json", "count": 10}'  # JSON string
+        row.state = '{"value": "from_json", "count": 10}'
         row.created_at = datetime.now(UTC)
-
         mock_session.execute.return_value = create_mock_result([row])
-
         result = await store.get_snapshot(aggregate_id, "TestAggregate")
-
         assert result is not None
         assert result.state == {"value": "from_json", "count": 10}
 
@@ -146,7 +122,6 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """A row whose state column is not valid JSON must raise SnapshotDeserializationError."""
         row = MagicMock()
         row.aggregate_id = aggregate_id
         row.aggregate_type = "TestAggregate"
@@ -154,12 +129,9 @@ class TestPostgreSQLSnapshotStoreBasic:
         row.schema_version = 1
         row.state = "{not valid json"
         row.created_at = datetime.now(UTC)
-
         mock_session.execute.return_value = create_mock_result([row])
-
         with pytest.raises(SnapshotDeserializationError) as exc_info:
             await store.get_snapshot(aggregate_id, "TestAggregate")
-
         assert exc_info.value.aggregate_id == aggregate_id
         assert exc_info.value.aggregate_type == "TestAggregate"
 
@@ -170,11 +142,8 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test deleting an existing snapshot."""
         mock_session.execute.return_value = create_mock_result(rowcount=1)
-
         result = await store.delete_snapshot(aggregate_id, "TestAggregate")
-
         assert result is True
         mock_session.execute.assert_called_once()
         sql_text = str(mock_session.execute.call_args[0][0])
@@ -187,11 +156,8 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test deleting a non-existent snapshot returns False."""
         mock_session.execute.return_value = create_mock_result(rowcount=0)
-
         result = await store.delete_snapshot(aggregate_id, "TestAggregate")
-
         assert result is False
 
     @pytest.mark.asyncio
@@ -201,11 +167,8 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test snapshot_exists returns True when snapshot exists."""
         mock_session.execute.return_value = create_scalar_result(True)
-
         result = await store.snapshot_exists(aggregate_id, "TestAggregate")
-
         assert result is True
         sql_text = str(mock_session.execute.call_args[0][0])
         assert "SELECT EXISTS" in sql_text
@@ -217,11 +180,8 @@ class TestPostgreSQLSnapshotStoreBasic:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test snapshot_exists returns False when snapshot doesn't exist."""
         mock_session.execute.return_value = create_scalar_result(False)
-
         result = await store.snapshot_exists(aggregate_id, "TestAggregate")
-
         assert result is False
 
 
@@ -235,8 +195,6 @@ class TestUpsertSemantics:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test that saving a snapshot overwrites existing one."""
-        # First save
         snapshot1 = Snapshot(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -248,7 +206,6 @@ class TestUpsertSemantics:
         mock_session.execute.return_value = create_mock_result()
         await store.save_snapshot(snapshot1)
 
-        # Second save with same aggregate_id and type
         snapshot2 = Snapshot(
             aggregate_id=aggregate_id,
             aggregate_type="TestAggregate",
@@ -259,7 +216,6 @@ class TestUpsertSemantics:
         )
         await store.save_snapshot(snapshot2)
 
-        # Verify both used upsert SQL
         assert mock_session.execute.call_count == 2
         for call in mock_session.execute.call_args_list:
             sql_text = str(call[0][0])
@@ -272,10 +228,7 @@ class TestUpsertSemantics:
         mock_session: AsyncMock,
         aggregate_id: UUID,
     ) -> None:
-        """Test snapshots for different aggregate types don't conflict."""
         mock_session.execute.return_value = create_mock_result()
-
-        # Save snapshot for "Order" type
         snapshot1 = Snapshot(
             aggregate_id=aggregate_id,
             aggregate_type="Order",
@@ -286,7 +239,6 @@ class TestUpsertSemantics:
         )
         await store.save_snapshot(snapshot1)
 
-        # Save snapshot for "User" type with same aggregate_id
         snapshot2 = Snapshot(
             aggregate_id=aggregate_id,
             aggregate_type="User",
@@ -296,6 +248,4 @@ class TestUpsertSemantics:
             created_at=datetime.now(UTC),
         )
         await store.save_snapshot(snapshot2)
-
-        # Both should be separate inserts (different aggregate_type)
         assert mock_session.execute.call_count == 2

@@ -1,17 +1,4 @@
-"""
-Unit tests for grouped `handle_batch()` dispatch on the **live** path.
-
-Covers task #34 / ADR 0063. The catch-up runner has grouped its reads into
-`handle_batch()` calls since ADR 0059; the live runner delivered one event per
-call, so the same subscriber saw two different delivery shapes depending on
-which runner happened to be driving it.
-
-The decision recorded in ADR 0063 is that the live batch is **a page the feed
-already returned, never an accumulator** -- nothing is held back waiting for
-more events. These tests pin both halves of that: that a page really is
-delivered as one call, and that the stop/pause/timeout guarantees PRs #137 and
-#139 established are unchanged.
-"""
+"""Unit tests for grouped `handle_batch()` dispatch on the live path (ADR 0063)."""
 
 import asyncio
 from uuid import uuid4
@@ -33,9 +20,6 @@ from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion
 
 _REGISTRY = EventRegistry()
-
-# Every wait here is bounded: a correct implementation finishes in
-# milliseconds, and a regression becomes a fast failure instead of a hang.
 BOUND = 5.0
 
 
@@ -63,8 +47,7 @@ class RecordingBatchSubscriber:
 
 
 class GatedBatchSubscriber:
-    """Blocks inside `handle_batch()` until released, so a test can catch the
-    runner mid-delivery rather than racing its loop."""
+    """Blocks inside `handle_batch()` until released."""
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -81,8 +64,7 @@ class GatedBatchSubscriber:
 
 
 class HangingBatchSubscriber:
-    """Never returns from `handle_batch()` -- what `processing_timeout` exists
-    to bound."""
+    """Never returns from `handle_batch()`."""
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -167,9 +149,7 @@ class TestLiveGroupedDispatch:
     async def test_available_events_are_delivered_as_one_batch(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """The load-bearing assertion: three events already on the feed reach
-        the subscriber in **one** `handle_batch()` call. Before ADR 0063 the
-        live runner made three one-event calls."""
+        """Three events already on the feed reach the subscriber in one `handle_batch()` call."""
         subscriber = RecordingBatchSubscriber()
         runner = make_runner(event_bus, event_store, checkpoint_repo, subscriber, "live-grouped")
         await runner.start()
@@ -187,9 +167,7 @@ class TestLiveGroupedDispatch:
     async def test_batch_is_a_page_not_an_accumulator(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """A lone event is dispatched immediately rather than waiting for
-        company. This is the property that makes ADR 0063 latency-neutral, and
-        it is what a time-window accumulator would have broken."""
+        """A lone event is dispatched immediately rather than waiting for more events."""
         subscriber = RecordingBatchSubscriber()
         runner = make_runner(event_bus, event_store, checkpoint_repo, subscriber, "live-one")
         await runner.start()
@@ -205,8 +183,7 @@ class TestLiveGroupedDispatch:
     async def test_stop_before_dispatch_delivers_nothing(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """Stop is still checked per envelope during the scan, so a drain
-        entered after `stop()` dispatches no batch at all."""
+        """A drain entered after `stop()` dispatches no batch at all."""
         subscriber = RecordingBatchSubscriber()
         runner = make_runner(event_bus, event_store, checkpoint_repo, subscriber, "live-stopped")
         await runner.start()
@@ -218,30 +195,24 @@ class TestLiveGroupedDispatch:
     async def test_stop_interrupts_a_paused_grouped_drain(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """The PR #139 guarantee, on the grouped path: a drain parked in
-        `wait_if_paused()` mid-scan is released by `stop()`, not only by
-        `resume()`. The scan is where pause is observed, so grouping must not
-        have moved the wait outside the stop-aware path."""
+        """A drain parked in `wait_if_paused()` mid-scan is released by `stop()`."""
         subscriber = RecordingBatchSubscriber()
         runner = make_runner(event_bus, event_store, checkpoint_repo, subscriber, "live-paused")
         await runner.start()
         await add_events(event_store, 3)
         await runner.subscription.pause()
         drain = asyncio.create_task(runner._drain_feed())
-        await asyncio.sleep(0)  # let the drain park in wait_if_paused
+        await asyncio.sleep(0)
         assert not drain.done()
         await runner.stop()
         await asyncio.wait_for(drain, timeout=BOUND)
         assert subscriber.batch_calls == []
-        # Stopping is not an implicit resume.
         assert runner.subscription.is_paused
 
     async def test_processing_timeout_bounds_the_batch_call(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """The PR #137 guarantee, on the grouped path: `processing_timeout`
-        bounds one `handle_batch()` exactly as it bounds one `handle()`. A
-        hung batch handler must not wedge the subscription."""
+        """`processing_timeout` bounds `handle_batch()` so a hung batch handler cannot wedge."""
         subscriber = HangingBatchSubscriber()
         cfg = make_config(processing_timeout=0.05)
         runner = make_runner(
@@ -254,16 +225,12 @@ class TestLiveGroupedDispatch:
         finally:
             await runner.stop()
         assert subscriber.entered.is_set()
-        # The timeout surfaced as an ordinary handler failure per event, via
-        # the per-event fallback -- not as a hang.
         assert runner.stats.events_failed == 3
 
     async def test_raising_batch_handler_falls_back_to_per_event(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """ADR 0059's documented contract, matched by the live runner: a
-        `handle_batch()` that raises falls back to per-event delivery rather
-        than the runner inventing partial-batch semantics."""
+        """A `handle_batch()` that raises falls back to per-event delivery."""
         subscriber = RaisingBatchSubscriber()
         runner = make_runner(event_bus, event_store, checkpoint_repo, subscriber, "live-raise")
         await runner.start()
@@ -279,9 +246,7 @@ class TestLiveGroupedDispatch:
     async def test_grouped_drain_checkpoints_the_page(
         self, event_bus, event_store, checkpoint_repo
     ) -> None:
-        """`EVERY_BATCH` now has a batch to attach to on the live path, and
-        the checkpoint lands at the last envelope of the page -- progress
-        never outruns the completed batch."""
+        """`EVERY_BATCH` checkpoints at the last envelope after the batch completes."""
         subscriber = GatedBatchSubscriber()
         cfg = make_config(checkpoint_strategy=CheckpointStrategy.EVERY_BATCH)
         runner = make_runner(
@@ -291,8 +256,6 @@ class TestLiveGroupedDispatch:
         await add_events(event_store, 3)
         drain = asyncio.create_task(runner._drain_feed())
         await asyncio.wait_for(subscriber.entered.wait(), timeout=BOUND)
-        # Mid-batch: nothing is checkpointed yet, because the batch has not
-        # settled. Progress never outruns completed work (ADR 0059).
         assert await checkpoint_repo.get_position("live-checkpoint") is None
         subscriber.release.set()
         await asyncio.wait_for(drain, timeout=BOUND)
