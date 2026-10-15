@@ -141,7 +141,7 @@ class SQLiteSnapshotStore:
                 raise SnapshotDeserializationError(r_id, r_type, e) from e
             logger.debug("Retrieved snapshot for %s/%s", aggregate_type, aggregate_id)
             created = datetime.fromisoformat(row["created_at"])
-            return Snapshot(r_id, r_type, row["version"], row["schema_version"], state, created)
+            return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], created)
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
         """Delete the snapshot for an aggregate; returns True if deleted."""
