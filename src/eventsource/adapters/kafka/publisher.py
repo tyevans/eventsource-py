@@ -69,14 +69,9 @@ class KafkaPublisher:
         self._tracer = tracer
         self._enable_tracing = enable_tracing
 
-    async def publish_all(
-        self,
-        events: Sequence[DomainEvent],
-        background: bool,
-    ) -> None:
+    async def publish_all(self, events: Sequence[DomainEvent], background: bool) -> None:
         """Hand every event to the producer sequentially, then resolve delivery."""
         pending = [await self._begin_publish_single_event(event, background) for event in events]
-
         if background:
             for future, published_event, span in pending:
                 self._track_background_publish(future, published_event, span)
@@ -90,7 +85,6 @@ class KafkaPublisher:
         if span:
             span.set_status(Status(StatusCode.ERROR, str(error)))
             span.record_exception(error)
-
         if self._metrics:
             self._metrics.publish_errors.add(
                 1,
@@ -101,18 +95,14 @@ class KafkaPublisher:
                     "error.type": type(error).__name__,
                 },
             )
-
         logger.error("Failed to publish event", extra={"error": str(error)}, exc_info=True)
         self._stats.last_error_at = datetime.now(UTC)
 
     async def _begin_publish_single_event(
-        self,
-        event: DomainEvent,
-        background: bool,
+        self, event: DomainEvent, background: bool
     ) -> tuple[Any, DomainEvent, Any]:
         """Serialize and hand a single event to the producer."""
         producer = self._connection.require_producer()
-
         key = self._get_partition_key(event)
         value = self._serialize_event(event)
         headers = self._create_headers(event)
@@ -133,19 +123,14 @@ class KafkaPublisher:
                     ATTR_AGGREGATE_TYPE: event.aggregate_type,
                 },
             )
-
             if PROPAGATION_AVAILABLE and inject is not None:
                 carrier: dict[str, str] = {}
                 inject(carrier)
-                for trace_key, trace_value in carrier.items():
-                    headers.append((trace_key, trace_value.encode("utf-8")))
+                headers.extend((k, v.encode("utf-8")) for k, v in carrier.items())
 
         try:
             future = await producer.send(
-                topic=self._config.topic_name,
-                key=key,
-                value=value,
-                headers=headers,
+                topic=self._config.topic_name, key=key, value=value, headers=headers
             )
         except Exception as e:
             self._record_publish_error(event, span, e)
@@ -158,16 +143,13 @@ class KafkaPublisher:
     async def _await_publish_ack(self, handle: tuple[Any, DomainEvent, Any]) -> None:
         """Await broker acknowledgment for a single previously-sent event."""
         future, event, span = handle
-
         try:
             record_metadata = await future
-
             if span:
                 if record_metadata is not None:
                     span.set_attribute("messaging.kafka.partition", record_metadata.partition)
                     span.set_attribute("messaging.kafka.offset", record_metadata.offset)
                 span.set_status(Status(StatusCode.OK))
-
             if record_metadata is not None:
                 logger.debug(
                     "Event published",
@@ -177,7 +159,6 @@ class KafkaPublisher:
                         "offset": record_metadata.offset,
                     },
                 )
-
             if self._metrics:
                 self._metrics.messages_published.add(
                     1,
@@ -187,7 +168,6 @@ class KafkaPublisher:
                         "event.type": event.event_type,
                     },
                 )
-
         except Exception as e:
             self._record_publish_error(event, span, e)
             raise
@@ -195,16 +175,16 @@ class KafkaPublisher:
             if span:
                 span.end()
 
-    def _track_background_publish(
-        self,
-        future: Any,
-        event: DomainEvent,
-        span: Any,
-    ) -> None:
+    def _track_background_publish(self, future: Any, event: DomainEvent, span: Any) -> None:
         """Track a background publish using a done-callback on the future."""
         event_type = event.event_type
         event_id = str(event.event_id)
         topic = self._config.topic_name
+        base_attrs = {
+            "messaging.system": "kafka",
+            "messaging.destination": topic,
+            "event.type": event_type,
+        }
 
         def on_send_success(record_metadata: Any) -> None:
             logger.debug(
@@ -218,14 +198,7 @@ class KafkaPublisher:
                 },
             )
             if self._metrics:
-                self._metrics.messages_published.add(
-                    1,
-                    attributes={
-                        "messaging.system": "kafka",
-                        "messaging.destination": topic,
-                        "event.type": event_type,
-                    },
-                )
+                self._metrics.messages_published.add(1, attributes=dict(base_attrs))
 
         def on_send_error(exc: Exception) -> None:
             logger.error(
@@ -236,13 +209,7 @@ class KafkaPublisher:
             self._stats.last_error_at = datetime.now(UTC)
             if self._metrics:
                 self._metrics.publish_errors.add(
-                    1,
-                    attributes={
-                        "messaging.system": "kafka",
-                        "messaging.destination": topic,
-                        "event.type": event_type,
-                        "error.type": type(exc).__name__,
-                    },
+                    1, attributes={**base_attrs, "error.type": type(exc).__name__}
                 )
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
@@ -278,10 +245,8 @@ class KafkaPublisher:
             ("occurred_at", event.occurred_at.isoformat().encode("utf-8")),
             ("correlation_id", str(event.correlation_id).encode("utf-8")),
         ]
-        if event.tenant_id:
-            headers.append(("tenant_id", str(event.tenant_id).encode("utf-8")))
-        if event.causation_id:
-            headers.append(("causation_id", str(event.causation_id).encode("utf-8")))
-        if event.actor_id:
-            headers.append(("actor_id", str(event.actor_id).encode("utf-8")))
+        for attr in ("tenant_id", "causation_id", "actor_id"):
+            val = getattr(event, attr)
+            if val:
+                headers.append((attr, str(val).encode("utf-8")))
         return headers
