@@ -16,35 +16,27 @@ if AIOSQLITE_AVAILABLE:
 
 _OUTBOX_SCHEMA = """
     CREATE TABLE IF NOT EXISTS event_outbox (
-        id TEXT PRIMARY KEY,
-        event_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        aggregate_id TEXT NOT NULL,
-        aggregate_type TEXT NOT NULL,
-        tenant_id TEXT,
-        event_data TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        published_at TEXT,
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT,
+        id TEXT PRIMARY KEY, event_id TEXT NOT NULL, event_type TEXT NOT NULL,
+        aggregate_id TEXT NOT NULL, aggregate_type TEXT NOT NULL, tenant_id TEXT,
+        event_data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        published_at TEXT, retry_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         CHECK (status IN ('pending', 'published', 'failed'))
     )
 """
 
 
+@pytest.fixture
+async def db_connection() -> aiosqlite.Connection:
+    conn = await aiosqlite.connect(":memory:")
+    await conn.execute(_OUTBOX_SCHEMA)
+    await conn.commit()
+    yield conn
+    await conn.close()
+
+
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
 class TestSQLiteOutboxRepositoryStandalone:
-    """Tests for SQLiteOutboxRepository using in-memory SQLite database."""
-
-    @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
-        conn = await aiosqlite.connect(":memory:")
-        await conn.execute(_OUTBOX_SCHEMA)
-        await conn.commit()
-        yield conn
-        await conn.close()
-
     @pytest.fixture
     def repo(self, db_connection: aiosqlite.Connection) -> SQLiteOutboxRepository:
         return SQLiteOutboxRepository(db_connection)
@@ -75,11 +67,8 @@ class TestSQLiteOutboxRepositoryStandalone:
 
     @pytest.mark.asyncio
     async def test_get_pending_events_order(self, repo: SQLiteOutboxRepository):
-        events = []
         for i in range(3):
-            event = SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}")
-            events.append(event)
-            await repo.add_event(event)
+            await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}"))
         pending = await repo.get_pending_events()
         assert len(pending) == 3
         assert "event_0" in pending[0].event_data
@@ -102,8 +91,7 @@ class TestSQLiteOutboxRepositoryStandalone:
     async def test_mark_published(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
         await repo.add_event(sample_event)
         pending = await repo.get_pending_events()
-        outbox_id = pending[0].id
-        await repo.mark_published(outbox_id)
+        await repo.mark_published(pending[0].id)
         pending = await repo.get_pending_events()
         assert len(pending) == 0
         stats = await repo.get_stats()
@@ -114,8 +102,7 @@ class TestSQLiteOutboxRepositoryStandalone:
     async def test_mark_failed(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
         await repo.add_event(sample_event)
         pending = await repo.get_pending_events()
-        outbox_id = pending[0].id
-        await repo.mark_failed(outbox_id, "Connection refused")
+        await repo.mark_failed(pending[0].id, "Connection refused")
         pending = await repo.get_pending_events()
         assert len(pending) == 0
         stats = await repo.get_stats()
@@ -125,8 +112,7 @@ class TestSQLiteOutboxRepositoryStandalone:
     @pytest.mark.asyncio
     async def test_increment_retry(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
         await repo.add_event(sample_event)
-        pending = await repo.get_pending_events()
-        outbox_id = pending[0].id
+        outbox_id = (await repo.get_pending_events())[0].id
         await repo.increment_retry(outbox_id, "Temporary error")
         await repo.increment_retry(outbox_id, "Another error")
         pending = await repo.get_pending_events()
@@ -138,8 +124,7 @@ class TestSQLiteOutboxRepositoryStandalone:
         self, repo: SQLiteOutboxRepository, db_connection: aiosqlite.Connection
     ):
         await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field="test"))
-        pending = await repo.get_pending_events()
-        outbox_id = pending[0].id
+        outbox_id = (await repo.get_pending_events())[0].id
         await repo.mark_published(outbox_id)
         await db_connection.execute(
             "UPDATE event_outbox SET published_at = datetime('now', '-10 days') WHERE id = ?",
@@ -161,8 +146,7 @@ class TestSQLiteOutboxRepositoryStandalone:
     async def test_get_stats(self, repo: SQLiteOutboxRepository):
         for i in range(5):
             await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}"))
-        pending = await repo.get_pending_events()
-        outbox_ids = [p.id for p in pending]
+        outbox_ids = [p.id for p in await repo.get_pending_events()]
         await repo.mark_published(outbox_ids[0])
         await repo.mark_published(outbox_ids[1])
         await repo.mark_failed(outbox_ids[4], "Error")
@@ -186,12 +170,9 @@ class TestSQLiteOutboxRepositoryStandalone:
     async def test_get_stats_avg_retries(self, repo: SQLiteOutboxRepository):
         for i in range(3):
             await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}"))
-
-        pending = await repo.get_pending_events()
-        for i, p in enumerate(pending):
+        for i, p in enumerate(await repo.get_pending_events()):
             for _ in range(i * 2):
                 await repo.increment_retry(p.id, "Error")
-
         stats = await repo.get_stats()
         assert stats.avg_retries == 2.0
 
@@ -215,7 +196,6 @@ class TestSQLiteOutboxRepositoryStandalone:
         aggregate_id = uuid4()
         for i in range(3):
             await repo.add_event(SampleEvent(aggregate_id=aggregate_id, test_field=f"event_{i}"))
-
         pending = await repo.get_pending_events()
         assert len(pending) == 3
         for entry in pending:
@@ -223,14 +203,11 @@ class TestSQLiteOutboxRepositoryStandalone:
 
     @pytest.mark.asyncio
     async def test_pending_event_fields(self, repo: SQLiteOutboxRepository):
-        tenant_id = uuid4()
-        aggregate_id = uuid4()
+        tenant_id, aggregate_id = uuid4(), uuid4()
         event = SampleEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, test_field="test")
         await repo.add_event(event)
-
         pending = await repo.get_pending_events()
         assert len(pending) == 1
-
         entry = pending[0]
         assert entry.id is not None
         assert entry.event_id == event.event_id
@@ -245,16 +222,6 @@ class TestSQLiteOutboxRepositoryStandalone:
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
 class TestSQLiteOutboxRepositoryStandaloneProtocol:
-    """Tests to verify SQLiteOutboxRepository implements the protocol."""
-
-    @pytest.fixture
-    async def db_connection(self) -> aiosqlite.Connection:
-        conn = await aiosqlite.connect(":memory:")
-        await conn.execute(_OUTBOX_SCHEMA)
-        await conn.commit()
-        yield conn
-        await conn.close()
-
     def test_implements_protocol(self, db_connection: aiosqlite.Connection):
         repo = SQLiteOutboxRepository(db_connection)
         assert isinstance(repo, OutboxRepository)

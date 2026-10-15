@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import IntEnum
 from uuid import uuid4
 
 import pytest
@@ -10,28 +11,50 @@ import pytest
 from eventsource.adapters.serialization import json_dumps, json_loads
 
 
-class TestJsonEncoderContract:
-    """Contract tests for the single orjson-backed encoder."""
+class _MyDict(dict):
+    pass
 
+
+class _MyList(list):
+    pass
+
+
+class _MyTuple(tuple):
+    pass
+
+
+class _MyInt(int):
+    pass
+
+
+class _MyFloat(float):
+    pass
+
+
+class _MyStr(str):
+    pass
+
+
+class _Color(IntEnum):
+    RED = 1
+
+
+class TestJsonEncoderContract:
     def test_uuid_serializes(self) -> None:
         test_uuid = uuid4()
-        result = json_dumps({"id": test_uuid})
-        assert json_loads(result) == {"id": str(test_uuid)}
+        assert json_loads(json_dumps({"id": test_uuid})) == {"id": str(test_uuid)}
 
     def test_aware_datetime_serializes(self) -> None:
         dt = datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=UTC)
-        result = json_dumps({"t": dt})
-        assert json_loads(result) == {"t": dt.isoformat()}
+        assert json_loads(json_dumps({"t": dt})) == {"t": dt.isoformat()}
 
     def test_naive_datetime_serializes(self) -> None:
         dt = datetime(2024, 1, 15, 10, 30, 45, 123456)
-        result = json_dumps({"t": dt})
-        assert json_loads(result) == {"t": dt.isoformat()}
+        assert json_loads(json_dumps({"t": dt})) == {"t": dt.isoformat()}
 
     def test_uuid_dict_key_serializes(self) -> None:
         test_uuid = uuid4()
-        result = json_dumps({test_uuid: "a"})
-        assert str(test_uuid) in result
+        assert str(test_uuid) in json_dumps({test_uuid: "a"})
 
     def test_round_trip_through_json_loads(self) -> None:
         original = {
@@ -41,8 +64,7 @@ class TestJsonEncoderContract:
                 "items": [{"sub_id": uuid4(), "n": 1}, {"sub_id": uuid4(), "n": 2}],
             }
         }
-        result = json_dumps(original)
-        parsed = json_loads(result)
+        parsed = json_loads(json_dumps(original))
         assert parsed["event"]["id"] == str(original["event"]["id"])
         assert parsed["event"]["occurred_at"] == original["event"]["occurred_at"].isoformat()
         assert len(parsed["event"]["items"]) == 2
@@ -81,13 +103,11 @@ class TestJsonEncoderContract:
 
     def test_mixed_ascii_and_non_ascii(self) -> None:
         text = "Hello, Sébastien! 日本語 \U0001f600 mixed with ASCII."
-        result = json_dumps({"msg": text})
-        assert json_loads(result) == {"msg": text}
+        assert json_loads(json_dumps({"msg": text})) == {"msg": text}
 
     def test_control_characters(self) -> None:
         text = "line1\nline2\ttab\x00null-byte"
-        result = json_dumps({"text": text})
-        assert json_loads(result) == {"text": text}
+        assert json_loads(json_dumps({"text": text})) == {"text": text}
 
     def test_empty_and_whitespace_strings(self) -> None:
         data = {"empty": "", "spaces": "   ", "tabs_newlines": "\t\n"}
@@ -102,8 +122,7 @@ class TestJsonEncoderContract:
             "precise": 1.123456789012345,
             "negative": -42.5,
         }
-        result = json_dumps(data)
-        parsed = json_loads(result)
+        parsed = json_loads(json_dumps(data))
         for key, value in data.items():
             assert parsed[key] == value
 
@@ -112,53 +131,37 @@ class TestJsonEncoderContract:
         assert json_loads(json_dumps(data)) == data
 
     def test_bool_serializes_as_boolean_not_integer(self) -> None:
-        result = json_dumps({"flags": [True, False]})
-        assert result == '{"flags":[true,false]}'
+        assert json_dumps({"flags": [True, False]}) == '{"flags":[true,false]}'
 
     @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
     def test_non_finite_float_in_plain_dict_serializes_as_null(self, value: float) -> None:
-        result = json_dumps({"v": value})
-        assert result == '{"v":null}'
+        assert json_dumps({"v": value}) == '{"v":null}'
 
     def test_non_finite_float_nested_in_list_serializes_as_null(self) -> None:
         data = {"items": [1.0, 2.0, {"nested": [float("nan")]}]}
-        result = json_dumps(data)
-        assert json_loads(result) == {"items": [1.0, 2.0, {"nested": [None]}]}
+        assert json_loads(json_dumps(data)) == {"items": [1.0, 2.0, {"nested": [None]}]}
 
     def test_non_finite_float_nested_in_dict_serializes_as_null(self) -> None:
         data = {"outer": {"inner": {"deep": float("inf")}}}
-        result = json_dumps(data)
-        assert json_loads(result) == {"outer": {"inner": {"deep": None}}}
+        assert json_loads(json_dumps(data)) == {"outer": {"inner": {"deep": None}}}
 
     def test_non_finite_float_inside_dict_subclass_serializes_as_null(self) -> None:
-        class MyDict(dict):
-            pass
-
-        data = {"a": MyDict({"x": float("inf")})}
-        assert json_loads(json_dumps(data)) == {"a": {"x": None}}
+        assert json_loads(json_dumps({"a": _MyDict({"x": float("inf")})})) == {"a": {"x": None}}
 
     def test_non_finite_float_inside_list_subclass_serializes_as_null(self) -> None:
-        class MyList(list):
-            pass
-
-        data = {"a": MyList([float("nan")])}
-        assert json_loads(json_dumps(data)) == {"a": [None]}
+        assert json_loads(json_dumps({"a": _MyList([float("nan")])})) == {"a": [None]}
 
     def test_tuple_subclass_is_unsupported_regardless_of_content(self) -> None:
-        class MyTuple(tuple):
-            pass
-
         with pytest.raises(TypeError, match="not JSON serializable"):
-            json_dumps({"a": MyTuple([1, "finite", 2.5])})
+            json_dumps({"a": _MyTuple([1, "finite", 2.5])})
 
     def test_int_min_boundary_ok(self) -> None:
         value = -(2**63)
         assert json_loads(json_dumps({"n": value})) == {"n": value}
 
     def test_int_below_min_boundary_raises(self) -> None:
-        value = -(2**63) - 1
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps({"n": value})
+            json_dumps({"n": -(2**63) - 1})
 
     def test_out_of_range_int_error_message_matches_documented_text(self) -> None:
         with pytest.raises(ValueError) as exc_info:
@@ -173,87 +176,48 @@ class TestJsonEncoderContract:
         assert json_loads(json_dumps({"n": value})) == {"n": value}
 
     def test_int_above_max_boundary_raises(self) -> None:
-        value = 2**64
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps({"n": value})
+            json_dumps({"n": 2**64})
 
     def test_out_of_range_int_nested_in_dict_raises(self) -> None:
-        data = {"outer": {"inner": 2**64}}
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps(data)
+            json_dumps({"outer": {"inner": 2**64}})
 
     def test_out_of_range_int_nested_in_list_raises(self) -> None:
-        data = {"items": [1, 2, [2**64]]}
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps(data)
+            json_dumps({"items": [1, 2, [2**64]]})
 
     def test_out_of_range_int_inside_dict_subclass_raises(self) -> None:
-        class MyDict(dict):
-            pass
-
-        data = {"a": MyDict({"x": 2**64})}
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps(data)
+            json_dumps({"a": _MyDict({"x": 2**64})})
 
     def test_out_of_range_int_inside_list_subclass_raises(self) -> None:
-        class MyList(list):
-            pass
-
-        data = {"a": MyList([-(2**63) - 1])}
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps(data)
+            json_dumps({"a": _MyList([-(2**63) - 1])})
 
     def test_bool_never_range_checked(self) -> None:
         assert json_dumps({"a": True, "b": False}) == '{"a":true,"b":false}'
 
     def test_int_subclass_in_range_serializes(self) -> None:
-        from enum import IntEnum
-
-        class Color(IntEnum):
-            RED = 1
-
-        assert json_loads(json_dumps({"c": Color.RED})) == {"c": 1}
+        assert json_loads(json_dumps({"c": _Color.RED})) == {"c": 1}
 
     def test_int_subclass_out_of_range_raises(self) -> None:
-        class MyInt(int):
-            pass
-
         with pytest.raises(ValueError, match="Integer out of range"):
-            json_dumps({"n": MyInt(2**64)})
+            json_dumps({"n": _MyInt(2**64)})
 
     def test_float_subclass_finite_serializes(self) -> None:
-        class MyFloat(float):
-            pass
-
-        result = json_dumps({"v": MyFloat(3.14)})
-        assert json_loads(result) == {"v": 3.14}
+        assert json_loads(json_dumps({"v": _MyFloat(3.14)})) == {"v": 3.14}
 
     @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
     def test_float_subclass_non_finite_serializes_as_null(self, value: float) -> None:
-        class MyFloat(float):
-            pass
-
-        result = json_dumps({"v": MyFloat(value)})
-        assert result == '{"v":null}'
+        assert json_dumps({"v": _MyFloat(value)}) == '{"v":null}'
 
     def test_nested_float_subclass_in_dict_subclass_in_list_serializes_as_null(self) -> None:
-        class MyDict(dict):
-            pass
-
-        class MyFloat(float):
-            pass
-
-        data = {"outer": [MyDict({"inner": MyFloat(float("inf"))})]}
+        data = {"outer": [_MyDict({"inner": _MyFloat(float("inf"))})]}
         assert json_loads(json_dumps(data)) == {"outer": [{"inner": None}]}
 
     def test_int_subclass_serializes(self) -> None:
-        class MyInt(int):
-            pass
-
-        assert json_loads(json_dumps({"v": MyInt(42)})) == {"v": 42}
+        assert json_loads(json_dumps({"v": _MyInt(42)})) == {"v": 42}
 
     def test_str_subclass_serializes(self) -> None:
-        class MyStr(str):
-            pass
-
-        assert json_loads(json_dumps({"v": MyStr("hi")})) == {"v": "hi"}
+        assert json_loads(json_dumps({"v": _MyStr("hi")})) == {"v": "hi"}

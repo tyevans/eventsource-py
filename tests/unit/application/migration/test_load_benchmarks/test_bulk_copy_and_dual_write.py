@@ -27,28 +27,18 @@ from tests.unit.application.migration.test_load_benchmarks._repositories import 
 
 
 class TestBulkCopyThroughput:
-    """Benchmarks for bulk copy throughput at various batch sizes (Target: > 10K events/second)."""
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "batch_size,event_count",
-        [
-            (100, 1_000),
-            (500, 5_000),
-            (1_000, 10_000),
-            (2_000, 10_000),
-            (5_000, 20_000),
-        ],
+        [(100, 1_000), (500, 5_000), (1_000, 10_000), (2_000, 10_000), (5_000, 20_000)],
     )
     async def test_bulk_copy_throughput_at_batch_sizes(
         self, batch_size: int, event_count: int
     ) -> None:
-        """Test bulk copy throughput at various batch sizes."""
         tenant_id = uuid4()
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
         migration_repo = InMemoryMigrationRepository()
-
         await create_test_events(source_store, tenant_id, event_count)
 
         migration = Migration(
@@ -60,13 +50,7 @@ class TestBulkCopyThroughput:
             config=MigrationConfig(batch_size=batch_size, max_bulk_copy_rate=1_000_000),
         )
         await migration_repo.create(migration)
-
-        copier = BulkCopier(
-            source_store=source_store,
-            target_store=target_store,
-            migration_repo=migration_repo,
-            enable_tracing=False,
-        )
+        copier = BulkCopier(source_store, target_store, migration_repo, enable_tracing=False)
 
         start_time = time.monotonic()
         events_copied = 0
@@ -81,22 +65,18 @@ class TestBulkCopyThroughput:
             operations_count=events_copied,
             metadata={"batch_size": batch_size, "event_count": event_count},
         )
-
-        assert result.operations_per_second > 1_000, (
-            f"Throughput {result.operations_per_second:.0f} events/s below threshold"
-        )
+        assert (
+            result.operations_per_second > 1_000
+        ), f"Throughput {result.operations_per_second:.0f} events/s below threshold"
         assert events_copied == event_count
 
     @pytest.mark.asyncio
     async def test_bulk_copy_with_large_payload(self) -> None:
-        """Test bulk copy performance with larger event payloads."""
         tenant_id = uuid4()
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
         migration_repo = InMemoryMigrationRepository()
-        event_count = 5_000
-        payload_size = 1_000
-
+        event_count, payload_size = 5_000, 1_000
         await create_test_events(source_store, tenant_id, event_count, payload_size=payload_size)
 
         migration = Migration(
@@ -108,13 +88,7 @@ class TestBulkCopyThroughput:
             config=MigrationConfig(batch_size=500, max_bulk_copy_rate=1_000_000),
         )
         await migration_repo.create(migration)
-
-        copier = BulkCopier(
-            source_store=source_store,
-            target_store=target_store,
-            migration_repo=migration_repo,
-            enable_tracing=False,
-        )
+        copier = BulkCopier(source_store, target_store, migration_repo, enable_tracing=False)
 
         start_time = time.monotonic()
         events_copied = 0
@@ -133,11 +107,8 @@ class TestBulkCopyThroughput:
 
 
 class TestDualWriteOverhead:
-    """Benchmarks for dual-write overhead compared to single-write (Target: < 5% latency overhead)."""
-
     @pytest.mark.asyncio
     async def test_dual_write_overhead_comparison(self) -> None:
-        """Compare latency of single-write vs dual-write operations."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
         tenant_id = uuid4()
@@ -158,10 +129,7 @@ class TestDualWriteOverhead:
             single_write_times.append((time.monotonic() - start) * 1000)
 
         interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, tenant_id, enable_tracing=False
         )
         dual_write_times: list[float] = []
 
@@ -180,28 +148,23 @@ class TestDualWriteOverhead:
 
         single_result = LatencyResult.from_samples("single_write", single_write_times)
         dual_result = LatencyResult.from_samples("dual_write", dual_write_times)
-
         _ = ((dual_result.mean_ms - single_result.mean_ms) / single_result.mean_ms) * 100
         _ = ((dual_result.p95_ms - single_result.p95_ms) / single_result.p95_ms) * 100
 
-        assert dual_result.mean_ms < 5.0, (
-            f"Dual-write mean latency {dual_result.mean_ms:.2f}ms too high"
-        )
-        assert dual_result.p95_ms < 10.0, (
-            f"Dual-write p95 latency {dual_result.p95_ms:.2f}ms too high"
-        )
+        assert (
+            dual_result.mean_ms < 5.0
+        ), f"Dual-write mean latency {dual_result.mean_ms:.2f}ms too high"
+        assert (
+            dual_result.p95_ms < 10.0
+        ), f"Dual-write p95 latency {dual_result.p95_ms:.2f}ms too high"
 
     @pytest.mark.asyncio
     async def test_dual_write_with_target_failure(self) -> None:
-        """Test dual-write performance when target store fails."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         tenant_id = uuid4()
         num_operations = 200
         interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=RaisingTargetStore(),
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, RaisingTargetStore(), tenant_id, enable_tracing=False
         )
         latencies: list[float] = []
 
@@ -224,15 +187,11 @@ class TestDualWriteOverhead:
 
     @pytest.mark.asyncio
     async def test_dual_write_batch_performance(self) -> None:
-        """Test dual-write performance with batches of multiple events."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
         tenant_id = uuid4()
         interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, tenant_id, enable_tracing=False
         )
         results: dict[int, LatencyResult] = {}
 

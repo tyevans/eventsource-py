@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 
 
 class _TestSyncLagAnchorBase:
-    """Base mixin containing first half of sync lag anchor test scenarios."""
-
     @pytest.mark.asyncio
     async def test_healthy_tenant_converges_unbounded(
         self,
@@ -39,15 +37,10 @@ class _TestSyncLagAnchorBase:
         target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """All writes mirrored and the checkpoint covers the install window: lag 0."""
         interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, tenant_id, enable_tracing=False
         )
         await drive_dual_writes(interceptor, tenant_id, 3)
-
         copied_through = await source_store.current_position()
         assert copied_through is not None
         assert interceptor.first_seen_source_position is not None
@@ -58,10 +51,10 @@ class _TestSyncLagAnchorBase:
         assert interceptor.last_synced_source_position is not None
 
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=MigrationConfig(cutover_max_lag_events=3),
-            tenant_id=tenant_id,
+            source_store,
+            target_store,
+            MigrationConfig(cutover_max_lag_events=3),
+            tenant_id,
             enable_tracing=False,
         )
         anchor = interceptor.safe_lag_anchor(copied_through)
@@ -82,31 +75,19 @@ class _TestSyncLagAnchorBase:
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
     ) -> None:
-        """Failures followed by successes must not hide the missing events."""
         migration_id = uuid4()
         copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
-
         flaky = FlakyTarget(target_store, reject_first=3)
-        interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=flaky,
-            tenant_id=tenant_id,
-            enable_tracing=False,
-        )
+        interceptor = DualWriteInterceptor(source_store, flaky, tenant_id, enable_tracing=False)
         await drive_dual_writes(interceptor, tenant_id, 8)
         assert interceptor.first_failed_source_position is not None
 
         config = MigrationConfig(cutover_max_lag_events=3)
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, config, tenant_id, enable_tracing=False
         )
         anchor = interceptor.safe_lag_anchor(copied_through)
         lag = await tracker.calculate_lag(since=anchor)
-
         assert lag.events >= 3
         assert tracker.is_sync_ready() is False
 
@@ -114,12 +95,7 @@ class _TestSyncLagAnchorBase:
             tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
         )
         router.register_store("dedicated", target_store)
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
-        )
+        cutover_manager = CutoverManager(lock_manager, router, routing_repo, enable_tracing=False)
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -141,14 +117,8 @@ class _TestSyncLagAnchorBase:
         target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """Later successes never clear or advance the first-failure mark."""
         flaky = FlakyTarget(target_store, reject_first=1)
-        interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=flaky,
-            tenant_id=tenant_id,
-            enable_tracing=False,
-        )
+        interceptor = DualWriteInterceptor(source_store, flaky, tenant_id, enable_tracing=False)
         await drive_dual_writes(interceptor, tenant_id, 1)
         first_failed = interceptor.first_failed_source_position
         assert first_failed is not None
@@ -169,10 +139,8 @@ class _TestSyncLagAnchorBase:
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
     ) -> None:
-        """Install-window clamp prevents advancing anchor past unmirrored writes."""
         migration_id = uuid4()
         copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
-
         for _i in range(3):
             aggregate_id = uuid4()
             await source_store.append(
@@ -182,10 +150,7 @@ class _TestSyncLagAnchorBase:
             )
 
         interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, tenant_id, enable_tracing=False
         )
         await drive_dual_writes(interceptor, tenant_id, 2)
         assert interceptor.first_failed_source_position is None
@@ -197,11 +162,7 @@ class _TestSyncLagAnchorBase:
 
         config = MigrationConfig(cutover_max_lag_events=3)
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, config, tenant_id, enable_tracing=False
         )
         lag = await tracker.calculate_lag(since=anchor)
         assert lag.events >= 3
@@ -211,12 +172,7 @@ class _TestSyncLagAnchorBase:
             tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
         )
         router.register_store("dedicated", target_store)
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
-        )
+        cutover_manager = CutoverManager(lock_manager, router, routing_repo, enable_tracing=False)
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -238,15 +194,10 @@ class _TestSyncLagAnchorBase:
         target_store: InMemoryEventStore,
         tenant_id: UUID,
     ) -> None:
-        """Once checkpoint reaches interceptor coverage, the anchor advances normally."""
         interceptor = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
+            source_store, target_store, tenant_id, enable_tracing=False
         )
         await drive_dual_writes(interceptor, tenant_id, 1)
-
         checkpoint = interceptor.first_seen_source_position
         assert checkpoint is not None
 

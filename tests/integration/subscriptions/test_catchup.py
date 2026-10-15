@@ -26,16 +26,11 @@ async def position_after(store, n: int):
 
 class TestCatchUpFromBeginning:
     async def test_catchup_from_beginning_processes_all_events(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, subscription_manager
     ):
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         success = await projection.wait_for_events(100)
@@ -44,19 +39,12 @@ class TestCatchUpFromBeginning:
         for i, event in enumerate(projection.events):
             assert event.order_number == f"ORD-{i:05d}"
 
-    async def test_catchup_preserves_event_order(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_catchup_preserves_event_order(self, in_memory_event_store, subscription_manager):
         events = await populate_event_store_with_types(
             in_memory_event_store, created_count=30, shipped_count=20, cancelled_count=10
         )
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         success = await projection.wait_for_events(60)
@@ -66,16 +54,11 @@ class TestCatchUpFromBeginning:
             assert original.event_id == received.event_id, f"Mismatch at position {i}"
 
     async def test_catchup_with_large_event_count(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, subscription_manager
     ):
         await populate_event_store(in_memory_event_store, 500)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         success = await projection.wait_for_events(500, timeout=15.0)
@@ -85,11 +68,7 @@ class TestCatchUpFromBeginning:
 
 class TestCatchUpFromCheckpoint:
     async def test_catchup_from_checkpoint(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_checkpoint_repo, subscription_manager
     ):
         events = await populate_event_store(in_memory_event_store, 100)
         await in_memory_checkpoint_repo.save_position(
@@ -99,8 +78,9 @@ class TestCatchUpFromCheckpoint:
             event_type="TestOrderCreated",
         )
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="checkpoint")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
         await subscription_manager.start()
 
         success = await projection.wait_for_events(50)
@@ -109,16 +89,13 @@ class TestCatchUpFromCheckpoint:
         assert projection.events[0].order_number == "ORD-00050"
 
     async def test_catchup_from_checkpoint_no_checkpoint_exists(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, subscription_manager
     ):
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="checkpoint")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
         await subscription_manager.start()
 
         success = await projection.wait_for_events(50)
@@ -126,11 +103,7 @@ class TestCatchUpFromCheckpoint:
         assert projection.event_count == 50
 
     async def test_catchup_from_specific_position(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, subscription_manager
     ):
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
@@ -145,13 +118,7 @@ class TestCatchUpFromCheckpoint:
 
 
 class TestCatchUpWithBatchSize:
-    async def test_catchup_with_small_batch_size(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_catchup_with_small_batch_size(self, in_memory_event_store, subscription_manager):
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
         config = SubscriptionConfig(start_from="beginning", batch_size=10)
@@ -162,13 +129,7 @@ class TestCatchUpWithBatchSize:
         assert success
         assert projection.event_count == 100
 
-    async def test_catchup_with_large_batch_size(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_catchup_with_large_batch_size(self, in_memory_event_store, subscription_manager):
         await populate_event_store(in_memory_event_store, 250)
         projection = CollectingProjection()
         config = SubscriptionConfig(start_from="beginning", batch_size=500)
@@ -179,13 +140,7 @@ class TestCatchUpWithBatchSize:
         assert success
         assert projection.event_count == 250
 
-    async def test_catchup_batch_size_one(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_catchup_batch_size_one(self, in_memory_event_store, subscription_manager):
         await populate_event_store(in_memory_event_store, 25)
         projection = CollectingProjection()
         config = SubscriptionConfig(start_from="beginning", batch_size=1)
@@ -198,16 +153,9 @@ class TestCatchUpWithBatchSize:
 
 
 class TestEmptyEventStore:
-    async def test_empty_event_store_goes_to_live(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_empty_event_store_goes_to_live(self, subscription_manager):
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         assert projection.event_count == 0
@@ -216,15 +164,10 @@ class TestEmptyEventStore:
         assert subscription.state.value == "live"
 
     async def test_empty_store_receives_live_events(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         await publish_live_event(
@@ -237,17 +180,10 @@ class TestEmptyEventStore:
 
 
 class TestNoDuplicateEvents:
-    async def test_no_duplicates_during_catchup(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_no_duplicates_during_catchup(self, in_memory_event_store, subscription_manager):
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         success = await projection.wait_for_events(100)

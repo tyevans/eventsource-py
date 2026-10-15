@@ -6,35 +6,23 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.application.migration.consistency import (
-    ConsistencyVerifier,
-    VerificationLevel,
-)
+from eventsource.application.migration.consistency import ConsistencyVerifier, VerificationLevel
 from eventsource.domain import StreamId
 from eventsource.ports import EventEnvelope
-from tests.unit.application.migration.test_consistency_verifier._fixtures import (
-    TestEvent,
-)
+from tests.unit.application.migration.test_consistency_verifier._fixtures import TestEvent
 
 
 class TestConsistencyVerifierInit:
     def test_init_with_stores(self) -> None:
-        source_store = MagicMock()
-        target_store = MagicMock()
-        verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-        )
+        source_store, target_store = MagicMock(), MagicMock()
+        verifier = ConsistencyVerifier(source_store=source_store, target_store=target_store)
         assert verifier._source == source_store
         assert verifier._target == target_store
 
     def test_init_with_tracing_disabled(self) -> None:
-        source_store = MagicMock()
-        target_store = MagicMock()
+        source_store, target_store = MagicMock(), MagicMock()
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
         assert verifier._enable_tracing is False
 
@@ -63,11 +51,7 @@ class TestConsistencyVerifierVerifyTenant:
         agg_id = aggregate_id or uuid4()
         stream_id = StreamId(aggregate_id=agg_id, category="TestAggregate")
         for i in range(count):
-            event = TestEvent(
-                aggregate_id=agg_id,
-                tenant_id=tenant_id,
-                value=f"{value_prefix}_{i}",
-            )
+            event = TestEvent(aggregate_id=agg_id, tenant_id=tenant_id, value=f"{value_prefix}_{i}")
             envelope = EventEnvelope(
                 event=event,
                 stream_id=stream_id,
@@ -80,10 +64,7 @@ class TestConsistencyVerifierVerifyTenant:
 
     @pytest.mark.asyncio
     async def test_verify_consistent_tenant(
-        self,
-        tenant_id: UUID,
-        source_store: AsyncMock,
-        target_store: AsyncMock,
+        self, tenant_id: UUID, source_store: AsyncMock, target_store: AsyncMock
     ) -> None:
         agg_id = uuid4()
         events = self._create_events(5, tenant_id, agg_id)
@@ -99,14 +80,9 @@ class TestConsistencyVerifierVerifyTenant:
         source_store.read_all = source_generator
         target_store.read_all = target_generator
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
-        report = await verifier.verify_tenant_consistency(
-            tenant_id,
-            level=VerificationLevel.HASH,
-        )
+        report = await verifier.verify_tenant_consistency(tenant_id, level=VerificationLevel.HASH)
         assert report.is_consistent is True
         assert report.source_event_count == 5
         assert report.target_event_count == 5
@@ -116,10 +92,7 @@ class TestConsistencyVerifierVerifyTenant:
 
     @pytest.mark.asyncio
     async def test_verify_count_mismatch(
-        self,
-        tenant_id: UUID,
-        source_store: AsyncMock,
-        target_store: AsyncMock,
+        self, tenant_id: UUID, source_store: AsyncMock, target_store: AsyncMock
     ) -> None:
         agg_id = uuid4()
         source_events = self._create_events(10, tenant_id, agg_id)
@@ -136,14 +109,9 @@ class TestConsistencyVerifierVerifyTenant:
         source_store.read_all = source_generator
         target_store.read_all = target_generator
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
-        report = await verifier.verify_tenant_consistency(
-            tenant_id,
-            level=VerificationLevel.COUNT,
-        )
+        report = await verifier.verify_tenant_consistency(tenant_id, level=VerificationLevel.COUNT)
         assert report.is_consistent is False
         assert report.source_event_count == 10
         assert report.target_event_count == 8
@@ -151,10 +119,7 @@ class TestConsistencyVerifierVerifyTenant:
 
     @pytest.mark.asyncio
     async def test_verify_empty_stores(
-        self,
-        tenant_id: UUID,
-        source_store: AsyncMock,
-        target_store: AsyncMock,
+        self, tenant_id: UUID, source_store: AsyncMock, target_store: AsyncMock
     ) -> None:
         async def empty_generator(from_position, options):
             return
@@ -163,9 +128,7 @@ class TestConsistencyVerifierVerifyTenant:
         source_store.read_all = empty_generator
         target_store.read_all = empty_generator
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
         report = await verifier.verify_tenant_consistency(tenant_id)
         assert report.is_consistent is True
@@ -175,10 +138,7 @@ class TestConsistencyVerifierVerifyTenant:
 
     @pytest.mark.asyncio
     async def test_verify_missing_stream_in_target(
-        self,
-        tenant_id: UUID,
-        source_store: AsyncMock,
-        target_store: AsyncMock,
+        self, tenant_id: UUID, source_store: AsyncMock, target_store: AsyncMock
     ) -> None:
         agg_id = uuid4()
         source_events = self._create_events(5, tenant_id, agg_id)
@@ -194,9 +154,7 @@ class TestConsistencyVerifierVerifyTenant:
         source_store.read_all = source_generator
         target_store.read_all = target_generator
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
         report = await verifier.verify_tenant_consistency(tenant_id)
         assert report.is_consistent is False
@@ -204,16 +162,12 @@ class TestConsistencyVerifierVerifyTenant:
 
     @pytest.mark.asyncio
     async def test_verify_with_multiple_streams(
-        self,
-        tenant_id: UUID,
-        source_store: AsyncMock,
-        target_store: AsyncMock,
+        self, tenant_id: UUID, source_store: AsyncMock, target_store: AsyncMock
     ) -> None:
-        agg1_id = uuid4()
-        agg2_id = uuid4()
-        source_events1 = self._create_events(3, tenant_id, agg1_id)
-        source_events2 = self._create_events(4, tenant_id, agg2_id)
-        all_source = source_events1 + source_events2
+        agg1_id, agg2_id = uuid4(), uuid4()
+        all_source = self._create_events(3, tenant_id, agg1_id) + self._create_events(
+            4, tenant_id, agg2_id
+        )
 
         async def source_generator(from_position, options):
             for event in all_source:
@@ -226,9 +180,7 @@ class TestConsistencyVerifierVerifyTenant:
         source_store.read_all = source_generator
         target_store.read_all = target_generator
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
         report = await verifier.verify_tenant_consistency(tenant_id)
         assert report.is_consistent is True
@@ -237,23 +189,12 @@ class TestConsistencyVerifierVerifyTenant:
 
     @pytest.mark.asyncio
     async def test_verify_invalid_sample_percentage(
-        self,
-        tenant_id: UUID,
-        source_store: AsyncMock,
-        target_store: AsyncMock,
+        self, tenant_id: UUID, source_store: AsyncMock, target_store: AsyncMock
     ) -> None:
         verifier = ConsistencyVerifier(
-            source_store=source_store,
-            target_store=target_store,
-            enable_tracing=False,
+            source_store=source_store, target_store=target_store, enable_tracing=False
         )
         with pytest.raises(ValueError, match="sample_percentage"):
-            await verifier.verify_tenant_consistency(
-                tenant_id,
-                sample_percentage=0,
-            )
+            await verifier.verify_tenant_consistency(tenant_id, sample_percentage=0)
         with pytest.raises(ValueError, match="sample_percentage"):
-            await verifier.verify_tenant_consistency(
-                tenant_id,
-                sample_percentage=101,
-            )
+            await verifier.verify_tenant_consistency(tenant_id, sample_percentage=101)
