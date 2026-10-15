@@ -122,7 +122,70 @@ class TestEventBuilderTypeSafety:
         assert isinstance(event, SampleEvent)
 
 
+class TestEventBuilderClone:
+    """Tests for EventBuilder.clone(**overrides)."""
+
+    def test_clone_preserves_base_fields(self) -> None:
+        """clone() returns a new builder with all base fields preserved."""
+        agg_id = uuid4()
+        customer_id = uuid4()
+        base = (
+            EventBuilder(SampleEvent, customer_id=customer_id, amount=100.0)
+            .with_aggregate_id(agg_id)
+            .with_version(3)
+        )
+
+        cloned = base.clone()
+
+        assert cloned is not base
+        event = cloned.build()
+        assert event.aggregate_id == agg_id
+        assert event.aggregate_version == 3
+        assert event.customer_id == customer_id
+        assert event.amount == 100.0
+
+    def test_clone_applies_overrides(self) -> None:
+        """clone(**overrides) overrides specified fields while preserving others."""
+        agg_id = uuid4()
+        customer_id = uuid4()
+        base = EventBuilder(
+            SampleEvent,
+            aggregate_id=agg_id,
+            customer_id=customer_id,
+            amount=100.0,
+        )
+
+        cloned = base.clone(amount=250.0, aggregate_version=2)
+        event = cloned.build()
+
+        assert event.aggregate_id == agg_id
+        assert event.customer_id == customer_id
+        assert event.amount == 250.0
+        assert event.aggregate_version == 2
+
+    def test_clone_does_not_mutate_original_builder(self) -> None:
+        """Cloning and mutating the clone leaves the original builder unchanged."""
+        agg_id = uuid4()
+        customer_id = uuid4()
+        base = EventBuilder(
+            SampleEvent,
+            aggregate_id=agg_id,
+            customer_id=customer_id,
+            amount=100.0,
+        )
+
+        cloned = base.clone(amount=250.0).with_version(5)
+
+        base_event = base.build()
+        cloned_event = cloned.build()
+        assert base_event.amount == 100.0
+        assert base_event.aggregate_version == 1
+        assert cloned_event.amount == 250.0
+        assert cloned_event.aggregate_version == 5
+
+
 __all__ = [  # pragma: allowlist secret
+    "TestEventBuilderClone",
     "TestEventBuilderMethodChaining",
     "TestEventBuilderRepr",
     "TestEventBuilderTypeSafety",
