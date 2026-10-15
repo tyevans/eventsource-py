@@ -8,11 +8,7 @@ from eventsource.application.migration.dual_write import DualWriteInterceptor
 from eventsource.domain import StreamId
 from eventsource.ports import AppendResult, ExpectedVersion, FullEventStore, Position
 
-from ._fixtures import (
-    TestEvent,
-    async_generator_mock,
-    sid,
-)
+from ._fixtures import TestEvent, async_generator_mock, sid
 
 
 class TestReadOperations:
@@ -55,9 +51,7 @@ class TestReadOperations:
     ) -> None:
         """Test that event_exists delegates to source store."""
         event_id = uuid4()
-
         await interceptor.event_exists(event_id)
-
         source_store.event_exists.assert_called_once_with(event_id)
         target_store.event_exists.assert_not_called()
 
@@ -69,9 +63,7 @@ class TestReadOperations:
     ) -> None:
         """Test that get_stream_version delegates to source store."""
         stream = sid()
-
         await interceptor.get_stream_version(stream)
-
         source_store.get_stream_version.assert_called_once_with(stream)
         target_store.get_stream_version.assert_not_called()
 
@@ -83,7 +75,6 @@ class TestReadOperations:
     ) -> None:
         """Test that current_position delegates to source store."""
         result = await interceptor.current_position()
-
         assert result == Position(store_id="source", key=(100,))
         source_store.current_position.assert_called_once()
         target_store.current_position.assert_not_called()
@@ -95,12 +86,7 @@ class TestReadOperations:
     ) -> None:
         """Test that read_stream delegates to source store."""
         stream = sid()
-        events_read = []
-
-        async for event in interceptor.read_stream(stream):
-            events_read.append(event)
-
-        # Verify we iterated through source's generator
+        events_read = [event async for event in interceptor.read_stream(stream)]
         assert events_read == []
 
     async def test_read_all_delegates_to_source(
@@ -109,11 +95,7 @@ class TestReadOperations:
         source_store: MagicMock,
     ) -> None:
         """Test that read_all delegates to source store."""
-        events_read = []
-
-        async for event in interceptor.read_all():
-            events_read.append(event)
-
+        events_read = [event async for event in interceptor.read_all()]
         assert events_read == []
 
 
@@ -126,30 +108,20 @@ class TestRouterIntegration:
         target_store: MagicMock,
         tenant_id: UUID,
     ) -> None:
-        """The interceptor is a drop-in wherever a `FullEventStore` is expected.
-
-        This deliberately uses a concrete category throughout -- the old
-        EventStore capability of looking a stream up by aggregate_id alone
-        (omitting aggregate_type/category) is dropped under the ports shape
-        and is not replaced by a cross-type port.
-        """
+        """The interceptor is a drop-in wherever a `FullEventStore` is expected."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-
         _: FullEventStore = interceptor_inst  # mypy-checked structural conformance
 
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         event = TestEvent(aggregate_id=aggregate_id)
 
-        # Write operation
         await interceptor_inst.append(stream, [event], ExpectedVersion.no_stream())
-
-        # Read operations -- one call through each remaining member
         async for _ in interceptor_inst.read_stream(stream):
             pass
         async for _ in interceptor_inst.read_category("TestAggregate"):
@@ -184,11 +156,9 @@ class TestConcurrentOperations:
             stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
             return await interceptor_inst.append(stream, [event], ExpectedVersion.no_stream())
 
-        # Run multiple concurrent writes
         tasks = [asyncio.create_task(do_write(i)) for i in range(10)]
         results = await asyncio.gather(*tasks)
 
-        # All writes should succeed (no exception raised, sensible results)
         assert len(results) == 10
         assert all(isinstance(r, AppendResult) for r in results)
         assert source_store.append.call_count == 10
@@ -207,8 +177,6 @@ class TestConcurrentOperations:
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-
-        # Make target fail every other call
         call_count = [0]
 
         async def intermittent_failure(stream, events, expected):
@@ -216,9 +184,7 @@ class TestConcurrentOperations:
             if call_count[0] % 2 == 0:
                 raise Exception("Intermittent failure")
             return AppendResult(
-                stream=stream,
-                new_version=1,
-                position=Position(store_id="target", key=(1,)),
+                stream=stream, new_version=1, position=Position(store_id="target", key=(1,))
             )
 
         target_store.append = intermittent_failure
@@ -229,17 +195,12 @@ class TestConcurrentOperations:
             stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
             return await interceptor_inst.append(stream, [event], ExpectedVersion.no_stream())
 
-        # Run concurrent writes
         tasks = [asyncio.create_task(do_write(i)) for i in range(10)]
         results = await asyncio.gather(*tasks)
 
-        # All source writes should succeed
         assert len(results) == 10
         assert all(isinstance(r, AppendResult) for r in results)
-
-        # Some target writes should have failed
-        stats = interceptor_inst.get_failure_stats()
-        assert stats.total_failures == 5
+        assert interceptor_inst.get_failure_stats().total_failures == 5
 
 
 class TestEdgeCases:
@@ -260,7 +221,6 @@ class TestEdgeCases:
 
         assert result.stream == stream
         source_store.append.assert_called_once_with(stream, events, ExpectedVersion.no_stream())
-        # Derived mirror expectation: new_version (5) minus the batch (5).
         target_store.append.assert_called_once_with(stream, events, ExpectedVersion.exact(0))
 
     async def test_failure_tracking_multiple_events(
@@ -272,7 +232,6 @@ class TestEdgeCases:
         aggregate_id = uuid4()
         events = [TestEvent(aggregate_id=aggregate_id, data=f"event-{i}") for i in range(3)]
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-
         target_store.append.side_effect = Exception("Error")
 
         await interceptor.append(stream, events, ExpectedVersion.no_stream())
@@ -280,9 +239,7 @@ class TestEdgeCases:
         failed_writes = interceptor.get_failed_writes()
         assert len(failed_writes) == 1
         assert len(failed_writes[0].event_ids) == 3
-
-        stats = interceptor.get_failure_stats()
-        assert stats.total_events_failed == 3
+        assert interceptor.get_failure_stats().total_events_failed == 3
 
     async def test_source_position_tracked_in_failure(
         self,
@@ -290,11 +247,7 @@ class TestEdgeCases:
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that the FIRST event's source position is tracked when target fails.
-
-        `AppendResult.position` is the position of the first appended event,
-        not the last -- this asserts identity, not arithmetic.
-        """
+        """Test that the FIRST event's source position is tracked when target fails."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
@@ -302,9 +255,7 @@ class TestEdgeCases:
         expected_position = Position(store_id="source", key=(500,))
         source_store.append.side_effect = None
         source_store.append.return_value = AppendResult(
-            stream=stream,
-            new_version=1,
-            position=expected_position,
+            stream=stream, new_version=1, position=expected_position
         )
         target_store.append.side_effect = Exception("Error")
 
