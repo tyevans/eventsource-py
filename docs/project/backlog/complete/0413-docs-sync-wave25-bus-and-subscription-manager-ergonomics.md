@@ -1,7 +1,7 @@
 ---
 id: TASK-0413
 title: "Sync Diataxis documentation for Wave 25 EventBus and SubscriptionManager ergonomics"
-status: Refined
+status: Complete
 target_bc: documentation
 dependencies: [TASK-0403]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0413: Sync Diataxis documentation for Wave 25 EventBus and SubscriptionManager ergonomics
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `documentation`
 
 ## Objective
