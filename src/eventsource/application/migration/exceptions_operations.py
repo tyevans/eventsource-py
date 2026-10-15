@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.application.migration.error_classification import (
+from eventsource.application.migration.error_classification import (  # fmt: skip
     CONNECTIVITY_RETRY_CONFIG,
     TRANSIENT_RETRY_CONFIG,
     ErrorClassification,
@@ -43,16 +43,10 @@ class ConsistencyError(MigrationError):
         stream_id: str | None = None,
         details: str | None = None,
     ) -> None:
-        self.source_count = source_count
-        self.target_count = target_count
-        self.stream_id = stream_id
-        self.details = details
-        super().__init__(
-            message=message,
-            migration_id=migration_id,
-            recoverable=False,
-            suggested_action="Review migration logs and consider manual reconciliation",
-        )
+        self.source_count, self.target_count = source_count, target_count
+        self.stream_id, self.details = stream_id, details
+        action = "Review migration logs and consider manual reconciliation"
+        super().__init__(message=message, migration_id=migration_id, recoverable=False, suggested_action=action)  # fmt: skip
 
 
 class BulkCopyError(MigrationError):
@@ -71,15 +65,11 @@ class BulkCopyError(MigrationError):
     )
 
     def __init__(self, migration_id: UUID, last_position: Position | None, error: str) -> None:
-        self.last_position = last_position
-        self.original_error = error
+        self.last_position, self.original_error = last_position, error
         rendered = last_position.to_str() if last_position is not None else "start"
-        super().__init__(
-            message=f"Bulk copy failed at position {rendered}: {error}",
-            migration_id=migration_id,
-            recoverable=True,
-            suggested_action="Resume migration to continue from last checkpoint",
-        )
+        msg = f"Bulk copy failed at position {rendered}: {error}"
+        action = "Resume migration to continue from last checkpoint"
+        super().__init__(message=msg, migration_id=migration_id, recoverable=True, suggested_action=action)  # fmt: skip
 
 
 class DualWriteError(MigrationError):
@@ -100,12 +90,9 @@ class DualWriteError(MigrationError):
 
     def __init__(self, migration_id: UUID, target_error: str) -> None:
         self.target_error = target_error
-        super().__init__(
-            message=f"Target store write failed: {target_error}",
-            migration_id=migration_id,
-            recoverable=True,
-            suggested_action="Background sync will recover; monitor sync lag",
-        )
+        msg = f"Target store write failed: {target_error}"
+        action = "Background sync will recover; monitor sync lag"
+        super().__init__(message=msg, migration_id=migration_id, recoverable=True, suggested_action=action)  # fmt: skip
 
 
 class PositionMappingError(MigrationError):
@@ -130,8 +117,7 @@ class PositionMappingError(MigrationError):
         source_position: Position | None = None,
         reason: str | None = None,
     ) -> None:
-        self.source_position = source_position
-        self.reason = reason
+        self.source_position, self.reason = source_position, reason
         if source_position is not None:
             message = f"{message} (source_position={source_position.to_str()})"
         super().__init__(message=message, migration_id=migration_id, recoverable=False)
@@ -154,25 +140,17 @@ class CircuitBreakerOpenError(MigrationError):
     )
 
     def __init__(
-        self,
-        operation_name: str,
-        time_until_retry: float,
-        migration_id: UUID | None = None,
+        self, operation_name: str, time_until_retry: float, migration_id: UUID | None = None
     ) -> None:
-        self.operation_name = operation_name
-        self.time_until_retry = time_until_retry
-        super().__init__(
-            message=f"Circuit breaker open for '{operation_name}'. Retry after {time_until_retry:.1f}s",
-            migration_id=migration_id,
-            recoverable=True,
-            suggested_action=f"Wait {time_until_retry:.0f}s before retrying",
-        )
+        self.operation_name, self.time_until_retry = operation_name, time_until_retry
+        msg = f"Circuit breaker open for '{operation_name}'. Retry after {time_until_retry:.1f}s"
+        action = f"Wait {time_until_retry:.0f}s before retrying"
+        super().__init__(message=msg, migration_id=migration_id, recoverable=True, suggested_action=action)  # fmt: skip
 
 
+# fmt: off
 __all__ = [
-    "BulkCopyError",
-    "CircuitBreakerOpenError",
-    "ConsistencyError",
-    "DualWriteError",
-    "PositionMappingError",
+    "BulkCopyError", "CircuitBreakerOpenError", "ConsistencyError",
+    "DualWriteError", "PositionMappingError",
 ]
+# fmt: on

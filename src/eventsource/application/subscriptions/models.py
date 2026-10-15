@@ -1,10 +1,4 @@
-"""
-Subscription models, state definitions, and status snapshots.
-
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0002 (Single-Responsibility Modules and File Limits)
-"""
+"""Subscription models, state definitions, and status snapshots."""
 
 from __future__ import annotations
 
@@ -22,26 +16,12 @@ if TYPE_CHECKING:
 
 
 def render_position(position: Position | None) -> str | None:
-    """Render a position as its opaque token string, or None.
-
-    Span attributes, log `extra` payloads and DLQ records must carry
-    primitives, never the value object's repr.
-    """
+    """Render a position as its opaque token string, or None."""
     return position.to_str() if position is not None else None
 
 
 class SubscriptionState(Enum):
-    """
-    States a subscription can be in during its lifecycle.
-
-    State transitions:
-        STARTING -> CATCHING_UP | LIVE | STOPPED | ERROR
-        CATCHING_UP -> LIVE | PAUSED | STOPPED | ERROR
-        LIVE -> CATCHING_UP | PAUSED | STOPPED | ERROR
-        PAUSED -> CATCHING_UP | LIVE | STOPPED | ERROR
-        STOPPED -> (terminal)
-        ERROR -> STARTING (restart)
-    """
+    """States a subscription can be in during its lifecycle."""
 
     STARTING = "starting"
     CATCHING_UP = "catching_up"
@@ -59,7 +39,6 @@ class PauseReason(Enum):
     MAINTENANCE = "maintenance"
 
 
-# Valid state transitions
 VALID_TRANSITIONS: dict[SubscriptionState, set[SubscriptionState]] = {
     SubscriptionState.STARTING: {
         SubscriptionState.CATCHING_UP,
@@ -74,7 +53,7 @@ VALID_TRANSITIONS: dict[SubscriptionState, set[SubscriptionState]] = {
         SubscriptionState.ERROR,
     },
     SubscriptionState.LIVE: {
-        SubscriptionState.CATCHING_UP,  # Falls behind
+        SubscriptionState.CATCHING_UP,
         SubscriptionState.PAUSED,
         SubscriptionState.STOPPED,
         SubscriptionState.ERROR,
@@ -85,22 +64,16 @@ VALID_TRANSITIONS: dict[SubscriptionState, set[SubscriptionState]] = {
         SubscriptionState.STOPPED,
         SubscriptionState.ERROR,
     },
-    SubscriptionState.STOPPED: set(),  # Terminal state
-    SubscriptionState.ERROR: {
-        SubscriptionState.STARTING,  # Allow restart
-    },
+    SubscriptionState.STOPPED: set(),
+    SubscriptionState.ERROR: {SubscriptionState.STARTING},
 }
 
 
-def is_valid_transition(
-    from_state: SubscriptionState,
-    to_state: SubscriptionState,
-) -> bool:
+def is_valid_transition(from_state: SubscriptionState, to_state: SubscriptionState) -> bool:
     """Check if a state transition from `from_state` to `to_state` is valid."""
     return to_state in VALID_TRANSITIONS.get(from_state, set())
 
 
-# Type aliases for event handlers
 EventHandler = Callable[["DomainEvent"], Awaitable[None]]
 BatchHandler = Callable[[Sequence["DomainEvent"]], Awaitable[None]]
 
