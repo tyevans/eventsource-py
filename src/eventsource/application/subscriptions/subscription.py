@@ -1,7 +1,4 @@
-"""Subscription module managing state, position tracking, and statistics.
-
-Backward-compatible facade re-exporting Subscription and related models.
-"""
+"""Subscription state, position tracking, and status re-export surface."""
 
 from __future__ import annotations
 

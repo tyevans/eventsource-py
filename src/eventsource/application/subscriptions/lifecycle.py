@@ -1,11 +1,4 @@
-"""
-Subscription lifecycle management for coordinating start/stop operations.
-
-Handles:
-- Starting individual and multiple subscriptions
-- Stopping individual and multiple subscriptions
-- Coordinating transition from catch-up to live events
-"""
+"""Subscription lifecycle management for coordinating start/stop operations."""
 
 import asyncio
 import logging
@@ -39,22 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class SubscriptionLifecycleManager:
-    """
-    Manages subscription lifecycle operations.
-
-    Handles:
-    - Starting subscriptions (resolving positions, catch-up, transition to live)
-    - Stopping subscriptions gracefully
-    - Managing transition coordinators
-
-    Example:
-        >>> lifecycle = SubscriptionLifecycleManager(
-        ...     event_store=event_store,
-        ...     event_bus=event_bus,
-        ...     checkpoint_repo=checkpoint_repo,
-        ... )
-        >>> results = await lifecycle.start_all(subscriptions)
-    """
+    """Manages subscription start, stop, and catch-up-to-live transition operations."""
 
     def __init__(
         self,
@@ -78,15 +56,7 @@ class SubscriptionLifecycleManager:
         self._start_resolver = StartFromResolver(event_store, checkpoint_repo)
 
     async def verify_leadership_lease(self) -> bool:
-        """
-        Verify leadership lease renewal immediately prior to executing cluster transitions.
-
-        Re-verifies lease renewal directly with the elector to ensure leadership status
-        is currently held and valid, eliminating split-brain windows.
-
-        Returns:
-            True if uncoordinated or if lease renewal succeeded; False otherwise.
-        """
+        """Verify leadership lease renewal prior to executing cluster transitions."""
         if self.leader_elector is None:
             return True
         try:
@@ -101,18 +71,7 @@ class SubscriptionLifecycleManager:
             return False
 
     async def start_subscription(self, subscription: Subscription) -> None:
-        """
-        Start a single subscription.
-
-        Resolves the starting position, performs catch-up from event store,
-        and transitions to live events from event bus.
-
-        Args:
-            subscription: The subscription to start
-
-        Raises:
-            SubscriptionError: If the subscription fails to start
-        """
+        """Start a single subscription, resolving position and transitioning to live."""
         name = subscription.name
 
         with self._tracer.span(
@@ -191,18 +150,7 @@ class SubscriptionLifecycleManager:
         self,
         subscription: Subscription,
     ) -> Exception | None:
-        """
-        Start a single subscription with isolation.
-
-        This method catches and returns exceptions instead of raising them,
-        ensuring that one subscription failure does not affect others.
-
-        Args:
-            subscription: The subscription to start
-
-        Returns:
-            None if successful, Exception if failed
-        """
+        """Start a single subscription, returning any raised exception instead of propagating."""
         try:
             await self.start_subscription(subscription)
             return None
@@ -214,16 +162,7 @@ class SubscriptionLifecycleManager:
         subscriptions: list[Subscription],
         concurrent: bool = True,
     ) -> dict[str, Exception | None]:
-        """
-        Start multiple subscriptions.
-
-        Args:
-            subscriptions: List of subscriptions to start
-            concurrent: If True (default), start concurrently; if False, sequentially
-
-        Returns:
-            Dictionary mapping subscription names to None (success) or Exception (failure)
-        """
+        """Start multiple subscriptions concurrently or sequentially."""
         logger.info(
             "Starting subscriptions",
             extra={
@@ -259,7 +198,6 @@ class SubscriptionLifecycleManager:
                 result = await self.start_subscription_isolated(subscription)
                 results[subscription.name] = result
 
-        # Log summary
         succeeded = sum(1 for r in results.values() if r is None)
         failed = sum(1 for r in results.values() if r is not None)
         if failed > 0:
@@ -277,13 +215,7 @@ class SubscriptionLifecycleManager:
         name: str,
         timeout: float = 30.0,
     ) -> None:
-        """
-        Stop a single subscription.
-
-        Args:
-            name: Subscription name
-            timeout: Shutdown timeout in seconds
-        """
+        """Stop a single subscription within the given shutdown timeout."""
         with self._tracer.span(
             "eventsource.lifecycle.stop_subscription",
             {ATTR_SUBSCRIPTION_NAME: name},
@@ -312,13 +244,7 @@ class SubscriptionLifecycleManager:
         subscriptions: list[Subscription],
         timeout: float = 30.0,
     ) -> None:
-        """
-        Stop multiple subscriptions gracefully.
-
-        Args:
-            subscriptions: List of subscriptions to stop
-            timeout: Maximum seconds to wait for graceful shutdown per subscription
-        """
+        """Stop multiple subscriptions gracefully within the given timeout."""
         logger.info(
             "Stopping subscriptions",
             extra={
@@ -336,7 +262,6 @@ class SubscriptionLifecycleManager:
         if stop_tasks:
             await asyncio.gather(*stop_tasks, return_exceptions=True)
 
-        # Update subscription states
         for subscription in subscriptions:
             if not subscription.is_terminal:
                 await subscription.transition_to(SubscriptionState.STOPPED)
@@ -344,15 +269,7 @@ class SubscriptionLifecycleManager:
         logger.info("Subscriptions stopped")
 
     def get_coordinator(self, name: str) -> TransitionCoordinator | None:
-        """
-        Get the coordinator for a subscription.
-
-        Args:
-            name: Subscription name
-
-        Returns:
-            TransitionCoordinator or None if not found
-        """
+        """Get the coordinator for a subscription, or None if not found."""
         return self._coordinators.get(name)
 
     def get_handler_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
@@ -366,15 +283,7 @@ class SubscriptionLifecycleManager:
         return coordinator.infra_circuit_breaker if coordinator else None
 
     def remove_coordinator(self, name: str) -> TransitionCoordinator | None:
-        """
-        Remove and return a coordinator.
-
-        Args:
-            name: Subscription name
-
-        Returns:
-            The removed TransitionCoordinator or None
-        """
+        """Remove and return a coordinator by subscription name."""
         return self._coordinators.pop(name, None)
 
     @property
