@@ -48,58 +48,43 @@ class CoordinatorControlMixin:
     _subscription_summaries: dict[UUID, Any]
 
     def _calculate_duration(self, migration: Migration | None) -> float:
-        raise NotImplementedError
+        raise NotImplementedError  # fmt: skip
 
     async def _record_audit(self, entry: MigrationAuditEntry) -> None:
-        raise NotImplementedError
+        raise NotImplementedError  # fmt: skip
 
     def _cleanup_status_queues(self, migration_id: UUID) -> None:
-        raise NotImplementedError
+        raise NotImplementedError  # fmt: skip
 
     def _cleanup_migration_resources(self, migration_id: UUID) -> None:
         """Clean up resources associated with a migration."""
-        self._lag_trackers.pop(migration_id, None)
-        self._target_stores.pop(migration_id, None)
-        self._interceptors.pop(migration_id, None)
-        self._consistency_reports.pop(migration_id, None)
-        self._subscription_summaries.pop(migration_id, None)
+        for d in (self._lag_trackers, self._target_stores, self._interceptors, self._consistency_reports, self._subscription_summaries):  # fmt: skip
+            d.pop(migration_id, None)
 
     async def pause_migration(self, migration_id: UUID) -> None:
         """Pause an in-progress migration after the current batch completes."""
-        with self._tracer.span(
-            "eventsource.coordinator.pause_migration", {ATTR_MIGRATION_ID: str(migration_id)}
-        ):
+        with self._tracer.span("eventsource.coordinator.pause_migration", {ATTR_MIGRATION_ID: str(migration_id)}):  # fmt: skip
             if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             if migration.phase.is_terminal:
-                raise MigrationError(
-                    "Cannot pause a completed migration", migration_id=migration_id
-                )
+                raise MigrationError("Cannot pause a completed migration", migration_id=migration_id)  # fmt: skip
             if migration.is_paused:
                 logger.debug("Migration %s is already paused", migration_id)
                 return
-
             if copier := self._active_copiers.get(migration_id):
                 copier.pause()
-
-            await self._migration_repo.set_paused(
-                migration_id, paused=True, reason="Operator requested"
-            )
+            await self._migration_repo.set_paused(migration_id, paused=True, reason="Operator requested")  # fmt: skip
             logger.info("Paused migration %s", migration_id)
 
     async def resume_migration(self, migration_id: UUID) -> None:
         """Resume a paused migration and its tracked in-process copier if present."""
-        with self._tracer.span(
-            "eventsource.coordinator.resume_migration", {ATTR_MIGRATION_ID: str(migration_id)}
-        ):
+        with self._tracer.span("eventsource.coordinator.resume_migration", {ATTR_MIGRATION_ID: str(migration_id)}):  # fmt: skip
             if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             if not migration.is_paused:
                 raise MigrationError("Migration is not paused", migration_id=migration_id)
-
             if copier := self._active_copiers.get(migration_id):
                 copier.resume()
-
             await self._migration_repo.set_paused(migration_id, paused=False)
             logger.info("Resumed migration %s", migration_id)
 
@@ -107,19 +92,13 @@ class CoordinatorControlMixin:
         self, migration_id: UUID, reason: str | None = None
     ) -> MigrationResult:
         """Abort and rollback a migration, restoring normal tenant routing."""
-        with self._tracer.span(
-            "eventsource.coordinator.abort_migration", {ATTR_MIGRATION_ID: str(migration_id)}
-        ):
+        with self._tracer.span("eventsource.coordinator.abort_migration", {ATTR_MIGRATION_ID: str(migration_id)}):  # fmt: skip
             if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             if migration.phase.is_terminal:
-                raise MigrationError(
-                    "Cannot abort a completed migration", migration_id=migration_id
-                )
-
+                raise MigrationError("Cannot abort a completed migration", migration_id=migration_id)  # fmt: skip
             if copier := self._active_copiers.pop(migration_id, None):
                 copier.cancel()
-
             if (task := self._active_tasks.pop(migration_id, None)) and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -129,27 +108,14 @@ class CoordinatorControlMixin:
             self._router.clear_dual_write_interceptor(migration.tenant_id)
             self._cleanup_migration_resources(migration_id)
             release_migration_metrics(str(migration_id))
-
             await self._migration_repo.update_phase(migration_id, MigrationPhase.ABORTED)
             if reason:
                 await self._migration_repo.record_error(migration_id, f"Aborted: {reason}")
             logger.info("Aborted migration %s: %s", migration_id, reason)
-
-            await self._record_audit(
-                MigrationAuditEntry(
-                    id=None,
-                    migration_id=migration_id,
-                    event_type=AuditEventType.MIGRATION_ABORTED,
-                    old_phase=migration.phase,
-                    new_phase=MigrationPhase.ABORTED,
-                    details={"reason": reason} if reason else None,
-                    operator=None,
-                    occurred_at=datetime.now(UTC),
-                )
-            )
+            entry = MigrationAuditEntry(None, migration_id, AuditEventType.MIGRATION_ABORTED, migration.phase, MigrationPhase.ABORTED, {"reason": reason} if reason else None, None, datetime.now(UTC))  # fmt: skip
+            await self._record_audit(entry)
             self._cleanup_status_queues(migration_id)
             updated = await self._migration_repo.get(migration_id)
-
             return MigrationResult(
                 migration_id=migration_id,
                 success=False,
@@ -168,19 +134,8 @@ class CoordinatorControlMixin:
         self._cleanup_migration_resources(migration.id)
         release_migration_metrics(str(migration.id))
         logger.error("Migration %s failed: %s", migration.id, error)
-
-        await self._record_audit(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration.id,
-                event_type=AuditEventType.MIGRATION_FAILED,
-                old_phase=migration.phase,
-                new_phase=MigrationPhase.FAILED,
-                details={"error": error},
-                operator=None,
-                occurred_at=datetime.now(UTC),
-            )
-        )
+        entry = MigrationAuditEntry(None, migration.id, AuditEventType.MIGRATION_FAILED, migration.phase, MigrationPhase.FAILED, {"error": error}, None, datetime.now(UTC))  # fmt: skip
+        await self._record_audit(entry)
         self._cleanup_status_queues(migration.id)
 
 

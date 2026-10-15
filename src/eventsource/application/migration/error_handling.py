@@ -34,7 +34,6 @@ class ErrorHandler:
         alert_callback: Callable[[MigrationError], None] | None = None,
         metrics_callback: Callable[[MigrationError, bool], None] | None = None,
     ) -> None:
-        """Initialize the error handler."""
         self.circuit_breaker = circuit_breaker
         self.alert_callback = alert_callback
         self.metrics_callback = metrics_callback
@@ -49,15 +48,10 @@ class ErrorHandler:
         on_retry: Callable[[int, Exception, float], None] | None = None,
     ) -> T:
         """Execute an operation with automatic retry for transient errors."""
-        ctx = (
-            await self.circuit_breaker.protect(operation_name, migration_id)
-            if self.circuit_breaker
-            else None
-        )
-
+        cb = self.circuit_breaker
+        ctx = await cb.protect(operation_name, migration_id) if cb else None
         last_exception: Exception | None = None
-        attempt = 0
-        effective_config = retry_config or TRANSIENT_RETRY_CONFIG
+        attempt, effective_config = 0, retry_config or TRANSIENT_RETRY_CONFIG
 
         while attempt < effective_config.max_attempts:
             try:
@@ -66,53 +60,26 @@ class ErrorHandler:
                         result = await operation()
                 else:
                     result = await operation()
-
                 if attempt > 0:
-                    logger.info(
-                        "Operation '%s' succeeded after %d retries", operation_name, attempt
-                    )
+                    logger.info("Operation '%s' succeeded after %d retries", operation_name, attempt)  # fmt: skip
                 return result
-
             except MigrationError as e:
                 last_exception = e
                 self._handle_error(e, operation_name)
-
                 if not e.recoverability_type.should_retry:
-                    logger.error(
-                        "Non-retryable error in '%s': %s (code=%s)",
-                        operation_name,
-                        e.message,
-                        e.error_code,
-                    )
+                    logger.error("Non-retryable error in '%s': %s (code=%s)", operation_name, e.message, e.error_code)  # fmt: skip
                     raise
-
                 config = retry_config or e.retry_config or TRANSIENT_RETRY_CONFIG
                 if attempt + 1 >= config.max_attempts:
-                    logger.error(
-                        "Exhausted %d retries for '%s': %s",
-                        config.max_attempts,
-                        operation_name,
-                        e.message,
-                    )
+                    logger.error("Exhausted %d retries for '%s': %s", config.max_attempts, operation_name, e.message)  # fmt: skip
                     raise
-
                 delay_ms = config.get_delay_ms(attempt)
                 delay_s = delay_ms / 1000.0
-                logger.warning(
-                    "Retryable error in '%s' (attempt %d/%d): %s. Retrying in %.1fs",
-                    operation_name,
-                    attempt + 1,
-                    config.max_attempts,
-                    e.message,
-                    delay_s,
-                )
-
+                logger.warning("Retryable error in '%s' (attempt %d/%d): %s. Retrying in %.1fs", operation_name, attempt + 1, config.max_attempts, e.message, delay_s)  # fmt: skip
                 if on_retry:
                     on_retry(attempt, e, delay_ms)
-
                 await asyncio.sleep(delay_s)
                 attempt += 1
-
             except Exception as e:
                 logger.exception("Unexpected error in '%s': %s", operation_name, str(e))
                 raise
@@ -123,34 +90,21 @@ class ErrorHandler:
 
     def _handle_error(self, error: MigrationError, operation_name: str) -> None:
         """Handle an error by logging and potentially alerting."""
-        classification = error.classification
-        logger.log(
-            classification.severity.log_level,
-            "Error in '%s': %s [code=%s, severity=%s, recoverable=%s]",
-            operation_name,
-            error.message,
-            classification.error_code,
-            classification.severity.value,
-            classification.recoverability.value,
-        )
-
-        if classification.severity.should_alert and self.alert_callback:
+        c = error.classification
+        logger.log(c.severity.log_level, "Error in '%s': %s [code=%s, severity=%s, recoverable=%s]", operation_name, error.message, c.error_code, c.severity.value, c.recoverability.value)  # fmt: skip
+        if c.severity.should_alert and self.alert_callback:
             try:
                 self.alert_callback(error)
             except Exception:
                 logger.exception("Alert callback failed")
-
         if self.metrics_callback:
             try:
-                self.metrics_callback(error, classification.recoverability.should_retry)
+                self.metrics_callback(error, c.recoverability.should_retry)
             except Exception:
                 logger.exception("Metrics callback failed")
 
     def with_retry(
-        self,
-        operation_name: str,
-        *,
-        retry_config: RetryConfig | None = None,
+        self, operation_name: str, *, retry_config: RetryConfig | None = None
     ) -> Callable[
         [Callable[..., Coroutine[Any, Any, T]]],
         Callable[..., Coroutine[Any, Any, T]],
@@ -177,7 +131,6 @@ def classify_exception(exc: Exception) -> ErrorClassification:
     """Classify any exception and return its ErrorClassification."""
     if isinstance(exc, MigrationError):
         return exc.classification
-
     return ErrorClassification(
         severity=ErrorSeverity.ERROR,
         recoverability=ErrorRecoverability.FATAL,

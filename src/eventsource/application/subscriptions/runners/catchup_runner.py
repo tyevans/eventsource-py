@@ -73,10 +73,11 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
     async def run_until_position(self, target_position: Position) -> CatchUpResult:
         """Run catch-up in batches until reaching the target position, stop request, or error."""
         start_pos, sub_name = self.subscription.last_processed_position, self.subscription.name
+        from_tok, to_tok = render_position(start_pos), render_position(target_position)
         span_attrs = {
             attr.ATTR_SUBSCRIPTION_NAME: sub_name,
-            attr.ATTR_FROM_POSITION: render_position(start_pos),
-            attr.ATTR_TO_POSITION: render_position(target_position),
+            attr.ATTR_FROM_POSITION: from_tok,
+            attr.ATTR_TO_POSITION: to_tok,
             attr.ATTR_BATCH_SIZE: self.config.batch_size,
         }
         with self._tracer.span("eventsource.catchup_runner.run_until_position", span_attrs) as span:
@@ -85,8 +86,8 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
             self._last_checkpoint_time, total_processed = time.monotonic(), 0
             log_extra: dict[str, object] = {
                 "subscription": sub_name,
-                "from_position": render_position(start_pos),
-                "to_position": render_position(target_position),
+                "from_position": from_tok,
+                "to_position": to_tok,
                 "batch_size": self.config.batch_size,
                 "checkpoint_strategy": self.config.checkpoint_strategy.value,
             }
@@ -103,34 +104,22 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
                     if await self.subscription.wait_if_paused(self._stop_event):
                         if self._stop_requested or not self._running:
                             break
-                        logger.debug(
-                            "Catch-up resumed after pause", extra={"subscription": sub_name}
-                        )
+                        logger.debug("Catch-up resumed after pause", extra={"subscription": sub_name})  # fmt: skip
                     outcome = await self._process_batch(target_position)
                     total_processed += outcome.events_delivered
 
-                completed = self._reached_target
-                final_pos = self.subscription.last_processed_position
+                completed, final_pos = self._reached_target, self.subscription.last_processed_position  # fmt: skip
+                final_tok = render_position(final_pos)
                 if span:
                     span.set_attribute(attr.ATTR_EVENTS_PROCESSED, total_processed)
-                    if (token := render_position(final_pos)) is not None:
-                        span.set_attribute(attr.ATTR_POSITION, token)
-                done_extra = {
-                    "subscription": sub_name,
-                    "events_processed": total_processed,
-                    "final_position": render_position(final_pos),
-                    "completed": completed,
-                }
+                    if final_tok is not None:
+                        span.set_attribute(attr.ATTR_POSITION, final_tok)
+                done_extra = {"subscription": sub_name, "events_processed": total_processed, "final_position": final_tok, "completed": completed}  # fmt: skip
                 logger.info("Catch-up completed", extra=done_extra)
                 return CatchUpResult(total_processed, final_pos, completed)
             except Exception as e:
                 final_pos = self.subscription.last_processed_position
-                err_extra = {
-                    "subscription": sub_name,
-                    "error": str(e),
-                    "position": render_position(final_pos),
-                    "events_processed": total_processed,
-                }
+                err_extra = {"subscription": sub_name, "error": str(e), "position": render_position(final_pos), "events_processed": total_processed}  # fmt: skip
                 logger.error("Catch-up failed", extra=err_extra, exc_info=True)
                 return CatchUpResult(total_processed, final_pos, False, error=e)
             finally:
@@ -142,47 +131,47 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        return self._running  # fmt: skip
 
     @property
     def _stop_requested(self) -> bool:
-        return self._stop_event.is_set()
+        return self._stop_event.is_set()  # fmt: skip
 
     @property
     def stop_requested(self) -> bool:
-        return self._stop_event.is_set()
+        return self._stop_event.is_set()  # fmt: skip
 
     @property
     def flow_controller(self) -> FlowController:
-        return self._flow_controller
+        return self._flow_controller  # fmt: skip
 
     @property
     def flow_control_stats(self) -> FlowControlStats:
-        return self._flow_controller.stats
+        return self._flow_controller.stats  # fmt: skip
 
     @property
     def handler_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._handler_circuit_breaker
+        return self._handler_circuit_breaker  # fmt: skip
 
     @property
     def infra_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._infra_circuit_breaker
+        return self._infra_circuit_breaker  # fmt: skip
 
     @property
     def retry_operation(self) -> RetryableOperation:
-        return self._retry
+        return self._retry  # fmt: skip
 
     @property
     def event_filter(self) -> EventFilter:
-        return self._filter
+        return self._filter  # fmt: skip
 
     @property
     def filter_stats(self) -> FilterStats:
-        return self._filter.stats
+        return self._filter.stats  # fmt: skip
 
     @property
     def metrics(self) -> SubscriptionMetrics:
-        return self._metrics
+        return self._metrics  # fmt: skip
 
 
 __all__ = ["CatchUpRunner"]
