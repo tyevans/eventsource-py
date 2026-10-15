@@ -1,9 +1,4 @@
-"""
-Read model projection base class.
-
-Extends DatabaseProjection to provide automatic read model repository
-creation and routing to handler methods, simplifying common projection patterns.
-"""
+"""Read model projection base class extending DatabaseProjection."""
 
 from __future__ import annotations
 
@@ -34,26 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
-    """
-    Projection base class with automatic read model repository support.
-
-    Extends DatabaseProjection to provide:
-    - Automatic repository creation based on session factory dialect
-      (PostgreSQL -> PostgreSQLReadModelRepository, SQLite -> SQLiteReadModelRepository)
-    - Handler methods receive repository instead of raw connection
-    - Automatic truncate via repository for reset operations
-    - Type-safe generic for model class and @handles decorator integration
-
-    Handler Signatures (auto-detected via inspection):
-        1. Single parameter (event only):
-           `async def _on_event(self, event: EventType) -> None`
-        2. Two parameters (repository + event):
-           `async def _on_event(self, repo: ReadModelRepository, event: EventType) -> None`
-
-    Unregistered Event Handling:
-        Configure via class attribute `unregistered_event_handling`
-        ("ignore" [default], "warn", or "error").
-    """
+    """Projection base class with automatic dialect-aware read model repository support."""
 
     def __init__(
         self,
@@ -67,19 +43,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
     ) -> None:
-        """
-        Initialize the read model projection.
-
-        Args:
-            session_factory: SQLAlchemy async session factory for database connections
-            model_class: The ReadModel subclass this projection manages
-            checkpoint_repo: Repository for checkpoint storage
-            dlq_repo: Repository for dead letter queue
-            enable_tracing: Whether to enable OpenTelemetry tracing (ignored if tracer provided)
-            retry_policy: Retry policy (defaults to ExponentialBackoffRetryPolicy)
-            tracer: Optional custom Tracer instance
-            tenant_filter: Optional UUID or callable tenant filter
-        """
+        """Initialize the read model projection."""
         super().__init__(
             session_factory=session_factory,
             checkpoint_repo=checkpoint_repo,
