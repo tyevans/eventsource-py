@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Self
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -24,16 +24,17 @@ class DeciderScenario:
 
     Works with a DeciderAggregate subclass or the three functions directly.
     No store, no event loop, no fixtures: ``given`` folds events through
-    ``evolve`` from ``initial_state``, partitioned by aggregate ID. ``when``
-    evaluates ``decide`` against the target aggregate's state, capturing
-    events or the raised exception, and ``then_*`` asserts the outcome.
+    ``evolve`` from ``initial_state``, partitioned by aggregate ID, while
+    ``given_commands`` folds prior commands through ``decide`` and ``evolve``.
+    ``when`` evaluates ``decide`` against the target aggregate's state,
+    capturing events or the raised exception, and ``then_*`` asserts the outcome.
 
     Supports multi-aggregate scenarios where events with distinct aggregate IDs
     maintain isolated state.
 
     Example:
         >>> (DeciderScenario(OrderAggregate)
-        ...     .given(OrderCreated(aggregate_id=oid, aggregate_version=1, ...))
+        ...     .given_commands(CreateOrder(order_id=oid, ...))
         ...     .when(ShipOrder(order_id=oid, tracking_number="T"))
         ...     .then_events(OrderShipped))
     """
@@ -124,6 +125,33 @@ class DeciderScenario:
         if agg_id not in self._states:
             self._states[agg_id] = self._initial_state()
         self._states[agg_id] = self._evolve(self._states[agg_id], event)
+
+    def given_commands(
+        self,
+        *commands: object,
+        aggregate_id: UUID | None = None,
+    ) -> Self:
+        """Sequentially fold prior commands (decide -> evolve) into aggregate state."""
+        for command in commands:
+            target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
+            current_state = (
+                self._states.get(target_id, self._initial_state())
+                if target_id is not None
+                else self._default_state
+            )
+            for event in self._decide(command, current_state):
+                current_state = self._evolve(current_state, event)
+                event_agg_id = getattr(event, "aggregate_id", None)
+                eff_id = (
+                    target_id
+                    if target_id is not None
+                    else (event_agg_id if isinstance(event_agg_id, UUID) else None)
+                )
+                if eff_id is not None:
+                    self._states[eff_id] = current_state
+                else:
+                    self._default_state = current_state
+        return self
 
     def _resolve_target_id(self, command: object, explicit_id: UUID | None = None) -> UUID | None:
         if explicit_id is not None:
