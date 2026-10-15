@@ -127,17 +127,9 @@ class TestFullMigrationWithVerificationAndSubscriptions:
     ) -> None:
         position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
         migration_id = uuid4()
-        await position_mapper.record_mapping(
-            migration_id=migration_id,
-            source_position=source_pos(100),
-            target_position=target_pos(50),
-            event_id=uuid4(),
-        )
+        await position_mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
         await checkpoint_repo.save_position(
-            subscription_id="OrderProjection",
-            position=source_pos(100),
-            event_id=uuid4(),
-            event_type="OrderCreated",
+            "OrderProjection", source_pos(100), uuid4(), "OrderCreated"
         )
         coordinator = MigrationCoordinator(
             source_store=source_store,
@@ -177,18 +169,8 @@ class TestMigrationSummary:
         migration_id: UUID,
         tenant_id: UUID,
     ) -> None:
-        await position_mapper.record_mapping(
-            migration_id=migration_id,
-            source_position=source_pos(100),
-            target_position=target_pos(50),
-            event_id=uuid4(),
-        )
-        await checkpoint_repo.save_position(
-            subscription_id="TestProjection",
-            position=source_pos(100),
-            event_id=uuid4(),
-            event_type="TestEvent",
-        )
+        await position_mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
+        await checkpoint_repo.save_position("TestProjection", source_pos(100), uuid4(), "TestEvent")
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper, checkpoint_repo=checkpoint_repo, enable_tracing=False
         )
@@ -214,24 +196,9 @@ class TestMigrationSummary:
         migration_id: UUID,
         tenant_id: UUID,
     ) -> None:
-        await position_mapper.record_mapping(
-            migration_id=migration_id,
-            source_position=source_pos(100),
-            target_position=target_pos(50),
-            event_id=uuid4(),
-        )
-        await checkpoint_repo.save_position(
-            subscription_id="Projection1",
-            position=source_pos(100),
-            event_id=uuid4(),
-            event_type="TestEvent",
-        )
-        await checkpoint_repo.save_position(
-            subscription_id="Projection2",
-            position=source_pos(50),
-            event_id=uuid4(),
-            event_type="TestEvent",
-        )
+        await position_mapper.record_mapping(migration_id, source_pos(100), target_pos(50), uuid4())
+        await checkpoint_repo.save_position("Projection1", source_pos(100), uuid4(), "TestEvent")
+        await checkpoint_repo.save_position("Projection2", source_pos(50), uuid4(), "TestEvent")
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper, checkpoint_repo=checkpoint_repo, enable_tracing=False
         )

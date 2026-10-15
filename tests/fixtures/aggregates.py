@@ -1,8 +1,4 @@
-"""Shared test aggregate implementations and state models.
-
-Provides reusable aggregates (CounterAggregate, DeclarativeCounterAggregate,
-OrderAggregate) and state models (CounterState, OrderState) for testing.
-"""
+"""Shared test aggregate implementations and state models."""
 
 from decimal import Decimal
 from uuid import UUID
@@ -26,16 +22,12 @@ from tests.fixtures.events import (
 
 
 class CounterState(BaseModel):
-    """State model for counter aggregates."""
-
     counter_id: UUID
     value: int = 0
     name: str = ""
 
 
 class OrderState(BaseModel):
-    """State model for order aggregates with complex nested data."""
-
     customer_id: UUID | None = None
     status: str = "draft"
     total: Decimal = Decimal("0")
@@ -43,8 +35,6 @@ class OrderState(BaseModel):
 
 
 class CounterAggregate(AggregateRoot[CounterState]):
-    """Simple counter aggregate using manual event dispatch via isinstance checks."""
-
     aggregate_type = "Counter"
 
     def _get_initial_state(self) -> CounterState:
@@ -71,7 +61,6 @@ class CounterAggregate(AggregateRoot[CounterState]):
             self._state = self._get_initial_state()
 
     def increment(self, amount: int = 1) -> None:
-        """Command: Increment the counter by the specified amount."""
         self.apply_event(
             CounterIncremented(
                 aggregate_id=self.aggregate_id,
@@ -82,7 +71,6 @@ class CounterAggregate(AggregateRoot[CounterState]):
         )
 
     def decrement(self, amount: int = 1) -> None:
-        """Command: Decrement the counter by the specified amount."""
         self.apply_event(
             CounterDecremented(
                 aggregate_id=self.aggregate_id,
@@ -93,7 +81,6 @@ class CounterAggregate(AggregateRoot[CounterState]):
         )
 
     def set_name(self, name: str) -> None:
-        """Command: Set the counter's name."""
         self.apply_event(
             CounterNamed(
                 aggregate_id=self.aggregate_id,
@@ -104,7 +91,6 @@ class CounterAggregate(AggregateRoot[CounterState]):
         )
 
     def reset(self) -> None:
-        """Command: Reset the counter to zero."""
         self.apply_event(
             CounterReset(
                 aggregate_id=self.aggregate_id,
@@ -115,8 +101,6 @@ class CounterAggregate(AggregateRoot[CounterState]):
 
 
 class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
-    """Counter aggregate using declarative pattern with @handles decorator."""
-
     aggregate_type = "Counter"
 
     def _get_initial_state(self) -> CounterState:
@@ -145,7 +129,6 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
         self._state = self._get_initial_state()
 
     def increment(self, amount: int = 1) -> None:
-        """Command: Increment the counter by the specified amount."""
         self._raise_event(
             CounterIncremented(
                 aggregate_id=self.aggregate_id,
@@ -156,7 +139,6 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
         )
 
     def decrement(self, amount: int = 1) -> None:
-        """Command: Decrement the counter by the specified amount."""
         self._raise_event(
             CounterDecremented(
                 aggregate_id=self.aggregate_id,
@@ -168,30 +150,22 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
 
 
 class CreateOrder(DomainCommand):
-    """Request to create an order for a customer."""
-
     order_id: UUID
     customer_id: UUID
 
 
 class AddOrderItem(DomainCommand):
-    """Request to add an item to an order."""
-
     order_id: UUID
     item_name: str
     price: Decimal
 
 
 class ShipOrder(DomainCommand):
-    """Request to ship an order with a tracking number."""
-
     order_id: UUID
     tracking_number: str
 
 
 class OrderAggregate(DeciderAggregate[OrderState]):
-    """Order aggregate implemented in decider style (decide/evolve) with lifecycle helpers."""
-
     aggregate_type = "Order"
 
     @staticmethod

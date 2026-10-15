@@ -20,15 +20,10 @@ from tests.unit.domain.test_aggregate_root._fixtures import (
 
 
 class TestUnregisteredEventHandling:
-    """Tests for configurable unregistered event handling feature (TD-012)."""
-
     def test_default_mode_is_error(self) -> None:
-        """AC5: Default mode is 'error'."""
         assert DeclarativeCounterAggregate.unregistered_event_handling == "error"
 
     def test_ignore_mode_silently_accepts_unknown_events(self) -> None:
-        """AC2: ignore mode allows unknown events without raising or logging."""
-
         class IgnoreAggregate(DeclarativeAggregate[CounterState]):
             aggregate_type = "IgnoreAggregate"
             unregistered_event_handling = "ignore"
@@ -49,17 +44,14 @@ class TestUnregisteredEventHandling:
         class UnknownEvent(DomainEvent):
             aggregate_type: str = "Counter"
 
-        event = UnknownEvent(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
+        aggregate.apply_event(
+            UnknownEvent(
+                aggregate_id=aggregate.aggregate_id, aggregate_type="Counter", aggregate_version=1
+            )
         )
-        aggregate.apply_event(event)
         assert aggregate.version == 1
 
     def test_error_mode_raises_unhandled_event_error(self) -> None:
-        """AC1: error mode raises UnhandledEventError for unhandled events."""
-
         class StrictAggregate(DeclarativeAggregate[CounterState]):
             aggregate_type = "StrictAggregate"
             unregistered_event_handling = "error"
@@ -81,9 +73,7 @@ class TestUnregisteredEventHandling:
             aggregate_type: str = "Counter"
 
         event = UnhandledEvent(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
+            aggregate_id=aggregate.aggregate_id, aggregate_type="Counter", aggregate_version=1
         )
         with pytest.raises(UnhandledEventError) as exc_info:
             aggregate.apply_event(event)
@@ -91,8 +81,6 @@ class TestUnregisteredEventHandling:
         assert "StrictAggregate" in str(exc_info.value)
 
     def test_warn_mode_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        """AC3: warn mode logs warning for unhandled events."""
-
         class WarnAggregate(DeclarativeAggregate[CounterState]):
             aggregate_type = "WarnAggregate"
             unregistered_event_handling = "warn"
@@ -114,9 +102,7 @@ class TestUnregisteredEventHandling:
             aggregate_type: str = "Counter"
 
         event = UnknownEvent(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
+            aggregate_id=aggregate.aggregate_id, aggregate_type="Counter", aggregate_version=1
         )
         with caplog.at_level(logging.WARNING):
             aggregate.apply_event(event)
@@ -126,8 +112,6 @@ class TestUnregisteredEventHandling:
         assert aggregate.version == 1
 
     def test_error_message_includes_available_handlers(self) -> None:
-        """AC4: Error message lists handlers that ARE available."""
-
         class MultiHandlerAggregate(DeclarativeAggregate[CounterState]):
             aggregate_type = "MultiHandlerAggregate"
             unregistered_event_handling = "error"
@@ -149,9 +133,7 @@ class TestUnregisteredEventHandling:
             aggregate_type: str = "Counter"
 
         event = UnknownEvent(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
+            aggregate_id=aggregate.aggregate_id, aggregate_type="Counter", aggregate_version=1
         )
         with pytest.raises(UnhandledEventError) as exc_info:
             aggregate.apply_event(event)
@@ -165,8 +147,6 @@ class TestUnregisteredEventHandling:
         assert "CounterDecremented" in error_msg
 
     def test_error_message_shows_no_handlers_when_empty(self) -> None:
-        """Error message shows 'none' when no handlers are registered."""
-
         class EmptyAggregate(DeclarativeAggregate[CounterState]):
             aggregate_type = "EmptyAggregate"
             unregistered_event_handling = "error"
@@ -180,15 +160,12 @@ class TestUnregisteredEventHandling:
             aggregate_type: str = "Counter"
 
         event = UnknownEvent(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
+            aggregate_id=aggregate.aggregate_id, aggregate_type="Counter", aggregate_version=1
         )
         with pytest.raises(UnhandledEventError) as exc_info:
             aggregate.apply_event(event)
-        error = exc_info.value
-        assert error.available_handlers == []
-        assert "none" in str(error)
+        assert exc_info.value.available_handlers == []
+        assert "none" in str(exc_info.value)
 
     def test_subclass_can_override_handling_mode(self) -> None:
         class BaseAggregate(DeclarativeAggregate[CounterState]):
@@ -220,13 +197,14 @@ class TestUnregisteredEventHandling:
                 )
 
         aggregate = StrictAggregate(uuid4())
-        event = CounterIncremented(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
-            increment=5,
+        aggregate.apply_event(
+            CounterIncremented(
+                aggregate_id=aggregate.aggregate_id,
+                aggregate_type="Counter",
+                aggregate_version=1,
+                increment=5,
+            )
         )
-        aggregate.apply_event(event)
         assert aggregate.state is not None
         assert aggregate.state.value == 5
 
@@ -237,9 +215,7 @@ class TestUnregisteredEventHandling:
             aggregate_type: str = "Counter"
 
         event = FutureEvent(
-            aggregate_id=aggregate.aggregate_id,
-            aggregate_type="Counter",
-            aggregate_version=1,
+            aggregate_id=aggregate.aggregate_id, aggregate_type="Counter", aggregate_version=1
         )
         with pytest.raises(UnhandledEventError):
             aggregate.apply_event(event)
