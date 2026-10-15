@@ -1,7 +1,7 @@
 ---
-id: TASK-0304
-title: "Sync Diataxis testing guide for assert_event_type_count and create_read_model_repository"
-status: Refined
+id: TASK-0303
+title: "Add create_read_model_repository(model_class) helper to InMemoryTestHarness"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0304: Sync Diataxis testing guide for assert_event_type_count and create_read_model_repository
+# TASK-0303: Add create_read_model_repository(model_class) helper to InMemoryTestHarness
 
 ## Summary
-Update `docs/guides/testing.md` to document `EventAssertions.assert_event_type_count(EventCls, count)` and `harness.create_read_model_repository(ModelCls)`.
+Add `create_read_model_repository(model_class) -> InMemoryReadModelRepository[TModel]` to `InMemoryTestHarness` in `src/eventsource/testing/harness.py` with unit tests.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 265` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).

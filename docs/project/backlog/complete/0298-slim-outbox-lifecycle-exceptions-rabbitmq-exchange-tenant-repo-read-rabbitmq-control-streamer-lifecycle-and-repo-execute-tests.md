@@ -1,7 +1,7 @@
 ---
 id: TASK-0298
 title: "Compact top 7 test modules at 293-296 lines below 265 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

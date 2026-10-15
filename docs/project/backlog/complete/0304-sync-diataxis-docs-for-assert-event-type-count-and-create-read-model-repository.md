@@ -1,7 +1,7 @@
 ---
-id: TASK-0302
-title: "Add assert_event_type_count(event_type, count) and __len__ to EventAssertions"
-status: Refined
+id: TASK-0304
+title: "Sync Diataxis testing guide for assert_event_type_count and create_read_model_repository"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0302: Add assert_event_type_count(event_type, count) and __len__ to EventAssertions
+# TASK-0304: Sync Diataxis testing guide for assert_event_type_count and create_read_model_repository
 
 ## Summary
-Add `assert_event_type_count(event_type, count) -> list[TEvent]` and `__len__(self) -> int` to `EventAssertions` in `src/eventsource/testing/assertions.py` while compacting `assertions.py` below 215 lines.
+Update `docs/guides/testing.md` to document `EventAssertions.assert_event_type_count(EventCls, count)` and `harness.create_read_model_repository(ModelCls)`.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 265` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).
