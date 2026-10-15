@@ -1,16 +1,4 @@
-"""Kafka connection lifecycle management.
-
-Holds the producer/consumer connection state for ``KafkaEventBus``:
-connect/disconnect/cleanup, consumer reconnection after a consume-loop
-error, security config for ad-hoc consumers (e.g. DLQ inspection), and
-reconnection/rebalance metrics recording. Extracted from ``bus.py`` so the
-facade can delegate connection concerns to a single collaborator instead of
-managing producer/consumer state directly.
-
-``KafkaRebalanceListener`` also lives here since its sole purpose is to
-coordinate offset commits and rebalance-metric recording with the connection
-manager during a Kafka consumer group rebalance.
-"""
+"""Kafka connection lifecycle management and consumer rebalance listener."""
 
 from __future__ import annotations
 
@@ -18,12 +6,6 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-# Optional aiokafka import - fail gracefully if not installed. The canonical
-# KAFKA_AVAILABLE flag lives on bus.py (checked at construction, re-exported
-# from adapters/kafka/__init__.py) -- this module only needs the guard to
-# import safely, not a second copy of the flag (recurring-defects §2/§3: a
-# flag set and never read here would just be one more copy that could
-# silently disagree with the canonical one under a partial install).
 try:
     from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
     from aiokafka.abc import ConsumerRebalanceListener as _ConsumerRebalanceListener
@@ -40,19 +22,11 @@ if TYPE_CHECKING:
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
 
-# Pinned explicitly: __name__ is "eventsource.bus.kafka.connection" after the
-# package move, but the public logger name must stay "eventsource.bus.kafka".
 logger = logging.getLogger("eventsource.bus.kafka")
 
 
 class KafkaConnectionManager:
-    """Owns the Kafka producer/consumer connection lifecycle.
-
-    Attributes:
-        config: Kafka configuration used to build producer/consumer clients.
-        stats: Shared statistics object updated on reconnection/rebalance.
-        metrics: Shared metrics container updated on reconnection/rebalance.
-    """
+    """Owns the Kafka producer/consumer connection lifecycle."""
 
     def __init__(
         self,
@@ -60,13 +34,6 @@ class KafkaConnectionManager:
         stats: KafkaEventBusStats,
         metrics: KafkaEventBusMetrics | None,
     ) -> None:
-        """Initialize the connection manager.
-
-        Args:
-            config: Configuration for Kafka connection.
-            stats: Shared statistics object (mutated in place).
-            metrics: Shared metrics container, or None if metrics disabled.
-        """
         self._config = config
         self._stats = stats
         self._metrics = metrics
@@ -75,10 +42,6 @@ class KafkaConnectionManager:
         self._consumer: AIOKafkaConsumer | None = None
         self._rebalance_listener: KafkaRebalanceListener | None = None
         self._connected = False
-
-    # =========================================================================
-    # Properties
-    # =========================================================================
 
     @property
     def producer(self) -> AIOKafkaProducer | None:
@@ -102,63 +65,34 @@ class KafkaConnectionManager:
 
     @metrics.setter
     def metrics(self, value: KafkaEventBusMetrics | None) -> None:
-        """Replace the metrics container (used by tests wiring a test meter)."""
+        """Replace the metrics container."""
         self._metrics = value
 
     def require_producer(self) -> AIOKafkaProducer:
-        """Get the active producer, raising if not connected.
-
-        Returns:
-            The active AIOKafkaProducer.
-
-        Raises:
-            RuntimeError: If not connected to Kafka.
-        """
+        """Get the active producer, raising RuntimeError if not connected."""
         if not self._producer:
             raise RuntimeError("Not connected to Kafka")
         return self._producer
 
-    # =========================================================================
-    # Connection Lifecycle Methods
-    # =========================================================================
-
     async def connect(self) -> None:
-        """Connect to Kafka cluster.
-
-        Creates and starts the producer and consumer clients. The consumer
-        subscribes to the configured topic.
-
-        Raises:
-            KafkaError: If connection to Kafka fails.
-        """
+        """Connect to Kafka cluster, starting producer and consumer clients."""
         if self._connected:
             logger.warning("KafkaEventBus already connected")
             return
 
-        logger.info(
-            "Connecting to Kafka",
-            extra=self._config.get_sanitized_config(),
-        )
+        logger.info("Connecting to Kafka", extra=self._config.get_sanitized_config())
 
         try:
-            # Create and start producer
             self._producer = AIOKafkaProducer(**self._config.get_producer_config())
             await self._producer.start()
 
-            # Create and start consumer
-            # Note: We pass the topic to the constructor for proper metadata loading.
-            # aiokafka handles consumer group rebalancing internally; we track
-            # rebalance events through the record_rebalance() method which can be
-            # called externally or during reconnection.
             self._consumer = AIOKafkaConsumer(
                 self._config.topic_name,
                 **self._config.get_consumer_config(),
             )
             await self._consumer.start()
 
-            # Initialize rebalance listener (available for future use or manual tracking)
             self._rebalance_listener = KafkaRebalanceListener(self)
-
             self._connected = True
             self._stats.connected_at = datetime.now(UTC)
 
@@ -169,43 +103,25 @@ class KafkaConnectionManager:
                     "consumer_group": self._config.consumer_group,
                 },
             )
-
         except Exception as e:
-            # Increment connection_errors counter
             if self._metrics:
                 self._metrics.connection_errors.add(
                     1,
-                    attributes={
-                        "error.type": type(e).__name__,
-                    },
+                    attributes={"error.type": type(e).__name__},
                 )
-
-            logger.error(
-                "Failed to connect to Kafka",
-                extra={"error": str(e)},
-                exc_info=True,
-            )
-            # Clean up partial connection
+            logger.error("Failed to connect to Kafka", extra={"error": str(e)}, exc_info=True)
             await self.cleanup()
             raise
 
     async def disconnect(self) -> None:
-        """Disconnect from Kafka cluster.
-
-        Closes producer/consumer connections. Safe to call multiple times.
-
-        Note: Stopping an active consume loop is the caller's responsibility
-        (the facade stops consuming before delegating here).
-        """
+        """Disconnect from Kafka cluster. Safe to call multiple times."""
         if not self._connected:
             logger.debug("KafkaEventBus not connected, nothing to disconnect")
             return
 
         logger.info("Disconnecting from Kafka")
-
         await self.cleanup()
         self._connected = False
-
         logger.info("Disconnected from Kafka")
 
     async def cleanup(self) -> None:
@@ -225,79 +141,41 @@ class KafkaConnectionManager:
             self._consumer = None
 
     async def reconnect_consumer(self) -> None:
-        """Attempt to reconnect the consumer after an error.
-
-        Stops the current consumer and creates a new one with the same
-        configuration and topic subscriptions.
-        """
+        """Stop the current consumer and start a new one with the same subscription."""
         logger.debug("Reconnecting consumer")
 
-        # Stop the current consumer if it exists
         if self._consumer:
             try:
                 await self._consumer.stop()
             except Exception as e:
                 logger.warning(f"Error stopping consumer during reconnect: {e}")
 
-        # Create and start new consumer with topic
         self._consumer = AIOKafkaConsumer(
             self._config.topic_name,
             **self._config.get_consumer_config(),
         )
         await self._consumer.start()
-
         logger.info("Consumer reconnected successfully")
 
     def get_security_config(self) -> dict[str, Any]:
-        """Get security configuration for additional consumers.
-
-        Delegates to :meth:`KafkaEventBusConfig.get_security_config` so this
-        is a thin passthrough rather than a second derivation of the
-        security dict -- see that method's docstring for why a second
-        derivation is exactly the defect this collapses.
-
-        Returns:
-            Dictionary of security settings.
-        """
+        """Get security configuration for additional consumers."""
         return self._config.get_security_config()
 
-    # =========================================================================
-    # Metrics Recording
-    # =========================================================================
-
     def record_reconnection(self) -> None:
-        """Record a reconnection event for metrics.
-
-        Call this method when a reconnection to Kafka occurs. Updates both
-        the internal stats counter and the OpenTelemetry metrics counter.
-
-        This method is safe to call even if metrics are disabled.
-        """
+        """Record a reconnection event in stats and metrics."""
         self._stats.reconnections += 1
-
         if self._metrics:
             self._metrics.reconnections.add(1)
-
         logger.debug("Reconnection recorded")
 
     def record_rebalance(self) -> None:
-        """Record a consumer rebalance event for metrics.
-
-        Call this method when a consumer group rebalance occurs. Updates both
-        the internal stats counter and the OpenTelemetry metrics counter.
-
-        This method is safe to call even if metrics are disabled.
-        """
+        """Record a consumer rebalance event in stats and metrics."""
         self._stats.rebalance_count += 1
-
         if self._metrics:
             self._metrics.rebalances.add(
                 1,
-                attributes={
-                    "messaging.kafka.consumer_group": self._config.consumer_group,
-                },
+                attributes={"messaging.kafka.consumer_group": self._config.consumer_group},
             )
-
         logger.debug(
             "Rebalance recorded",
             extra={"consumer_group": self._config.consumer_group},
@@ -305,21 +183,12 @@ class KafkaConnectionManager:
 
 
 class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
-    """Consumer rebalance listener for handling partition assignment changes.
-
-    Commits offsets for revoked partitions before they are reassigned to
-    other consumers, maintaining at-least-once delivery guarantees during
-    rebalances.
-    """
+    """Commits offsets for revoked partitions and logs assignment changes during rebalances."""
 
     def __init__(self, manager: KafkaConnectionManager) -> None:
-        """Initialize the rebalance listener."""
         self._manager = manager
 
-    async def on_partitions_revoked(
-        self,
-        revoked: set[TopicPartition],
-    ) -> None:
+    async def on_partitions_revoked(self, revoked: set[TopicPartition]) -> None:
         """Commit offsets and record metrics when partitions are revoked."""
         if not revoked:
             return
@@ -348,10 +217,7 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
 
         self._manager.record_rebalance()
 
-    async def on_partitions_assigned(
-        self,
-        assigned: set[TopicPartition],
-    ) -> None:
+    async def on_partitions_assigned(self, assigned: set[TopicPartition]) -> None:
         """Log newly assigned partitions after a rebalance."""
         if not assigned:
             return
