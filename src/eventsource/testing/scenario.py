@@ -1,9 +1,4 @@
-"""
-Synchronous Given-When-Then harness for decider-style domains.
-
-Supports both single-aggregate and multi-aggregate scenarios without
-requiring store or event bus infrastructure.
-"""
+"""Synchronous Given-When-Then harness for decider-style domains."""
 
 from __future__ import annotations
 
@@ -16,28 +11,11 @@ from pydantic import BaseModel
 
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import CommandRejectedError
+from eventsource.testing.assertions import EventAssertions
 
 
 class DeciderScenario:
-    """
-    Synchronous given/when/then harness for decider-style domains.
-
-    Works with a DeciderAggregate subclass or the three functions directly.
-    No store, no event loop, no fixtures: ``given`` folds events through
-    ``evolve`` from ``initial_state``, partitioned by aggregate ID, while
-    ``given_commands`` folds prior commands through ``decide`` and ``evolve``.
-    ``when`` evaluates ``decide`` against the target aggregate's state,
-    capturing events or the raised exception, and ``then_*`` asserts the outcome.
-
-    Supports multi-aggregate scenarios where events with distinct aggregate IDs
-    maintain isolated state.
-
-    Example:
-        >>> (DeciderScenario(OrderAggregate)
-        ...     .given_commands(CreateOrder(order_id=oid, ...))
-        ...     .when(ShipOrder(order_id=oid, tracking_number="T"))
-        ...     .then_events(OrderShipped))
-    """
+    """Synchronous given/when/then harness for decider-style domains."""
 
     _NON_AGGREGATE_ID_FIELDS = frozenset(
         {"command_id", "correlation_id", "causation_id", "tenant_id", "actor_id"}
@@ -52,9 +30,11 @@ class DeciderScenario:
         initial_state: Callable[[], Any] | None = None,
     ) -> None:
         if aggregate_class is not None:
-            decide = aggregate_class.decide
-            evolve = aggregate_class.evolve
-            initial_state = aggregate_class.initial_state
+            decide, evolve, initial_state = (
+                aggregate_class.decide,
+                aggregate_class.evolve,
+                aggregate_class.initial_state,
+            )
         if decide is None or evolve is None or initial_state is None:
             raise TypeError(
                 "DeciderScenario needs an aggregate class or all of "
@@ -130,12 +110,8 @@ class DeciderScenario:
             )
             for event in self._decide(command, current_state):
                 current_state = self._evolve(current_state, event)
-                event_agg_id = getattr(event, "aggregate_id", None)
-                eff_id = (
-                    target_id
-                    if target_id is not None
-                    else (event_agg_id if isinstance(event_agg_id, UUID) else None)
-                )
+                ev_id = getattr(event, "aggregate_id", None)
+                eff_id = target_id or (ev_id if isinstance(ev_id, UUID) else None)
                 if eff_id is not None:
                     self._states[eff_id] = current_state
                 else:
@@ -157,9 +133,7 @@ class DeciderScenario:
             field_values = [(k, getattr(command, k)) for k in command.__dataclass_fields__]
         uuid_candidates: list[tuple[str, UUID]] = []
         for name, val in field_values:
-            if name in self._NON_AGGREGATE_ID_FIELDS:
-                continue
-            if isinstance(val, UUID):
+            if name not in self._NON_AGGREGATE_ID_FIELDS and isinstance(val, UUID):
                 if val in self._states:
                     return val
                 if name.endswith("_id") or name == "id":
@@ -182,8 +156,7 @@ class DeciderScenario:
 
     def when_all(self, *commands: object, aggregate_id: UUID | None = None) -> DeciderScenario:
         """Sequentially run multiple commands, evolving state after each and collecting all events."""
-        self._events = None
-        self._error = None
+        self._events, self._error = None, None
         collected: list[DomainEvent] = []
         for command in commands:
             target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
@@ -218,11 +191,23 @@ class DeciderScenario:
             )
         return self
 
+    def then_no_events(self) -> Self:
+        """Assert that the command(s) succeeded without emitting any events."""
+        self.then_no_error()
+        if self._events:
+            raise AssertionError(
+                f"expected no events, got {[type(e).__name__ for e in self._events]}"
+            )
+        return self
+
+    def then_event(self, event_type: type[DomainEvent], **expected_fields: Any) -> Self:
+        """Assert an event of event_type matching expected_fields was emitted."""
+        self.then_no_error()
+        EventAssertions(self.events).assert_event_with_fields(event_type, **expected_fields)
+        return self
+
     def then_state(
-        self,
-        expected_or_predicate: Any,
-        *,
-        aggregate_id: UUID | None = None,
+        self, expected_or_predicate: Any, *, aggregate_id: UUID | None = None
     ) -> DeciderScenario:
         """Assert evolved state equals expected state or satisfies predicate."""
         self.then_no_error()
@@ -243,7 +228,7 @@ class DeciderScenario:
                 f"expected events {[t.__name__ for t in event_types]} but the "
                 f"command was rejected: {self._error!r}"
             )
-        assert self._events is not None  # narrows for mypy
+        assert self._events is not None
         actual = [type(e).__name__ for e in self._events]
         expected = [t.__name__ for t in event_types]
         if actual != expected:
