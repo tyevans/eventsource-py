@@ -20,8 +20,6 @@ from eventsource.ports.positions import ExpectedVersion
 
 @register_event
 class SubTestOrderCreated(DomainEvent):
-    """Test event for order creation in subscription integration tests."""
-
     aggregate_type: str = "SubTestOrder"
     order_number: str = ""
     amount: float = 0.0
@@ -29,16 +27,12 @@ class SubTestOrderCreated(DomainEvent):
 
 @register_event
 class SubTestOrderShipped(DomainEvent):
-    """Test event for order shipment in subscription integration tests."""
-
     aggregate_type: str = "SubTestOrder"
     tracking_number: str = ""
 
 
 @register_event
 class SubTestOrderCancelled(DomainEvent):
-    """Test event for order cancellation in subscription integration tests."""
-
     aggregate_type: str = "SubTestOrder"
     reason: str = ""
 
@@ -62,7 +56,6 @@ class CollectingProjection:
         return [SubTestOrderCreated, SubTestOrderShipped, SubTestOrderCancelled]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle an event by collecting it."""
         async with self._lock:
             event_id_str = str(event.event_id)
             if event_id_str not in self.event_ids:
@@ -71,7 +64,6 @@ class CollectingProjection:
                 self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 5.0) -> bool:
-        """Wait until the specified number of events are collected."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -80,11 +72,9 @@ class CollectingProjection:
         return True
 
     def get_event_at_position(self, position: int) -> DomainEvent | None:
-        """Get event at a specific position (0-indexed)."""
         return self.events[position] if 0 <= position < len(self.events) else None
 
     def has_duplicates(self) -> bool:
-        """Check if any duplicate events were received."""
         return len(self.events) != len(self.event_ids)
 
 
@@ -102,7 +92,6 @@ class FailingProjection:
         return [SubTestOrderCreated, SubTestOrderShipped, SubTestOrderCancelled]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle an event, potentially failing."""
         async with self._lock:
             if event.event_type in self.fail_on_event_types:
                 error = ValueError(f"Intentional failure for {event.event_type}")
@@ -125,14 +114,12 @@ class SlowProjection:
         return [SubTestOrderCreated, SubTestOrderShipped, SubTestOrderCancelled]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle an event with artificial delay."""
         await asyncio.sleep(self.delay)
         async with self._lock:
             self.events.append(event)
             self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 10.0) -> bool:
-        """Wait for events with longer timeout for slow processing."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -143,13 +130,11 @@ class SlowProjection:
 
 @pytest_asyncio.fixture
 async def in_memory_event_store() -> AsyncGenerator[InMemoryEventStore]:
-    """Create an in-memory event store for testing."""
     yield InMemoryEventStore()
 
 
 @pytest_asyncio.fixture
 async def in_memory_event_bus() -> AsyncGenerator[InMemoryEventBus]:
-    """Create an in-memory event bus for testing."""
     bus = InMemoryEventBus(enable_tracing=False)
     yield bus
     await bus.shutdown()
@@ -157,7 +142,6 @@ async def in_memory_event_bus() -> AsyncGenerator[InMemoryEventBus]:
 
 @pytest_asyncio.fixture
 async def in_memory_checkpoint_repo() -> AsyncGenerator[InMemoryCheckpointRepository]:
-    """Create an in-memory checkpoint repository for testing."""
     yield InMemoryCheckpointRepository(enable_tracing=False)
 
 
@@ -167,7 +151,6 @@ async def subscription_manager(
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
 ) -> AsyncGenerator[SubscriptionManager]:
-    """Create a subscription manager for testing."""
     manager = SubscriptionManager(
         event_store=in_memory_event_store,
         event_bus=in_memory_event_bus,
@@ -180,7 +163,6 @@ async def subscription_manager(
 
 @pytest.fixture
 def collecting_projection() -> CollectingProjection:
-    """Create a collecting projection for testing."""
     return CollectingProjection()
 
 
@@ -193,7 +175,6 @@ async def _append_event(store: InMemoryEventStore, event: DomainEvent) -> Domain
 async def populate_event_store(
     store: InMemoryEventStore, count: int, start_index: int = 0
 ) -> list[DomainEvent]:
-    """Populate the event store with test events."""
     events = []
     for i in range(count):
         event = SubTestOrderCreated(
@@ -206,7 +187,6 @@ async def populate_event_store(
 async def populate_event_store_with_types(
     store: InMemoryEventStore, created_count: int, shipped_count: int, cancelled_count: int = 0
 ) -> list[DomainEvent]:
-    """Populate the event store with mixed event types."""
     events: list[DomainEvent] = []
     for i in range(created_count):
         event = SubTestOrderCreated(
@@ -225,7 +205,6 @@ async def populate_event_store_with_types(
 async def publish_live_event(
     store: InMemoryEventStore, bus: InMemoryEventBus, order_number: str, amount: float = 100.0
 ) -> SubTestOrderCreated:
-    """Publish a live event through both store and bus."""
     event = SubTestOrderCreated(aggregate_id=uuid4(), order_number=order_number, amount=amount)
     await _append_event(store, event)
     await bus.publish([event])

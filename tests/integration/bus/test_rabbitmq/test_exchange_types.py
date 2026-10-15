@@ -31,40 +31,45 @@ def _make_registry(*events: type[DomainEvent]) -> EventRegistry:
     return registry
 
 
-class TestAdvancedExchangeTypes:
-    """Tests for different exchange type routing behaviors (direct, fanout, topic)."""
+def _make_bus(
+    url: str,
+    exchange_name: str,
+    exchange_type: str,
+    consumer_group: str,
+    registry: EventRegistry,
+    routing_key_pattern: str = "#",
+) -> RabbitMQEventBus:
+    config = RabbitMQEventBusConfig(
+        rabbitmq_url=url,
+        exchange_name=exchange_name,
+        exchange_type=exchange_type,
+        consumer_group=consumer_group,
+        routing_key_pattern=routing_key_pattern,
+        durable=False,
+        auto_delete=True,
+    )
+    return RabbitMQEventBus(config=config, event_registry=registry)
 
+
+class TestAdvancedExchangeTypes:
     async def test_direct_exchange_with_multiple_routing_keys(
         self, rabbitmq_connection_url: str
     ) -> None:
-        unique_suffix = uuid4().hex[:8]
-        registry = _make_registry(TestItemCreated, TestOrderCreated)
-        config = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=f"test_direct_routing_{unique_suffix}",
-            exchange_type="direct",
-            consumer_group=f"direct_consumer_{unique_suffix}",
-            durable=False,
-            auto_delete=True,
+        sfx = uuid4().hex[:8]
+        reg = _make_registry(TestItemCreated, TestOrderCreated)
+        bus = _make_bus(
+            rabbitmq_connection_url, f"test_direct_routing_{sfx}", "direct", f"direct_{sfx}", reg
         )
-        bus = RabbitMQEventBus(config=config, event_registry=registry)
         try:
             await bus.connect()
             received_events: list[DomainEvent] = []
-
-            async def handler(event: DomainEvent) -> None:
-                received_events.append(event)
-
-            bus.subscribe(TestItemCreated, handler)
-            bus.subscribe(TestOrderCreated, handler)
+            bus.subscribe(TestItemCreated, received_events.append)  # type: ignore[arg-type]
+            bus.subscribe(TestOrderCreated, received_events.append)  # type: ignore[arg-type]
             consume_task = asyncio.create_task(bus.start_consuming())
             await asyncio.sleep(0.5)
 
             item_event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="Direct Exchange Test Item",
-                quantity=5,
+                aggregate_id=uuid4(), aggregate_version=1, name="Direct Item", quantity=5
             )
             await bus.publish([item_event])
             await asyncio.sleep(2.0)
@@ -76,43 +81,25 @@ class TestAdvancedExchangeTypes:
     async def test_fanout_exchange_broadcasts_to_multiple_queues(
         self, rabbitmq_connection_url: str
     ) -> None:
-        unique_suffix = uuid4().hex[:8]
-        exchange_name = f"test_fanout_broadcast_{unique_suffix}"
-        registry = _make_registry(TestItemCreated)
-
-        config1 = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=exchange_name,
-            exchange_type="fanout",
-            consumer_group=f"fanout_group_a_{unique_suffix}",
-            durable=False,
-            auto_delete=True,
-        )
-        config2 = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=exchange_name,
-            exchange_type="fanout",
-            consumer_group=f"fanout_group_b_{unique_suffix}",
-            durable=False,
-            auto_delete=True,
-        )
-        bus1 = RabbitMQEventBus(config=config1, event_registry=registry)
-        bus2 = RabbitMQEventBus(config=config2, event_registry=registry)
+        sfx = uuid4().hex[:8]
+        ex = f"test_fanout_broadcast_{sfx}"
+        reg = _make_registry(TestItemCreated)
+        bus1 = _make_bus(rabbitmq_connection_url, ex, "fanout", f"fanout_group_a_{sfx}", reg)
+        bus2 = _make_bus(rabbitmq_connection_url, ex, "fanout", f"fanout_group_b_{sfx}", reg)
 
         try:
             await bus1.connect()
             await bus2.connect()
-            received_group_a: list[DomainEvent] = []
-            received_group_b: list[DomainEvent] = []
-            event_a_received, event_b_received = asyncio.Event(), asyncio.Event()
+            received_a, received_b = [], []
+            evt_a, evt_b = asyncio.Event(), asyncio.Event()
 
             async def handler_a(event: DomainEvent) -> None:
-                received_group_a.append(event)
-                event_a_received.set()
+                received_a.append(event)
+                evt_a.set()
 
             async def handler_b(event: DomainEvent) -> None:
-                received_group_b.append(event)
-                event_b_received.set()
+                received_b.append(event)
+                evt_b.set()
 
             bus1.subscribe(TestItemCreated, handler_a)
             bus2.subscribe(TestItemCreated, handler_b)
@@ -121,40 +108,26 @@ class TestAdvancedExchangeTypes:
             await asyncio.sleep(0.5)
 
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="Fanout Broadcast Test",
-                quantity=10,
+                aggregate_id=uuid4(), aggregate_version=1, name="Fanout Test", quantity=10
             )
             await bus1.publish([event])
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    asyncio.gather(event_a_received.wait(), event_b_received.wait()), timeout=10.0
-                )
+                await asyncio.wait_for(asyncio.gather(evt_a.wait(), evt_b.wait()), timeout=10.0)
 
             await _stop_consumer(bus1, task1)
             await _stop_consumer(bus2, task2)
-            assert len(received_group_a) == 1, f"Group A received {len(received_group_a)} events"
-            assert len(received_group_b) == 1, f"Group B received {len(received_group_b)} events"
-            assert received_group_a[0].event_id == event.event_id
-            assert received_group_b[0].event_id == event.event_id
+            assert len(received_a) == 1 and len(received_b) == 1
+            assert received_a[0].event_id == event.event_id == received_b[0].event_id
         finally:
             await bus1.disconnect()
             await bus2.disconnect()
 
     async def test_topic_exchange_with_pattern_matching(self, rabbitmq_connection_url: str) -> None:
-        unique_suffix = uuid4().hex[:8]
-        registry = _make_registry(TestItemCreated, TestOrderCreated)
-        config = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=f"test_topic_pattern_{unique_suffix}",
-            exchange_type="topic",
-            consumer_group=f"topic_consumer_{unique_suffix}",
-            routing_key_pattern="#",
-            durable=False,
-            auto_delete=True,
+        sfx = uuid4().hex[:8]
+        reg = _make_registry(TestItemCreated, TestOrderCreated)
+        bus = _make_bus(
+            rabbitmq_connection_url, f"test_topic_pattern_{sfx}", "topic", f"topic_{sfx}", reg
         )
-        bus = RabbitMQEventBus(config=config, event_registry=registry)
         try:
             await bus.connect()
             received_events: list[DomainEvent] = []
@@ -171,7 +144,7 @@ class TestAdvancedExchangeTypes:
             await asyncio.sleep(0.5)
 
             item_event = TestItemCreated(
-                aggregate_id=uuid4(), aggregate_version=1, name="Topic Test Item", quantity=3
+                aggregate_id=uuid4(), aggregate_version=1, name="Topic Item", quantity=3
             )
             order_event = TestOrderCreated(
                 aggregate_id=uuid4(), aggregate_version=1, customer_id=uuid4(), total_amount=99.99
@@ -181,26 +154,24 @@ class TestAdvancedExchangeTypes:
                 await asyncio.wait_for(events_received.wait(), timeout=10.0)
 
             await _stop_consumer(bus, consume_task)
-            assert len(received_events) >= 2, f"Expected 2 events, got {len(received_events)}"
+            assert len(received_events) >= 2
             event_types = {e.event_type for e in received_events}
-            assert "TestItemCreated" in event_types and "TestOrderCreated" in event_types
+            assert {"TestItemCreated", "TestOrderCreated"} <= event_types
         finally:
             await bus.disconnect()
 
     @pytest.mark.slow
     async def test_topic_exchange_selective_pattern(self, rabbitmq_connection_url: str) -> None:
-        unique_suffix = uuid4().hex[:8]
-        registry = _make_registry(TestItemCreated, TestOrderCreated)
-        config = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=f"test_topic_selective_{unique_suffix}",
-            exchange_type="topic",
-            consumer_group=f"topic_selective_{unique_suffix}",
+        sfx = uuid4().hex[:8]
+        reg = _make_registry(TestItemCreated, TestOrderCreated)
+        bus = _make_bus(
+            rabbitmq_connection_url,
+            f"test_topic_selective_{sfx}",
+            "topic",
+            f"topic_sel_{sfx}",
+            reg,
             routing_key_pattern="TestItem.*",
-            durable=False,
-            auto_delete=True,
         )
-        bus = RabbitMQEventBus(config=config, event_registry=registry)
         try:
             await bus.connect()
             received_events: list[DomainEvent] = []
@@ -225,7 +196,6 @@ class TestAdvancedExchangeTypes:
 
             item_events = [e for e in received_events if e.event_type == "TestItemCreated"]
             order_events = [e for e in received_events if e.event_type == "TestOrderCreated"]
-            assert len(item_events) == 1, f"Expected 1 item event, got {len(item_events)}"
-            assert len(order_events) == 0, f"Expected 0 order events, got {len(order_events)}"
+            assert len(item_events) == 1 and len(order_events) == 0
         finally:
             await bus.disconnect()
