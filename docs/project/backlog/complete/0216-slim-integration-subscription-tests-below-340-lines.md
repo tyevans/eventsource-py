@@ -1,7 +1,7 @@
 ---
 id: TASK-0216
 title: "Slim integration subscription tests (test_live, test_transition, test_catchup) below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

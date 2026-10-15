@@ -1,7 +1,7 @@
 ---
 id: TASK-0215
 title: "Slim sql/dlq.py, aggregates/repository.py, domain/event.py, and migration/coordinator_copy.py below 330 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

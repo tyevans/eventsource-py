@@ -1,7 +1,7 @@
 ---
 id: TASK-0222
 title: "Slim projection checkpoints, leadership lease, and tenant repository save tests below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

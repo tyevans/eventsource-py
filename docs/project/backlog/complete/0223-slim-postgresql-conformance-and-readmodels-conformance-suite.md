@@ -1,7 +1,7 @@
 ---
 id: TASK-0223
 title: "Slim test_postgresql_conformance.py and conformance_ports/readmodels.py below 330 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

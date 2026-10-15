@@ -1,7 +1,7 @@
 ---
 id: TASK-0219
 title: "Slim test_postgresql_catchup.py benchmark and examples/aggregate_example.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

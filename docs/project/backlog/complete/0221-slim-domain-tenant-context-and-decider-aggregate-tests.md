@@ -1,7 +1,7 @@
 ---
 id: TASK-0221
 title: "Slim test_tenant_context.py and test_decider_aggregate.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

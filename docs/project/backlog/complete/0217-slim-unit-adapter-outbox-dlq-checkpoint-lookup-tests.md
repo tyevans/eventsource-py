@@ -1,7 +1,7 @@
 ---
 id: TASK-0217
 title: "Slim unit adapter test modules (sqlite outbox, memory dlq, sql lag, position lookups) below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

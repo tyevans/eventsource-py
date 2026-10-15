@@ -1,7 +1,7 @@
 ---
 id: TASK-0218
 title: "Slim unit migration test modules (subscription migrator, dual write, bulk copier) below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
