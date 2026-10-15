@@ -25,9 +25,7 @@ class TestManagerPauseSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test pausing a running subscription."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
@@ -36,10 +34,8 @@ class TestManagerPauseSubscription:
         assert subscription.state == SubscriptionState.LIVE
 
         result = await manager.pause_subscription("MockSubscriber")
-
         assert result is True
         assert subscription.state == SubscriptionState.PAUSED
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -48,9 +44,7 @@ class TestManagerPauseSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test pausing with specific reason."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
@@ -59,11 +53,9 @@ class TestManagerPauseSubscription:
             "MockSubscriber",
             reason=PauseReason.MAINTENANCE,
         )
-
         subscription = manager.get_subscription("MockSubscriber")
         assert result is True
         assert subscription.pause_reason == PauseReason.MAINTENANCE
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -71,7 +63,6 @@ class TestManagerPauseSubscription:
         self,
         manager: SubscriptionManager,
     ):
-        """Test pausing nonexistent subscription returns False."""
         result = await manager.pause_subscription("NonExistent")
         assert result is False
 
@@ -80,11 +71,8 @@ class TestManagerPauseSubscription:
         self,
         manager: SubscriptionManager,
     ):
-        """Test pausing subscription that is not running returns False."""
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
-        # Not started, so not running
-
         result = await manager.pause_subscription("MockSubscriber")
         assert result is False
 
@@ -94,19 +82,14 @@ class TestManagerPauseSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test pausing already paused subscription returns False."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
 
         await manager.pause_subscription("MockSubscriber")
-
-        # Try to pause again
         result = await manager.pause_subscription("MockSubscriber")
         assert result is False
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -115,20 +98,15 @@ class TestManagerPauseSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test pause maintains checkpoint position."""
         await add_events_to_store(event_store, 10)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
 
         subscription = manager.get_subscription("MockSubscriber")
         position_before = subscription.last_processed_position
-
         await manager.pause_subscription("MockSubscriber")
-
         assert subscription.last_processed_position == position_before
-
         await manager.stop()
 
 
@@ -141,9 +119,7 @@ class TestManagerResumeSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test resuming a paused subscription."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
@@ -153,10 +129,8 @@ class TestManagerResumeSubscription:
         assert subscription.state == SubscriptionState.PAUSED
 
         result = await manager.resume_subscription("MockSubscriber")
-
         assert result is True
         assert subscription.state == SubscriptionState.LIVE
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -164,7 +138,6 @@ class TestManagerResumeSubscription:
         self,
         manager: SubscriptionManager,
     ):
-        """Test resuming nonexistent subscription returns False."""
         result = await manager.resume_subscription("NonExistent")
         assert result is False
 
@@ -174,17 +147,13 @@ class TestManagerResumeSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test resuming subscription that is not paused returns False."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
 
-        # Not paused
         result = await manager.resume_subscription("MockSubscriber")
         assert result is False
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -193,9 +162,7 @@ class TestManagerResumeSubscription:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test resume continues from paused position."""
         await add_events_to_store(event_store, 10)
-
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
@@ -205,10 +172,7 @@ class TestManagerResumeSubscription:
 
         await manager.pause_subscription("MockSubscriber")
         await manager.resume_subscription("MockSubscriber")
-
-        # Position should be preserved (may be same or higher if events arrived)
         assert subscription.last_processed_position >= position_before
-
         await manager.stop()
 
 
@@ -221,23 +185,15 @@ class TestPausedSubscriptionsProperties:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test paused_subscriptions returns paused subscriptions."""
         await add_events_to_store(event_store, 5)
-
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         await manager.start()
 
-        # Pause only OrderProjection
         await manager.pause_subscription("OrderProjection")
-
         paused = manager.paused_subscriptions
         assert len(paused) == 1
         assert paused[0].name == "OrderProjection"
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -246,16 +202,11 @@ class TestPausedSubscriptionsProperties:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test paused_subscriptions is empty when no subscriptions are paused."""
         await add_events_to_store(event_store, 5)
-
-        subscriber = MockSubscriber()
-        await manager.subscribe(subscriber)
+        await manager.subscribe(MockSubscriber())
         await manager.start()
 
-        paused = manager.paused_subscriptions
-        assert len(paused) == 0
-
+        assert len(manager.paused_subscriptions) == 0
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -264,19 +215,11 @@ class TestPausedSubscriptionsProperties:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test paused_subscription_names returns names of paused subscriptions."""
         await add_events_to_store(event_store, 5)
-
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         await manager.start()
 
         await manager.pause_all()
-
-        names = manager.paused_subscription_names
-        assert set(names) == {"OrderProjection", "CustomerProjection"}
-
+        assert set(manager.paused_subscription_names) == {"OrderProjection", "CustomerProjection"}
         await manager.stop()

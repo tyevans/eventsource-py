@@ -21,8 +21,6 @@ from tests.unit.test_event_bus._fixtures import (
 
 
 class TestInMemoryEventBusWildcardSubscriptions:
-    """Tests for wildcard subscription functionality."""
-
     @pytest.mark.asyncio
     async def test_wildcard_subscription_receives_all_events(
         self,
@@ -43,8 +41,7 @@ class TestInMemoryEventBusWildcardSubscriptions:
         event_bus.subscribe_to_all_events(wildcard_handler)
         event_bus.subscribe(OrderCreated, specific_handler)
         await event_bus.publish([sample_order_created])
-        assert wildcard_handler.handle_count == 1
-        assert specific_handler.handle_count == 1
+        assert (wildcard_handler.handle_count, specific_handler.handle_count) == (1, 1)
 
     @pytest.mark.asyncio
     async def test_unsubscribe_from_all_events(
@@ -60,17 +57,14 @@ class TestInMemoryEventBusWildcardSubscriptions:
         assert event_bus.unsubscribe_from_all_events(RecordingHandler()) is False
 
     def test_get_wildcard_subscriber_count(self, event_bus: InMemoryEventBus) -> None:
-        handler1, handler2 = RecordingHandler(), RecordingHandler()
         assert event_bus.get_wildcard_subscriber_count() == 0
-        event_bus.subscribe_to_all_events(handler1)
+        event_bus.subscribe_to_all_events(RecordingHandler())
         assert event_bus.get_wildcard_subscriber_count() == 1
-        event_bus.subscribe_to_all_events(handler2)
+        event_bus.subscribe_to_all_events(RecordingHandler())
         assert event_bus.get_wildcard_subscriber_count() == 2
 
 
 class TestInMemoryEventBusSubscribeAll:
-    """Tests for subscribe_all with EventSubscriber."""
-
     @pytest.mark.asyncio
     async def test_subscribe_all_with_subscriber(
         self,
@@ -100,8 +94,6 @@ class TestInMemoryEventBusSubscribeAll:
 
 
 class TestInMemoryEventBusUnsubscribe:
-    """Tests for unsubscribe functionality."""
-
     @pytest.mark.asyncio
     async def test_unsubscribe_handler(
         self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
@@ -124,8 +116,6 @@ class TestInMemoryEventBusUnsubscribe:
 
 
 class TestInMemoryEventBusSubscriberManagement:
-    """Tests for subscriber management utilities."""
-
     def test_clear_subscribers(self, event_bus: InMemoryEventBus) -> None:
         handler = RecordingHandler()
         event_bus.subscribe(OrderCreated, handler)
@@ -144,21 +134,20 @@ class TestInMemoryEventBusSubscriberManagement:
         event_bus.subscribe(OrderCreated, handler2)
         assert event_bus.get_subscriber_count(OrderCreated) == 2
         event_bus.subscribe(OrderShipped, handler1)
-        assert event_bus.get_subscriber_count(OrderCreated) == 2
-        assert event_bus.get_subscriber_count(OrderShipped) == 1
+        assert (
+            event_bus.get_subscriber_count(OrderCreated),
+            event_bus.get_subscriber_count(OrderShipped),
+        ) == (2, 1)
 
     def test_get_subscriber_count_total(self, event_bus: InMemoryEventBus) -> None:
         handler = RecordingHandler()
         assert event_bus.get_subscriber_count() == 0
-        event_bus.subscribe(OrderCreated, handler)
-        event_bus.subscribe(OrderShipped, handler)
-        event_bus.subscribe(OrderCancelled, handler)
+        for evt in (OrderCreated, OrderShipped, OrderCancelled):
+            event_bus.subscribe(evt, handler)
         assert event_bus.get_subscriber_count() == 3
 
 
 class TestInMemoryEventBusShutdown:
-    """Tests for event bus shutdown functionality."""
-
     @pytest.mark.asyncio
     async def test_shutdown_waits_for_background_tasks(
         self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
@@ -187,8 +176,6 @@ class TestInMemoryEventBusShutdown:
 
 
 class TestInMemoryEventBusStatistics:
-    """Tests for event bus statistics."""
-
     @pytest.mark.asyncio
     async def test_events_published_counter(
         self,
@@ -213,8 +200,6 @@ class TestInMemoryEventBusStatistics:
 
 
 class TestInMemoryEventBusThreadSafety:
-    """Tests for thread safety of subscription operations."""
-
     def test_subscribe_from_multiple_threads(self, event_bus: InMemoryEventBus) -> None:
         handlers: list[RecordingHandler] = []
 
@@ -235,22 +220,21 @@ class TestInMemoryEventBusThreadSafety:
         for handler in handlers:
             event_bus.subscribe(OrderCreated, handler)
         results: list[bool] = []
-
-        def unsubscribe_handler(h: RecordingHandler) -> None:
-            results.append(event_bus.unsubscribe(OrderCreated, h))
-
-        threads = [threading.Thread(target=unsubscribe_handler, args=(h,)) for h in handlers]
+        threads = [
+            threading.Thread(
+                target=lambda h: results.append(event_bus.unsubscribe(OrderCreated, h)),
+                args=(h,),
+            )
+            for h in handlers
+        ]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        assert all(results)
-        assert event_bus.get_subscriber_count(OrderCreated) == 0
+        assert all(results) and event_bus.get_subscriber_count(OrderCreated) == 0
 
 
 class TestEventOrdering:
-    """Tests for event ordering guarantees."""
-
     @pytest.mark.asyncio
     async def test_events_processed_in_order(self, event_bus: InMemoryEventBus) -> None:
         order: list[str] = []
@@ -260,22 +244,11 @@ class TestEventOrdering:
                 order.append(event.event_type)
 
         event_bus.subscribe_to_all_events(OrderTrackingHandler())
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id="cust-1"),
-            OrderShipped(aggregate_id=uuid4(), order_number="ORD-001", tracking_number="TRK-1"),
-            OrderCancelled(aggregate_id=uuid4(), order_number="ORD-001", reason="Test"),
-        ]
-        await event_bus.publish(events)
+        await event_bus.publish(
+            [
+                OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id="cust-1"),
+                OrderShipped(aggregate_id=uuid4(), order_number="ORD-001", tracking_number="TRK-1"),
+                OrderCancelled(aggregate_id=uuid4(), order_number="ORD-001", reason="Test"),
+            ]
+        )
         assert order == ["OrderCreated", "OrderShipped", "OrderCancelled"]
-
-
-__all__ = [
-    "TestEventOrdering",
-    "TestInMemoryEventBusShutdown",  # pragma: allowlist secret
-    "TestInMemoryEventBusStatistics",  # pragma: allowlist secret
-    "TestInMemoryEventBusSubscribeAll",  # pragma: allowlist secret
-    "TestInMemoryEventBusSubscriberManagement",  # pragma: allowlist secret
-    "TestInMemoryEventBusThreadSafety",  # pragma: allowlist secret
-    "TestInMemoryEventBusUnsubscribe",  # pragma: allowlist secret
-    "TestInMemoryEventBusWildcardSubscriptions",  # pragma: allowlist secret
-]

@@ -39,28 +39,17 @@ from tests.unit.application.migration.test_load_benchmarks._repositories import 
 
 
 class TestMemoryUsage:
-    """
-    Benchmarks for memory usage during migration operations.
-
-    Target: < 500MB for 10M events (testing with smaller scale)
-    """
+    """Benchmarks for memory usage during migration operations."""
 
     @pytest.mark.asyncio
     async def test_bulk_copy_memory_usage(self) -> None:
-        """
-        Test memory usage during bulk copy operation.
-
-        Verifies that memory usage scales linearly with batch size,
-        not total event count.
-        """
+        """Verify memory usage scales linearly with batch size, not total event count."""
         tenant_id = uuid4()
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
         migration_repo = InMemoryMigrationRepository()
-
         event_count = 10_000
 
-        # Create events
         await create_test_events(source_store, tenant_id, event_count)
 
         migration = Migration(
@@ -69,10 +58,7 @@ class TestMemoryUsage:
             source_store_id="source",
             target_store_id="target",
             phase=MigrationPhase.BULK_COPY,
-            config=MigrationConfig(
-                batch_size=1_000,
-                max_bulk_copy_rate=1_000_000,
-            ),
+            config=MigrationConfig(batch_size=1_000, max_bulk_copy_rate=1_000_000),
         )
         await migration_repo.create(migration)
 
@@ -83,13 +69,10 @@ class TestMemoryUsage:
             enable_tracing=False,
         )
 
-        # Start memory tracking
         gc.collect()
         tracemalloc.start()
-
         async for _progress in copier.run(migration):
             pass
-
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
@@ -100,28 +83,19 @@ class TestMemoryUsage:
             objects_tracked=len(gc.get_objects()),
             metadata={"event_count": event_count},
         )
-
-        # Memory should be reasonable (adjust threshold based on scale)
-        # For 10K events, expect less than 100MB peak
         assert result.peak_memory_mb < 100.0
 
     @pytest.mark.asyncio
     async def test_position_mapping_memory_scaling(self) -> None:
-        """
-        Test memory usage of position mapping storage.
-
-        Verifies that position mappings scale linearly with count.
-        """
+        """Verify position mappings scale linearly with count."""
         migration_id = uuid4()
         repo = InMemoryPositionMappingRepository()
-
         mapping_counts = [1_000, 5_000, 10_000]
         memory_results: list[tuple[int, float]] = []
 
         for count in mapping_counts:
             gc.collect()
             tracemalloc.start()
-
             now = datetime.now(UTC)
             for i in range(count):
                 mapping = PositionMapping(
@@ -133,36 +107,23 @@ class TestMemoryUsage:
                 )
                 await repo.create(mapping)
 
-            current, peak = tracemalloc.get_traced_memory()
+            _current, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
-
             memory_results.append((count, peak / (1024 * 1024)))
-
-            # Clean up for next iteration
             await repo.delete_by_migration(migration_id)
 
-        # Verify memory scales roughly linearly
-        # (second measurement should be ~5x first, third ~10x first)
         if len(memory_results) >= 2:
             ratio = memory_results[-1][1] / memory_results[0][1]
             expected_ratio = mapping_counts[-1] / mapping_counts[0]
-            # Allow for some overhead - ratio should be within 3x of expected
             assert ratio < expected_ratio * 3
 
 
 class TestConcurrentMigrations:
-    """
-    Benchmarks for handling multiple concurrent migrations.
-    """
+    """Benchmarks for handling multiple concurrent migrations."""
 
     @pytest.mark.asyncio
     async def test_concurrent_bulk_copies(self) -> None:
-        """
-        Test multiple concurrent bulk copy operations.
-
-        Verifies that concurrent migrations don't significantly
-        degrade performance.
-        """
+        """Verify concurrent migrations don't significantly degrade performance."""
         num_migrations = 5
         events_per_migration = 2_000
 
@@ -180,10 +141,7 @@ class TestConcurrentMigrations:
                 source_store_id="source",
                 target_store_id="target",
                 phase=MigrationPhase.BULK_COPY,
-                config=MigrationConfig(
-                    batch_size=500,
-                    max_bulk_copy_rate=1_000_000,
-                ),
+                config=MigrationConfig(batch_size=500, max_bulk_copy_rate=1_000_000),
             )
             await migration_repo.create(migration)
 
@@ -196,10 +154,8 @@ class TestConcurrentMigrations:
 
             start_time = time.monotonic()
             events_copied = 0
-
             async for progress in copier.run(migration):
                 events_copied = progress.events_copied
-
             end_time = time.monotonic()
 
             return BenchmarkResult.from_timing(
@@ -209,33 +165,22 @@ class TestConcurrentMigrations:
                 operations_count=events_copied,
             )
 
-        # Run all migrations concurrently
         overall_start = time.monotonic()
-        tasks = [run_migration(i) for i in range(num_migrations)]
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*[run_migration(i) for i in range(num_migrations)])
         overall_end = time.monotonic()
 
-        # Calculate aggregate throughput
         total_events = sum(r.operations_count for r in results)
-        overall_duration = overall_end - overall_start
-        overall_throughput = total_events / overall_duration
+        overall_throughput = total_events / (overall_end - overall_start)
 
-        # Individual migrations should still have reasonable throughput
         for result in results:
             assert result.operations_per_second > 500
-
-        # Combined throughput should benefit from concurrency
-        # (should be higher than single migration throughput)
         assert overall_throughput > 1_000
 
     @pytest.mark.asyncio
     async def test_concurrent_dual_writes(self) -> None:
-        """
-        Test concurrent dual-write operations.
-        """
+        """Test concurrent dual-write operations."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
-
         num_tenants = 5
         ops_per_tenant = 100
 
@@ -257,7 +202,6 @@ class TestConcurrentMigrations:
                     aggregate_id=aggregate_id,
                     tenant_id=interceptor.tenant_id,
                 )
-
                 start = time.monotonic()
                 await interceptor.append(
                     StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
@@ -266,17 +210,13 @@ class TestConcurrentMigrations:
                 )
                 end = time.monotonic()
                 latencies.append((end - start) * 1000)
-
             return latencies
 
-        # Run all tenant writes concurrently
-        tasks = [tenant_writes(i, ops_per_tenant) for i in interceptors]
-        all_latencies = await asyncio.gather(*tasks)
-
-        # Flatten latencies
+        all_latencies = await asyncio.gather(
+            *[tenant_writes(i, ops_per_tenant) for i in interceptors]
+        )
         combined_latencies = [lat for tenant_lats in all_latencies for lat in tenant_lats]
         result = LatencyResult.from_samples("concurrent_dual_writes", combined_latencies)
 
-        # Even with concurrency, latencies should be reasonable
         assert result.mean_ms < 5.0
         assert result.p95_ms < 15.0
