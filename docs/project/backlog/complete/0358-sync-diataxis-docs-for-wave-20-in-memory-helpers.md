@@ -1,7 +1,7 @@
 ---
 id: TASK-0358
 title: "Sync Diataxis testing guide for InMemoryEventStore and InMemoryReadModelRepository helpers"
-status: Refined
+status: Complete
 target_bc: documentation
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md

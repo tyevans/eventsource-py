@@ -1,7 +1,7 @@
 ---
 id: TASK-0356
 title: "Add get_or_raise(id) and clear() to InMemoryReadModelRepository"
-status: Refined
+status: Complete
 target_bc: adapters
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md
