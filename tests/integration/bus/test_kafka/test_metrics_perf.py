@@ -60,7 +60,7 @@ class TestKafkaMetricsPerformance:
         )
 
         async with KafkaEventBus(config=config, event_registry=event_registry) as bus:
-            assert bus._metrics is None, "Metrics should be None when disabled"
+            assert bus._connection_manager.metrics is None, "Metrics should be None when disabled"
 
             events: list[DomainEvent] = [
                 TestOrderCreated(

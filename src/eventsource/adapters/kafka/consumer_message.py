@@ -5,13 +5,15 @@ Governed by ADR-0002 (<500 lines per module).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from eventsource.adapters.kafka.consumer_helpers import get_header_value
+from eventsource.adapters.kafka.consumer_helpers import (
+    get_header_value,
+    get_retry_delay_remaining,
+)
 from eventsource.adapters.kafka.models import DeserializationError
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from eventsource.adapters._bus.handler_adapter import HandlerAdapter
+    from eventsource.adapters._bus.retry_scheduler import RetryScheduler
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
@@ -61,6 +64,7 @@ class KafkaConsumerMessageMixin:
     _tracer: Tracer
     _enable_tracing: bool
     _consumer: Any
+    _retry_scheduler: RetryScheduler
     _dispatch_to_handlers: Any
     _handle_processing_error: Any
     _send_to_dlq: Any
@@ -68,6 +72,20 @@ class KafkaConsumerMessageMixin:
 
     async def _process_message(self, message: Any, skip_await_retry: bool = False) -> None:
         """Process a single Kafka message with optional tracing."""
+        if not skip_await_retry:
+            remaining = get_retry_delay_remaining(message.headers)
+            if remaining > 0:
+
+                async def _retry_action(msg: Any = message) -> None:
+                    await self._process_message(msg, skip_await_retry=True)
+
+                self._retry_scheduler.schedule(
+                    remaining,
+                    _retry_action,
+                    name=f"kafka-retry-p{message.partition}-o{message.offset}",
+                )
+                return
+
         self._stats.events_consumed += 1
         self._stats.last_consume_at = datetime.now(UTC)
 
@@ -125,13 +143,9 @@ class KafkaConsumerMessageMixin:
                 },
                 context=context,
             ) as span:
-                await self._process_message_with_span(
-                    message, event_type_name, span, skip_await_retry=skip_await_retry
-                )
+                await self._process_message_with_span(message, event_type_name, span)
         else:
-            await self._process_message_with_span(
-                message, event_type_name, None, skip_await_retry=skip_await_retry
-            )
+            await self._process_message_with_span(message, event_type_name, None)
 
     def _extract_trace_context(
         self,
@@ -150,14 +164,10 @@ class KafkaConsumerMessageMixin:
         message: Any,
         event_type_name: str,
         span: Any,
-        skip_await_retry: bool = False,
     ) -> None:
         """Process message with optional span updates."""
         start_time = time.perf_counter()
         retry_count = self._get_retry_count(message.headers)
-
-        if not skip_await_retry:
-            await self._await_retry_after(message.headers)
 
         try:
             try:
@@ -261,25 +271,6 @@ class KafkaConsumerMessageMixin:
     ) -> str | None:
         """Get a header value by key."""
         return get_header_value(headers, key)
-
-    async def _await_retry_after(
-        self,
-        headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
-    ) -> None:
-        """Wait until a republished message's scheduled retry time."""
-        value = self._get_header_value(headers, "retry_after")
-        if not value:
-            return
-
-        try:
-            retry_after = float(value)
-        except ValueError:
-            logger.warning("Ignoring unparseable retry_after header: %r", value)
-            return
-
-        remaining = retry_after - datetime.now(UTC).timestamp()
-        if remaining > 0:
-            await asyncio.sleep(remaining)
 
     def _get_retry_count(
         self,

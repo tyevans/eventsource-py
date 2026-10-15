@@ -18,65 +18,34 @@ logger = logging.getLogger("eventsource.bus.kafka")
 class KafkaEventBusConfig:
     """Configuration for Kafka event bus.
 
-    This configuration class provides all settings needed for connecting to
-    Apache Kafka and managing producer/consumer behavior. It follows the same
-    patterns as RabbitMQEventBusConfig for consistency across the eventsource
-    library.
+    Provides settings for connecting to Apache Kafka and managing
+    producer, consumer, retry, DLQ, security, and observability behavior.
 
     Attributes:
         bootstrap_servers: Kafka broker addresses (comma-separated).
-            Format: host1:port1,host2:port2
-        topic_prefix: Prefix for topic names. The main topic will be
-            {topic_prefix}.stream and DLQ will be {topic_prefix}.stream.dlq
+        topic_prefix: Prefix for topic names ({topic_prefix}.stream).
         consumer_group: Consumer group ID for coordinated consumption.
-            Multiple consumers in the same group share partitions.
-        consumer_name: Unique name for this consumer instance. Auto-generated
-            from hostname and UUID if not provided.
-        acks: Producer acknowledgment level. Options:
-            - "0": No acknowledgment (fire and forget)
-            - "1": Leader acknowledgment only
-            - "all": All in-sync replicas (default, most durable)
-        compression_type: Compression for messages. Options:
-            - None: No compression
-            - "gzip": Good compression ratio (default)
-            - "snappy": Fast compression
-            - "lz4": Balanced compression
-            - "zstd": Best compression ratio
-        producer_max_batch_bytes: Maximum size in bytes of a producer batch
-            before it is sent, forwarded as-is to
-            ``AIOKafkaProducer(max_batch_size=...)``. Unrelated to Redis's
-            ``stream_read_count`` or RabbitMQ's ``publish_chunk_size``, which
-            count events, not bytes, and bound the opposite side of the
-            wire (consume/publish chunking, not producer buffering).
+        consumer_name: Unique name for this consumer instance.
+        acks: Producer acknowledgment level ("0", "1", or "all").
+        compression_type: Message compression (None, "gzip", "snappy", "lz4", "zstd").
+        producer_max_batch_bytes: Max bytes of a producer batch before send.
         linger_ms: Time to wait for additional messages before sending batch.
-        auto_offset_reset: Where to start consuming when no offset exists:
-            - "earliest": Start from beginning (default)
-            - "latest": Start from end
+        auto_offset_reset: Offset reset policy ("earliest" or "latest").
         session_timeout_ms: Consumer session timeout in milliseconds.
         heartbeat_interval_ms: Consumer heartbeat interval in milliseconds.
-        max_poll_interval_ms: Maximum time between poll calls before consumer
-            is considered failed.
-        fetch_max_bytes: Maximum bytes the broker returns per fetch across
-            all partitions, bounding in-process buffering. Forwarded as-is
-            to ``AIOKafkaConsumer(fetch_max_bytes=...)``.
-        max_partition_fetch_bytes: Maximum bytes the broker returns per
-            partition in a single fetch. Forwarded as-is to
-            ``AIOKafkaConsumer(max_partition_fetch_bytes=...)``.
+        max_poll_interval_ms: Max time between poll calls in milliseconds.
+        fetch_max_bytes: Max bytes returned per fetch across partitions.
+        max_partition_fetch_bytes: Max bytes returned per partition in a fetch.
         max_retries: Maximum retry attempts before sending to DLQ.
         retry_base_delay: Base delay in seconds for exponential backoff.
         retry_max_delay: Maximum delay in seconds between retries.
         retry_jitter: Fraction of delay to randomize (0.0 to 1.0).
         enable_dlq: Whether to enable dead letter queue.
         dlq_topic_suffix: Suffix for DLQ topic name.
-        security_protocol: Security protocol for broker connection:
-            - "PLAINTEXT": No security (development only)
-            - "SSL": TLS encryption
-            - "SASL_PLAINTEXT": SASL auth without encryption
-            - "SASL_SSL": SASL auth with TLS (production recommended)
-        sasl_mechanism: SASL mechanism when using SASL_* protocol:
-            - "PLAIN": Simple username/password
-            - "SCRAM-SHA-256": SCRAM with SHA-256
-            - "SCRAM-SHA-512": SCRAM with SHA-512
+        dlq_consumer_group: Consumer group for DLQ processing.
+        dlq_max_replay_attempts: Maximum times a DLQ message can be replayed.
+        security_protocol: "PLAINTEXT", "SSL", "SASL_PLAINTEXT", or "SASL_SSL".
+        sasl_mechanism: "PLAIN", "SCRAM-SHA-256", or "SCRAM-SHA-512".
         sasl_username: Username for SASL authentication.
         sasl_password: Password for SASL authentication.
         ssl_cafile: Path to CA certificate file.
@@ -87,58 +56,8 @@ class KafkaEventBusConfig:
         enable_metrics: Enable OpenTelemetry metrics if available.
         shutdown_timeout: Timeout in seconds for graceful shutdown.
 
-    Security Configuration Examples:
-
-        Development (no security - NOT for production):
-
-        >>> config = KafkaEventBusConfig(
-        ...     bootstrap_servers="localhost:9092",
-        ...     security_protocol="PLAINTEXT",
-        ... )
-
-        TLS only (encryption, no authentication):
-
-        >>> config = KafkaEventBusConfig(
-        ...     bootstrap_servers="kafka:9093",
-        ...     security_protocol="SSL",
-        ...     ssl_cafile="/path/to/ca.crt",
-        ... )
-
-        SASL/PLAIN with TLS (recommended for production):
-
-        >>> config = KafkaEventBusConfig(
-        ...     bootstrap_servers="kafka:9093",
-        ...     security_protocol="SASL_SSL",
-        ...     sasl_mechanism="PLAIN",
-        ...     sasl_username="myuser",
-        ...     sasl_password="mypassword",
-        ...     ssl_cafile="/path/to/ca.crt",
-        ... )
-
-        SASL/SCRAM-SHA-512 with TLS (most secure):
-
-        >>> config = KafkaEventBusConfig(
-        ...     bootstrap_servers="kafka:9093",
-        ...     security_protocol="SASL_SSL",
-        ...     sasl_mechanism="SCRAM-SHA-512",
-        ...     sasl_username="myuser",
-        ...     sasl_password="mypassword",
-        ...     ssl_cafile="/path/to/ca.crt",
-        ... )
-
-        Mutual TLS (mTLS) - client certificate authentication:
-
-        >>> config = KafkaEventBusConfig(
-        ...     bootstrap_servers="kafka:9093",
-        ...     security_protocol="SSL",
-        ...     ssl_cafile="/path/to/ca.crt",
-        ...     ssl_certfile="/path/to/client.crt",
-        ...     ssl_keyfile="/path/to/client.key",
-        ... )
-
     Raises:
-        ValueError: If security configuration is invalid (e.g., SASL protocol
-            without credentials, mismatched SSL cert/key files).
+        ValueError: If security configuration is invalid.
     """
 
     # Connection

@@ -109,7 +109,7 @@ def test_kafka_serialization_roundtrip_is_identity(event: RoundtripEvent) -> Non
     ]
     message = SimpleNamespace(headers=headers, value=body)
 
-    restored = bus._deserialize_message(message)
+    restored = bus._consumer_loop._deserialize_message(message)
 
     assert restored.event_id == event.event_id
     assert restored.aggregate_id == event.aggregate_id

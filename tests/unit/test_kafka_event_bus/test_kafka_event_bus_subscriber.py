@@ -49,7 +49,7 @@ def test_retry_delay_comes_from_the_shared_policy() -> None:
     bus = KafkaEventBus(config=config)
 
     assert isinstance(bus._retry_policy, RetryPolicy)
-    assert bus._calculate_retry_delay(2) == 8.0
+    assert bus._consumer_loop._calculate_retry_delay(2) == 8.0
 
 
 @pytest.mark.asyncio
@@ -58,8 +58,8 @@ async def test_publish_sends_all_events_before_awaiting_any(
 ) -> None:
     """Regression: publish awaited a full broker round-trip per event."""
     bus = KafkaEventBus(config=KafkaEventBusConfig(bootstrap_servers="localhost:9092"))
-    bus._producer = mock_producer
-    bus._connected = True
+    bus._connection_manager._producer = mock_producer
+    bus._connection_manager._connected = True
 
     send_order: list[str] = []
 

@@ -307,42 +307,20 @@ class KafkaConnectionManager:
 class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
     """Consumer rebalance listener for handling partition assignment changes.
 
-    This listener is called during consumer group rebalances to ensure proper
-    offset management and prevent duplicate message processing during scaling
-    events.
-
-    The listener commits offsets for revoked partitions before they are
-    reassigned to other consumers, ensuring at-least-once delivery guarantees
-    are maintained during rebalances.
-
-    Attributes:
-        _manager: Reference to the KafkaConnectionManager for offset commits
-            and metrics recording.
+    Commits offsets for revoked partitions before they are reassigned to
+    other consumers, maintaining at-least-once delivery guarantees during
+    rebalances.
     """
 
     def __init__(self, manager: KafkaConnectionManager) -> None:
-        """Initialize the rebalance listener.
-
-        Args:
-            manager: The KafkaConnectionManager instance to coordinate with.
-        """
+        """Initialize the rebalance listener."""
         self._manager = manager
 
     async def on_partitions_revoked(
         self,
         revoked: set[TopicPartition],
     ) -> None:
-        """Called when partitions are being revoked from this consumer.
-
-        This method commits offsets for all revoked partitions before they
-        are assigned to other consumers. This ensures that:
-        1. Messages processed but not yet committed are properly committed
-        2. The new consumer starts from the correct offset
-        3. No messages are processed twice due to rebalance
-
-        Args:
-            revoked: Set of TopicPartition objects being revoked.
-        """
+        """Commit offsets and record metrics when partitions are revoked."""
         if not revoked:
             return
 
@@ -356,14 +334,11 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
             },
         )
 
-        # Commit offsets before partitions are revoked
         if self._manager._consumer:
             try:
                 await self._manager._consumer.commit()
                 logger.debug("Offsets committed before partition revocation")
             except IllegalStateError:
-                # No partitions currently assigned - nothing to commit
-                # This is expected during certain rebalance scenarios
                 logger.debug("No partitions to commit during rebalance")
             except Exception as e:
                 logger.warning(
@@ -371,21 +346,13 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
                     extra={"error": str(e)},
                 )
 
-        # Record the rebalance event
         self._manager.record_rebalance()
 
     async def on_partitions_assigned(
         self,
         assigned: set[TopicPartition],
     ) -> None:
-        """Called when new partitions are assigned to this consumer.
-
-        This method is called after partitions have been assigned and can
-        be used for any initialization needed for the new partitions.
-
-        Args:
-            assigned: Set of TopicPartition objects newly assigned.
-        """
+        """Log newly assigned partitions after a rebalance."""
         if not assigned:
             return
 

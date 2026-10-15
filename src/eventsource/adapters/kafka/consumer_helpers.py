@@ -10,6 +10,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+logger = logging.getLogger("eventsource.bus.kafka")
+
 
 def get_header_value(
     headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
@@ -37,6 +39,7 @@ def get_retry_delay_remaining(
         remaining = float(val) - datetime.now(UTC).timestamp()
         return max(0.0, remaining)
     except ValueError:
+        logger.warning("Ignoring unparseable retry_after header: %r", val)
         return 0.0
 
 

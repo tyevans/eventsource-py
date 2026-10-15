@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.connection import KafkaConnectionManager
     from eventsource.adapters.kafka.consumer import KafkaConsumerLoop
-    from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
 
 try:
     from opentelemetry.metrics import Observation
@@ -29,13 +28,9 @@ class KafkaBusMetricsMixin:
     _config: KafkaEventBusConfig
     _connection_manager: KafkaConnectionManager
     _consumer_loop: KafkaConsumerLoop
-    _metrics: KafkaEventBusMetrics | None
     _meter: Any
     _connection_gauge_registered: bool
     _lag_gauge_registered: bool
-    _connected: bool
-    _consuming: bool
-    _consumer: Any
 
     def _wire_metrics(self) -> None:
         """Register observable gauges after a successful connect.
@@ -53,15 +48,16 @@ class KafkaBusMetricsMixin:
         Reports 1 when connected, 0 when disconnected. This provides
         visibility into connection uptime and disconnection events.
         """
-        if not self._meter or not self._config.enable_metrics or self._metrics is None:
+        metrics = self._connection_manager.metrics
+        if not self._meter or not self._config.enable_metrics or metrics is None:
             return
 
         import eventsource.adapters.kafka.bus as bus_mod
 
         self._connection_gauge_registered = bus_mod.register_connection_gauge(
             self._meter,
-            self._metrics,
-            lambda: self._connected,
+            metrics,
+            lambda: self._connection_manager.is_connected,
             self._config.consumer_group,
         )
 
@@ -71,14 +67,15 @@ class KafkaBusMetricsMixin:
         The gauge reports lag per partition, calculated as the difference
         between the high watermark (latest offset) and the current position.
         """
-        if not self._meter or not self._config.enable_metrics or self._metrics is None:
+        metrics = self._connection_manager.metrics
+        if not self._meter or not self._config.enable_metrics or metrics is None:
             return
 
         import eventsource.adapters.kafka.bus as bus_mod
 
         self._lag_gauge_registered = bus_mod.register_consumer_lag_gauge(
             self._meter,
-            self._metrics,
+            metrics,
             self._lag_observations,
         )
 
@@ -90,18 +87,23 @@ class KafkaBusMetricsMixin:
             Yields nothing when not consuming, mid-rebalance, or in an
             invalid consumer state.
         """
-        if not self._consuming or not self._consumer or not self._connected:
+        consumer = self._connection_manager.consumer
+        if (
+            not self._consumer_loop.is_consuming
+            or not consumer
+            or not self._connection_manager.is_connected
+        ):
             return
 
         try:
-            assignment = self._consumer.assignment()
+            assignment = consumer.assignment()
             if not assignment:
                 return
 
             for tp in assignment:
                 try:
-                    highwater = self._consumer.highwater(tp)
-                    position = self._consumer.position(tp)
+                    highwater = consumer.highwater(tp)
+                    position = consumer.position(tp)
 
                     if highwater is not None and position is not None:
                         lag = max(0, highwater - position)

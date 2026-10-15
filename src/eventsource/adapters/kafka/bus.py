@@ -23,10 +23,7 @@ from eventsource.adapters.kafka.bus_dlq import KafkaBusDLQMixin
 from eventsource.adapters.kafka.bus_metrics import KafkaBusMetricsMixin
 from eventsource.adapters.kafka.bus_publish import KafkaBusPublishMixin
 from eventsource.adapters.kafka.config import KafkaEventBusConfig
-from eventsource.adapters.kafka.connection import (
-    KafkaConnectionManager,
-    KafkaRebalanceListener,
-)
+from eventsource.adapters.kafka.connection import KafkaConnectionManager
 from eventsource.adapters.kafka.consumer import KafkaConsumerLoop
 from eventsource.adapters.kafka.dlq import KafkaDLQAdmin
 from eventsource.adapters.kafka.metrics import (
@@ -211,74 +208,9 @@ class KafkaEventBus(
         return self._connection_manager.is_connected
 
     @property
-    def _connected(self) -> bool:
-        """Internal alias for ``is_connected``."""
-        return self._connection_manager.is_connected
-
-    @_connected.setter
-    def _connected(self, value: bool) -> None:
-        self._connection_manager._connected = value
-
-    @property
-    def _producer(self) -> AIOKafkaProducer | None:
-        """Internal alias delegating to the connection manager's producer."""
-        return self._connection_manager.producer
-
-    @_producer.setter
-    def _producer(self, value: AIOKafkaProducer | None) -> None:
-        self._connection_manager._producer = value
-
-    @property
-    def _consumer(self) -> AIOKafkaConsumer | None:
-        """Internal alias delegating to the connection manager's consumer."""
-        return self._connection_manager.consumer
-
-    @_consumer.setter
-    def _consumer(self, value: AIOKafkaConsumer | None) -> None:
-        self._connection_manager._consumer = value
-
-    @property
-    def _rebalance_listener(self) -> KafkaRebalanceListener | None:
-        """Internal alias delegating to the connection manager's rebalance listener."""
-        return self._connection_manager._rebalance_listener
-
-    @_rebalance_listener.setter
-    def _rebalance_listener(self, value: KafkaRebalanceListener | None) -> None:
-        self._connection_manager._rebalance_listener = value
-
-    @property
-    def _metrics(self) -> KafkaEventBusMetrics | None:
-        """Internal alias delegating to the connection manager's metrics."""
-        return self._connection_manager.metrics
-
-    @_metrics.setter
-    def _metrics(self, value: KafkaEventBusMetrics | None) -> None:
-        self._connection_manager.metrics = value
-        self._publisher._metrics = value
-        self._consumer_loop._metrics = value
-
-    @property
     def is_consuming(self) -> bool:
         """Check if actively consuming messages."""
         return self._consumer_loop.is_consuming
-
-    @property
-    def _consuming(self) -> bool:
-        """Internal alias for ``is_consuming``."""
-        return self._consumer_loop.is_consuming
-
-    @_consuming.setter
-    def _consuming(self, value: bool) -> None:
-        self._consumer_loop._consuming = value
-
-    @property
-    def _consume_task(self) -> asyncio.Task[None] | None:
-        """Internal alias delegating to the consume loop's background task."""
-        return self._consumer_loop._consume_task
-
-    @_consume_task.setter
-    def _consume_task(self, value: asyncio.Task[None] | None) -> None:
-        self._consumer_loop._consume_task = value
 
     @property
     def config(self) -> KafkaEventBusConfig:
@@ -307,7 +239,7 @@ class KafkaEventBus(
             logger.debug("KafkaEventBus not connected, nothing to disconnect")
             return
 
-        if self._consuming:
+        if self._consumer_loop.is_consuming:
             await self.stop_consuming()
 
         await self._connection_manager.disconnect()
@@ -334,14 +266,15 @@ class KafkaEventBus(
 
         self._shutdown_event.set()
 
-        if self._consume_task and not self._consume_task.done():
+        consume_task = self._consumer_loop._consume_task
+        if consume_task and not consume_task.done():
             try:
-                await asyncio.wait_for(self._consume_task, timeout=timeout)
+                await asyncio.wait_for(consume_task, timeout=timeout)
             except TimeoutError:
                 logger.warning("Shutdown timed out, cancelling consume task")
-                self._consume_task.cancel()
+                consume_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
-                    await self._consume_task
+                    await consume_task
 
         await self._drain_background(timeout or self._config.shutdown_timeout)
         await self.disconnect()
@@ -362,17 +295,18 @@ class KafkaEventBus(
 
     async def get_topic_info(self) -> dict[str, Any]:
         """Get information about the configured topic."""
-        if not self._connected or not self._consumer:
+        consumer = self._connection_manager.consumer
+        if not self._connection_manager.is_connected or not consumer:
             raise EventBusConnectionError("Not connected to Kafka")
 
-        partitions = self._consumer.partitions_for_topic(self._config.topic_name)
+        partitions = consumer.partitions_for_topic(self._config.topic_name)
 
         return {
             "topic": self._config.topic_name,
             "partitions": list(partitions) if partitions else [],
             "consumer_group": self._config.consumer_group,
-            "connected": self._connected,
-            "consuming": self._consuming,
+            "connected": self._connection_manager.is_connected,
+            "consuming": self._consumer_loop.is_consuming,
         }
 
 

@@ -64,7 +64,7 @@ class TestKafkaEventBusMetricsEdgeCases:
         )
 
         handlers = bus._handlers_for(SampleOrderCreated)
-        await bus._dispatch_to_handlers(event, handlers)
+        await bus._consumer_loop._dispatch_to_handlers(event, handlers)
 
     @pytest.mark.asyncio
     async def test_no_error_when_otel_unavailable(self) -> None:
@@ -80,7 +80,7 @@ class TestKafkaEventBusMetricsEdgeCases:
             bus = KafkaEventBus(config=config)
 
         # Bus should be created successfully, just without metrics
-        assert bus._metrics is None
+        assert bus._connection_manager.metrics is None
 
         # Operations should not raise
         bus._connection_manager.record_reconnection()
@@ -110,7 +110,10 @@ class TestKafkaEventBusMetricsEdgeCases:
                 bus = KafkaEventBus()
 
             # Set up test metrics
-            bus._metrics = KafkaEventBusMetrics(meter)
+            test_metrics = KafkaEventBusMetrics(meter)
+            bus._connection_manager.metrics = test_metrics
+            bus._publisher._metrics = test_metrics
+            bus._consumer_loop._metrics = test_metrics
             bus._meter = meter
 
             bus.subscribe(SampleOrderCreated, failing_handler)
@@ -125,7 +128,7 @@ class TestKafkaEventBusMetricsEdgeCases:
             handlers = bus._handlers_for(SampleOrderCreated)
 
             with pytest.raises(HandlerDispatchError):
-                await bus._dispatch_to_handlers(event, handlers)
+                await bus._consumer_loop._dispatch_to_handlers(event, handlers)
 
             metrics_data = reader.get_metrics_data()
 
@@ -160,7 +163,10 @@ class TestKafkaEventBusMetricsEdgeCases:
                 bus = KafkaEventBus()
 
             # Set up test metrics
-            bus._metrics = KafkaEventBusMetrics(meter)
+            test_metrics = KafkaEventBusMetrics(meter)
+            bus._connection_manager.metrics = test_metrics
+            bus._publisher._metrics = test_metrics
+            bus._consumer_loop._metrics = test_metrics
             bus._meter = meter
 
             bus.subscribe(SampleOrderCreated, handler1)
@@ -175,7 +181,7 @@ class TestKafkaEventBusMetricsEdgeCases:
             )
 
             handlers = bus._handlers_for(SampleOrderCreated)
-            await bus._dispatch_to_handlers(event, handlers)
+            await bus._consumer_loop._dispatch_to_handlers(event, handlers)
 
             metrics_data = reader.get_metrics_data()
             invocation_count = _get_metric_value(metrics_data, "kafka.eventbus.handler.invocations")
@@ -207,7 +213,10 @@ class TestKafkaEventBusMetricsEdgeCases:
                 bus = KafkaEventBus()
 
             # Set up test metrics
-            bus._metrics = KafkaEventBusMetrics(meter)
+            test_metrics = KafkaEventBusMetrics(meter)
+            bus._connection_manager.metrics = test_metrics
+            bus._publisher._metrics = test_metrics
+            bus._consumer_loop._metrics = test_metrics
             bus._meter = meter
 
             with (
