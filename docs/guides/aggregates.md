@@ -1,12 +1,16 @@
 # Execute Commands on Aggregates
 
 `AggregateRepository.execute` and `TenantAwareRepository.execute` collapse the
-standard load-decide-save cycle for command-driven aggregates (`DeciderAggregate`
-or any aggregate defining `execute(command)` / `apply_command(command)`) into a
-single async call.
+standard load-decide-save cycle into a single async call for both:
 
-Instead of manually calling `load_or_create`, invoking `aggregate.execute(command)`,
-and awaiting `save(aggregate)`, call `await repo.execute(aggregate_id, command)`.
+- **Command-driven aggregates** (`DeciderAggregate` or any aggregate defining
+  `execute(command)` / `apply_command(command)`), and
+- **Imperative (`AggregateRoot`) and declarative (`DeclarativeAggregate`)
+  aggregates** via callable commands (`lambda order: order.ship("TRACK-123")`).
+
+Instead of manually calling `load_or_create`, invoking `aggregate.execute(command)`
+or a mutating aggregate method, and awaiting `save(aggregate)`, call
+`await repo.execute(aggregate_id, command)`.
 
 For wiring `AggregateRepository` and inferring `aggregate_type`, see
 [Wire an AggregateRepository](repository-pattern.md). For choosing between
@@ -117,6 +121,103 @@ async def handle_commands() -> None:
         assert account.version == 2
 ```
 
+### Callable commands for `AggregateRoot` and `DeclarativeAggregate`
+
+When working with imperative (`AggregateRoot`) or declarative
+(`DeclarativeAggregate`) aggregates that expose domain methods rather than a
+single `execute(command)` dispatcher, pass a callable `Callable[[TAggregate], Any]`
+(such as `lambda order: order.ship("TRACK-123")`) to `repo.execute()`:
+
+```python
+from uuid import UUID, uuid4
+from pydantic import BaseModel
+
+from eventsource import (
+    AggregateRepository,
+    DeclarativeAggregate,
+    DomainEvent,
+    InMemoryEventStore,
+    handles,
+)
+
+
+class OrderState(BaseModel):
+    customer_id: UUID | None = None
+    tracking_number: str | None = None
+    status: str = "draft"
+
+
+class OrderCreated(DomainEvent):
+    aggregate_type: str = "Order"
+    customer_id: UUID
+
+
+class OrderShipped(DomainEvent):
+    aggregate_type: str = "Order"
+    tracking_number: str
+
+
+class OrderAggregate(DeclarativeAggregate[OrderState]):
+    aggregate_type = "Order"
+
+    def _get_initial_state(self) -> OrderState:
+        return OrderState()
+
+    def create(self, customer_id: UUID) -> None:
+        self.apply_event(
+            OrderCreated(
+                aggregate_id=self.aggregate_id,
+                aggregate_version=self.get_next_version(),
+                customer_id=customer_id,
+            )
+        )
+
+    def ship(self, tracking_number: str) -> None:
+        self.apply_event(
+            OrderShipped(
+                aggregate_id=self.aggregate_id,
+                aggregate_version=self.get_next_version(),
+                tracking_number=tracking_number,
+            )
+        )
+
+    @handles(OrderCreated)
+    def _on_created(self, event: OrderCreated) -> None:
+        self._state = self._state.model_copy(
+            update={"customer_id": event.customer_id, "status": "created"}
+        )
+
+    @handles(OrderShipped)
+    def _on_shipped(self, event: OrderShipped) -> None:
+        self._state = self._state.model_copy(
+            update={"tracking_number": event.tracking_number, "status": "shipped"}
+        )
+
+
+async def handle_declarative_commands() -> None:
+    async with InMemoryEventStore() as store:
+        repo = AggregateRepository(event_store=store, aggregate_factory=OrderAggregate)
+        order_id = uuid4()
+        customer_id = uuid4()
+
+        # Creates the aggregate if missing, invokes the callable, and saves
+        order = await repo.execute(
+            order_id,
+            lambda order: order.create(customer_id=customer_id),
+        )
+        assert order.state.status == "created"
+        assert order.version == 1
+
+        # Loads existing aggregate, invokes order.ship(...), and saves
+        order = await repo.execute(
+            order_id,
+            lambda order: order.ship("TRACK-123"),
+            create_if_missing=False,
+        )
+        assert order.state.tracking_number == "TRACK-123"
+        assert order.version == 2
+```
+
 ### Controlling creation with `create_if_missing`
 
 By default, `execute()` calls `load_or_create(aggregate_id)` (`create_if_missing=True`),
@@ -139,16 +240,26 @@ except AggregateNotFoundError:
     ...
 ```
 
-### Supported aggregate types
+### Supported aggregate types and command dispatch
 
-`execute()` looks up `aggregate.execute(command)` first, falling back to
-`aggregate.apply_command(command)`. `DeciderAggregate` provides `execute(command)`
-out of the box. If you call `repo.execute(...)` on an `AggregateRoot` or
-`DeclarativeAggregate` that defines neither method, `execute()` raises `TypeError`:
+`execute(aggregate_id, command)` dispatches `command` in two ways:
+
+1. **Callable commands (`Callable[[TAggregate], Any]`)**: If `command` is a
+   callable (and not a class type), `execute()` invokes `command(aggregate)`
+   directly with the loaded or created aggregate instance. This works with any
+   `AggregateRoot`, `DeclarativeAggregate`, or `DeciderAggregate`.
+2. **Command objects**: Otherwise, `execute()` looks up `aggregate.execute(command)`
+   first, falling back to `aggregate.apply_command(command)`. `DeciderAggregate`
+   provides `execute(command)` out of the box.
+
+If you pass a non-callable command object to an `AggregateRoot` or
+`DeclarativeAggregate` that defines neither `execute` nor `apply_command`,
+`execute()` raises `TypeError`:
 
 ```text
-TypeError: CounterAggregate does not support execute(); execute() requires an
-aggregate supporting execute(command) or apply_command(command), such as DeciderAggregate.
+TypeError: CounterAggregate does not support execute(); pass a callable (e.g.
+lambda agg: agg.do_something()) or use an aggregate supporting execute(command)
+or apply_command(command), such as DeciderAggregate.
 ```
 
 ### Querying aggregates with `get_or_none` and `exists`
@@ -179,7 +290,8 @@ async def check_and_load_account(repo: AggregateRepository[Account]) -> None:
 
 ## Multi-tenant command execution with `TenantAwareRepository.execute`
 
-`TenantAwareRepository` exposes the same `execute(aggregate_id, command, *, create_if_missing=True)`,
+`TenantAwareRepository` exposes the same `execute(aggregate_id, command, *, create_if_missing=True)`
+(accepting both `DeciderAggregate` command objects and `lambda agg: ...` callables),
 `get_or_none(aggregate_id)`, and `exists(aggregate_id)` methods while enforcing
 your configured tenant policies:
 

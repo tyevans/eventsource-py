@@ -6,6 +6,9 @@ domain behavior through public frontdoors without database or broker setup:
 - **`Scenario` / `DeciderScenario`** for synchronous, zero-I/O Given-When-Then
   testing of `DeciderAggregate`s and pure `(decide, evolve, initial_state)`
   triples, including `.then_event_types(*EventClasses)` and `.then_events(*EventClasses)`.
+- **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
+  `harness.snapshot_store`, and `harness.assertions` (`EventAssertions` wrapper
+  over `harness.published_events`) for pre-wired repository and bus testing.
 - **`published_of_type(EventType)`** on `InMemoryTestHarness`, `InMemoryEventBus`,
   and `RecordingEventBus` for type-safe inspection of published domain events.
 
@@ -163,6 +166,61 @@ In multi-aggregate scenarios where commands target distinct aggregate IDs, pass
 `aggregate_id=...` to `.then_state(..., aggregate_id=first_id)` to assert the
 state of a specific aggregate instance.
 
+## Pre-wired repositories, snapshots, and assertions with `InMemoryTestHarness`
+
+`InMemoryTestHarness` bundles in-memory infrastructure (`event_store`,
+`event_bus`, `checkpoint_repo`, `dlq_repo`, and `snapshot_store`) with helper
+methods for wiring aggregate repositories and asserting published domain events:
+
+- **`harness.create_repository(OrderAggregate, snapshot_threshold=..., with_snapshots=...)`**:
+  creates an `AggregateRepository` pre-wired with `harness.event_store`,
+  `harness.event_bus`, and `harness.snapshot_store` (when `with_snapshots=True`
+  or `snapshot_threshold` is specified) with tracing disabled for fast tests.
+- **`harness.snapshot_store`**: provides a pre-configured `InMemorySnapshotStore`
+  that is reset alongside all other components when `harness.reset()` is called.
+- **`harness.assertions`**: returns an `EventAssertions` wrapper over
+  `harness.published_events` with expressive helpers (`assert_event_published`,
+  `assert_no_event_published`, `assert_event_count`, `assert_event_sequence`,
+  `assert_event_with_fields`, `assert_event_for_aggregate`, and
+  `assert_no_events_published`).
+
+```python
+from uuid import uuid4
+from eventsource.testing import InMemoryTestHarness
+
+
+async def test_harness_repository_snapshots_and_assertions() -> None:
+    harness = InMemoryTestHarness()
+    repo = harness.create_repository(OrderAggregate, snapshot_threshold=2)
+
+    order_id = uuid4()
+    customer_id = uuid4()
+
+    await repo.execute(
+        order_id,
+        lambda order: order.create(customer_id=customer_id),
+    )
+    await repo.execute(
+        order_id,
+        lambda order: order.ship("TRACK-123"),
+        create_if_missing=False,
+    )
+
+    # EventAssertions wrapper over harness.published_events
+    harness.assertions.assert_event_count(2)
+    harness.assertions.assert_event_sequence([OrderCreated, OrderShipped])
+    shipped = harness.assertions.assert_event_with_fields(
+        OrderShipped,
+        tracking_number="TRACK-123",
+    )
+    assert shipped.aggregate_id == order_id
+
+    # Verify automatic snapshot creation in harness.snapshot_store at version 2
+    snapshot = await harness.snapshot_store.get_snapshot(order_id, "Order")
+    assert snapshot is not None
+    assert snapshot.version == 2
+```
+
 ## Inspecting published events with `published_of_type`
 
 `InMemoryTestHarness`, `InMemoryEventBus`, and `RecordingEventBus` all provide
@@ -178,11 +236,7 @@ from eventsource.testing import InMemoryTestHarness, RecordingEventBus
 
 async def test_repository_publishes_typed_events() -> None:
     harness = InMemoryTestHarness()
-    repo = AggregateRepository(
-        event_store=harness.event_store,
-        aggregate_factory=Account,
-        event_publisher=harness.event_bus,
-    )
+    repo = harness.create_repository(Account)
     account_id = uuid4()
 
     await repo.execute(
