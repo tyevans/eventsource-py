@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,48 +26,66 @@ from tests.unit.application.migration.test_final_integration._helpers import (
     create_test_events,
 )
 
-if TYPE_CHECKING:
-    from eventsource.adapters.memory import InMemoryEventStore
-    from eventsource.application.migration.router import TenantStoreRouter
-    from tests.unit.application.migration.test_final_integration._mocks import (
-        InMemoryAuditLogRepository,
-        MockLockManager,
+pytestmark = pytest.mark.asyncio
+
+
+async def _start_dedicated(
+    src: Any, tgt: Any, mig_repo: Any, rt_repo: Any, router: Any, locks: Any, tenant_id: UUID
+) -> tuple[MigrationCoordinator, Any]:
+    coord = MigrationCoordinator(
+        source_store=src,
+        migration_repo=mig_repo,
+        routing_repo=rt_repo,
+        router=router,
+        lock_manager=locks,
+        source_store_id="default",
+        enable_tracing=False,
     )
-    from tests.unit.application.migration.test_final_integration._repositories import (
-        InMemoryMigrationRepository,
-        InMemoryRoutingRepository,
+    router.register_store("dedicated", tgt)
+    mig = await coord.start_migration(
+        tenant_id=tenant_id, target_store=tgt, target_store_id="dedicated"
+    )
+    return coord, mig
+
+
+def _audit_entry(
+    migration_id: UUID,
+    event_type: AuditEventType,
+    details: dict[str, Any],
+    *,
+    old_phase: MigrationPhase | None = None,
+    new_phase: MigrationPhase | None = None,
+    operator: str = "admin",
+) -> MigrationAuditEntry:
+    return MigrationAuditEntry(
+        id=None,
+        migration_id=migration_id,
+        event_type=event_type,
+        old_phase=old_phase,
+        new_phase=new_phase,
+        details=details,
+        operator=operator,
+        occurred_at=datetime.now(UTC),
     )
 
 
 class TestRecoveryAfterSimulatedFailures:
     """Tests for recovery after simulated failures."""
 
-    @pytest.mark.asyncio
     async def test_recovery_from_bulk_copy_failure(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        migration_repo: InMemoryMigrationRepository,
-        routing_repo: InMemoryRoutingRepository,
-        router: TenantStoreRouter,
-        lock_manager: MockLockManager,
-        audit_log_repo: InMemoryAuditLogRepository,
-        tenant_id: UUID,
+        source_store,
+        target_store,
+        migration_repo,
+        routing_repo,
+        router,
+        lock_manager,
+        audit_log_repo,
+        tenant_id,
     ) -> None:
         await create_test_events(source_store, tenant_id, count=10)
-        coordinator = MigrationCoordinator(
-            source_store=source_store,
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
-            lock_manager=lock_manager,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        router.register_store("dedicated", target_store)
-        migration = await coordinator.start_migration(
-            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
-        )
+        deps = (source_store, target_store, migration_repo, routing_repo, router, lock_manager)
+        _, migration = await _start_dedicated(*deps, tenant_id)
         await migration_repo.record_error(migration.id, error="Simulated bulk copy failure")
         await audit_log_repo.record(
             MigrationAuditEntry.error_occurred(
@@ -85,27 +103,24 @@ class TestRecoveryAfterSimulatedFailures:
         )
         assert len(errors) == 1
 
-    @pytest.mark.asyncio
     async def test_recovery_from_cutover_rollback(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        routing_repo: InMemoryRoutingRepository,
-        router: TenantStoreRouter,
-        lock_manager: MockLockManager,
-        audit_log_repo: InMemoryAuditLogRepository,
-        tenant_id: UUID,
-        migration_id: UUID,
+        source_store,
+        target_store,
+        routing_repo,
+        router,
+        lock_manager,
+        audit_log_repo,
+        tenant_id,
+        migration_id,
     ) -> None:
         await create_test_events(source_store, tenant_id, count=5)
         await copy_events_between_stores(source_store, target_store, tenant_id)
         for i in range(200):
-            aggregate_id = uuid4()
-            event = SampleTestEvent(
-                aggregate_id=aggregate_id, tenant_id=tenant_id, value=f"extra-{i}"
-            )
+            agg_id = uuid4()
+            event = SampleTestEvent(aggregate_id=agg_id, tenant_id=tenant_id, value=f"extra-{i}")
             await source_store.append(
-                StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
+                StreamId(aggregate_id=agg_id, category="TestAggregate"),
                 [event],
                 ExpectedVersion.no_stream(),
             )
@@ -113,38 +128,23 @@ class TestRecoveryAfterSimulatedFailures:
             tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
         )
         router.register_store("dedicated", target_store)
+        cfg = MigrationConfig(cutover_max_lag_events=50)
         lag_tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            config=MigrationConfig(cutover_max_lag_events=50),
-            enable_tracing=False,
+            source_store, target_store, tenant_id, cfg, enable_tracing=False
         )
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
-        )
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=lag_tracker,
-            target_store_id="dedicated",
-            config=MigrationConfig(cutover_max_lag_events=50),
-            timeout_ms=500.0,
+        cutover_mgr = CutoverManager(lock_manager, router, routing_repo, enable_tracing=False)
+        result = await cutover_mgr.execute_cutover(
+            migration_id, tenant_id, lag_tracker, "dedicated", config=cfg, timeout_ms=500.0
         )
         assert result.success is False and result.rolled_back is True
         await audit_log_repo.record(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration_id,
-                event_type=AuditEventType.CUTOVER_ROLLED_BACK,
+            _audit_entry(
+                migration_id,
+                AuditEventType.CUTOVER_ROLLED_BACK,
+                {"reason": result.error_message, "duration_ms": result.duration_ms},
                 old_phase=MigrationPhase.CUTOVER,
                 new_phase=MigrationPhase.DUAL_WRITE,
-                details={"reason": result.error_message, "duration_ms": result.duration_ms},
                 operator="system",
-                occurred_at=datetime.now(UTC),
             )
         )
         routing = await routing_repo.get_routing(tenant_id)
@@ -154,58 +154,28 @@ class TestRecoveryAfterSimulatedFailures:
         )
         assert len(rollback_entries) == 1
 
-    @pytest.mark.asyncio
     async def test_pause_resume_recovery(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        migration_repo: InMemoryMigrationRepository,
-        routing_repo: InMemoryRoutingRepository,
-        router: TenantStoreRouter,
-        lock_manager: MockLockManager,
-        audit_log_repo: InMemoryAuditLogRepository,
-        tenant_id: UUID,
+        source_store,
+        target_store,
+        migration_repo,
+        routing_repo,
+        router,
+        lock_manager,
+        audit_log_repo,
+        tenant_id,
     ) -> None:
-        coordinator = MigrationCoordinator(
-            source_store=source_store,
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
-            lock_manager=lock_manager,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        router.register_store("dedicated", target_store)
-        migration = await coordinator.start_migration(
-            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
-        )
+        deps = (source_store, target_store, migration_repo, routing_repo, router, lock_manager)
+        coordinator, migration = await _start_dedicated(*deps, tenant_id)
         await coordinator.pause_migration(migration.id)
         await audit_log_repo.record(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration.id,
-                event_type=AuditEventType.MIGRATION_PAUSED,
-                old_phase=None,
-                new_phase=None,
-                details={"reason": "Maintenance"},
-                operator="admin",
-                occurred_at=datetime.now(UTC),
-            )
+            _audit_entry(migration.id, AuditEventType.MIGRATION_PAUSED, {"reason": "Maintenance"})
         )
         migration = await coordinator.get_migration(migration.id)
         assert migration is not None and migration.is_paused
         await coordinator.resume_migration(migration.id)
         await audit_log_repo.record(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration.id,
-                event_type=AuditEventType.MIGRATION_RESUMED,
-                old_phase=None,
-                new_phase=None,
-                details={"resumed_by": "admin"},
-                operator="admin",
-                occurred_at=datetime.now(UTC),
-            )
+            _audit_entry(migration.id, AuditEventType.MIGRATION_RESUMED, {"resumed_by": "admin"})
         )
         migration = await coordinator.get_migration(migration.id)
         assert migration is not None and not migration.is_paused
@@ -215,42 +185,27 @@ class TestRecoveryAfterSimulatedFailures:
         )
         assert len(entries) == 2
 
-    @pytest.mark.asyncio
     async def test_abort_recovery(
         self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        migration_repo: InMemoryMigrationRepository,
-        routing_repo: InMemoryRoutingRepository,
-        router: TenantStoreRouter,
-        lock_manager: MockLockManager,
-        audit_log_repo: InMemoryAuditLogRepository,
-        tenant_id: UUID,
+        source_store,
+        target_store,
+        migration_repo,
+        routing_repo,
+        router,
+        lock_manager,
+        audit_log_repo,
+        tenant_id,
     ) -> None:
-        coordinator = MigrationCoordinator(
-            source_store=source_store,
-            migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
-            lock_manager=lock_manager,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        router.register_store("dedicated", target_store)
-        migration = await coordinator.start_migration(
-            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
-        )
+        deps = (source_store, target_store, migration_repo, routing_repo, router, lock_manager)
+        coordinator, migration = await _start_dedicated(*deps, tenant_id)
         result = await coordinator.abort_migration(migration.id, reason="Test abort for recovery")
         await audit_log_repo.record(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration.id,
-                event_type=AuditEventType.MIGRATION_ABORTED,
+            _audit_entry(
+                migration.id,
+                AuditEventType.MIGRATION_ABORTED,
+                {"reason": "Test abort for recovery"},
                 old_phase=result.final_phase,
                 new_phase=MigrationPhase.ABORTED,
-                details={"reason": "Test abort for recovery"},
-                operator="admin",
-                occurred_at=datetime.now(UTC),
             )
         )
         assert result.success is False and result.final_phase == MigrationPhase.ABORTED

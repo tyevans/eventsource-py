@@ -24,7 +24,6 @@ class InMemoryAuditLogRepository:
         self._id_counter: int = 0
 
     async def record(self, entry: MigrationAuditEntry) -> int:
-        """Record an audit log entry."""
         self._id_counter += 1
         new_entry = MigrationAuditEntry(
             id=self._id_counter,
@@ -47,46 +46,29 @@ class InMemoryAuditLogRepository:
         until: datetime | None = None,
         limit: int | None = None,
     ) -> list[MigrationAuditEntry]:
-        """Get audit entries for a migration."""
         filtered = [e for e in self._entries if e.migration_id == migration_id]
-
         if event_types:
             filtered = [e for e in filtered if e.event_type in event_types]
-
         if since:
             filtered = [e for e in filtered if e.occurred_at >= since]
-
         if until:
             filtered = [e for e in filtered if e.occurred_at <= until]
-
         filtered.sort(key=lambda e: e.occurred_at)
-
-        if limit:
-            filtered = filtered[:limit]
-
-        return filtered
+        return filtered[:limit] if limit else filtered
 
     async def get_by_id(self, entry_id: int) -> MigrationAuditEntry | None:
-        """Get an audit entry by ID."""
-        for entry in self._entries:
-            if entry.id == entry_id:
-                return entry
-        return None
+        return next((e for e in self._entries if e.id == entry_id), None)
 
     async def get_latest(
         self,
         migration_id: UUID,
         event_type: AuditEventType | None = None,
     ) -> MigrationAuditEntry | None:
-        """Get the most recent audit entry for a migration."""
         filtered = [e for e in self._entries if e.migration_id == migration_id]
-
         if event_type:
             filtered = [e for e in filtered if e.event_type == event_type]
-
         if not filtered:
             return None
-
         filtered.sort(key=lambda e: e.occurred_at, reverse=True)
         return filtered[0]
 
@@ -95,12 +77,9 @@ class InMemoryAuditLogRepository:
         migration_id: UUID,
         event_type: AuditEventType | None = None,
     ) -> int:
-        """Count audit entries for a migration."""
         filtered = [e for e in self._entries if e.migration_id == migration_id]
-
         if event_type:
             filtered = [e for e in filtered if e.event_type == event_type]
-
         return len(filtered)
 
 
@@ -112,13 +91,11 @@ class InMemoryPositionMappingRepository:
         self._id_counter: int = 0
 
     async def create(self, mapping: PositionMapping) -> int:
-        """Create a new position mapping."""
         self._id_counter += 1
         self._mappings.append(mapping)
         return self._id_counter
 
     async def create_batch(self, mappings: list[PositionMapping]) -> int:
-        """Create multiple position mappings."""
         for mapping in mappings:
             await self.create(mapping)
         return len(mappings)
@@ -128,18 +105,20 @@ class InMemoryPositionMappingRepository:
         migration_id: UUID,
         source_position: Position,
     ) -> PositionMapping | None:
-        """Find mapping by exact source position."""
-        for mapping in self._mappings:
-            if mapping.migration_id == migration_id and mapping.source_position == source_position:
-                return mapping
-        return None
+        return next(
+            (
+                m
+                for m in self._mappings
+                if m.migration_id == migration_id and m.source_position == source_position
+            ),
+            None,
+        )
 
     async def find_nearest_source_position(
         self,
         migration_id: UUID,
         source_position: Position,
     ) -> PositionMapping | None:
-        """Find nearest mapping with source_position <= given position."""
         nearest: PositionMapping | None = None
         for mapping in self._mappings:
             if (
@@ -155,28 +134,28 @@ class InMemoryPositionMappingRepository:
         migration_id: UUID,
         event_id: UUID,
     ) -> PositionMapping | None:
-        """Find mapping by event ID."""
-        for mapping in self._mappings:
-            if mapping.migration_id == migration_id and mapping.event_id == event_id:
-                return mapping
-        return None
+        return next(
+            (
+                m
+                for m in self._mappings
+                if m.migration_id == migration_id and m.event_id == event_id
+            ),
+            None,
+        )
 
     async def count_by_migration(self, migration_id: UUID) -> int:
-        """Count mappings for a migration."""
         return len([m for m in self._mappings if m.migration_id == migration_id])
 
     async def get_position_bounds(
         self,
         migration_id: UUID,
     ) -> tuple[Position, Position] | None:
-        """Get first and last source positions by insertion (id) order."""
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         if not filtered:
             return None
         return (filtered[0].source_position, filtered[-1].source_position)
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
-        """Delete all mappings for a migration."""
         original_count = len(self._mappings)
         self._mappings = [m for m in self._mappings if m.migration_id != migration_id]
         return original_count - len(self._mappings)
@@ -187,7 +166,6 @@ class InMemoryPositionMappingRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[PositionMapping]:
-        """List mappings for a migration with pagination."""
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         sorted_mappings = sorted(filtered, key=lambda m: m.source_position)
         return sorted_mappings[offset : offset + limit]
@@ -221,14 +199,11 @@ class MockLockManager:
         key: str,
         timeout: float | None = None,
     ) -> AsyncIterator[MockLockInfo]:
-        """Acquire advisory lock."""
         self._acquire_count += 1
-
         if self._should_fail:
             from eventsource.ports.exceptions import LockAcquisitionError
 
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
-
         if self._fail_after is not None and self._acquire_count > self._fail_after:
             from eventsource.ports.exceptions import LockAcquisitionError
 
@@ -242,17 +217,11 @@ class MockLockManager:
             self._held_locks.pop(key, None)
 
     async def try_acquire(self, key: str) -> MockLockInfo | None:
-        """Try to acquire lock without blocking."""
-        if self._should_fail:
+        if self._should_fail or key in self._held_locks:
             return None
-
-        if key in self._held_locks:
-            return None
-
         return MockLockInfo(key=key)
 
     async def release(self, key: str) -> bool:
-        """Release advisory lock."""
         if key in self._held_locks:
             del self._held_locks[key]
             return True
