@@ -18,33 +18,24 @@ from eventsource.application.subscriptions.error_handling import (
 from tests.unit.application.subscriptions.test_error_handling._fixtures import pos
 
 
-def _make_error_info(
-    *,
-    position: int = 1,
-    error_type: str = "ValueError",
-    error_message: str = "Test error",
-    error_stacktrace: str = "...",
-    category: ErrorCategory = ErrorCategory.APPLICATION,
-    severity: ErrorSeverity = ErrorSeverity.MEDIUM,
-    retryable: bool = False,
-    subscription_name: str = "",
-    retry_count: int = 0,
-    sent_to_dlq: bool = False,
-) -> ErrorInfo:
-    return ErrorInfo(
-        event_id=uuid4(),
-        event_type="TestEvent",
-        position=pos(position),
-        error_type=error_type,
-        error_message=error_message,
-        error_stacktrace=error_stacktrace,
-        classification=ErrorClassification(
-            category=category, severity=severity, retryable=retryable
-        ),
-        subscription_name=subscription_name,
-        retry_count=retry_count,
-        sent_to_dlq=sent_to_dlq,
-    )
+def _make_error_info(**kwargs: object) -> ErrorInfo:
+    cat = kwargs.pop("category", ErrorCategory.APPLICATION)
+    sev = kwargs.pop("severity", ErrorSeverity.MEDIUM)
+    ret = kwargs.pop("retryable", False)
+    position = kwargs.pop("position", 1)
+    defaults: dict[str, object] = {
+        "event_id": uuid4(),
+        "event_type": "TestEvent",
+        "position": pos(int(position)),  # type: ignore[arg-type]
+        "error_type": "ValueError",
+        "error_message": "Test error",
+        "error_stacktrace": "...",
+        "classification": ErrorClassification(category=cat, severity=sev, retryable=ret),  # type: ignore[arg-type]
+        "subscription_name": "",
+        "retry_count": 0,
+        "sent_to_dlq": False,
+    }
+    return ErrorInfo(**(defaults | kwargs))  # type: ignore[arg-type]
 
 
 class TestErrorInfo:
@@ -59,22 +50,16 @@ class TestErrorInfo:
         )
 
     def test_error_info_fields(self, error_info: ErrorInfo):
-        assert error_info.event_type == "TestEvent"
-        assert error_info.position == pos(100)
+        assert error_info.event_type == "TestEvent" and error_info.position == pos(100)
         assert error_info.error_type == "ValueError"
         assert error_info.subscription_name == "TestSubscription"
-        assert error_info.retry_count == 2
-        assert error_info.sent_to_dlq is False
+        assert error_info.retry_count == 2 and error_info.sent_to_dlq is False
 
     def test_error_info_to_dict(self, error_info: ErrorInfo):
         data = error_info.to_dict()
-        assert data["event_type"] == "TestEvent"
-        assert data["position"] == pos(100).to_str()
-        assert data["error_type"] == "ValueError"
-        assert data["category"] == "application"
-        assert data["severity"] == "medium"
-        assert data["retryable"] is False
-        assert "timestamp" in data
+        assert data["event_type"] == "TestEvent" and data["position"] == pos(100).to_str()
+        assert data["error_type"] == "ValueError" and data["category"] == "application"
+        assert data["severity"] == "medium" and data["retryable"] is False and "timestamp" in data
 
 
 class TestErrorStats:
@@ -83,34 +68,30 @@ class TestErrorStats:
         return ErrorStats()
 
     def test_initial_state(self, stats: ErrorStats):
-        assert stats.total_errors == 0
-        assert stats.transient_errors == 0
-        assert stats.permanent_errors == 0
-        assert stats.dlq_count == 0
-        assert stats.first_error_at is None
-        assert stats.last_error_at is None
+        vals = (
+            stats.total_errors,
+            stats.transient_errors,
+            stats.permanent_errors,
+            stats.dlq_count,
+        )
+        assert vals == (0, 0, 0, 0) and stats.first_error_at is None and stats.last_error_at is None
 
     def test_record_transient_error(self, stats: ErrorStats):
-        error_info = _make_error_info(
+        info = _make_error_info(
             error_type="ConnectionError",
             error_message="Connection refused",
             category=ErrorCategory.TRANSIENT,
             retryable=True,
         )
-        stats.record_error(error_info)
-        assert stats.total_errors == 1
-        assert stats.transient_errors == 1
-        assert stats.permanent_errors == 0
+        stats.record_error(info)
+        assert (stats.total_errors, stats.transient_errors, stats.permanent_errors) == (1, 1, 0)
         assert stats.errors_by_category["transient"] == 1
         assert stats.errors_by_type["ConnectionError"] == 1
-        assert stats.first_error_at is not None
-        assert stats.last_error_at is not None
+        assert stats.first_error_at is not None and stats.last_error_at is not None
 
     def test_record_permanent_error(self, stats: ErrorStats):
         stats.record_error(_make_error_info(error_message="Invalid data"))
-        assert stats.total_errors == 1
-        assert stats.transient_errors == 0
-        assert stats.permanent_errors == 1
+        assert (stats.total_errors, stats.transient_errors, stats.permanent_errors) == (1, 0, 1)
         assert stats.errors_by_category["application"] == 1
 
     def test_record_dlq_error(self, stats: ErrorStats):
@@ -119,15 +100,14 @@ class TestErrorStats:
 
     def test_to_dict(self, stats: ErrorStats):
         data = stats.to_dict()
-        for key in (
+        assert {
             "total_errors",
             "transient_errors",
             "permanent_errors",
             "dlq_count",
             "errors_by_type",
             "errors_by_category",
-        ):
-            assert key in data
+        } <= data.keys()
 
 
 class TestErrorHandlerRegistry:
@@ -182,21 +162,18 @@ class TestErrorHandlerRegistry:
 
     @pytest.mark.asyncio
     async def test_multiple_callbacks(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
-        callback1, callback2, callback3 = AsyncMock(), AsyncMock(), AsyncMock()
-        registry.register(callback1)
-        registry.register(callback2)
-        registry.register(callback3)
+        callbacks = [AsyncMock(), AsyncMock(), AsyncMock()]
+        for cb in callbacks:
+            registry.register(cb)
         await registry.notify(error_info)
-        callback1.assert_called_once()
-        callback2.assert_called_once()
-        callback3.assert_called_once()
+        for cb in callbacks:
+            cb.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_callback_error_does_not_stop_others(
         self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
     ):
-        callback1 = AsyncMock(side_effect=RuntimeError("Callback error"))
-        callback2 = AsyncMock()
+        callback1, callback2 = AsyncMock(side_effect=RuntimeError("Callback error")), AsyncMock()
         registry.register(callback1)
         registry.register(callback2)
         await registry.notify(error_info)
@@ -208,17 +185,16 @@ class TestErrorHandlerRegistry:
         registry.register_for_category(ErrorCategory.APPLICATION, callback)
         registry.register_for_severity(ErrorSeverity.HIGH, callback)
         registry.clear()
-        assert len(registry._callbacks) == 0
-        assert len(registry._category_callbacks) == 0
-        assert len(registry._severity_callbacks) == 0
+        assert not (
+            registry._callbacks or registry._category_callbacks or registry._severity_callbacks
+        )
 
 
 class TestErrorHandlingConfig:
     def test_default_config(self):
         config = ErrorHandlingConfig()
         assert config.strategy == ErrorHandlingStrategy.RETRY_THEN_CONTINUE
-        assert config.max_recent_errors == 100
-        assert config.max_errors_before_stop is None
+        assert config.max_recent_errors == 100 and config.max_errors_before_stop is None
         assert config.dlq_enabled is True
 
     def test_custom_config(self):
@@ -228,10 +204,8 @@ class TestErrorHandlingConfig:
             max_errors_before_stop=1000,
             dlq_enabled=False,
         )
-        assert config.strategy == ErrorHandlingStrategy.DLQ_ONLY
-        assert config.max_recent_errors == 50
-        assert config.max_errors_before_stop == 1000
-        assert config.dlq_enabled is False
+        assert config.strategy == ErrorHandlingStrategy.DLQ_ONLY and config.dlq_enabled is False
+        assert config.max_recent_errors == 50 and config.max_errors_before_stop == 1000
 
 
 class TestErrorHandlingStrategy:
