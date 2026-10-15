@@ -9,54 +9,34 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource import (
-    DomainEvent,
-    RabbitMQEventBus,
-)
-from tests.integration.conftest import (
-    TestItemCreated,
-    TestOrderCreated,
-)
+from eventsource import DomainEvent, RabbitMQEventBus
+from tests.integration.conftest import TestItemCreated, TestOrderCreated
 
 from .conftest import skip_if_no_rabbitmq_infra
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.rabbitmq,
-    skip_if_no_rabbitmq_infra,
-]
+pytestmark = [pytest.mark.integration, pytest.mark.rabbitmq, skip_if_no_rabbitmq_infra]
 
 
 class TestRabbitMQEventBusStats:
     """Tests for statistics tracking accuracy."""
 
-    async def test_stats_tracking_publish(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_stats_tracking_publish(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test that publishing updates statistics correctly."""
         initial_stats = rabbitmq_event_bus.stats
-
         # Verify initial state
         assert initial_stats.events_published == 0
 
         # Publish events
         for i in range(5):
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Stats Item {i}",
-                quantity=i,
+                aggregate_id=uuid4(), aggregate_version=1, name=f"Stats Item {i}", quantity=i
             )
             await rabbitmq_event_bus.publish([event])
 
         assert rabbitmq_event_bus.stats.events_published == 5
         assert rabbitmq_event_bus.stats.publish_confirms == 5
 
-    async def test_stats_tracking_consume(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_stats_tracking_consume(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test that consuming updates statistics correctly."""
         received_events: list[DomainEvent] = []
 
@@ -97,8 +77,7 @@ class TestRabbitMQEventBusStats:
         assert rabbitmq_event_bus.stats.events_processed_success == event_count
 
     async def test_stats_tracking_handler_errors(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
         """Test that handler errors are tracked in statistics."""
 
@@ -109,16 +88,12 @@ class TestRabbitMQEventBusStats:
 
         # Publish event
         event = TestItemCreated(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            name="Error Stats Test",
-            quantity=1,
+            aggregate_id=uuid4(), aggregate_version=1, name="Error Stats Test", quantity=1
         )
         await rabbitmq_event_bus.publish([event])
 
         # Consume (will fail)
         consume_task = asyncio.create_task(rabbitmq_event_bus.start_consuming())
-
         # Wait a bit for the failure
         await asyncio.sleep(2.0)
 
@@ -132,10 +107,7 @@ class TestRabbitMQEventBusStats:
         assert rabbitmq_event_bus.stats.handler_errors >= 1
         assert rabbitmq_event_bus.stats.events_processed_failed >= 1
 
-    async def test_subscriber_counts(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_subscriber_counts(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test that subscriber counts are tracked correctly."""
         # Initially no subscribers
         rabbitmq_event_bus.clear_subscribers()
@@ -171,8 +143,7 @@ class TestRabbitMQReliabilityStats:
     """Tests for statistics tracking accuracy."""
 
     async def test_stats_accurately_track_operations(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
         """Test that statistics accurately reflect operations."""
         received_events: list[DomainEvent] = []
@@ -193,10 +164,7 @@ class TestRabbitMQReliabilityStats:
         event_count = 5
         for i in range(event_count):
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Stats Test {i}",
-                quantity=i,
+                aggregate_id=uuid4(), aggregate_version=1, name=f"Stats Test {i}", quantity=i
             )
             await rabbitmq_event_bus.publish([event])
 
@@ -226,10 +194,7 @@ class TestRabbitMQReliabilityStats:
         assert rabbitmq_event_bus.stats.events_consumed >= initial_consumed + event_count
         assert rabbitmq_event_bus.stats.events_processed_success >= initial_success + event_count
 
-    async def test_reset_stats_clears_counters(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_reset_stats_clears_counters(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test that reset_stats clears all counters."""
         # Publish some events to generate stats
         for i in range(3):
@@ -262,16 +227,12 @@ class TestRabbitMQReliabilityStats:
             assert rabbitmq_event_bus.stats.connected_at is not None
 
     async def test_stats_dict_returns_serializable_format(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
         """Test that get_stats_dict returns a JSON-serializable format."""
         # Publish event
         event = TestItemCreated(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            name="Stats Dict Test",
-            quantity=1,
+            aggregate_id=uuid4(), aggregate_version=1, name="Stats Dict Test", quantity=1
         )
         await rabbitmq_event_bus.publish([event])
 
@@ -300,10 +261,7 @@ class TestRabbitMQReliabilityStats:
         assert stats_dict["is_connected"] is True
 
     @pytest.mark.slow
-    async def test_handler_errors_tracked_separately(
-        self,
-        rabbitmq_event_bus_factory: Any,
-    ) -> None:
+    async def test_handler_errors_tracked_separately(self, rabbitmq_event_bus_factory: Any) -> None:
         """Test that handler errors are tracked separately from processing failures."""
         unique_suffix = uuid4().hex[:8]
         bus = rabbitmq_event_bus_factory(
@@ -314,7 +272,6 @@ class TestRabbitMQReliabilityStats:
         )
         bus.config.retry_base_delay = 0.1
         bus.config.retry_jitter = 0.0
-
         await bus.connect()
 
         try:
@@ -326,17 +283,13 @@ class TestRabbitMQReliabilityStats:
 
             # Publish event
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="Handler Error Test",
-                quantity=1,
+                aggregate_id=uuid4(), aggregate_version=1, name="Handler Error Test", quantity=1
             )
             await bus.publish([event])
 
             # Consume
             consume_task = asyncio.create_task(bus.start_consuming())
             await asyncio.sleep(5.0)
-
             await bus.stop_consuming()
             try:
                 await asyncio.wait_for(consume_task, timeout=2.0)
@@ -345,9 +298,7 @@ class TestRabbitMQReliabilityStats:
 
             # Verify handler_errors tracks each handler invocation error
             assert bus.stats.handler_errors >= 1
-
             # events_processed_failed tracks message processing failures
             assert bus.stats.events_processed_failed >= 1
-
         finally:
             await bus.disconnect()

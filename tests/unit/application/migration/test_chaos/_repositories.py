@@ -15,6 +15,7 @@ from eventsource.application.migration.exceptions import (
     MigrationNotFoundError,
 )
 from eventsource.ports import Position
+from eventsource.ports.exceptions import LockAcquisitionError
 from eventsource.ports.migration.models import (
     Migration,
     MigrationPhase,
@@ -39,11 +40,9 @@ class InMemoryMigrationRepository:
         existing = await self.get_by_tenant(migration.tenant_id)
         if existing is not None:
             raise MigrationAlreadyExistsError(migration.tenant_id, existing.id)
-
         now = datetime.now(UTC)
         migration.created_at = now
         migration.updated_at = now
-
         self._migrations[migration.id] = migration
         self._by_tenant[migration.tenant_id] = migration.id
         return migration.id
@@ -57,33 +56,22 @@ class InMemoryMigrationRepository:
         migration_id = self._by_tenant.get(tenant_id)
         if migration_id is None:
             return None
-
         migration = self._migrations.get(migration_id)
-        if migration is None:
+        if migration is None or migration.phase.is_terminal:
             return None
-
-        if migration.phase.is_terminal:
-            return None
-
         return migration
 
-    async def update_phase(
-        self,
-        migration_id: UUID,
-        new_phase: MigrationPhase,
-    ) -> None:
+    async def update_phase(self, migration_id: UUID, new_phase: MigrationPhase) -> None:
         """Update migration phase with validation."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         if not migration.can_transition_to(new_phase):
             raise InvalidPhaseTransitionError(migration_id, migration.phase, new_phase)
 
         now = datetime.now(UTC)
         migration.phase = new_phase
         migration.updated_at = now
-
         if new_phase == MigrationPhase.BULK_COPY:
             migration.started_at = now
             migration.bulk_copy_started_at = now
@@ -110,7 +98,6 @@ class InMemoryMigrationRepository:
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         migration.events_copied = events_copied
         migration.last_source_position = last_source_position
         if last_target_position is not None:
@@ -122,7 +109,6 @@ class InMemoryMigrationRepository:
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         migration.events_total = events_total
         migration.updated_at = datetime.now(UTC)
 
@@ -131,32 +117,21 @@ class InMemoryMigrationRepository:
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         now = datetime.now(UTC)
         migration.error_count += 1
         migration.last_error = error[:1000]
         migration.last_error_at = now
         migration.updated_at = now
 
-    async def set_paused(
-        self,
-        migration_id: UUID,
-        paused: bool,
-        reason: str | None = None,
-    ) -> None:
+    async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
         """Set migration pause state."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         now = datetime.now(UTC)
         migration.is_paused = paused
-        if paused:
-            migration.paused_at = now
-            migration.pause_reason = reason
-        else:
-            migration.paused_at = None
-            migration.pause_reason = None
+        migration.paused_at = now if paused else None
+        migration.pause_reason = reason if paused else None
         migration.updated_at = now
 
     async def list_active(self) -> list[Migration]:
@@ -174,16 +149,11 @@ class InMemoryRoutingRepository:
         """Get routing configuration for a tenant."""
         return self._routing.get(tenant_id)
 
-    async def get_or_default(
-        self,
-        tenant_id: UUID,
-        default_store_id: str,
-    ) -> TenantRouting:
+    async def get_or_default(self, tenant_id: UUID, default_store_id: str) -> TenantRouting:
         """Get routing configuration, creating default if not exists."""
         existing = await self.get_routing(tenant_id)
         if existing is not None:
             return existing
-
         now = datetime.now(UTC)
         routing = TenantRouting(
             tenant_id=tenant_id,
@@ -199,19 +169,17 @@ class InMemoryRoutingRepository:
         """Set or update the store for a tenant."""
         now = datetime.now(UTC)
         existing = self._routing.get(tenant_id)
-
         if existing:
             existing.store_id = store_id
             existing.updated_at = now
         else:
-            routing = TenantRouting(
+            self._routing[tenant_id] = TenantRouting(
                 tenant_id=tenant_id,
                 store_id=store_id,
                 migration_state=TenantMigrationState.NORMAL,
                 created_at=now,
                 updated_at=now,
             )
-            self._routing[tenant_id] = routing
 
     async def set_migration_state(
         self,
@@ -221,9 +189,9 @@ class InMemoryRoutingRepository:
     ) -> None:
         """Update the migration state for routing decisions."""
         routing = self._routing.get(tenant_id)
+        now = datetime.now(UTC)
         if routing is None:
-            now = datetime.now(UTC)
-            routing = TenantRouting(
+            self._routing[tenant_id] = TenantRouting(
                 tenant_id=tenant_id,
                 store_id="default",
                 migration_state=state,
@@ -231,11 +199,10 @@ class InMemoryRoutingRepository:
                 created_at=now,
                 updated_at=now,
             )
-            self._routing[tenant_id] = routing
         else:
             routing.migration_state = state
             routing.active_migration_id = migration_id
-            routing.updated_at = datetime.now(UTC)
+            routing.updated_at = now
 
     async def switch_routing(
         self,
@@ -250,11 +217,7 @@ class InMemoryRoutingRepository:
 
     async def clear_migration_state(self, tenant_id: UUID) -> None:
         """Reset migration state to NORMAL."""
-        await self.set_migration_state(
-            tenant_id,
-            TenantMigrationState.NORMAL,
-            migration_id=None,
-        )
+        await self.set_migration_state(tenant_id, TenantMigrationState.NORMAL, migration_id=None)
 
     async def list_by_state(self, state: TenantMigrationState) -> list[TenantRouting]:
         """List tenants in a specific migration state."""
@@ -296,37 +259,21 @@ class MockLockManager:
         self._lock = asyncio.Lock()
 
     @asynccontextmanager
-    async def acquire(
-        self,
-        key: str,
-        timeout: float | None = None,
-    ) -> AsyncIterator[MockLockInfo]:
+    async def acquire(self, key: str, timeout: float | None = None) -> AsyncIterator[MockLockInfo]:
         """Acquire advisory lock with potential failure injection."""
         self._acquire_count += 1
-
         if self._should_fail:
-            from eventsource.ports.exceptions import LockAcquisitionError
-
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
-
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.ports.exceptions import LockAcquisitionError
-
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
-
         # Simulate lock contention
         if self._contention_delay > 0:
             await asyncio.sleep(self._contention_delay)
-
         async with self._lock:
             if key in self._held_locks:
-                from eventsource.ports.exceptions import LockAcquisitionError
-
                 raise LockAcquisitionError(key, timeout or 0.0, "Lock already held")
-
             lock_info = MockLockInfo(key=key)
             self._held_locks[key] = lock_info
-
         try:
             yield lock_info
         finally:
@@ -337,7 +284,6 @@ class MockLockManager:
         """Try to acquire lock without blocking."""
         if self._should_fail:
             return None
-
         async with self._lock:
             if key in self._held_locks:
                 return None
