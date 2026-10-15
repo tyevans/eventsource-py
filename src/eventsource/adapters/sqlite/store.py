@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -15,21 +14,15 @@ from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.schemas import get_schema
 from eventsource.adapters.sqlite import queries as q
-from eventsource.domain import StreamId
-from eventsource.domain.event import DomainEvent
-from eventsource.domain.event_registry import EventRegistry, default_registry
+from eventsource.domain import DomainEvent, EventRegistry, StreamId, default_registry
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
 from eventsource.ports.outbox import outbox_event_data
 
 try:
     import aiosqlite
-
-    AIOSQLITE_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised only without the optional dep
-    AIOSQLITE_AVAILABLE = False
     aiosqlite = None  # type: ignore[assignment]
-
-logger = logging.getLogger(__name__)
+AIOSQLITE_AVAILABLE = aiosqlite is not None
 
 
 class SQLiteEventStore:
@@ -54,40 +47,30 @@ class SQLiteEventStore:
         self._connection: aiosqlite.Connection | None = None
         self._codec = IntPositionCodec(self._store_id)
         self._lock, self._init_lock = asyncio.Lock(), asyncio.Lock()
-
-    @property
-    def store_id(self) -> str:
-        return self._store_id
-
-    @property
-    def outbox_enabled(self) -> bool:
-        return self._outbox_enabled
+        self.store_id, self.outbox_enabled = self._store_id, self._outbox_enabled
 
     async def _conn(self) -> aiosqlite.Connection:
-        if self._connection is not None:
-            return self._connection
-        async with self._init_lock:
-            if self._connection is not None:
-                return self._connection
-            try:
-                conn = await aiosqlite.connect(self._database)
-            except (aiosqlite.Error, OSError) as e:
-                msg = f"could not open the SQLite database at {self._database!r}: {e}"
-                raise p.EventStoreConnectionError(msg, store=type(self).__name__) from e
-            await conn.execute("PRAGMA foreign_keys = ON")
-            await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
-            if self._wal_mode:
-                await conn.execute("PRAGMA journal_mode = WAL")
-            conn.row_factory = aiosqlite.Row
-            await conn.executescript(get_schema("all", backend="sqlite", additive=False))
-            await q.apply_additive_updates(conn)
-            await conn.commit()
-            self._connection = conn
-            return conn
+        if self._connection is None:
+            async with self._init_lock:
+                if self._connection is None:
+                    try:
+                        conn = await aiosqlite.connect(self._database)
+                    except (aiosqlite.Error, OSError) as e:
+                        msg = f"could not open the SQLite database at {self._database!r}: {e}"
+                        raise p.EventStoreConnectionError(msg, store=type(self).__name__) from e
+                    pragmas = ("foreign_keys = ON", f"busy_timeout = {self._busy_timeout}")
+                    for pragma in (*pragmas, *(("journal_mode = WAL",) if self._wal_mode else ())):
+                        await conn.execute(f"PRAGMA {pragma}")
+                    conn.row_factory = aiosqlite.Row
+                    await conn.executescript(get_schema("all", backend="sqlite", additive=False))
+                    await q.apply_additive_updates(conn)
+                    await conn.commit()
+                    self._connection = conn
+        return self._connection
 
     async def close(self) -> None:
-        if self._connection is not None:
-            await self._connection.close()
+        if (conn := self._connection) is not None:
+            await conn.close()
             self._connection = None
 
     async def __aenter__(self) -> SQLiteEventStore:
@@ -120,31 +103,27 @@ class SQLiteEventStore:
                 current_version = await self._max_version(conn, aid, category)
                 check_expected(current_version, expected, stream)
                 seen: set[UUID] = set()
-                for event in events:
-                    if event.event_id in seen:
-                        msg = f"event_id {event.event_id} already exists in the store"
-                        raise DuplicateEventError(msg)
-                    seen.add(event.event_id)
-                version, first_position, now = current_version, None, datetime.now(UTC).isoformat()
+                version, first_pos, now = current_version, None, datetime.now(UTC).isoformat()
                 sql = "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, tenant_id, actor_id, version, timestamp, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 for ev in events:
+                    if ev.event_id in seen:
+                        raise DuplicateEventError(f"event_id {ev.event_id} already exists in store")
+                    seen.add(ev.event_id)
                     version += 1
                     tid = str(ev.tenant_id) if ev.tenant_id else None
                     v1 = (str(ev.event_id), ev.event_type, category, aid, tid, ev.actor_id)
                     ts, data = ev.occurred_at.isoformat(), json_dumps(ev.model_dump(mode="json"))
                     cursor = await conn.execute(sql, (*v1, version, ts, data, now))
-                    if first_position is None:
-                        first_position = self._codec.encode(cursor.lastrowid or 0)
+                    first_pos = first_pos or self._codec.encode(cursor.lastrowid or 0)
                     if self._outbox_enabled:
                         await self._write_to_outbox(conn, ev, category, now)
                 await conn.commit()
-                return p.AppendResult(stream=stream, new_version=version, position=first_position)
+                return p.AppendResult(stream=stream, new_version=version, position=first_pos)
             except aiosqlite.IntegrityError as e:
                 await conn.rollback()
                 err = str(e).lower()
                 if "event_id" in err:
-                    msg = f"an event_id in this batch already exists in the store: {e}"
-                    raise DuplicateEventError(msg) from e
+                    raise DuplicateEventError(f"event_id already exists in the store: {e}") from e
                 if "unique" in err and ("aggregate_id" in err or "version" in err):
                     actual = await self._max_version(conn, aid, category)
                     desc = describe_expected(expected)
@@ -154,12 +133,11 @@ class SQLiteEventStore:
                 await conn.rollback()
                 raise
 
-    async def _write_to_outbox(self, conn: Any, event: DomainEvent, cat: str, now: str) -> None:
-        eid, aid = str(event.event_id), str(event.aggregate_id)
-        tid = str(event.tenant_id) if event.tenant_id else None
-        data = json_dumps(outbox_event_data(event))
+    async def _write_to_outbox(self, conn: Any, ev: DomainEvent, cat: str, now: str) -> None:
+        tid, data = str(ev.tenant_id) if ev.tenant_id else None, json_dumps(outbox_event_data(ev))
         sql = "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')"
-        await conn.execute(sql, (str(uuid4()), eid, event.event_type, aid, cat, tid, data, now))
+        row = (str(uuid4()), str(ev.event_id), ev.event_type, str(ev.aggregate_id), cat, tid)
+        await conn.execute(sql, (*row, data, now))
 
     async def _fetch_envelopes(self, sql: str, params: Any) -> AsyncIterator[p.EventEnvelope]:
         conn = await self._conn()
@@ -180,9 +158,8 @@ class SQLiteEventStore:
             return await self._max_version(conn, str(stream.aggregate_id), stream.category)
 
     async def event_exists(self, event_id: UUID) -> bool:
-        conn = await self._conn()
+        sql, conn = "SELECT 1 FROM events WHERE event_id = ? LIMIT 1", await self._conn()
         async with self._lock:
-            sql = "SELECT 1 FROM events WHERE event_id = ? LIMIT 1"
             return await (await conn.execute(sql, (str(event_id),))).fetchone() is not None
 
     async def read_all(
