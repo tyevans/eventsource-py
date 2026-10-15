@@ -180,6 +180,17 @@ class PostgreSQLEventStore(
         if self._owns_engine:
             await self._engine.dispose()
 
+    async def __aenter__(self) -> PostgreSQLEventStore:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
+        await self.close()
+
 
 __all__ = [
     "ASYNCPG_AVAILABLE",

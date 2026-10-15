@@ -62,7 +62,20 @@ class TestPostgreSQLSnapshotStoreBasic:
         assert params["schema_version"] == sample_snapshot.schema_version
         assert params["created_at"] == sample_snapshot.created_at
         # State should be JSON-encoded
-        assert '"value": "test"' in params["state"]
+        assert '"value":"test"' in params["state"] or '"value": "test"' in params["state"]
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager(
+        self,
+        store: PostgreSQLSnapshotStore,
+    ) -> None:
+        """Test PostgreSQLSnapshotStore supports async with context manager."""
+        from eventsource.ports.lifecycle import SupportsAsyncContextManager, SupportsClose
+
+        assert isinstance(store, SupportsClose)
+        assert isinstance(store, SupportsAsyncContextManager)
+        async with store as entered:
+            assert entered is store
 
     @pytest.mark.asyncio
     async def test_get_snapshot_found(

@@ -18,7 +18,7 @@ constructor flag). Implementations must be idempotent: calling `close()`
 more than once must not raise.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Self, runtime_checkable
 
 
 @runtime_checkable
@@ -27,7 +27,9 @@ class SupportsClose(Protocol):
 
     A store that has nothing of its own to release simply does not
     implement this Protocol -- there is no default no-op body and no
-    `NotImplementedError` fallback.
+    `NotImplementedError` fallback. Store adapters also implement
+    `__aenter__` and `__aexit__` (`SupportsAsyncContextManager`) so callers
+    can write `async with store:` to close on scope exit.
     """
 
     async def close(self) -> None:
@@ -39,4 +41,22 @@ class SupportsClose(Protocol):
         ...
 
 
-__all__ = ["SupportsClose"]
+@runtime_checkable
+class SupportsAsyncContextManager(SupportsClose, Protocol):
+    """Store lifecycle capability combining `close()` with `async with`."""
+
+    async def __aenter__(self) -> Self:
+        """Enter async context manager and return the store instance."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
+        """Exit async context manager and await `self.close()`."""
+        ...
+
+
+__all__ = ["SupportsAsyncContextManager", "SupportsClose"]

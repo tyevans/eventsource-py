@@ -168,6 +168,51 @@ class TestSQLiteSnapshotStoreLifecycle:
             assert loaded is not None
             assert loaded.state["round"] == "trip"
 
+    @pytest.mark.asyncio
+    async def test_async_context_manager_closes_connection_on_exit(self):
+        from eventsource.ports.lifecycle import SupportsAsyncContextManager
+
+        store = SQLiteSnapshotStore(":memory:")
+        assert isinstance(store, SupportsAsyncContextManager)
+        async with store as entered:
+            assert entered is store
+            await store.snapshot_exists(uuid4(), "Order")
+            assert store._connection is not None
+
+        assert store._connection is None
+
+    @pytest.mark.asyncio
+    async def test_unclosed_snapshot_store_emits_resource_warning_on_del(self):
+        store = SQLiteSnapshotStore(":memory:")
+        await store.snapshot_exists(uuid4(), "Order")
+        try:
+            with pytest.warns(
+                ResourceWarning, match=r"Unclosed SQLiteSnapshotStore \(':memory:'\)"
+            ):
+                store.__del__()
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_unclosed_event_store_emits_resource_warning_and_supports_async_with(self):
+        from eventsource.adapters.sqlite import SQLiteEventStore
+        from eventsource.ports.lifecycle import SupportsAsyncContextManager
+
+        async with SQLiteEventStore(":memory:") as event_store:
+            assert isinstance(event_store, SupportsAsyncContextManager)
+            await event_store.event_exists(uuid4())
+            assert event_store._connection is not None
+
+        assert event_store._connection is None
+
+        leaked = SQLiteEventStore(":memory:")
+        await leaked.event_exists(uuid4())
+        try:
+            with pytest.warns(ResourceWarning, match=r"Unclosed SQLiteEventStore \(':memory:'\)"):
+                leaked.__del__()
+        finally:
+            await leaked.close()
+
 
 class TestSQLiteSnapshotStoreConcurrency:
     """Tests for concurrent operations."""
