@@ -18,13 +18,9 @@ from tests.unit.application.migration.test_sync_lag_tracker._fixtures import (
 class TestTrackerLagStats:
     """Tests for lag statistics methods."""
 
-    def test_get_lag_stats_no_samples(
-        self,
-        tracker: SyncLagTracker,
-    ) -> None:
+    def test_get_lag_stats_no_samples(self, tracker: SyncLagTracker) -> None:
         """Test get_lag_stats with no samples."""
         stats = tracker.get_lag_stats()
-
         assert stats.current_lag == 0
         assert stats.average_lag == 0.0
         assert stats.max_lag == 0
@@ -36,16 +32,12 @@ class TestTrackerLagStats:
 
     @pytest.mark.asyncio
     async def test_get_lag_stats_single_sample(
-        self,
-        tracker: SyncLagTracker,
-        source_store: InMemoryEventStore,
+        self, tracker: SyncLagTracker, source_store: InMemoryEventStore
     ) -> None:
         """Test get_lag_stats with single sample."""
         await seed_events(source_store, 50)
-        await tracker.calculate_lag()  # lag = 50
-
+        await tracker.calculate_lag()
         stats = tracker.get_lag_stats()
-
         assert stats.current_lag == 50
         assert stats.average_lag == 50.0
         assert stats.max_lag == 50
@@ -68,7 +60,6 @@ class TestTrackerLagStats:
             config=config,
             enable_tracing=False,
         )
-
         positions = []
         for _ in range(90):
             result = await source_store.append(
@@ -78,17 +69,11 @@ class TestTrackerLagStats:
             )
             positions.append(result.position)
 
-        # First measurement: nothing copied yet -> 90 behind (bounded at 101)
         await tracker.calculate_lag()
-
-        # Second measurement: target has copied the first 60 -> 30 behind
         await tracker.calculate_lag(since=positions[59])
-
-        # Third measurement: target has copied the first 80 -> 10 behind
         await tracker.calculate_lag(since=positions[79])
 
         stats = tracker.get_lag_stats()
-
         assert stats.current_lag == 10
         assert stats.sample_count == 3
         assert stats.max_lag == 90
@@ -108,7 +93,6 @@ class TestTrackerLagStats:
             config=config,
             enable_tracing=False,
         )
-
         positions = []
         for _ in range(100):
             result = await source_store.append(
@@ -118,14 +102,10 @@ class TestTrackerLagStats:
             )
             positions.append(result.position)
 
-        # Decreasing lag pattern (converging): target catches up over time
-        copied_counts = [50, 60, 70, 80, 90, 95]
-        for copied in copied_counts:
-            since = positions[copied - 1]
-            await tracker.calculate_lag(since=since)
+        for copied in [50, 60, 70, 80, 90, 95]:
+            await tracker.calculate_lag(since=positions[copied - 1])
 
         stats = tracker.get_lag_stats()
-
         assert stats.is_converging is True
 
     @pytest.mark.asyncio
@@ -142,7 +122,6 @@ class TestTrackerLagStats:
             config=config,
             enable_tracing=False,
         )
-
         positions = []
         for _ in range(100):
             result = await source_store.append(
@@ -152,14 +131,10 @@ class TestTrackerLagStats:
             )
             positions.append(result.position)
 
-        # Increasing lag pattern (diverging): target falls further behind
-        copied_counts = [90, 80, 70, 60, 50, 40]
-        for copied in copied_counts:
-            since = positions[copied - 1]
-            await tracker.calculate_lag(since=since)
+        for copied in [90, 80, 70, 60, 50, 40]:
+            await tracker.calculate_lag(since=positions[copied - 1])
 
         stats = tracker.get_lag_stats()
-
         assert stats.is_converging is False
 
 
@@ -180,7 +155,6 @@ class TestSampleHistoryManagement:
             config=config,
             enable_tracing=False,
         )
-
         positions = []
         for _ in range(50):
             result = await source_store.append(
@@ -192,7 +166,6 @@ class TestSampleHistoryManagement:
 
         await tracker.calculate_lag()
         await tracker.calculate_lag(since=positions[19])
-
         history = tracker.get_sample_history()
 
         assert len(history) == 2
@@ -200,12 +173,8 @@ class TestSampleHistoryManagement:
         assert history[0].events == 50
         assert history[1].events == 30
 
-    def test_clear_history(
-        self,
-        tracker: SyncLagTracker,
-    ) -> None:
+    def test_clear_history(self, tracker: SyncLagTracker) -> None:
         """Test clearing sample history."""
-        # Add some samples manually
         lag = SyncLag(
             events=50,
             source_position=Position(store_id="source", key=(100,)),
@@ -213,12 +182,10 @@ class TestSampleHistoryManagement:
             timestamp=datetime.now(UTC),
         )
         tracker.record_lag(lag)
-
         assert len(tracker._lag_samples) == 1
         assert tracker.current_lag is not None
 
         cleared = tracker.clear_history()
-
         assert cleared == 1
         assert len(tracker._lag_samples) == 0
         assert tracker.current_lag is None
@@ -239,8 +206,6 @@ class TestSampleHistoryManagement:
             enable_tracing=False,
             max_sample_history=max_history,
         )
-
-        # Take more measurements than max, growing the source feed each time.
         for _ in range(max_history + 3):
             await seed_events(source_store, 1)
             await tracker.calculate_lag()
@@ -251,10 +216,7 @@ class TestSampleHistoryManagement:
 class TestManualLagRecording:
     """Tests for manual lag recording."""
 
-    def test_record_lag(
-        self,
-        tracker: SyncLagTracker,
-    ) -> None:
+    def test_record_lag(self, tracker: SyncLagTracker) -> None:
         """Test manually recording a lag measurement."""
         lag = SyncLag(
             events=25,
@@ -262,17 +224,12 @@ class TestManualLagRecording:
             target_position=Position(store_id="target", key=(75,)),
             timestamp=datetime.now(UTC),
         )
-
         tracker.record_lag(lag)
-
         assert tracker.current_lag is lag
         assert len(tracker._lag_samples) == 1
         assert tracker._lag_samples[0].lag is lag
 
-    def test_record_lag_multiple(
-        self,
-        tracker: SyncLagTracker,
-    ) -> None:
+    def test_record_lag_multiple(self, tracker: SyncLagTracker) -> None:
         """Test recording multiple lag measurements."""
         for i in range(3):
             lag = SyncLag(
@@ -284,15 +241,11 @@ class TestManualLagRecording:
             tracker.record_lag(lag)
 
         assert len(tracker._lag_samples) == 3
-        assert tracker.current_lag.events == 30  # Last recorded
+        assert tracker.current_lag.events == 30
 
-    def test_record_lag_updates_stats(
-        self,
-        tracker: SyncLagTracker,
-    ) -> None:
+    def test_record_lag_updates_stats(self, tracker: SyncLagTracker) -> None:
         """Test that recorded lags update statistics."""
-        lags = [50, 40, 30, 20, 10]
-        for lag_events in lags:
+        for lag_events in [50, 40, 30, 20, 10]:
             lag = SyncLag(
                 events=lag_events,
                 source_position=Position(store_id="source", key=(100,)),
@@ -302,8 +255,7 @@ class TestManualLagRecording:
             tracker.record_lag(lag)
 
         stats = tracker.get_lag_stats()
-
         assert stats.current_lag == 10
-        assert stats.average_lag == 30.0  # (50+40+30+20+10) / 5
+        assert stats.average_lag == 30.0
         assert stats.max_lag == 50
         assert stats.min_lag == 10

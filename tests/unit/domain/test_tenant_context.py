@@ -1,14 +1,4 @@
-"""
-Unit tests for tenant context management.
-
-Tests cover:
-- Basic context functions (get/set/clear)
-- Async context manager (tenant_scope)
-- Sync context manager (tenant_scope_sync)
-- Context isolation between concurrent tasks
-- Nested scope behavior
-- Error handling
-"""
+"""Unit tests for tenant context management."""
 
 from __future__ import annotations
 
@@ -55,17 +45,14 @@ class TestBasicContextFunctions:
 
     def test_set_returns_token(self) -> None:
         """set_current_tenant returns a token for restoration."""
-        tenant_id = uuid4()
-        token = set_current_tenant(tenant_id)
+        token = set_current_tenant(uuid4())
         assert token is not None
-        # Can use token to restore
         reset_tenant_context(token)
         assert get_current_tenant() is None
 
     def test_clear_tenant_context(self) -> None:
         """clear_tenant_context removes the current tenant."""
-        tenant_id = uuid4()
-        set_current_tenant(tenant_id)
+        set_current_tenant(uuid4())
         clear_tenant_context()
         assert get_current_tenant() is None
 
@@ -85,7 +72,6 @@ class TestGetRequiredTenant:
         """get_required_tenant raises TenantContextNotSetError when no context."""
         with pytest.raises(TenantContextNotSetError) as exc_info:
             get_required_tenant()
-        # Verify error message is helpful
         assert "set_current_tenant" in str(exc_info.value)
         assert "tenant_scope" in str(exc_info.value)
 
@@ -139,9 +125,7 @@ class TestAsyncTenantScope:
             assert get_current_tenant() == tenant1
             async with tenant_scope(tenant2):
                 assert get_current_tenant() == tenant2
-            # tenant1 is restored after inner scope
             assert get_current_tenant() == tenant1
-        # None is restored after outer scope
         assert get_current_tenant() is None
 
     async def test_triple_nested_scopes(self) -> None:
@@ -163,7 +147,6 @@ class TestAsyncTenantScope:
                 async with tenant_scope(tenant2):
                     assert get_current_tenant() == tenant2
                     raise RuntimeError("inner error")
-            # Outer scope is restored
             assert get_current_tenant() == tenant1
 
 
@@ -214,18 +197,11 @@ class TestContextIsolation:
 
         async def task_with_tenant(name: str, tenant_id: uuid4) -> None:
             async with tenant_scope(tenant_id):
-                # Simulate some async work
                 await asyncio.sleep(0.01)
-                # Record what tenant this task sees
                 results[name] = get_current_tenant()
 
         tenant1, tenant2 = uuid4(), uuid4()
-        # Run tasks concurrently
-        await asyncio.gather(
-            task_with_tenant("task1", tenant1),
-            task_with_tenant("task2", tenant2),
-        )
-        # Each task should have seen its own tenant
+        await asyncio.gather(task_with_tenant("task1", tenant1), task_with_tenant("task2", tenant2))
         assert results["task1"] == tenant1
         assert results["task2"] == tenant2
 
@@ -237,11 +213,10 @@ class TestContextIsolation:
 
         async def task_with_tenant(task_num: int, tenant_id: uuid4) -> None:
             async with tenant_scope(tenant_id):
-                await asyncio.sleep(0.001 * (task_num % 5))  # Variable delay
+                await asyncio.sleep(0.001 * (task_num % 5))
                 results[task_num] = get_current_tenant()
 
         await asyncio.gather(*[task_with_tenant(i, tenant_ids[i]) for i in range(num_tasks)])
-        # All tasks should have seen their own tenant
         for i in range(num_tasks):
             assert results[i] == tenant_ids[i]
 
@@ -252,11 +227,9 @@ class TestContextIsolation:
 
         async def inner_task() -> None:
             nonlocal result
-            # This task should see the parent's context
             result = get_current_tenant()
 
         async with tenant_scope(tenant_id):
-            # Create and await a task within the scope
             await asyncio.create_task(inner_task())
         assert result == tenant_id
 
@@ -265,11 +238,9 @@ class TestContextIsolation:
         tenant1, tenant2 = uuid4(), uuid4()
         async with tenant_scope(tenant1):
             assert get_current_tenant() == tenant1
-        # Context should be None now
         assert get_current_tenant() is None
         async with tenant_scope(tenant2):
             assert get_current_tenant() == tenant2
-        # Context should be None again
         assert get_current_tenant() is None
 
 
@@ -302,8 +273,6 @@ class TestClearIsFinal:
 
     def test_clear_inside_scope_raises_on_scope_exit(self) -> None:
         """Clearing inside a scope raises on scope exit (discipline violation)."""
-        # Clearing inside a scope is a discipline violation; the scope's
-        # exit must fail loudly rather than silently resurrect the tenant.
         with pytest.raises(TenantContextResetError), tenant_scope_sync(uuid4()):
             clear_tenant_context()
         assert get_current_tenant() is None

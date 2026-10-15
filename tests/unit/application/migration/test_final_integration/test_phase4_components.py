@@ -66,13 +66,9 @@ class TestIntegrationOfAllPhase4Components:
         tenant_id: UUID,
     ) -> None:
         """Test all Phase 4 components working together in a migration."""
-        # Create position mapper and subscription migrator
         position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
-
-        # Create historical events
         await create_test_events(source_store, tenant_id, count=5)
 
-        # Create coordinator with all dependencies
         coordinator = MigrationCoordinator(
             source_store=source_store,
             migration_repo=migration_repo,
@@ -84,28 +80,18 @@ class TestIntegrationOfAllPhase4Components:
             source_store_id="default",
             enable_tracing=False,
         )
-
         router.register_store("dedicated", target_store)
 
-        # 1. Start migration with all operational features
         migration = await coordinator.start_migration(
             tenant_id=tenant_id,
             target_store=target_store,
             target_store_id="dedicated",
             config=MigrationConfig(
-                batch_size=10,
-                verify_consistency=True,
-                migrate_subscriptions=False,
+                batch_size=10, verify_consistency=True, migrate_subscriptions=False
             ),
         )
+        metrics = get_migration_metrics(migration_id=str(migration.id), tenant_id=str(tenant_id))
 
-        # 2. Create and track metrics
-        metrics = get_migration_metrics(
-            migration_id=str(migration.id),
-            tenant_id=str(tenant_id),
-        )
-
-        # 3. Record audit events
         await audit_log_repo.record(
             MigrationAuditEntry.migration_started(
                 migration_id=migration.id,
@@ -115,13 +101,9 @@ class TestIntegrationOfAllPhase4Components:
             )
         )
 
-        # 4. Simulate bulk copy with metrics
         with metrics.time_phase("bulk_copy"):
-            # Copy events
             copied = await copy_events_between_stores(source_store, target_store, tenant_id)
             metrics.record_events_copied(copied, rate_events_per_sec=100.0)
-
-            # Record position mappings
             source_counter = 1
             target_counter = 1
             async for envelope in source_store.read_all():
@@ -135,7 +117,6 @@ class TestIntegrationOfAllPhase4Components:
                     source_counter += 1
                     target_counter += 1
 
-        # 5. Record phase transition
         await audit_log_repo.record(
             MigrationAuditEntry.phase_change(
                 migration_id=migration.id,
@@ -146,20 +127,16 @@ class TestIntegrationOfAllPhase4Components:
             )
         )
 
-        # 6. Simulate dual-write with sync lag tracking
         with metrics.time_phase("dual_write"):
             metrics.record_sync_lag(10)
             await asyncio.sleep(0.01)
             metrics.record_sync_lag(0)
 
-        # 7. Verify consistency
         verifier = ConsistencyVerifier(source_store, target_store, enable_tracing=False)
         report = await verifier.verify_tenant_consistency(
-            tenant_id=tenant_id,
-            level=VerificationLevel.COUNT,
+            tenant_id=tenant_id, level=VerificationLevel.COUNT
         )
 
-        # Record verification in audit log
         await audit_log_repo.record(
             MigrationAuditEntry(
                 id=None,
@@ -177,26 +154,21 @@ class TestIntegrationOfAllPhase4Components:
             )
         )
 
-        # 8. Validate all components worked correctly
         snapshot = metrics.get_snapshot()
         assert snapshot.events_copied >= 5
         assert "bulk_copy" in snapshot.phase_durations
         assert "dual_write" in snapshot.phase_durations
 
-        # Audit log entries
         all_entries = await audit_log_repo.get_by_migration(migration.id)
-        assert len(all_entries) >= 3  # started, phase_changed, verification
+        assert len(all_entries) >= 3
 
-        # Position mappings
         mapping_count = await position_mapper.get_mapping_count(migration.id)
         assert mapping_count == 5
 
-        # Consistency report
         assert report.is_consistent is True
         assert report.source_event_count == 5
         assert report.target_event_count == 5
 
-        # Clean up metrics
         release_migration_metrics(str(migration.id))
 
     @pytest.mark.asyncio
@@ -211,10 +183,7 @@ class TestIntegrationOfAllPhase4Components:
         tenant_id: UUID,
     ) -> None:
         """End-to-end smoke test for complete migration system."""
-        # Setup: Create 20 events in source
         await create_test_events(source_store, tenant_id, count=20)
-
-        # Create coordinator
         coordinator = MigrationCoordinator(
             source_store=source_store,
             migration_repo=migration_repo,
@@ -224,36 +193,23 @@ class TestIntegrationOfAllPhase4Components:
             source_store_id="default",
             enable_tracing=False,
         )
-
         router.register_store("dedicated", target_store)
 
-        # Start migration
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
-
         assert migration is not None
         assert migration.phase in (MigrationPhase.PENDING, MigrationPhase.BULK_COPY)
 
-        # Get status
         status = await coordinator.get_status(migration.id)
         assert status is not None
         assert status.migration_id == migration.id
         assert status.tenant_id == tenant_id
 
-        # Let it run briefly
         await asyncio.sleep(0.1)
-
-        # Abort to clean up
-        result = await coordinator.abort_migration(
-            migration.id,
-            reason="Smoke test cleanup",
-        )
+        result = await coordinator.abort_migration(migration.id, reason="Smoke test cleanup")
         assert result.final_phase == MigrationPhase.ABORTED
 
-        # Verify clean state
         routing = await routing_repo.get_routing(tenant_id)
         assert routing.migration_state == TenantMigrationState.NORMAL
 
@@ -268,11 +224,8 @@ class TestIntegrationOfAllPhase4Components:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """A migration driven end-to-end through the coordinator reports
-        bulk_copy phase duration and events copied, and release_migration_metrics()
-        at completion drops it from the active-migrations gauge."""
+        """Coordinator reports bulk_copy duration/copied and releases active metrics."""
         await create_test_events(source_store, tenant_id, count=5)
-
         coordinator = MigrationCoordinator(
             source_store=source_store,
             migration_repo=migration_repo,
@@ -285,11 +238,8 @@ class TestIntegrationOfAllPhase4Components:
         router.register_store("dedicated", target_store)
 
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
-
         await coordinator.wait_for_phase(migration.id, MigrationPhase.DUAL_WRITE, timeout=5.0)
 
         tracker = ActiveMigrationsTracker.get_instance()
@@ -300,10 +250,7 @@ class TestIntegrationOfAllPhase4Components:
         assert snapshot.phase_durations.get("bulk_copy", 0.0) > 0.0
 
         await coordinator.abort_migration(migration.id, reason="test cleanup")
-
         assert str(migration.id) not in tracker.active_migrations
 
 
-__all__ = [  # pragma: allowlist secret
-    "TestIntegrationOfAllPhase4Components",
-]
+__all__ = ["TestIntegrationOfAllPhase4Components"]  # pragma: allowlist secret
