@@ -41,23 +41,24 @@ def _sub_result(
 
 
 class TestMigrateSubscriptions:
-    """Tests for MigrationCoordinator.migrate_subscriptions() method."""
-
     @pytest.fixture
     def coordinator_deps(self) -> dict:
         return create_coordinator_deps()
 
-    @pytest.mark.asyncio
-    async def test_migrate_subscriptions_success(self, coordinator_deps: dict) -> None:
-        migration_id, tenant_id = uuid4(), uuid4()
-        coordinator_deps["migration_repo"].get = AsyncMock(
-            return_value=_completed_migration(migration_id, tenant_id)
-        )
-        coordinator = MigrationCoordinator(
+    def _make_coordinator(self, coordinator_deps: dict, migration) -> MigrationCoordinator:
+        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
+        return MigrationCoordinator(
             **coordinator_deps,
             position_mapper=AsyncMock(),
             checkpoint_repo=AsyncMock(),
             enable_tracing=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_migrate_subscriptions_success(self, coordinator_deps: dict) -> None:
+        migration_id, tenant_id = uuid4(), uuid4()
+        coordinator = self._make_coordinator(
+            coordinator_deps, _completed_migration(migration_id, tenant_id)
         )
         expected_summary = make_migration_summary(
             migration_id=migration_id,
@@ -72,28 +73,24 @@ class TestMigrateSubscriptions:
         )
         with patch(
             "eventsource.application.migration.coordinator.SubscriptionMigrator"
-        ) as mock_migrator_cls:
-            mock_migrator = MagicMock()
-            mock_migrator.migrate_tenant_subscriptions = AsyncMock(return_value=expected_summary)
-            mock_migrator_cls.return_value = mock_migrator
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock(
+                migrate_tenant_subscriptions=AsyncMock(return_value=expected_summary)
+            )
             summary = await coordinator.migrate_subscriptions(migration_id)
 
-        assert summary.all_successful is True
-        assert summary.successful_count == 3
-        assert summary.failed_count == 0
+        assert (summary.all_successful, summary.successful_count, summary.failed_count) == (
+            True,
+            3,
+            0,
+        )
         assert coordinator.get_subscription_summary(migration_id) is summary
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_with_failures(self, coordinator_deps: dict) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
-        coordinator_deps["migration_repo"].get = AsyncMock(
-            return_value=_completed_migration(migration_id, tenant_id)
-        )
-        coordinator = MigrationCoordinator(
-            **coordinator_deps,
-            position_mapper=AsyncMock(),
-            checkpoint_repo=AsyncMock(),
-            enable_tracing=False,
+        coordinator = self._make_coordinator(
+            coordinator_deps, _completed_migration(migration_id, tenant_id)
         )
         expected_summary = make_migration_summary(
             migration_id=migration_id,
@@ -108,28 +105,23 @@ class TestMigrateSubscriptions:
         )
         with patch(
             "eventsource.application.migration.coordinator.SubscriptionMigrator"
-        ) as mock_migrator_cls:
-            mock_migrator = MagicMock()
-            mock_migrator.migrate_tenant_subscriptions = AsyncMock(return_value=expected_summary)
-            mock_migrator_cls.return_value = mock_migrator
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock(
+                migrate_tenant_subscriptions=AsyncMock(return_value=expected_summary)
+            )
             summary = await coordinator.migrate_subscriptions(migration_id)
 
-        assert summary.all_successful is False
-        assert summary.successful_count == 2
-        assert summary.failed_count == 1
+        assert (summary.all_successful, summary.successful_count, summary.failed_count) == (
+            False,
+            2,
+            1,
+        )
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_migration_not_found(self, coordinator_deps: dict) -> None:
-        migration_id = uuid4()
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=None)
-        coordinator = MigrationCoordinator(
-            **coordinator_deps,
-            position_mapper=AsyncMock(),
-            checkpoint_repo=AsyncMock(),
-            enable_tracing=False,
-        )
+        coordinator = self._make_coordinator(coordinator_deps, None)
         with pytest.raises(MigrationNotFoundError):
-            await coordinator.migrate_subscriptions(migration_id)
+            await coordinator.migrate_subscriptions(uuid4())
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_no_position_mapper(self, coordinator_deps: dict) -> None:
@@ -160,14 +152,8 @@ class TestMigrateSubscriptions:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_dry_run(self, coordinator_deps: dict) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
-        coordinator_deps["migration_repo"].get = AsyncMock(
-            return_value=_completed_migration(migration_id, tenant_id)
-        )
-        coordinator = MigrationCoordinator(
-            **coordinator_deps,
-            position_mapper=AsyncMock(),
-            checkpoint_repo=AsyncMock(),
-            enable_tracing=False,
+        coordinator = self._make_coordinator(
+            coordinator_deps, _completed_migration(migration_id, tenant_id)
         )
         expected_summary = make_migration_summary(
             migration_id=migration_id,
@@ -177,29 +163,25 @@ class TestMigrateSubscriptions:
         )
         with patch(
             "eventsource.application.migration.coordinator.SubscriptionMigrator"
-        ) as mock_migrator_cls:
-            mock_migrator = MagicMock()
-            mock_migrator.migrate_tenant_subscriptions = AsyncMock(return_value=expected_summary)
-            mock_migrator_cls.return_value = mock_migrator
+        ) as mock_cls:
+            mock_migrator = MagicMock(
+                migrate_tenant_subscriptions=AsyncMock(return_value=expected_summary)
+            )
+            mock_cls.return_value = mock_migrator
             await coordinator.migrate_subscriptions(migration_id, dry_run=True)
             mock_migrator.migrate_tenant_subscriptions.assert_called_once()
             assert mock_migrator.migrate_tenant_subscriptions.call_args[1]["dry_run"] is True
 
 
 class TestGetSubscriptionSummary:
-    """Tests for MigrationCoordinator.get_subscription_summary() method."""
-
     def test_get_subscription_summary_returns_stored_summary(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
         coordinator = create_coordinator()
         summary = make_migration_summary(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            successful_count=2,
+            migration_id=migration_id, tenant_id=tenant_id, successful_count=2
         )
         coordinator._subscription_summaries[migration_id] = summary
         assert coordinator.get_subscription_summary(migration_id) is summary
 
     def test_get_subscription_summary_returns_none_if_not_found(self) -> None:
-        coordinator = create_coordinator()
-        assert coordinator.get_subscription_summary(uuid4()) is None
+        assert create_coordinator().get_subscription_summary(uuid4()) is None

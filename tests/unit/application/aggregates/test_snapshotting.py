@@ -79,14 +79,6 @@ class TestEveryNEvents:
             EveryNEvents(-5)
 
     def test_true_when_the_save_crosses_a_boundary(self, order_at_version_101):
-        """A save that straddles a boundary has passed it, and owes a snapshot.
-
-        Version 101 reached in one save of three events came from 98, so the
-        100 boundary is behind it. Requiring the version to *land* on the
-        boundary means a stream whose saves have a constant stride can miss
-        every boundary forever: with saves of 6 from version 1, no version is
-        ever even, so `version % 50 == 0` is unsatisfiable.
-        """
         assert EveryNEvents(100).should_snapshot(order_at_version_101, 3) is True
 
     def test_false_when_the_save_stayed_within_one_interval(self, order_at_version_101):
@@ -111,8 +103,7 @@ class TestTakeSnapshot:
         assert snap.version == order_at_version_3.version
         assert snap.aggregate_id == order_at_version_3.aggregate_id
         assert snap.schema_version == getattr(type(order_at_version_3), "schema_version", 1)
-        stored = await store.get_snapshot(snap.aggregate_id, "Order")
-        assert stored == snap
+        assert await store.get_snapshot(snap.aggregate_id, "Order") == snap
 
     async def test_store_errors_propagate(self, order_at_version_3, failing_store):
         with pytest.raises(RuntimeError):
@@ -123,24 +114,17 @@ class TestReadValidSnapshot:
     async def test_returns_snapshot_when_schema_matches(self, order_at_version_3):
         store = InMemorySnapshotStore()
         snap = await take_snapshot(order_at_version_3, "Order", store)
-        got = await read_valid_snapshot(store, snap.aggregate_id, "Order", type(order_at_version_3))
-        assert got == snap
+        assert await read_valid_snapshot(store, snap.aggregate_id, "Order", type(order_at_version_3)) == snap  # fmt: skip
 
     async def test_returns_none_when_missing(self):
-        store = InMemorySnapshotStore()
-        assert await read_valid_snapshot(store, uuid4(), "Order", OrderAggregate) is None
+        assert await read_valid_snapshot(InMemorySnapshotStore(), uuid4(), "Order", OrderAggregate) is None  # fmt: skip
 
     async def test_returns_none_on_schema_mismatch(self):
         store = InMemorySnapshotStore()
         await store.save_snapshot(
             Snapshot(
-                aggregate_id=(aid := uuid4()),
-                aggregate_type="Order",
-                version=5,
-                state={},
-                schema_version=999,
-                created_at=datetime.now(UTC),
-            )
+                (aid := uuid4()), "Order", 5, {}, schema_version=999, created_at=datetime.now(UTC)
+            )  # fmt: skip
         )
         assert await read_valid_snapshot(store, aid, "Order", OrderAggregate) is None
 
@@ -151,44 +135,38 @@ class TestReadValidSnapshot:
 class TestImmediateScheduler:
     async def test_awaits_write_and_returns_snapshot(self, order_at_version_3):
         store = InMemorySnapshotStore()
-        sched = ImmediateScheduler()
-        snap = await sched.schedule(
+        snap = await ImmediateScheduler().schedule(
             take_snapshot(order_at_version_3, "Order", store),
             aggregate_type="Order",
             aggregate_id=order_at_version_3.aggregate_id,
         )
-        assert snap is not None
-        assert await store.get_snapshot(snap.aggregate_id, "Order") == snap
+        assert snap is not None and await store.get_snapshot(snap.aggregate_id, "Order") == snap
 
     async def test_swallows_write_failure_returns_none(
         self, order_at_version_3, failing_store, caplog
     ):
-        sched = ImmediateScheduler()
-        result = await sched.schedule(
+        result = await ImmediateScheduler().schedule(
             take_snapshot(order_at_version_3, "Order", failing_store),
             aggregate_type="Order",
             aggregate_id=order_at_version_3.aggregate_id,
         )
-        assert result is None
-        assert "Failed to create snapshot" in caplog.text
+        assert result is None and "Failed to create snapshot" in caplog.text
 
     async def test_uniform_pending_surface(self):
         sched = ImmediateScheduler()
-        assert sched.pending_count == 0
-        assert await sched.await_pending() == 0
+        assert sched.pending_count == 0 and await sched.await_pending() == 0
         assert isinstance(sched, SnapshotScheduler)
 
 
 class TestBackgroundScheduler:
     async def test_schedules_and_completes(self, order_at_version_3):
-        store = InMemorySnapshotStore()
-        sched = BackgroundScheduler()
+        store, sched = InMemorySnapshotStore(), BackgroundScheduler()
         result = await sched.schedule(
             take_snapshot(order_at_version_3, "Order", store),
             aggregate_type="Order",
             aggregate_id=order_at_version_3.aggregate_id,
         )
-        assert result is None  # deferred
+        assert result is None
         await sched.await_pending()
         assert await store.get_snapshot(order_at_version_3.aggregate_id, "Order") is not None
 

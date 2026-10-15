@@ -28,27 +28,22 @@ class TestErrorSeverity:
         assert not ErrorSeverity.WARNING.should_alert and not ErrorSeverity.INFO.should_alert
 
     def test_log_level(self) -> None:
-        assert ErrorSeverity.CRITICAL.log_level == logging.CRITICAL
-        assert ErrorSeverity.ERROR.log_level == logging.ERROR
-        assert ErrorSeverity.WARNING.log_level == logging.WARNING
-        assert ErrorSeverity.INFO.log_level == logging.INFO
+        assert (ErrorSeverity.CRITICAL.log_level, ErrorSeverity.ERROR.log_level) == (logging.CRITICAL, logging.ERROR)  # fmt: skip
+        assert (ErrorSeverity.WARNING.log_level, ErrorSeverity.INFO.log_level) == (logging.WARNING, logging.INFO)  # fmt: skip
 
 
 class TestErrorRecoverability:
     def test_recoverability_values(self) -> None:
-        assert ErrorRecoverability.RECOVERABLE.value == "recoverable"
-        assert ErrorRecoverability.TRANSIENT.value == "transient"
+        assert (ErrorRecoverability.RECOVERABLE.value, ErrorRecoverability.TRANSIENT.value) == ("recoverable", "transient")  # fmt: skip
         assert ErrorRecoverability.FATAL.value == "fatal"
 
     def test_should_retry(self) -> None:
         assert not ErrorRecoverability.RECOVERABLE.should_retry
-        assert ErrorRecoverability.TRANSIENT.should_retry
-        assert not ErrorRecoverability.FATAL.should_retry
+        assert ErrorRecoverability.TRANSIENT.should_retry and not ErrorRecoverability.FATAL.should_retry  # fmt: skip
 
     def test_should_abort(self) -> None:
         assert not ErrorRecoverability.RECOVERABLE.should_abort
-        assert not ErrorRecoverability.TRANSIENT.should_abort
-        assert ErrorRecoverability.FATAL.should_abort
+        assert not ErrorRecoverability.TRANSIENT.should_abort and ErrorRecoverability.FATAL.should_abort  # fmt: skip
 
 
 class TestRetryConfig:
@@ -106,45 +101,35 @@ class TestRetryConfig:
 
 class TestDefaultRetryConfigs:
     def test_transient_config(self) -> None:
-        c = TRANSIENT_RETRY_CONFIG
-        assert (c.max_attempts, c.base_delay_ms) == (5, 100.0)
+        assert (TRANSIENT_RETRY_CONFIG.max_attempts, TRANSIENT_RETRY_CONFIG.base_delay_ms) == (5, 100.0)  # fmt: skip
 
     def test_connectivity_config(self) -> None:
-        c = CONNECTIVITY_RETRY_CONFIG
-        assert (c.max_attempts, c.base_delay_ms) == (10, 500.0)
+        assert (CONNECTIVITY_RETRY_CONFIG.max_attempts, CONNECTIVITY_RETRY_CONFIG.base_delay_ms) == (10, 500.0)  # fmt: skip
 
     def test_cutover_config(self) -> None:
-        c = CUTOVER_RETRY_CONFIG
-        assert (c.max_attempts, c.base_delay_ms) == (3, 1000.0)
+        assert (CUTOVER_RETRY_CONFIG.max_attempts, CUTOVER_RETRY_CONFIG.base_delay_ms) == (3, 1000.0)  # fmt: skip
 
 
 class TestErrorClassification:
     def test_basic_creation(self) -> None:
-        c = ErrorClassification(
-            ErrorSeverity.ERROR, ErrorRecoverability.TRANSIENT, "TEST_ERROR", "test", "Fix the test"
-        )
-        assert c.severity == ErrorSeverity.ERROR
-        assert c.recoverability == ErrorRecoverability.TRANSIENT
-        assert c.error_code == "TEST_ERROR" and c.category == "test"
-        assert c.suggested_action == "Fix the test"
+        c = ErrorClassification(ErrorSeverity.ERROR, ErrorRecoverability.TRANSIENT, "TEST_ERROR", "test", "Fix the test")  # fmt: skip
+        assert (c.severity, c.recoverability) == (ErrorSeverity.ERROR, ErrorRecoverability.TRANSIENT)  # fmt: skip
+        assert (c.error_code, c.category, c.suggested_action) == ("TEST_ERROR", "test", "Fix the test")  # fmt: skip
         assert (c.retry_config, c.documentation_url, c.metrics_labels) == (None, None, {})
 
     def test_with_retry_config(self) -> None:
-        rc = RetryConfig(max_attempts=5)
         c = ErrorClassification(
             ErrorSeverity.WARNING,
             ErrorRecoverability.TRANSIENT,
             "TRANSIENT_ERROR",
             "connectivity",
             "Retry",
-            retry_config=rc,
+            retry_config=RetryConfig(max_attempts=5),
         )
         assert c.retry_config is not None and c.retry_config.max_attempts == 5
 
     def test_to_dict_basic(self) -> None:
-        c = ErrorClassification(
-            ErrorSeverity.ERROR, ErrorRecoverability.FATAL, "FATAL_ERROR", "data", "Contact support"
-        )
+        c = ErrorClassification(ErrorSeverity.ERROR, ErrorRecoverability.FATAL, "FATAL_ERROR", "data", "Contact support")  # fmt: skip
         assert c.to_dict() == {
             "severity": "error",
             "recoverability": "fatal",
@@ -172,7 +157,7 @@ class TestErrorClassification:
 class TestErrorIntegration:
     def test_all_exceptions_have_classification(self) -> None:
         uid, p1, p2 = uuid4(), MigrationPhase.PENDING, MigrationPhase.CUTOVER
-        exceptions = [
+        for exc in [
             mig_exc.MigrationError("test"),
             mig_exc.MigrationNotFoundError(uid),
             mig_exc.MigrationAlreadyExistsError(uid, uid),
@@ -186,8 +171,7 @@ class TestErrorIntegration:
             mig_exc.DualWriteError(uid, "error"),
             mig_exc.PositionMappingError("test", uid),
             mig_exc.CircuitBreakerOpenError("op", 10.0),
-        ]
-        for exc in exceptions:
+        ]:
             c = exc.classification
             assert c.severity in ErrorSeverity and c.recoverability in ErrorRecoverability
             assert c.error_code and c.category and c.suggested_action

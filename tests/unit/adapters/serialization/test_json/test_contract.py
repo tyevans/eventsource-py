@@ -11,28 +11,14 @@ import pytest
 from eventsource.adapters.serialization import json_dumps, json_loads
 
 
-class _MyDict(dict):
-    pass
-
-
-class _MyList(list):
-    pass
-
-
-class _MyTuple(tuple):
-    pass
-
-
-class _MyInt(int):
-    pass
-
-
-class _MyFloat(float):
-    pass
-
-
-class _MyStr(str):
-    pass
+# fmt: off
+class _MyDict(dict): ...
+class _MyList(list): ...
+class _MyTuple(tuple): ...
+class _MyInt(int): ...
+class _MyFloat(float): ...
+class _MyStr(str): ...
+# fmt: on
 
 
 class _Color(IntEnum):
@@ -57,13 +43,7 @@ class TestJsonEncoderContract:
         assert str(test_uuid) in json_dumps({test_uuid: "a"})
 
     def test_round_trip_through_json_loads(self) -> None:
-        original = {
-            "event": {
-                "id": uuid4(),
-                "occurred_at": datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC),
-                "items": [{"sub_id": uuid4(), "n": 1}, {"sub_id": uuid4(), "n": 2}],
-            }
-        }
+        original = {"event": {"id": uuid4(), "occurred_at": datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC), "items": [{"sub_id": uuid4(), "n": 1}, {"sub_id": uuid4(), "n": 2}]}}  # fmt: skip
         parsed = json_loads(json_dumps(original))
         assert parsed["event"]["id"] == str(original["event"]["id"])
         assert parsed["event"]["occurred_at"] == original["event"]["occurred_at"].isoformat()
@@ -151,8 +131,7 @@ class TestJsonEncoderContract:
     def test_out_of_range_int_error_message_matches_documented_text(self) -> None:
         with pytest.raises(ValueError) as exc_info:
             json_dumps({"n": 2**64})
-        expected = "Integer out of range for JSON serialization (must be within [-2**63, 2**64-1])"
-        assert str(exc_info.value) == expected
+        assert str(exc_info.value) == "Integer out of range for JSON serialization (must be within [-2**63, 2**64-1])"  # fmt: skip
 
     def test_int_max_boundary_ok(self) -> None:
         assert json_loads(json_dumps({"n": 2**64 - 1})) == {"n": 2**64 - 1}
