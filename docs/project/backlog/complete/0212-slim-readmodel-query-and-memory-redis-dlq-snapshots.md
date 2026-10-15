@@ -1,7 +1,7 @@
 ---
 id: TASK-0212
 title: "Slim ports/readmodels/query.py, memory/dlq.py, memory/snapshots.py, and redis/bus_dlq.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

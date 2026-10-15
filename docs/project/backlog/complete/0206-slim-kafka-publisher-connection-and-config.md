@@ -1,7 +1,7 @@
 ---
 id: TASK-0206
 title: "Slim kafka/publisher.py, kafka/connection.py, and kafka/config.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

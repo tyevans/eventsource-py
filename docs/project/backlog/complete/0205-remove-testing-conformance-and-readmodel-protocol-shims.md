@@ -1,7 +1,7 @@
 ---
 id: TASK-0205
 title: "Remove testing.conformance shim, ReadModelRepositoryProtocol alias, and harness duplicate tracking"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: ports
