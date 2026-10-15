@@ -46,33 +46,7 @@ class CatchUpDeliveryMixin:
         operation: Callable[[], Awaitable[T]],
         operation_name: str,
     ) -> T:
-        """
-        Call `operation` under `processing_timeout`, through the handler
-        circuit breaker if one is configured.
-
-        `config.processing_timeout` bounds **one handler call**: a
-        `handle_batch()` of 500 events gets the same budget as a single
-        `handle()`, because it is one call. Exceeding it raises `TimeoutError`,
-        which is an ordinary handler failure from here on -- `continue_on_error`
-        decides whether the subscription proceeds, and the event takes the same
-        DLQ path any raising handler would.
-
-        The timeout is applied **inside** the breaker rather than around it, so
-        a run of hanging handlers opens the circuit exactly as a run of raising
-        ones does.
-
-        Args:
-            operation: Zero-argument async callable to run
-            operation_name: Name for logging/tracing
-
-        Returns:
-            The operation's result
-
-        Raises:
-            CircuitBreakerOpenError: If the breaker is open
-            TimeoutError: If the call exceeds `config.processing_timeout`
-            Exception: Whatever `operation` itself raises
-        """
+        """Call `operation` under `processing_timeout` inside the handler circuit breaker."""
 
         async def bounded() -> T:
             async with asyncio.timeout(self.config.processing_timeout):
@@ -83,15 +57,7 @@ class CatchUpDeliveryMixin:
         return await bounded()
 
     async def _deliver_batch(self, envelopes: list[EventEnvelope]) -> bool:
-        """
-        Deliver a batch of envelopes through `subscriber.handle_batch()`.
-
-        Returns:
-            True if the batch call succeeded. False if it raised, in which
-            case the caller falls back to per-event delivery -- per
-            `BatchSubscriber.handle_batch`'s documented contract
-            (`ports/subscribers.py`).
-        """
+        """Deliver a batch of envelopes via `handle_batch()`; return False on failure for fallback."""
         events = [envelope.event for envelope in envelopes]
         with self._tracer.span(
             "eventsource.catchup_runner.deliver_batch",
@@ -129,15 +95,7 @@ class CatchUpDeliveryMixin:
             return True
 
     async def _deliver_event(self, envelope: EventEnvelope) -> None:
-        """
-        Deliver an event to the subscriber.
-
-        Args:
-            envelope: The envelope to deliver
-
-        Raises:
-            Exception: If continue_on_error is False and handler fails
-        """
+        """Deliver a single event to the subscriber, recording metrics and handling errors."""
         event = envelope.event
         with self._tracer.span(
             "eventsource.catchup_runner.deliver_event",
@@ -154,16 +112,13 @@ class CatchUpDeliveryMixin:
                 await self._call_guarded(
                     lambda: settle_handler_result(subscriber.handle(event)), "handle_event"
                 )
-                # Record success metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_processed(
                     event_type=event.event_type,
                     duration_ms=duration_ms,
                 )
-                # Update lag after each event
                 self._metrics.record_lag(self.subscription.lag)
             except Exception as e:
-                # Record failure metrics
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_failed(
                     event_type=event.event_type,
@@ -171,10 +126,8 @@ class CatchUpDeliveryMixin:
                     duration_ms=duration_ms,
                 )
                 await self.subscription.record_event_failed(e)
-
                 if not self.config.continue_on_error:
                     raise
-
                 logger.warning(
                     "Event processing failed, continuing",
                     extra={

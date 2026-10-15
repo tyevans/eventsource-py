@@ -20,16 +20,12 @@ class ConsistencyStreamCheckerMixin:
     async def _collect_tenant_events(
         self, store: FullEventStore, tenant_id: UUID
     ) -> list[EventEnvelope]:
-        """Collect all events for a tenant from a store."""
-        return [
-            envelope
-            async for envelope in store.read_all(None, FeedReadOptions(tenant_id=tenant_id))
-        ]
+        opts = FeedReadOptions(tenant_id=tenant_id)
+        return [envelope async for envelope in store.read_all(None, opts)]
 
     def _group_events_by_stream(
         self, events: list[EventEnvelope]
     ) -> dict[str, list[EventEnvelope]]:
-        """Group events by their rendered stream ID, sorted by stream version."""
         grouped: dict[str, list[EventEnvelope]] = {}
         for envelope in events:
             grouped.setdefault(envelope.stream_id.render(), []).append(envelope)
@@ -66,8 +62,7 @@ class ConsistencyStreamCheckerMixin:
             pos: int | None = None,
             details: str | None = None,
         ) -> None:
-            v = ConsistencyViolation(vtype, stream_id, src, tgt, pos, details)
-            violations.append(v)
+            violations.append(ConsistencyViolation(vtype, stream_id, src, tgt, pos, details))
 
         sc_str, tc_str = str(source_count), str(target_count)
         sv_str, tv_str = str(source_version), str(target_version)
@@ -96,16 +91,10 @@ class ConsistencyStreamCheckerMixin:
                     src_h = self._compute_event_hash(src_ev)
                     tgt_h = self._compute_event_hash(tgt_ev)
                     if src_h != tgt_h:
-                        hash_match = False
-                        pos = src_ev.stream_version
+                        hash_match, pos = False, src_ev.stream_version
                         mismatched_positions.append(pos)
-                        _add_v(
-                            "hash_mismatch",
-                            src_h[:16],
-                            tgt_h[:16],
-                            pos,
-                            "Event content hash mismatch",
-                        )
+                        msg = "Event content hash mismatch"
+                        _add_v("hash_mismatch", src_h[:16], tgt_h[:16], pos, msg)
                 elif level == VerificationLevel.FULL and (
                     mismatch := self._compare_events_full(src_ev, tgt_ev)
                 ):
@@ -114,7 +103,7 @@ class ConsistencyStreamCheckerMixin:
             if hash_match is None and level == VerificationLevel.HASH:
                 hash_match = True
 
-        consistency = StreamConsistency(
+        args = (
             stream_id,
             aggregate_id,
             aggregate_type,
@@ -126,7 +115,7 @@ class ConsistencyStreamCheckerMixin:
             hash_match,
             mismatched_positions,
         )
-        return consistency, violations
+        return StreamConsistency(*args), violations
 
     def _sample_events(
         self,
@@ -134,41 +123,29 @@ class ConsistencyStreamCheckerMixin:
         target_events: list[EventEnvelope],
         sample_percentage: float,
     ) -> list[tuple[EventEnvelope, EventEnvelope]]:
-        """Sample event pairs for verification according to sample_percentage."""
         if len(source_events) != len(target_events):
             return []
         pairs = list(zip(source_events, target_events, strict=False))
-        if sample_percentage >= 100.0:
-            return pairs
         sample_size = max(1, int(len(pairs) * sample_percentage / 100))
-        if sample_size >= len(pairs):
+        if sample_percentage >= 100.0 or sample_size >= len(pairs):
             return pairs
         return random.sample(pairs, sample_size)  # nosec B311 - statistical sampling, not security
 
     def _compute_event_hash(self, event: EventEnvelope) -> str:
-        """Compute SHA-256 hex digest of core event envelope fields and payload."""
         hasher = hashlib.sha256()
-        for val in (
-            event.event.event_id,
-            event.event.event_type,
-            event.stream_id.aggregate_id,
-            event.stream_id.category,
-            event.stream_version,
-        ):
-            hasher.update(str(val).encode())
-        underlying = event.event
-        if hasattr(underlying, "model_dump"):
-            data = underlying.model_dump(mode="json")
-            hasher.update(str(sorted(data.items())).encode())
-        elif hasattr(underlying, "__dict__"):
-            data = {k: v for k, v in underlying.__dict__.items() if not k.startswith("_")}
+        ev, sid = event.event, event.stream_id
+        for v in (ev.event_id, ev.event_type, sid.aggregate_id, sid.category, event.stream_version):
+            hasher.update(str(v).encode())
+        if hasattr(ev, "model_dump"):
+            hasher.update(str(sorted(ev.model_dump(mode="json").items())).encode())
+        elif hasattr(ev, "__dict__"):
+            data = {k: v for k, v in ev.__dict__.items() if not k.startswith("_")}
             hasher.update(str(sorted(data.items())).encode())
         return hasher.hexdigest()
 
     def _compare_events_full(
         self, source_event: EventEnvelope, target_event: EventEnvelope
     ) -> str | None:
-        """Compare all significant fields between source and target events."""
         s_ev, t_ev = source_event.event, target_event.event
         s_sid, t_sid = source_event.stream_id, target_event.stream_id
         checks = [

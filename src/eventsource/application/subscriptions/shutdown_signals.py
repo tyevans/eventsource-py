@@ -1,11 +1,4 @@
-"""
-Signal management for graceful shutdown.
-
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0002 (Single-Responsibility Modules and File Limits)
-- TASK-0008 (Decompose Monolithic Modules SubscriptionManager and Shutdown)
-"""
+"""Signal management for graceful shutdown (ADR-0002, ADR-0007, TASK-0008)."""
 
 from __future__ import annotations
 
@@ -13,23 +6,17 @@ import asyncio
 import logging
 import signal
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
 
 from eventsource.application.subscriptions.shutdown_models import (
     ShutdownPhase,
     ShutdownReason,
 )
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
 
 
 class ShutdownSignalManager:
-    """
-    Manages OS signal registration, signal callbacks, and programmatic triggers.
-    """
+    """Manages OS signal registration, signal callbacks, and programmatic triggers."""
 
     def __init__(self, timeout: float = 30.0) -> None:
         self.timeout = timeout
@@ -77,9 +64,7 @@ class ShutdownSignalManager:
         if self._signal_handlers_registered:
             logger.warning("Signal handlers already registered")
             return
-
         loop = loop or asyncio.get_running_loop()
-
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.add_signal_handler(
@@ -92,7 +77,6 @@ class ShutdownSignalManager:
                     "Signal handling not fully supported on this platform",
                     extra={"signal": sig.name},
                 )
-
         self._signal_handlers_registered = True
         logger.info("Shutdown signal handlers registered")
 
@@ -100,16 +84,13 @@ class ShutdownSignalManager:
         """Unregister signal handlers."""
         if not self._signal_handlers_registered:
             return
-
         loop = loop or asyncio.get_running_loop()
-
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.remove_signal_handler(sig)
                 logger.debug("Removed signal handler", extra={"signal": sig.name})
             except (NotImplementedError, ValueError):
                 pass
-
         self._signal_handlers_registered = False
         logger.info("Shutdown signal handlers unregistered")
 
@@ -118,10 +99,7 @@ class ShutdownSignalManager:
         if self._shutdown_requested:
             logger.warning(
                 "Received second shutdown signal, forcing shutdown",
-                extra={
-                    "signal": sig.name,
-                    "current_phase": self._phase.value,
-                },
+                extra={"signal": sig.name, "current_phase": self._phase.value},
             )
             self._phase = ShutdownPhase.FORCED
             self._shutdown_reason = ShutdownReason.DOUBLE_SIGNAL
@@ -133,13 +111,10 @@ class ShutdownSignalManager:
         elif sig == signal.SIGINT:
             self._shutdown_reason = ShutdownReason.SIGNAL_SIGINT
 
+        reason_val = self._shutdown_reason.value if self._shutdown_reason else None
         logger.info(
             "Received shutdown signal, initiating graceful shutdown",
-            extra={
-                "signal": sig.name,
-                "timeout": self.timeout,
-                "reason": self._shutdown_reason.value if self._shutdown_reason else None,
-            },
+            extra={"signal": sig.name, "timeout": self.timeout, "reason": reason_val},
         )
         self._shutdown_requested = True
         self._shutdown_event.set()
@@ -148,11 +123,7 @@ class ShutdownSignalManager:
             try:
                 await callback()
             except Exception as e:
-                logger.error(
-                    "Shutdown callback error",
-                    extra={"error": str(e)},
-                    exc_info=True,
-                )
+                logger.error("Shutdown callback error", extra={"error": str(e)}, exc_info=True)
 
     def on_shutdown(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Register a callback to be invoked on shutdown signal."""
@@ -186,6 +157,4 @@ class ShutdownSignalManager:
         self._phase = ShutdownPhase.RUNNING
 
 
-__all__ = [
-    "ShutdownSignalManager",
-]
+__all__ = ["ShutdownSignalManager"]

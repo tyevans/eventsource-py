@@ -1,10 +1,4 @@
-"""Conformance suite for the `EventAppender` port.
-
-Subclass and provide a `store` fixture yielding a fresh adapter instance
-implementing `EventAppender` (and enough of `StreamReader` /`EventLookup`
-to make assertions convenient, since the memory adapter implements all
-five ports at once).
-"""
+"""Conformance suite for the `EventAppender` port."""
 
 from abc import ABC, abstractmethod
 from typing import Protocol
@@ -31,14 +25,7 @@ class _AppenderUnderTest(EventAppender, StreamReader, Protocol):
 
 
 class AppenderConformance(ABC):
-    """Conformance suite for `EventAppender` implementations.
-
-    Attributes:
-        positions_expected: Whether `AppendResult.position` is expected to be
-            non-None and strictly increasing across appends. Set to False in
-            subclasses covering feed-less (partitioned) adapters, where
-            `position` is always None by design.
-    """
+    """Conformance suite for `EventAppender` implementations (`positions_expected` toggles position checks)."""
 
     positions_expected: bool = True
 
@@ -122,15 +109,10 @@ class AppenderConformance(ABC):
         stream = make_stream()
         first = make_event(stream.aggregate_id)
         await store.append(stream, [first], ExpectedVersion.no_stream())
-
         duplicate_batch = [make_event(stream.aggregate_id), first]
         with pytest.raises(DuplicateEventError):
             await store.append(stream, duplicate_batch, ExpectedVersion.any_())
-
-        # Atomic: the non-duplicate event in the rejected batch must not have
-        # been persisted -- the stream stays at version 1.
-        version = await store.get_stream_version(stream)
-        assert version == 1
+        assert await store.get_stream_version(stream) == 1
 
     async def test_empty_batch_raises_value_error(self, store: _AppenderUnderTest) -> None:
         stream = make_stream()
@@ -140,42 +122,25 @@ class AppenderConformance(ABC):
     async def test_append_result_position_non_none_and_strictly_increasing(
         self, store: _AppenderUnderTest
     ) -> None:
-        stream_a = make_stream(aggregate_id=uuid4())
-        stream_b = make_stream(aggregate_id=uuid4())
-
+        stream_a, stream_b = make_stream(aggregate_id=uuid4()), make_stream(aggregate_id=uuid4())
         result_a = await store.append(
             stream_a, [make_event(stream_a.aggregate_id)], ExpectedVersion.any_()
         )
         result_b = await store.append(
             stream_b, [make_event(stream_b.aggregate_id)], ExpectedVersion.any_()
         )
-
         if not self.positions_expected:
             assert result_a.position is None
             assert result_b.position is None
             return
-
         assert result_a.position is not None
         assert result_b.position is not None
         assert result_b.position > result_a.position
 
     async def test_unregistered_event_type_is_rejected(self, store: _AppenderUnderTest) -> None:
-        """An event whose `event_type` is not in the store's registry fails.
-
-        The SQL-family adapters round-trip events through JSON and raise
-        `EventTypeNotFoundError` when the class cannot be looked up again on
-        read. The in-memory adapters hold live `DomainEvent` objects, so they
-        would never notice -- which is exactly the divergence that lets a
-        missing registration pass in tests and explode in production. They
-        validate on `append` instead, so the failure mode matches even though
-        the moment of detection is earlier.
-
-        `pytest.raises` therefore wraps both the write and the read-back: a
-        store may reject at either point, but it must reject.
-        """
+        """An event whose `event_type` is not in the store's registry fails on append or read."""
         stream = make_stream()
         event = UnregisteredEvent(aggregate_id=stream.aggregate_id)
-
         with pytest.raises(EventTypeNotFoundError):
             await store.append(stream, [event], ExpectedVersion.no_stream())
             async for _ in store.read_stream(stream):

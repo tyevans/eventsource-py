@@ -43,43 +43,27 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
     AggregateRepositorySaveMixin[TAggregate],
     AggregateRepositorySnapshotMixin[TAggregate],
 ):
-    """
-    Repository for event-sourced aggregates.
-
-    Coordinates loading aggregates from event history (and optional snapshots),
-    persisting uncommitted events with optimistic locking, and optional publishing.
-    """
+    """Repository coordinating aggregate loading, optimistic-locked saving, snapshots, and publishing."""
 
     def __init__(
         self,
         event_store: AggregateStore,
         aggregate_factory: type[TAggregate],
         event_publisher: EventPublisher | None = None,
-        # Snapshot configuration
         snapshot_store: SnapshotStore | None = None,
         snapshot_threshold: int | None = None,
         snapshot_mode: Literal["sync", "background", "manual"] = "sync",
         snapshot_policy: SnapshotPolicy | None = None,
         snapshot_scheduler: SnapshotScheduler | None = None,
-        # Tracing configuration
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the repository.
-
-        ``aggregate_type`` is inferred from ``aggregate_factory.aggregate_type``.
-        Raises ``ValueError`` if ``aggregate_type`` cannot be inferred or both
-        policy/scheduler and mode/threshold snapshot parameters are provided.
-        """
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-
         self._event_store = event_store
         self._aggregate_factory = aggregate_factory
         self._event_publisher = event_publisher
         self._aggregate_type = self._infer_aggregate_type(aggregate_factory)
-
         self._snapshot_store = snapshot_store
         self._snapshot_threshold = snapshot_threshold
         self._snapshot_mode = snapshot_mode
@@ -105,12 +89,10 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
             self._snapshot_scheduler = ImmediateScheduler()
 
     def _infer_aggregate_type(self, factory: type[TAggregate]) -> str:
-        """Infer aggregate_type from factory's aggregate_type attribute."""
         if hasattr(factory, "aggregate_type"):
             inferred = factory.aggregate_type
             if isinstance(inferred, str) and inferred not in ("", "Unknown"):
                 return inferred
-
         factory_name = factory.__name__ if hasattr(factory, "__name__") else str(factory)
         raise ValueError(
             f"Cannot infer aggregate_type from {factory_name}. "
@@ -120,54 +102,44 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         )
 
     def _stream(self, aggregate_id: UUID) -> StreamId:
-        """Stream identity for one aggregate of this repository's type."""
         return StreamId(aggregate_id=aggregate_id, category=self._aggregate_type)
 
     @property
     def aggregate_type(self) -> str:
-        """Get the aggregate type this repository manages."""
         return self._aggregate_type
 
     @property
     def event_store(self) -> AggregateStore:
-        """Get the event store used by this repository."""
         return self._event_store
 
     @property
     def event_publisher(self) -> EventPublisher | None:
-        """Get the event publisher, if configured."""
         return self._event_publisher
 
     async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
-        """Get an aggregate if it exists, or return None if not found."""
         try:
             return await self.load(aggregate_id)
         except AggregateNotFoundError:
             return None
 
     async def exists(self, aggregate_id: UUID) -> bool:
-        """Check if an aggregate exists."""
         return await super().exists(aggregate_id)
 
     async def execute(
-        self,
-        aggregate_id: UUID,
-        command: Any,
-        *,
-        create_if_missing: bool = True,
+        self, aggregate_id: UUID, command: Any, *, create_if_missing: bool = True
     ) -> TAggregate:
         """Load (or create) an aggregate, execute a command on it, and save."""
-        if create_if_missing:
-            aggregate = await self.load_or_create(aggregate_id)
-        else:
-            aggregate = await self.load(aggregate_id)
-
+        aggregate = (
+            await self.load_or_create(aggregate_id)
+            if create_if_missing
+            else await self.load(aggregate_id)
+        )
         if callable(command) and not isinstance(command, type):
             command(aggregate)
         else:
-            runner = getattr(aggregate, "execute", None)
-            if not callable(runner):
-                runner = getattr(aggregate, "apply_command", None)
+            runner = getattr(aggregate, "execute", None) or getattr(
+                aggregate, "apply_command", None
+            )
             if not callable(runner):
                 raise TypeError(
                     f"{type(aggregate).__name__} does not support execute(); "
@@ -176,7 +148,6 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
                     "such as DeciderAggregate."
                 )
             runner(command)
-
         await self.save(aggregate)
         return aggregate
 

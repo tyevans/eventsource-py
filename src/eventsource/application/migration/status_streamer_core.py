@@ -28,7 +28,6 @@ class StatusStreamer:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """Initialize the StatusStreamer."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._coordinator = coordinator
@@ -40,24 +39,18 @@ class StatusStreamer:
 
     @property
     def migration_id(self) -> UUID:
-        """Get the migration ID being streamed."""
         return self._migration_id
 
     @property
     def subscriber_count(self) -> int:
-        """Get the number of active subscribers."""
         return len(self._subscribers)
 
     @property
     def is_closed(self) -> bool:
-        """Check if the streamer has been closed."""
         return self._closed
 
     async def stream_status(
-        self,
-        *,
-        update_interval: float = 1.0,
-        include_initial: bool = True,
+        self, *, update_interval: float = 1.0, include_initial: bool = True
     ) -> AsyncIterator[MigrationStatus]:
         """Stream migration status updates until terminal state or streamer closure."""
         if update_interval <= 0:
@@ -65,52 +58,36 @@ class StatusStreamer:
         if self._closed:
             raise RuntimeError("StatusStreamer has been closed")
 
-        with self._tracer.span(
-            "eventsource.status_streamer.stream_status",
-            {
-                "migration.id": str(self._migration_id),
-                "update_interval": update_interval,
-            },
-        ):
+        span_attrs = {"migration.id": str(self._migration_id), "update_interval": update_interval}
+        with self._tracer.span("eventsource.status_streamer.stream_status", span_attrs):
             subscriber_id = await self._register_subscriber()
             try:
-                if include_initial:
-                    initial_status = await self._get_current_status()
-                    if initial_status is not None:
-                        yield initial_status
-                        if initial_status.phase.is_terminal:
-                            return
-
-                queue = self._subscribers.get(subscriber_id)
-                if queue is None:
+                if include_initial and (initial := await self._get_current_status()) is not None:
+                    yield initial
+                    if initial.phase.is_terminal:
+                        return
+                if self._subscribers.get(subscriber_id) is None:
                     return
-
                 notification_queue: asyncio.Queue[UUID] = asyncio.Queue(maxsize=100)
                 self._coordinator.register_status_queue(self._migration_id, notification_queue)
-
                 try:
                     last_status: MigrationStatus | None = None
                     while not self._closed:
                         try:  # noqa: SIM105 - Need to continue after timeout
                             await asyncio.wait_for(
-                                notification_queue.get(),
-                                timeout=update_interval,
+                                notification_queue.get(), timeout=update_interval
                             )
                         except TimeoutError:
                             pass
-
                         status = await self._get_current_status()
                         if status is None:
                             logger.warning(
-                                "Migration %s not found during streaming",
-                                self._migration_id,
+                                "Migration %s not found during streaming", self._migration_id
                             )
                             return
-
                         if last_status is None or self._status_changed(last_status, status):
                             yield status
                             last_status = status
-
                         if status.phase.is_terminal:
                             logger.info(
                                 "Migration %s reached terminal state %s, stopping stream",
@@ -126,7 +103,6 @@ class StatusStreamer:
                 await self._unregister_subscriber(subscriber_id)
 
     async def _register_subscriber(self) -> int:
-        """Register a new subscriber and return its ID."""
         async with self._lock:
             subscriber_id = self._next_subscriber_id
             self._next_subscriber_id += 1
@@ -140,7 +116,6 @@ class StatusStreamer:
             return subscriber_id
 
     async def _unregister_subscriber(self, subscriber_id: int) -> None:
-        """Unregister a subscriber."""
         async with self._lock:
             if subscriber_id in self._subscribers:
                 del self._subscribers[subscriber_id]
@@ -152,33 +127,24 @@ class StatusStreamer:
                 )
 
     async def _get_current_status(self) -> MigrationStatus | None:
-        """Get the current migration status from the coordinator, or None if not found."""
         try:
             return await self._coordinator.get_status(self._migration_id)
         except Exception:
             return None
 
-    def _status_changed(
-        self,
-        previous: MigrationStatus,
-        current: MigrationStatus,
-    ) -> bool:
-        """Check if phase, progress (>=1%), sync lag (>=10), error count, or pause state changed."""
-        if previous.phase != current.phase:
-            return True
-        if abs(previous.progress_percent - current.progress_percent) >= 1.0:
-            return True
-        if abs(previous.sync_lag_events - current.sync_lag_events) >= 10:
-            return True
-        if current.error_count > previous.error_count:
-            return True
-        return previous.is_paused != current.is_paused
+    def _status_changed(self, previous: MigrationStatus, current: MigrationStatus) -> bool:
+        return (
+            previous.phase != current.phase
+            or abs(previous.progress_percent - current.progress_percent) >= 1.0
+            or abs(previous.sync_lag_events - current.sync_lag_events) >= 10
+            or current.error_count > previous.error_count
+            or previous.is_paused != current.is_paused
+        )
 
     async def close(self) -> None:
         """Close the streamer and clean up resources."""
         with self._tracer.span(
-            "eventsource.status_streamer.close",
-            {"migration.id": str(self._migration_id)},
+            "eventsource.status_streamer.close", {"migration.id": str(self._migration_id)}
         ):
             async with self._lock:
                 self._closed = True

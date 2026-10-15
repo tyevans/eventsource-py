@@ -1,32 +1,17 @@
 """Subscription lifecycle management for coordinating start/stop operations."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Any
 
-from eventsource.application.subscriptions.subscription import (
-    Subscription,
-    SubscriptionState,
-    render_position,
-)
-from eventsource.application.subscriptions.transition import (
-    StartFromResolver,
-    TransitionCoordinator,
-)
 from eventsource.observability import Tracer, create_tracer
-from eventsource.observability.attributes import (
-    ATTR_EVENTS_PROCESSED,
-    ATTR_POSITION,
-    ATTR_SUBSCRIPTION_NAME,
-)
+from eventsource.observability import attributes as attr
 from eventsource.ports.exceptions import SubscriptionError, TransitionError
 
-if TYPE_CHECKING:
-    from eventsource.application.subscriptions.retry import CircuitBreaker
-    from eventsource.ports.bus import SubscribableEventBus
-    from eventsource.ports.checkpoints import SubscriptionPositions
-    from eventsource.ports.coordination import LeaderElector
-    from eventsource.ports.store import GlobalEventFeed
+from .subscription import Subscription, SubscriptionState, render_position
+from .transition import StartFromResolver, TransitionCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +21,12 @@ class SubscriptionLifecycleManager:
 
     def __init__(
         self,
-        event_store: "GlobalEventFeed",
-        event_bus: "SubscribableEventBus",
-        checkpoint_repo: "SubscriptionPositions",
+        event_store: Any,
+        event_bus: Any,
+        checkpoint_repo: Any,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
-        leader_elector: "LeaderElector | None" = None,
+        leader_elector: Any = None,
     ) -> None:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
@@ -62,7 +47,7 @@ class SubscriptionLifecycleManager:
 
     async def start_subscription(self, subscription: Subscription) -> None:
         name = subscription.name
-        span_attrs = {ATTR_SUBSCRIPTION_NAME: name}
+        span_attrs = {attr.ATTR_SUBSCRIPTION_NAME: name}
         with self._tracer.span("eventsource.lifecycle.start_subscription", span_attrs) as span:
             try:
                 if self.leader_elector is not None and not await self.verify_leadership_lease():
@@ -75,7 +60,7 @@ class SubscriptionLifecycleManager:
                 subscription.last_processed_position = start_pos
                 pos_token = render_position(start_pos)
                 if span and pos_token is not None:
-                    span.set_attribute(ATTR_POSITION, pos_token)
+                    span.set_attribute(attr.ATTR_POSITION, pos_token)
                 start_extra = {"subscription": name, "start_position": pos_token}
                 logger.info("Starting subscription", extra=start_extra)
                 coordinator = TransitionCoordinator(
@@ -90,7 +75,7 @@ class SubscriptionLifecycleManager:
                         f"Subscription {name} failed to transition: {result.error}"
                     )
                 if span:
-                    span.set_attribute(ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
+                    span.set_attribute(attr.ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
                 ok_extra = {"subscription": name, "catchup_events": result.catchup_events_processed}
                 ok_extra["buffer_events"] = result.buffer_events_processed
                 ok_extra["final_position"] = render_position(result.final_position)
@@ -115,23 +100,19 @@ class SubscriptionLifecycleManager:
         logger.info("Starting subscriptions", extra=extra_start)
         results: dict[str, Exception | None] = {}
         if concurrent and len(subscriptions) > 1:
-            coro = self.start_subscription_isolated
-            tasks = [
-                (s.name, asyncio.create_task(coro(s), name=f"start_{s.name}"))
-                for s in subscriptions
-            ]
+            coro, create_task = self.start_subscription_isolated, asyncio.create_task
+            tasks = [(s.name, create_task(coro(s), name=f"start_{s.name}")) for s in subscriptions]
             for name, task in tasks:
                 try:
                     results[name] = await task
                 except Exception as e:
-                    results[name] = e
-                    err_extra = {"subscription": name, "error": str(e)}
-                    msg = "Unexpected error starting subscription"
-                    logger.error(msg, extra=err_extra, exc_info=True)
+                    results[name], err_extra = e, {"subscription": name, "error": str(e)}
+                    logger.error(
+                        "Unexpected error starting subscription", extra=err_extra, exc_info=True
+                    )
         else:
             for sub in subscriptions:
                 results[sub.name] = await self.start_subscription_isolated(sub)
-
         succeeded = sum(1 for r in results.values() if r is None)
         if failed := sum(1 for r in results.values() if r is not None):
             extra_warn = {"succeeded": succeeded, "failed": failed}
@@ -141,7 +122,7 @@ class SubscriptionLifecycleManager:
         return results
 
     async def stop_subscription(self, name: str, timeout: float = 30.0) -> None:
-        span_attrs = {ATTR_SUBSCRIPTION_NAME: name}
+        span_attrs = {attr.ATTR_SUBSCRIPTION_NAME: name}
         with self._tracer.span("eventsource.lifecycle.stop_subscription", span_attrs):
             if (coordinator := self._coordinators.get(name)) is None:
                 return
@@ -155,11 +136,9 @@ class SubscriptionLifecycleManager:
     async def stop_all(self, subscriptions: list[Subscription], timeout: float = 30.0) -> None:
         extra = {"subscription_count": len(subscriptions), "timeout": timeout}
         logger.info("Stopping subscriptions", extra=extra)
-        active = [s.name for s in subscriptions if s.name in self._coordinators]
-        if active:
-            await asyncio.gather(
-                *(self.stop_subscription(n, timeout) for n in active), return_exceptions=True
-            )
+        if active := [s.name for s in subscriptions if s.name in self._coordinators]:
+            coros = (self.stop_subscription(n, timeout) for n in active)
+            await asyncio.gather(*coros, return_exceptions=True)
         for sub in subscriptions:
             if not sub.is_terminal:
                 await sub.transition_to(SubscriptionState.STOPPED)
@@ -168,22 +147,17 @@ class SubscriptionLifecycleManager:
     def get_coordinator(self, name: str) -> TransitionCoordinator | None:
         return self._coordinators.get(name)
 
-    def get_handler_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
+    def get_handler_circuit_breaker(self, name: str) -> Any:
         return coord.handler_circuit_breaker if (coord := self.get_coordinator(name)) else None
 
-    def get_infra_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
+    def get_infra_circuit_breaker(self, name: str) -> Any:
         return coord.infra_circuit_breaker if (coord := self.get_coordinator(name)) else None
 
     def remove_coordinator(self, name: str) -> TransitionCoordinator | None:
         return self._coordinators.pop(name, None)
 
-    @property
-    def coordinator_names(self) -> list[str]:
-        return list(self._coordinators.keys())
-
-    @property
-    def coordinators(self) -> dict[str, TransitionCoordinator]:
-        return self._coordinators
+    coordinator_names: Any = property(lambda self: list(self._coordinators.keys()))
+    coordinators: Any = property(lambda self: self._coordinators)
 
 
 __all__ = ["SubscriptionLifecycleManager"]
