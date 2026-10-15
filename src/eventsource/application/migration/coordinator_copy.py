@@ -80,8 +80,7 @@ class CoordinatorCopyMixin:
                 completed = await self._run_copy_pass(copier, migration)
                 rounds = 0
                 while completed:
-                    current = await self._migration_repo.get(migration.id)
-                    if current is None:
+                    if (current := await self._migration_repo.get(migration.id)) is None:
                         raise MigrationNotFoundError(migration.id)
                     remaining = interceptor.mark_copy_pass_complete(current.last_source_position)
                     if remaining == 0:
@@ -121,36 +120,25 @@ class CoordinatorCopyMixin:
             )
             raise MigrationError(msg, migration_id=m.id)
         mapper = self._position_mapper if m.config.position_mapping_enabled else None
-        tr = self._enable_tracing
-        return BulkCopier(
-            self._source_store,
-            store,
-            self._migration_repo,
-            position_mapper=mapper,
-            enable_tracing=tr,
-        )
+        src, repo, tr = self._source_store, self._migration_repo, self._enable_tracing
+        return BulkCopier(src, store, repo, position_mapper=mapper, enable_tracing=tr)
 
     async def run_resync_pass(self, migration_id: UUID) -> int:
         """Run one bounded catch-up copy pass while in DUAL_WRITE."""
-        with self._tracer.span(
-            "eventsource.coordinator.run_resync_pass", {_attr.ATTR_MIGRATION_ID: str(migration_id)}
-        ):
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+        span_attrs = {_attr.ATTR_MIGRATION_ID: str(migration_id)}
+        with self._tracer.span("eventsource.coordinator.run_resync_pass", span_attrs):
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             if migration.phase != MigrationPhase.DUAL_WRITE:
+                msg = f"Cannot run a resync pass: migration is in {migration.phase.value} phase"
+                allowed = [MigrationPhase.DUAL_WRITE]
                 raise MigrationStateError(
-                    f"Cannot run a resync pass: migration is in {migration.phase.value} phase",
-                    migration_id,
-                    migration.phase,
-                    [MigrationPhase.DUAL_WRITE],
-                    "run_resync_pass",
+                    msg, migration_id, migration.phase, allowed, "run_resync_pass"
                 )
             if migration_id in self._active_copiers:
                 msg = "A copy pass is already running for this migration"
                 raise MigrationError(msg, migration_id=migration_id)
-            copier = self._build_copier(migration)
-            self._active_copiers[migration_id] = copier
+            self._active_copiers[migration_id] = (copier := self._build_copier(migration))
             try:
                 completed = await self._run_copy_pass(copier, migration)
             finally:
@@ -161,11 +149,9 @@ class CoordinatorCopyMixin:
                     "(an incomplete pass attests nothing)"
                 )
                 raise MigrationError(msg, migration_id=migration_id)
-            current = await self._migration_repo.get(migration_id)
-            if current is None:
+            if (current := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
-            interceptor = self._interceptors.get(migration_id)
-            if interceptor is None:
+            if (interceptor := self._interceptors.get(migration_id)) is None:
                 msg = (
                     "Resync pass complete for migration %s: no interceptor registered "
                     "(coordinator restarted since dual-write began), so no failures could be "
@@ -192,9 +178,9 @@ class CoordinatorCopyMixin:
     def _install_interceptor(self, m: Migration, target: FullEventStore) -> DualWriteInterceptor:
         if (interceptor := self._interceptors.get(m.id)) is not None:
             return interceptor
-        tr = self._enable_tracing
+        src, tr = self._source_store, self._enable_tracing
         interceptor = DualWriteInterceptor(
-            self._source_store, target, m.tenant_id, migration_id=m.id, enable_tracing=tr
+            src, target, m.tenant_id, migration_id=m.id, enable_tracing=tr
         )
         self._router.set_dual_write_interceptor(m.tenant_id, interceptor)
         self._interceptors[m.id] = interceptor
@@ -204,27 +190,17 @@ class CoordinatorCopyMixin:
         attrs = self._phase_span_attrs(m, MigrationPhase.DUAL_WRITE)
         with self._tracer.span("eventsource.coordinator.transition_to_dual_write", attrs):
             self._install_interceptor(m, target)
-            tr = self._enable_tracing
+            src, tr = self._source_store, self._enable_tracing
             self._lag_trackers[m.id] = SyncLagTracker(
-                self._source_store,
-                target,
-                m.config,
-                m.tenant_id,
-                migration_id=m.id,
-                enable_tracing=tr,
+                src, target, m.config, m.tenant_id, migration_id=m.id, enable_tracing=tr
             )
             await self._migration_repo.update_phase(m.id, MigrationPhase.DUAL_WRITE)
-            await self._routing_repo.set_migration_state(
-                m.tenant_id, TenantMigrationState.DUAL_WRITE, m.id
-            )
+            state = TenantMigrationState.DUAL_WRITE
+            await self._routing_repo.set_migration_state(m.tenant_id, state, m.id)
             msg = "Migration %s transitioned to dual-write phase for tenant %s"
             logger.info(msg, m.id, m.tenant_id)
-            entry = MigrationAuditEntry.phase_change(
-                migration_id=m.id,
-                old_phase=MigrationPhase.BULK_COPY,
-                new_phase=MigrationPhase.DUAL_WRITE,
-                occurred_at=datetime.now(UTC),
-            )
+            old_p, new_p = MigrationPhase.BULK_COPY, MigrationPhase.DUAL_WRITE
+            entry = MigrationAuditEntry.phase_change(m.id, old_p, new_p, datetime.now(UTC))
             await self._record_audit(entry)
             await self._notify_status_update(m.id)
 

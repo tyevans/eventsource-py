@@ -1,7 +1,4 @@
-"""Handler dispatch mixin for KafkaConsumerLoop.
-
-Governed by ADR-0002 (<500 lines per module).
-"""
+"""Handler dispatch mixin for KafkaConsumerLoop."""
 
 from __future__ import annotations
 
@@ -45,41 +42,24 @@ class KafkaConsumerDispatchMixin:
         event: DomainEvent,
         handlers: tuple[HandlerAdapter, ...],
     ) -> None:
-        """Dispatch an event to all registered handlers with optional tracing.
-
-        Every handler runs for this delivery even if an earlier one failed
-        (error isolation) -- failures are collected and raised together as a
-        single HandlerDispatchError afterward, so the caller's retry/DLQ path
-        still sees the delivery as failed exactly as a single raise would.
-
-        When tracing is enabled, creates child spans for each handler
-        invocation to provide detailed visibility into handler execution.
-
-        Args:
-            event: The event to dispatch.
-            handlers: Tuple of HandlerAdapter instances to invoke.
-
-        Raises:
-            HandlerDispatchError: If one or more handlers raise.
-        """
+        """Dispatch an event to all registered handlers with error isolation and tracing."""
         failures: list[tuple[str, Exception]] = []
 
         for adapter in handlers:
             handler_name = adapter.name
-
-            # Start timing for handler duration histogram
             handler_start_time = time.perf_counter()
+            metric_attrs = {"handler.name": handler_name, "event.type": event.event_type}
 
-            # Use composition-based tracer for tracing
             if self._enable_tracing:
+                span_attrs = {
+                    ATTR_HANDLER_NAME: handler_name,
+                    ATTR_EVENT_TYPE: event.event_type,
+                    ATTR_EVENT_ID: str(event.event_id),
+                }
                 with self._tracer.span_with_kind(
                     name=f"eventsource.event_bus.dispatch {handler_name}",
                     kind=SpanKindEnum.INTERNAL,
-                    attributes={
-                        ATTR_HANDLER_NAME: handler_name,
-                        ATTR_EVENT_TYPE: event.event_type,
-                        ATTR_EVENT_ID: str(event.event_id),
-                    },
+                    attributes=span_attrs,
                 ) as span:
                     try:
                         logger.debug(
@@ -90,60 +70,30 @@ class KafkaConsumerDispatchMixin:
                                 "handler": handler_name,
                             },
                         )
-
                         await adapter.handle(event)
-
-                        # Record handler duration and increment counter on success
                         if self._metrics:
                             handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
                             self._metrics.handler_duration.record(
-                                handler_duration_ms,
-                                attributes={
-                                    "handler.name": handler_name,
-                                    "event.type": event.event_type,
-                                },
+                                handler_duration_ms, attributes=metric_attrs
                             )
-                            self._metrics.handler_invocations.add(
-                                1,
-                                attributes={
-                                    "handler.name": handler_name,
-                                    "event.type": event.event_type,
-                                },
-                            )
-
+                            self._metrics.handler_invocations.add(1, attributes=metric_attrs)
                         logger.debug(
                             "Handler completed",
-                            extra={
-                                "event_type": event.event_type,
-                                "handler": handler_name,
-                            },
+                            extra={"event_type": event.event_type, "handler": handler_name},
                         )
-
                     except Exception as e:
-                        # Record handler duration on error path
                         if self._metrics:
                             handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
                             self._metrics.handler_duration.record(
-                                handler_duration_ms,
-                                attributes={
-                                    "handler.name": handler_name,
-                                    "event.type": event.event_type,
-                                },
+                                handler_duration_ms, attributes=metric_attrs
                             )
                             self._metrics.handler_errors.add(
-                                1,
-                                attributes={
-                                    "handler.name": handler_name,
-                                    "event.type": event.event_type,
-                                    "error.type": type(e).__name__,
-                                },
+                                1, attributes={**metric_attrs, "error.type": type(e).__name__}
                             )
-
                         if span is not None and Status is not None and StatusCode is not None:
                             span.set_status(Status(StatusCode.ERROR, str(e)))
                             span.record_exception(e)
                         self._stats.handler_errors += 1
-
                         logger.error(
                             "Handler error",
                             extra={
@@ -165,57 +115,27 @@ class KafkaConsumerDispatchMixin:
                             "handler": handler_name,
                         },
                     )
-
                     await adapter.handle(event)
-
-                    # Record handler duration and increment counter on success
                     if self._metrics:
                         handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
                         self._metrics.handler_duration.record(
-                            handler_duration_ms,
-                            attributes={
-                                "handler.name": handler_name,
-                                "event.type": event.event_type,
-                            },
+                            handler_duration_ms, attributes=metric_attrs
                         )
-                        self._metrics.handler_invocations.add(
-                            1,
-                            attributes={
-                                "handler.name": handler_name,
-                                "event.type": event.event_type,
-                            },
-                        )
-
+                        self._metrics.handler_invocations.add(1, attributes=metric_attrs)
                     logger.debug(
                         "Handler completed",
-                        extra={
-                            "event_type": event.event_type,
-                            "handler": handler_name,
-                        },
+                        extra={"event_type": event.event_type, "handler": handler_name},
                     )
-
                 except Exception as e:
-                    # Record handler duration on error path
                     if self._metrics:
                         handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
                         self._metrics.handler_duration.record(
-                            handler_duration_ms,
-                            attributes={
-                                "handler.name": handler_name,
-                                "event.type": event.event_type,
-                            },
+                            handler_duration_ms, attributes=metric_attrs
                         )
                         self._metrics.handler_errors.add(
-                            1,
-                            attributes={
-                                "handler.name": handler_name,
-                                "event.type": event.event_type,
-                                "error.type": type(e).__name__,
-                            },
+                            1, attributes={**metric_attrs, "error.type": type(e).__name__}
                         )
-
                     self._stats.handler_errors += 1
-
                     logger.error(
                         "Handler error",
                         extra={
