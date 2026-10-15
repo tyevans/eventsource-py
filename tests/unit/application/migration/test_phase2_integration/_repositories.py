@@ -23,30 +23,20 @@ if TYPE_CHECKING:
 
 
 class InMemoryMigrationRepository:
-    """
-    In-memory implementation of MigrationRepository for testing.
-
-    Stores migrations in a dictionary and implements all protocol methods.
-    """
+    """In-memory implementation of MigrationRepository for testing."""
 
     def __init__(self) -> None:
         self._migrations: dict[UUID, Migration] = {}
-        self._by_tenant: dict[UUID, UUID] = {}  # tenant_id -> migration_id
+        self._by_tenant: dict[UUID, UUID] = {}
 
     async def create(self, migration: Migration) -> UUID:
         """Create a new migration record."""
-        # Check for existing active migration
         existing = await self.get_by_tenant(migration.tenant_id)
         if existing is not None:
-            raise MigrationAlreadyExistsError(
-                migration.tenant_id,
-                existing.id,
-            )
-
+            raise MigrationAlreadyExistsError(migration.tenant_id, existing.id)
         now = datetime.now(UTC)
         migration.created_at = now
         migration.updated_at = now
-
         self._migrations[migration.id] = migration
         self._by_tenant[migration.tenant_id] = migration.id
         return migration.id
@@ -60,39 +50,21 @@ class InMemoryMigrationRepository:
         migration_id = self._by_tenant.get(tenant_id)
         if migration_id is None:
             return None
-
         migration = self._migrations.get(migration_id)
-        if migration is None:
+        if migration is None or migration.phase.is_terminal:
             return None
-
-        # Only return if not terminal
-        if migration.phase.is_terminal:
-            return None
-
         return migration
 
-    async def update_phase(
-        self,
-        migration_id: UUID,
-        new_phase: MigrationPhase,
-    ) -> None:
+    async def update_phase(self, migration_id: UUID, new_phase: MigrationPhase) -> None:
         """Update migration phase with validation."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         if not migration.can_transition_to(new_phase):
-            raise InvalidPhaseTransitionError(
-                migration_id,
-                migration.phase,
-                new_phase,
-            )
-
+            raise InvalidPhaseTransitionError(migration_id, migration.phase, new_phase)
         now = datetime.now(UTC)
         migration.phase = new_phase
         migration.updated_at = now
-
-        # Update phase-specific timestamps
         if new_phase == MigrationPhase.BULK_COPY:
             migration.started_at = now
             migration.bulk_copy_started_at = now
@@ -119,39 +91,28 @@ class InMemoryMigrationRepository:
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         migration.events_copied = events_copied
         migration.last_source_position = last_source_position
         if last_target_position is not None:
             migration.last_target_position = last_target_position
         migration.updated_at = datetime.now(UTC)
 
-    async def set_events_total(
-        self,
-        migration_id: UUID,
-        events_total: int,
-    ) -> None:
+    async def set_events_total(self, migration_id: UUID, events_total: int) -> None:
         """Set the total events count."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         migration.events_total = events_total
         migration.updated_at = datetime.now(UTC)
 
-    async def record_error(
-        self,
-        migration_id: UUID,
-        error: str,
-    ) -> None:
+    async def record_error(self, migration_id: UUID, error: str) -> None:
         """Record an error occurrence."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         now = datetime.now(UTC)
         migration.error_count += 1
-        migration.last_error = error[:1000]  # Truncate
+        migration.last_error = error[:1000]
         migration.last_error_at = now
         migration.updated_at = now
 
@@ -165,15 +126,10 @@ class InMemoryMigrationRepository:
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
-
         now = datetime.now(UTC)
         migration.is_paused = paused
-        if paused:
-            migration.paused_at = now
-            migration.pause_reason = reason
-        else:
-            migration.paused_at = None
-            migration.pause_reason = None
+        migration.paused_at = now if paused else None
+        migration.pause_reason = reason if paused else None
         migration.updated_at = now
 
     async def list_active(self) -> list[Migration]:
@@ -182,11 +138,7 @@ class InMemoryMigrationRepository:
 
 
 class InMemoryRoutingRepository:
-    """
-    In-memory implementation of TenantRoutingRepository for testing.
-
-    Stores routing entries in a dictionary.
-    """
+    """In-memory implementation of TenantRoutingRepository for testing."""
 
     def __init__(self) -> None:
         self._routing: dict[UUID, TenantRouting] = {}
@@ -195,16 +147,11 @@ class InMemoryRoutingRepository:
         """Get routing configuration for a tenant."""
         return self._routing.get(tenant_id)
 
-    async def get_or_default(
-        self,
-        tenant_id: UUID,
-        default_store_id: str,
-    ) -> TenantRouting:
+    async def get_or_default(self, tenant_id: UUID, default_store_id: str) -> TenantRouting:
         """Get routing configuration, creating default if not exists."""
         existing = await self.get_routing(tenant_id)
         if existing is not None:
             return existing
-
         now = datetime.now(UTC)
         routing = TenantRouting(
             tenant_id=tenant_id,
@@ -216,27 +163,21 @@ class InMemoryRoutingRepository:
         self._routing[tenant_id] = routing
         return routing
 
-    async def set_routing(
-        self,
-        tenant_id: UUID,
-        store_id: str,
-    ) -> None:
+    async def set_routing(self, tenant_id: UUID, store_id: str) -> None:
         """Set or update the store for a tenant."""
         now = datetime.now(UTC)
         existing = self._routing.get(tenant_id)
-
         if existing:
             existing.store_id = store_id
             existing.updated_at = now
         else:
-            routing = TenantRouting(
+            self._routing[tenant_id] = TenantRouting(
                 tenant_id=tenant_id,
                 store_id=store_id,
                 migration_state=TenantMigrationState.NORMAL,
                 created_at=now,
                 updated_at=now,
             )
-            self._routing[tenant_id] = routing
 
     async def set_migration_state(
         self,
@@ -246,9 +187,9 @@ class InMemoryRoutingRepository:
     ) -> None:
         """Update the migration state for routing decisions."""
         routing = self._routing.get(tenant_id)
+        now = datetime.now(UTC)
         if routing is None:
-            now = datetime.now(UTC)
-            routing = TenantRouting(
+            self._routing[tenant_id] = TenantRouting(
                 tenant_id=tenant_id,
                 store_id="default",
                 migration_state=state,
@@ -256,11 +197,10 @@ class InMemoryRoutingRepository:
                 created_at=now,
                 updated_at=now,
             )
-            self._routing[tenant_id] = routing
         else:
             routing.migration_state = state
             routing.active_migration_id = migration_id
-            routing.updated_at = datetime.now(UTC)
+            routing.updated_at = now
 
     async def switch_routing(
         self,
@@ -275,16 +215,9 @@ class InMemoryRoutingRepository:
 
     async def clear_migration_state(self, tenant_id: UUID) -> None:
         """Reset migration state to NORMAL."""
-        await self.set_migration_state(
-            tenant_id,
-            TenantMigrationState.NORMAL,
-            migration_id=None,
-        )
+        await self.set_migration_state(tenant_id, TenantMigrationState.NORMAL, migration_id=None)
 
-    async def list_by_state(
-        self,
-        state: TenantMigrationState,
-    ) -> list[TenantRouting]:
+    async def list_by_state(self, state: TenantMigrationState) -> list[TenantRouting]:
         """List tenants in a specific migration state."""
         return [r for r in self._routing.values() if r.migration_state == state]
 
@@ -293,7 +226,4 @@ class InMemoryRoutingRepository:
         return [r for r in self._routing.values() if r.store_id == store_id]
 
 
-__all__ = [
-    "InMemoryMigrationRepository",
-    "InMemoryRoutingRepository",
-]
+__all__ = ["InMemoryMigrationRepository", "InMemoryRoutingRepository"]
