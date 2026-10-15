@@ -6,6 +6,7 @@ ordering, and pagination. Repository implementations translate
 these queries to their specific backend syntax (SQL, MongoDB, etc.).
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -70,14 +71,14 @@ class Filter:
         return cls(field=field, operator="lte", value=value)
 
     @classmethod
-    def in_(cls, field: str, values: list[Any]) -> "Filter":
+    def in_(cls, field: str, values: Iterable[Any]) -> "Filter":
         """Create an "in list" filter (field IN (values))."""
-        return cls(field=field, operator="in", value=values)
+        return cls(field=field, operator="in", value=list(values))
 
     @classmethod
-    def not_in(cls, field: str, values: list[Any]) -> "Filter":
+    def not_in(cls, field: str, values: Iterable[Any]) -> "Filter":
         """Create a "not in list" filter (field NOT IN (values))."""
-        return cls(field=field, operator="not_in", value=values)
+        return cls(field=field, operator="not_in", value=list(values))
 
     def __str__(self) -> str:
         """Human-readable string representation."""
@@ -108,9 +109,15 @@ class Query:
     offset: int = 0
     include_deleted: bool = False
 
-    def with_filter(self, filter_: Filter) -> "Query":
-        """Create a new Query with an additional filter."""
-        return replace(self, filters=[*self.filters, filter_])
+    @classmethod
+    def where(cls, *filters: Filter, **eq_filters: Any) -> "Query":
+        """Create a Query with filters and/or keyword equality conditions."""
+        return cls().with_filter(*filters, **eq_filters)
+
+    def with_filter(self, *filters: Filter, **eq_filters: Any) -> "Query":
+        """Create a new Query with additional filters and/or keyword equality conditions."""
+        eq_list = [Filter.eq(k, v) for k, v in eq_filters.items()]
+        return replace(self, filters=[*self.filters, *filters, *eq_list])
 
     def with_order(self, field: str, direction: Literal["asc", "desc"] = "asc") -> "Query":
         """Create a new Query with ordering."""
