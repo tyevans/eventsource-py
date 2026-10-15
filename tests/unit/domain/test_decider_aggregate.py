@@ -7,10 +7,12 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import CommandRejectedError
+from eventsource.domain.tenant_context import tenant_scope_sync
 
 
 class AccountOpened(DomainEvent):
@@ -104,8 +106,6 @@ class TestExecuteStamping:
         assert event.tenant_id == cmd.tenant_id
 
     def test_plain_object_command_gets_version_but_no_provenance(self) -> None:
-        from dataclasses import dataclass
-
         @dataclass(frozen=True)
         class PlainOpen:
             account_id: UUID
@@ -114,11 +114,9 @@ class TestExecuteStamping:
         class PlainAccount(Account):
             @staticmethod
             def decide(command: object, state: AccountState) -> list[DomainEvent]:
-                match command:
-                    case PlainOpen(account_id=account_id, owner=owner):
-                        return [AccountOpened(aggregate_id=account_id, owner=owner)]
-                    case _:
-                        return Account.decide(command, state)
+                if isinstance(command, PlainOpen):
+                    return [AccountOpened(aggregate_id=command.account_id, owner=command.owner)]
+                return Account.decide(command, state)
 
         acct = PlainAccount(uuid4())
         (event,) = acct.execute(PlainOpen(account_id=acct.aggregate_id, owner="alice"))
@@ -178,14 +176,11 @@ class TestReplayEquivalence:
         acct.execute(OpenAccount(account_id=agg_id, owner="alice"))
         acct.execute(DepositMoney(account_id=agg_id, amount=25.0))
         history = acct.uncommitted_events
-
         replayed = Account(agg_id)
         replayed.load_from_history(history)
-
         folded = Account.initial_state()
         for event in history:
             folded = Account.evolve(folded, event)
-
         assert replayed.state == folded == acct.state
         assert replayed.version == 2
 
@@ -195,7 +190,6 @@ class TestSnapshotRoundTrip:
         acct = Account(uuid4())
         acct.execute(OpenAccount(account_id=acct.aggregate_id, owner="alice"))
         snapshot = acct._serialize_state()
-
         restored = Account(acct.aggregate_id)
         restored._restore_from_snapshot(snapshot, version=1)
         assert restored.state == acct.state
@@ -208,42 +202,32 @@ class TestStateInvariant:
 
         class BrokenDecider(DeciderAggregate[dict]):
             aggregate_type = "Broken"
-
-            @staticmethod
-            def initial_state() -> dict:
-                return None  # type: ignore[return-value]  # deliberate contract violation
-
-            @staticmethod
-            def decide(command: object, state: dict) -> list[DomainEvent]:
-                return []
-
-            @staticmethod
-            def evolve(state: dict, event: DomainEvent) -> dict:
-                return state
+            initial_state = staticmethod(lambda: None)  # type: ignore[assignment]  # deliberate contract violation
+            decide = staticmethod(lambda command, state: [])
+            evolve = staticmethod(lambda state, event: state)
 
         agg = BrokenDecider(uuid4())
         with pytest.raises(RuntimeError, match="initial_state"):
             _ = agg.state
 
 
+class _ImperativeAccount(AggregateRoot[AccountState]):
+    aggregate_type = "Account"
+
+    def _get_initial_state(self) -> AccountState:
+        return AccountState()
+
+    def _apply(self, event: DomainEvent) -> None:
+        if isinstance(event, AccountOpened):
+            self._state = AccountState(owner=event.owner, is_open=True)
+
+    def open(self, command: OpenAccount) -> None:
+        self.create_event(AccountOpened, command=command, owner=command.owner)
+
+
 class TestCreateEventCommandProvenance:
     def test_create_event_stamps_provenance_from_command(self) -> None:
-        from eventsource.domain.aggregate import AggregateRoot
-
-        class ImperativeAccount(AggregateRoot[AccountState]):
-            aggregate_type = "Account"
-
-            def _get_initial_state(self) -> AccountState:
-                return AccountState()
-
-            def _apply(self, event: DomainEvent) -> None:
-                if isinstance(event, AccountOpened):
-                    self._state = AccountState(owner=event.owner, is_open=True)
-
-            def open(self, command: OpenAccount) -> None:
-                self.create_event(AccountOpened, command=command, owner=command.owner)
-
-        acct = ImperativeAccount(uuid4())
+        acct = _ImperativeAccount(uuid4())
         cmd = OpenAccount(account_id=acct.aggregate_id, owner="alice", actor_id="user-1")
         acct.open(cmd)
         (event,) = acct.uncommitted_events
@@ -252,20 +236,8 @@ class TestCreateEventCommandProvenance:
         assert event.actor_id == "user-1"
 
     def test_explicit_kwargs_beat_command_fields(self) -> None:
-        from eventsource.domain.aggregate import AggregateRoot
-
         explicit = uuid4()
-
-        class ImperativeAccount(AggregateRoot[AccountState]):
-            aggregate_type = "Account"
-
-            def _get_initial_state(self) -> AccountState:
-                return AccountState()
-
-            def _apply(self, event: DomainEvent) -> None:
-                pass
-
-        acct = ImperativeAccount(uuid4())
+        acct = _ImperativeAccount(uuid4())
         cmd = OpenAccount(account_id=acct.aggregate_id, owner="alice")
         event = acct.create_event(
             AccountOpened, command=cmd, owner="alice", correlation_id=explicit
@@ -276,32 +248,24 @@ class TestCreateEventCommandProvenance:
 
 class TestAmbientTenantStamping:
     def test_plain_command_gets_ambient_tenant(self) -> None:
-        from eventsource.domain.tenant_context import tenant_scope_sync
-
         tenant = uuid4()
 
         @dataclass
         class PlainShip:  # deliberately NOT a DomainCommand
             order_id: UUID
 
+        class Shipped(DomainEvent):
+            aggregate_type: str = "Order"
+
         class ShipDecider(DeciderAggregate[dict]):
             aggregate_type = "Order"
-
-            @staticmethod
-            def initial_state() -> dict:
-                return {}
+            initial_state = staticmethod(dict)
+            evolve = staticmethod(lambda state, event: state)
 
             @staticmethod
             def decide(command: object, state: dict) -> list[DomainEvent]:
                 assert isinstance(command, PlainShip)
                 return [Shipped(aggregate_id=command.order_id)]
-
-            @staticmethod
-            def evolve(state: dict, event: DomainEvent) -> dict:
-                return state
-
-        class Shipped(DomainEvent):
-            aggregate_type: str = "Order"
 
         agg = ShipDecider(uuid4())
         with tenant_scope_sync(tenant):
@@ -320,18 +284,9 @@ class TestTypedDecider:
 
         class PingDecider(DeciderAggregate[PingState, Ping]):
             aggregate_type = "Ping"
-
-            @staticmethod
-            def initial_state() -> PingState:
-                return PingState()
-
-            @staticmethod
-            def decide(command: Ping, state: PingState) -> list[DomainEvent]:
-                return []
-
-            @staticmethod
-            def evolve(state: PingState, event: DomainEvent) -> PingState:
-                return state
+            initial_state = staticmethod(PingState)
+            decide = staticmethod(lambda command, state: [])
+            evolve = staticmethod(lambda state, event: state)
 
         agg = PingDecider(uuid4())
         assert agg.execute(Ping(target=agg.aggregate_id)) == []
@@ -342,18 +297,9 @@ class TestTypedDecider:
 
         class LegacyDecider(DeciderAggregate[LegacyState]):
             aggregate_type = "Legacy"
-
-            @staticmethod
-            def initial_state() -> LegacyState:
-                return LegacyState()
-
-            @staticmethod
-            def decide(command: object, state: LegacyState) -> list[DomainEvent]:
-                return []
-
-            @staticmethod
-            def evolve(state: LegacyState, event: DomainEvent) -> LegacyState:
-                return state
+            initial_state = staticmethod(LegacyState)
+            decide = staticmethod(lambda command, state: [])
+            evolve = staticmethod(lambda state, event: state)
 
         assert LegacyDecider(uuid4()).execute(object()) == []
 
@@ -374,9 +320,7 @@ class TestInitialStateIsNullary:
 
     def test_decide_takes_the_aggregate_id_from_the_command(self) -> None:
         target = uuid4()
-
         (event,) = Account.decide(
             OpenAccount(account_id=target, owner="alice"), Account.initial_state()
         )
-
         assert event.aggregate_id == target
