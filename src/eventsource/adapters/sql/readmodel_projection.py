@@ -38,91 +38,21 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
     Projection base class with automatic read model repository support.
 
     Extends DatabaseProjection to provide:
-    - Automatic repository creation based on session factory
+    - Automatic repository creation based on session factory dialect
+      (PostgreSQL -> PostgreSQLReadModelRepository, SQLite -> SQLiteReadModelRepository)
     - Handler methods receive repository instead of raw connection
     - Automatic truncate via repository for reset operations
-    - Type-safe generic for model class
-    - Integration with @handles decorator for declarative event handling
-    - Automatic handler discovery via HandlerRegistry
+    - Type-safe generic for model class and @handles decorator integration
 
-    The repository type is automatically determined from the session factory:
-    - PostgreSQL session -> PostgreSQLReadModelRepository
-    - SQLite session -> SQLiteReadModelRepository
-
-    Handler Signatures:
-        ReadModelProjection handlers can have two signatures:
-
+    Handler Signatures (auto-detected via inspection):
         1. Single parameter (event only):
-           @handles(EventType)
-           async def _on_event(self, event: EventType) -> None:
-               # No database access needed
-               pass
-
+           `async def _on_event(self, event: EventType) -> None`
         2. Two parameters (repository + event):
-           @handles(EventType)
-           async def _on_event(self, repo: ReadModelRepository, event: EventType) -> None:
-               # Full repository access
-               await repo.save(model)
-
-        The handler signature is auto-detected via inspection:
-        - 1 param: context=None passed to handler registry
-        - 2 params: context=repository passed to handler registry
-
-    Handler Requirements:
-        - All handlers MUST be async (use 'async def')
-        - Handlers must accept 1 or 2 parameters (event only, or repo + event)
-        - Use @handles(EventType) decorator to mark handler methods
-
-    Example:
-        >>> from eventsource import ReadModelProjection
-        >>> from eventsource.ports.readmodels import ReadModel
-        >>> from eventsource.domain.decorators import handles
-        >>>
-        >>> class OrderSummary(ReadModel):
-        ...     order_number: str
-        ...     status: str
-        ...
-        >>> class OrderProjection(ReadModelProjection[OrderSummary]):
-        ...     @handles(OrderCreated)
-        ...     async def _on_created(self, repo, event: OrderCreated) -> None:
-        ...         await repo.save(OrderSummary(
-        ...             id=event.aggregate_id,
-        ...             order_number=event.order_number,
-        ...             status="pending",
-        ...         ))
-        ...
-        ...     @handles(OrderShipped)
-        ...     async def _on_shipped(self, repo, event: OrderShipped) -> None:
-        ...         summary = await repo.get(event.aggregate_id)
-        ...         if summary:
-        ...             summary.status = "shipped"
-        ...             await repo.save(summary)
-        ...
-        ...     @handles(OrderCancelled)
-        ...     async def _on_cancelled(self, repo, event: OrderCancelled) -> None:
-        ...         await repo.soft_delete(event.aggregate_id)
-        >>>
-        >>> # Usage
-        >>> projection = OrderProjection(
-        ...     session_factory=async_session_factory,
-        ...     model_class=OrderSummary,
-        ... )
-        >>> await projection.handle(event)
+           `async def _on_event(self, repo: ReadModelRepository, event: EventType) -> None`
 
     Unregistered Event Handling:
-        By default, events without handlers are silently ignored. Configure
-        this behavior via class attribute:
-
-        >>> class StrictProjection(ReadModelProjection[MyModel]):
-        ...     unregistered_event_handling = "error"  # Raise UnhandledEventError
-        ...     # Or "warn" to log a warning
-        ...     # Or "ignore" (default) to silently skip
-
-    Note:
-        - Each handler invocation gets a fresh repository instance
-        - Repository operations share the same transaction as the projection
-        - Soft delete, queries, and all repository features are available
-        - Handler discovery happens at construction time via HandlerRegistry
+        Configure via class attribute `unregistered_event_handling`
+        ("ignore" [default], "warn", or "error").
     """
 
     def __init__(
@@ -145,16 +75,10 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             model_class: The ReadModel subclass this projection manages
             checkpoint_repo: Repository for checkpoint storage
             dlq_repo: Repository for dead letter queue
-            enable_tracing: Whether to enable OpenTelemetry tracing.
-                          Ignored if tracer is explicitly provided.
-            retry_policy: Policy for retry behavior.
-                         If None, uses ExponentialBackoffRetryPolicy with defaults.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            tenant_filter: Optional tenant filter. Can be:
-                - UUID: Static filter, only process events with this tenant_id
-                - Callable[[], UUID | None]: Dynamic filter, called per event
-                - None: No filtering, process all events (default)
+            enable_tracing: Whether to enable OpenTelemetry tracing (ignored if tracer provided)
+            retry_policy: Retry policy (defaults to ExponentialBackoffRetryPolicy)
+            tracer: Optional custom Tracer instance
+            tenant_filter: Optional UUID or callable tenant filter
         """
         super().__init__(
             session_factory=session_factory,
@@ -180,16 +104,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         )
 
     async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle event within a database transaction with repository.
-
-        Wraps the parent handle() and creates a repository instance
-        scoped to the transaction. The repository is available to
-        handler methods via the context parameter.
-
-        Args:
-            event: The domain event to process
-        """
+        """Handle event within a database transaction with a scoped repository."""
         logger.debug(
             "ReadModelProjection %s handling event %s",
             self._projection_name,
@@ -204,51 +119,24 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         async with self._session_factory() as session, session.begin():
             conn = await session.connection()
             self._current_connection = conn
-
-            # Create repository for this transaction
             self._current_repository = await self._create_repository(conn)
 
             try:
-                # Call parent's handle logic (retry, checkpoint, etc.)
-                # But we override _process_event to use repository
                 await super(DatabaseProjection, self).handle(event)
-
             finally:
                 self._current_connection = None
                 self._current_repository = None
 
     async def _create_repository(self, conn: AsyncConnection) -> ReadModelRepository[TModel]:
-        """
-        Create a repository instance for the current connection.
-
-        Detects the database type from the connection and creates
-        the appropriate repository implementation.
-
-        Args:
-            conn: Database connection
-
-        Returns:
-            ReadModelRepository instance
-        """
-        # Import here to avoid circular imports
+        """Create a dialect-appropriate repository instance for the current connection."""
         from eventsource.adapters.postgresql.readmodels import PostgreSQLReadModelRepository
 
-        # Detect dialect from connection
         dialect_name = conn.dialect.name
-
-        if dialect_name == "postgresql":
-            return PostgreSQLReadModelRepository(
-                conn,
-                self._model_class,
-                enable_tracing=self._enable_tracing,
-            )
-        elif dialect_name == "sqlite":
-            # For SQLite, we need the raw connection
+        if dialect_name == "sqlite":
             from aiosqlite import Connection as AiosqliteConnection
 
             from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 
-            # Get raw aiosqlite connection from SQLAlchemy
             raw_conn = await conn.get_raw_connection()
             driver_conn = raw_conn.driver_connection
             if driver_conn is None or not isinstance(driver_conn, AiosqliteConnection):
@@ -258,8 +146,8 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
                 self._model_class,
                 enable_tracing=self._enable_tracing,
             )
-        else:
-            # Fallback to PostgreSQL-style (works with most SQL databases)
+
+        if dialect_name != "postgresql":
             logger.warning(
                 "Unknown dialect %s, using PostgreSQL repository",
                 dialect_name,
@@ -268,32 +156,20 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
                     "dialect": dialect_name,
                 },
             )
-            return PostgreSQLReadModelRepository(
-                conn,
-                self._model_class,
-                enable_tracing=self._enable_tracing,
-            )
+        return PostgreSQLReadModelRepository(
+            conn,
+            self._model_class,
+            enable_tracing=self._enable_tracing,
+        )
 
     async def _process_event(self, event: DomainEvent) -> None:
-        """
-        Route event to handler with repository context.
-
-        Overrides parent to pass repository instead of raw connection
-        to handler methods.
-
-        Args:
-            event: The domain event to process
-        """
+        """Route event to handler with repository context."""
         handler_info = self._handler_registry.get_handler(type(event))
-
         if handler_info is None:
-            # Delegate unregistered event handling to registry
-            # This will either ignore, warn, or raise based on unregistered_event_handling
             await self._handler_registry.dispatch(event, context=None)
             return
 
         handler_name = handler_info.handler_name
-
         with self._tracer.span(
             "eventsource.projection.handler",
             {
@@ -302,12 +178,9 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
                 ATTR_HANDLER_NAME: handler_name,
             },
         ):
-            # Check handler parameter count
             if handler_info.param_count == 1:
-                # Single parameter: just event
                 await self._handler_registry.dispatch(event, context=None)
             else:
-                # Two parameters: pass repository as context
                 repo = self._current_repository
                 if repo is None:
                     raise RuntimeError(
@@ -317,11 +190,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
                 await self._handler_registry.dispatch(event, context=repo)
 
     async def _truncate_read_models(self) -> None:
-        """
-        Truncate read model table via repository.
-
-        Called during reset() to clear all projection data.
-        """
+        """Truncate read model table via repository during reset()."""
         async with self._session_factory() as session, session.begin():
             conn = await session.connection()
             repo = await self._create_repository(conn)
@@ -346,15 +215,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
 
     @property
     def repository(self) -> ReadModelRepository[TModel] | None:
-        """
-        Get the current repository instance.
-
-        Only available during event handling. Returns None outside
-        of handle() context.
-
-        Returns:
-            The current repository instance or None
-        """
+        """Get the current repository instance (only available during handle())."""
         return self._current_repository
 
     def __repr__(self) -> str:
