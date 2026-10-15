@@ -13,10 +13,7 @@ from .test_rabbitmq_availability import (
     TestRabbitMQEventBusInit,
     TestRabbitMQEventBusUrlSanitization,
 )
-from .test_rabbitmq_bindings import (
-    TestBindEventType,
-    TestBindRoutingKey,
-)
+from .test_rabbitmq_bindings import TestBindEventType, TestBindRoutingKey
 from .test_rabbitmq_config import TestRabbitMQEventBusConfig
 from .test_rabbitmq_config_edge_cases import (
     TestRabbitMQConfigImmutabilityAfterInit,
@@ -50,20 +47,14 @@ from .test_rabbitmq_dlq_config import (
 from .test_rabbitmq_dlq_count import TestGetDLQMessageCount
 from .test_rabbitmq_dlq_helpers import TestRabbitMQDLQHelperMethods
 from .test_rabbitmq_dlq_messages import TestGetDLQMessages
-from .test_rabbitmq_dlq_operations import (
-    TestPurgeDLQ,
-    TestSendToDLQ,
-)
+from .test_rabbitmq_dlq_operations import TestPurgeDLQ, TestSendToDLQ
 from .test_rabbitmq_dlq_retry import (
     TestCalculateRetryDelay,
     TestRepublishForRetry,
     TestRetryConfiguration,
     test_retry_delay_comes_from_the_shared_policy,
 )
-from .test_rabbitmq_exchanges_direct import (
-    TestDirectExchangeBinding,
-    TestDirectExchangeConfig,
-)
+from .test_rabbitmq_exchanges_direct import TestDirectExchangeBinding, TestDirectExchangeConfig
 from .test_rabbitmq_exchanges_direct_patterns import (
     TestDirectExchangeRoutingKeyGeneration,
     TestDirectExchangeWorkQueuePattern,
@@ -73,10 +64,7 @@ from .test_rabbitmq_exchanges_fanout import (
     TestFanoutExchangeMultipleConsumerGroups,
     TestFanoutExchangeUseCases,
 )
-from .test_rabbitmq_exchanges_fanout_dlq import (
-    TestFanoutExchangeLogging,
-    TestFanoutExchangeWithDLQ,
-)
+from .test_rabbitmq_exchanges_fanout_dlq import TestFanoutExchangeLogging, TestFanoutExchangeWithDLQ
 from .test_rabbitmq_force_disconnect import (
     TestDrainInFlight,
     TestForceDisconnect,
@@ -85,10 +73,7 @@ from .test_rabbitmq_force_disconnect import (
     TestShutdownLogging,
 )
 from .test_rabbitmq_get_queue_info import TestGetQueueInfo
-from .test_rabbitmq_handlers import (
-    TestRabbitMQGetHandlerName,
-    TestRabbitMQHandlerNormalization,
-)
+from .test_rabbitmq_handlers import TestRabbitMQGetHandlerName, TestRabbitMQHandlerNormalization
 from .test_rabbitmq_handlers_edge_cases import (
     TestRabbitMQGetHandlerNameEdgeCases,
     TestRabbitMQHandlerNormalizationEdgeCases,
@@ -111,10 +96,7 @@ from .test_rabbitmq_message_processing import (
 )
 from .test_rabbitmq_message_replay import TestReplayDLQMessage
 from .test_rabbitmq_message_replay_raw import TestReplayMessage
-from .test_rabbitmq_message_retry import (
-    TestHandleFailedMessage,
-    TestProcessMessageWithRetry,
-)
+from .test_rabbitmq_message_retry import TestHandleFailedMessage, TestProcessMessageWithRetry
 from .test_rabbitmq_opentelemetry import TestOpenTelemetryTracing
 from .test_rabbitmq_opentelemetry_consumer import (
     TestOpenTelemetryConsumerTracing,
@@ -133,10 +115,7 @@ from .test_rabbitmq_publish_multi import (
     TestRabbitMQPublishSingle,
     TestRabbitMQPublishWithDifferentEventTypes,
 )
-from .test_rabbitmq_queue_info import (
-    TestHealthCheckResult,
-    TestQueueInfo,
-)
+from .test_rabbitmq_queue_info import TestHealthCheckResult, TestQueueInfo
 from .test_rabbitmq_reconnection import (
     TestRabbitMQChannelCloseCallback,
     TestRabbitMQConnectionCloseCallback,
@@ -162,14 +141,8 @@ from .test_rabbitmq_stats import (
     TestRabbitMQStatsResetBehavior,
     TestStatisticsTimingFields,
 )
-from .test_rabbitmq_stats_dict import (
-    TestBatchPublishingStatsDict,
-    TestGetStatsDictMethod,
-)
-from .test_rabbitmq_stats_integration import (
-    TestResetStatsMethod,
-    TestStatisticsIntegration,
-)
+from .test_rabbitmq_stats_dict import TestBatchPublishingStatsDict, TestGetStatsDictMethod
+from .test_rabbitmq_stats_integration import TestResetStatsMethod, TestStatisticsIntegration
 from .test_rabbitmq_subscriptions import (
     TestRabbitMQSubscriptionIntegration,
     TestRabbitMQSubscriptionManagement,
@@ -180,10 +153,7 @@ from .test_rabbitmq_topology_connection import TestRabbitMQConnectionWithTopolog
 from .test_rabbitmq_topology_dlq import TestRabbitMQDLQDeclaration
 from .test_rabbitmq_topology_errors import TestRabbitMQDeclarationErrors
 from .test_rabbitmq_topology_exchange import TestRabbitMQExchangeDeclaration
-from .test_rabbitmq_topology_queue import (
-    TestRabbitMQQueueBinding,
-    TestRabbitMQQueueDeclaration,
-)
+from .test_rabbitmq_topology_queue import TestRabbitMQQueueBinding, TestRabbitMQQueueDeclaration
 
 __all__ = [  # pragma: allowlist secret
     "ConsumerTestEvent",  # pragma: allowlist secret

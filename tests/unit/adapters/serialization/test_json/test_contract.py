@@ -7,38 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.serialization import (
-    json_dumps,
-    json_loads,
-)
+from eventsource.adapters.serialization import json_dumps, json_loads
 
 
 class TestJsonEncoderContract:
-    """
-    Contract tests for the single orjson-backed encoder.
-
-    History: earlier revisions of this file compared a stdlib fallback
-    branch against orjson (a "parity" suite), because orjson was an
-    optional extra with a stdlib `json_dumps` fallback. The user has since
-    decided orjson is a core dependency and the fallback is deleted -- so
-    there is no second branch to compare against anymore. These tests
-    instead pin the single encoder's behavior directly: what it accepts,
-    what it rejects, and how.
-
-    Two rejections are load-bearing, not incidental:
-    - Non-finite floats (inf/-inf/nan) raise ValueError. orjson would
-      otherwise silently substitute JSON `null`, which is data corruption
-      for a persisted value.
-    - Integers outside [-2**63, 2**64-1] raise ValueError with a message
-      naming the value and the range. orjson otherwise raises a bare,
-      unhelpful `TypeError: Integer exceeds 64-bit range`.
-
-    A UUID dict key serializing successfully (via OPT_NON_STR_KEYS) is
-    simply the encoder's behavior now, not a "divergence" -- there is
-    nothing left for it to diverge from.
-    """
-
-    # -- UUID / datetime -----------------------------------------------
+    """Contract tests for the single orjson-backed encoder."""
 
     def test_uuid_serializes(self) -> None:
         test_uuid = uuid4()
@@ -74,8 +47,6 @@ class TestJsonEncoderContract:
         assert parsed["event"]["occurred_at"] == original["event"]["occurred_at"].isoformat()
         assert len(parsed["event"]["items"]) == 2
 
-    # -- Structural shapes -----------------------------------------------
-
     def test_empty_dict(self) -> None:
         assert json_dumps({}) == "{}"
 
@@ -87,8 +58,6 @@ class TestJsonEncoderContract:
 
     def test_int_dict_key(self) -> None:
         assert json_loads(json_dumps({1: "a", 2: "b"})) == {"1": "a", "2": "b"}
-
-    # -- Content dimension: non-ASCII, control chars (still worth pinning) --
 
     def test_latin1_accented_characters_not_escaped(self) -> None:
         result = json_dumps({"name": "Sébastien Müller Peña"})
@@ -124,8 +93,6 @@ class TestJsonEncoderContract:
         data = {"empty": "", "spaces": "   ", "tabs_newlines": "\t\n"}
         assert json_loads(json_dumps(data)) == data
 
-    # -- Finite float / integer values still serialize --------------------
-
     def test_finite_floats_including_extremes(self) -> None:
         data = {
             "zero": 0.0,
@@ -147,8 +114,6 @@ class TestJsonEncoderContract:
     def test_bool_serializes_as_boolean_not_integer(self) -> None:
         result = json_dumps({"flags": [True, False]})
         assert result == '{"flags":[true,false]}'
-
-    # -- Non-finite floats: NOT rejected by json_dumps (round 5) -----------
 
     @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
     def test_non_finite_float_in_plain_dict_serializes_as_null(self, value: float) -> None:
@@ -185,8 +150,6 @@ class TestJsonEncoderContract:
 
         with pytest.raises(TypeError, match="not JSON serializable"):
             json_dumps({"a": MyTuple([1, "finite", 2.5])})
-
-    # -- Integer range: rejected -----------------------------------------
 
     def test_int_min_boundary_ok(self) -> None:
         value = -(2**63)
@@ -258,8 +221,6 @@ class TestJsonEncoderContract:
         with pytest.raises(ValueError, match="Integer out of range"):
             json_dumps({"n": MyInt(2**64)})
 
-    # -- float subclasses -----------------------------------------------
-
     def test_float_subclass_finite_serializes(self) -> None:
         class MyFloat(float):
             pass
@@ -267,10 +228,7 @@ class TestJsonEncoderContract:
         result = json_dumps({"v": MyFloat(3.14)})
         assert json_loads(result) == {"v": 3.14}
 
-    @pytest.mark.parametrize(
-        "value",
-        [float("inf"), float("-inf"), float("nan")],
-    )
+    @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
     def test_float_subclass_non_finite_serializes_as_null(self, value: float) -> None:
         class MyFloat(float):
             pass
@@ -287,8 +245,6 @@ class TestJsonEncoderContract:
 
         data = {"outer": [MyDict({"inner": MyFloat(float("inf"))})]}
         assert json_loads(json_dumps(data)) == {"outer": [{"inner": None}]}
-
-    # -- int / str subclasses: verified, not assumed -----------------------
 
     def test_int_subclass_serializes(self) -> None:
         class MyInt(int):
