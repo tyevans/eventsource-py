@@ -1,8 +1,4 @@
-"""Conformance tests for PostgreSQLEventStore against the port suites.
-
-Subclasses the five store-port conformance suites plus snapshot, checkpoint,
-and DLQ repository suites against the private `ports_conformance` database.
-"""
+"""Conformance tests for PostgreSQLEventStore against the port suites."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -15,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from ..conftest import skip_if_no_postgres_infra
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, skip_if_no_postgres_infra]
-
 
 from eventsource.adapters.postgresql import (  # noqa: E402
     PostgreSQLEventStore,
@@ -44,7 +39,6 @@ from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
 
 
 async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
-    """Create a store on a fresh engine with the `events` table dropped first."""
     engine = create_async_engine(connection_url)
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
@@ -86,13 +80,11 @@ class TestPostgreSQLGlobalFeed(_PGStoreFixture, GlobalFeedConformance):
     async def test_rows_with_null_txid_are_returned_by_read_all(
         self, store: PostgreSQLEventStore
     ) -> None:
-        """A row predating updates/004 has a NULL txid and is always safe."""
         stream = make_stream()
         await store.append(stream, [make_event(stream.aggregate_id)], ExpectedVersion.no_stream())
         async with store._engine.begin() as conn:  # type: ignore[attr-defined]
             await conn.execute(text("UPDATE events SET txid = NULL"))
-        envelopes = await collect(store.read_all())
-        assert len(envelopes) == 1
+        assert len(await collect(store.read_all())) == 1
 
 
 class TestPostgreSQLCategoryQuery(_PGStoreFixture, CategoryQueryConformance):
@@ -108,37 +100,29 @@ class TestPostgreSQLSnapshotStore(SnapshotStoreConformance):
         async with engine.begin() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS snapshots CASCADE"))
             await _exec_raw_schema(conn, "snapshots")
-        session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        yield PostgreSQLSnapshotStore(session_factory)
+        yield PostgreSQLSnapshotStore(async_sessionmaker(engine, expire_on_commit=False))
         await engine.dispose()
 
 
-# Bare DDL without PL/pgSQL helper functions so asyncpg text() execution works cleanly.
 _CHECKPOINTS_DDL = [
-    """CREATE TABLE IF NOT EXISTS projection_checkpoints (
-        projection_name VARCHAR(255) PRIMARY KEY,
-        last_event_id UUID, last_event_type VARCHAR(255), last_processed_at TIMESTAMPTZ,
-        events_processed BIGINT NOT NULL DEFAULT 0,
-        global_position BIGINT, position_token TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )""",
+    "CREATE TABLE IF NOT EXISTS projection_checkpoints ("
+    "projection_name VARCHAR(255) PRIMARY KEY, last_event_id UUID, "
+    "last_event_type VARCHAR(255), last_processed_at TIMESTAMPTZ, "
+    "events_processed BIGINT NOT NULL DEFAULT 0, global_position BIGINT, position_token TEXT, "
+    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
 ]
 
 _DLQ_DDL = [
-    """CREATE TABLE IF NOT EXISTS dead_letter_queue (
-        id BIGSERIAL PRIMARY KEY,
-        event_id UUID NOT NULL, projection_name VARCHAR(255) NOT NULL,
-        event_type VARCHAR(255) NOT NULL, event_data JSONB NOT NULL,
-        error_message TEXT NOT NULL, error_stacktrace TEXT,
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        first_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        status VARCHAR(20) NOT NULL DEFAULT 'failed',
-        resolved_at TIMESTAMPTZ, resolved_by VARCHAR(255),
-        CONSTRAINT chk_dlq_status_ports CHECK (status IN ('failed', 'retrying', 'resolved')),
-        CONSTRAINT uq_dlq_event_projection_ports UNIQUE (event_id, projection_name)
-    )""",
+    "CREATE TABLE IF NOT EXISTS dead_letter_queue ("
+    "id BIGSERIAL PRIMARY KEY, event_id UUID NOT NULL, projection_name VARCHAR(255) NOT NULL, "
+    "event_type VARCHAR(255) NOT NULL, event_data JSONB NOT NULL, "
+    "error_message TEXT NOT NULL, error_stacktrace TEXT, retry_count INTEGER NOT NULL DEFAULT 0, "
+    "first_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+    "last_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+    "status VARCHAR(20) NOT NULL DEFAULT 'failed', resolved_at TIMESTAMPTZ, "
+    "resolved_by VARCHAR(255), "
+    "CONSTRAINT chk_dlq_status_ports CHECK (status IN ('failed', 'retrying', 'resolved')), "
+    "CONSTRAINT uq_dlq_event_projection_ports UNIQUE (event_id, projection_name))"
 ]
 
 
@@ -160,15 +144,12 @@ class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
     async def write_legacy_int_row(
         self, store: SQLCheckpointRepository, subscription_id: str, value: int
     ) -> None:
+        sql = (
+            "INSERT INTO projection_checkpoints "
+            "(projection_name, global_position, events_processed) VALUES (:name, :value, 1)"
+        )
         async with store._conn.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO projection_checkpoints "
-                    "(projection_name, global_position, events_processed) "
-                    "VALUES (:name, :value, 1)"
-                ),
-                {"name": subscription_id, "value": value},
-            )
+            await conn.execute(text(sql), {"name": subscription_id, "value": value})
 
 
 class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
@@ -194,14 +175,11 @@ class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
         )
         (entry,) = await store.get_failed_events()
         await store.mark_resolved(entry.id, "alice")
-        deleted = await store.delete_resolved_events(older_than_days=0)
-        assert deleted == 1
+        assert await store.delete_resolved_events(older_than_days=0) == 1
         assert await store.get_failed_event_by_id(entry.id) is None
 
 
 class TestPostgreSQLConcurrency(_PGStoreFixture):
-    """Real-transaction concurrency coverage against a live PostgreSQL server."""
-
     async def test_concurrent_appends_to_different_streams_all_succeed(
         self, store: PostgreSQLEventStore
     ) -> None:
@@ -231,14 +209,10 @@ class TestPostgreSQLConcurrency(_PGStoreFixture):
         results = await asyncio.gather(
             *[append_at_zero() for _ in range(5)], return_exceptions=True
         )
-        successes = sum(1 for r in results if r is True)
-        conflicts = sum(1 for r in results if r is False)
-        assert (successes, conflicts) == (1, 4)
+        assert (sum(r is True for r in results), sum(r is False for r in results)) == (1, 4)
 
 
 class TestPostgreSQLLargePayloads(_PGStoreFixture):
-    """Large-metadata round trip exercising JSONB payload handling."""
-
     async def test_large_metadata_round_trips(self, store: PostgreSQLEventStore) -> None:
         stream = make_stream()
         large_metadata = {f"key_{i}": f"value_{i}" * 100 for i in range(100)}
@@ -246,17 +220,16 @@ class TestPostgreSQLLargePayloads(_PGStoreFixture):
         result = await store.append(stream, [event], ExpectedVersion.no_stream())
         assert result.new_version == 1
         envelopes = [e async for e in store.read_stream(stream)]
-        assert len(envelopes) == 1
-        assert envelopes[0].event.metadata == large_metadata
+        assert len(envelopes) == 1 and envelopes[0].event.metadata == large_metadata
 
 
 async def test_store_id_stable_across_restarts(ports_postgres_connection_url: str) -> None:
-    """`store_id` derives from the engine URL's database name -- stable, not random."""
     engine_a: AsyncEngine = create_async_engine(ports_postgres_connection_url)
     engine_b: AsyncEngine = create_async_engine(ports_postgres_connection_url)
     try:
-        store_a = PostgreSQLEventStore(engine_a, event_registry=make_conformance_registry())
-        store_b = PostgreSQLEventStore(engine_b, event_registry=make_conformance_registry())
+        reg = make_conformance_registry()
+        store_a = PostgreSQLEventStore(engine_a, event_registry=reg)
+        store_b = PostgreSQLEventStore(engine_b, event_registry=reg)
         assert store_a.store_id == store_b.store_id == f"pg:{engine_a.url.database}"
     finally:
         await engine_a.dispose()

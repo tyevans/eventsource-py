@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -28,58 +28,45 @@ def _make_coordinator(
     )
 
 
+def _make_migration(
+    migration_id: UUID | None = None,
+    tenant_id: UUID | None = None,
+    phase: MigrationPhase = MigrationPhase.CUTOVER,
+) -> Migration:
+    return Migration(
+        id=migration_id or uuid4(),
+        tenant_id=tenant_id or uuid4(),
+        source_store_id="default",
+        target_store_id="dedicated",
+        phase=phase,
+    )
+
+
 class TestRollbackCutover:
     """Tests for MigrationCoordinator._rollback_cutover() method."""
 
     @pytest.mark.asyncio
     async def test_rollback_updates_phase_to_dual_write(self) -> None:
-        """Test _rollback_cutover updates phase back to DUAL_WRITE."""
-        migration_id = uuid4()
-        migration = Migration(
-            id=migration_id,
-            tenant_id=uuid4(),
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.CUTOVER,
-        )
+        migration = _make_migration()
         migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
         coordinator = _make_coordinator(migration_repo=migration_repo)
         result = CutoverResult(
-            success=False,
-            duration_ms=100.0,
-            error_message="Timeout exceeded",
-            rolled_back=True,
+            success=False, duration_ms=100.0, error_message="Timeout exceeded", rolled_back=True
         )
-
         await coordinator._rollback_cutover(migration, result)
-
-        migration_repo.update_phase.assert_called_once_with(migration_id, MigrationPhase.DUAL_WRITE)
+        migration_repo.update_phase.assert_called_once_with(migration.id, MigrationPhase.DUAL_WRITE)
 
     @pytest.mark.asyncio
     async def test_rollback_records_error(self) -> None:
-        """Test _rollback_cutover records error message."""
-        migration_id = uuid4()
-        migration = Migration(
-            id=migration_id,
-            tenant_id=uuid4(),
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.CUTOVER,
-        )
+        migration = _make_migration()
         migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
         coordinator = _make_coordinator(migration_repo=migration_repo)
         result = CutoverResult(
-            success=False,
-            duration_ms=100.0,
-            error_message="Timeout exceeded",
-            rolled_back=True,
+            success=False, duration_ms=100.0, error_message="Timeout exceeded", rolled_back=True
         )
-
         await coordinator._rollback_cutover(migration, result)
-
         migration_repo.record_error.assert_called_once()
-        error_arg = migration_repo.record_error.call_args[0][1]
-        assert "Timeout exceeded" in error_arg
+        assert "Timeout exceeded" in migration_repo.record_error.call_args[0][1]
 
 
 class TestCompleteCutover:
@@ -87,29 +74,18 @@ class TestCompleteCutover:
 
     @pytest.mark.asyncio
     async def test_complete_cutover_updates_phase(self) -> None:
-        """Test _complete_cutover updates phase to COMPLETED."""
-        migration_id = uuid4()
-        migration = Migration(
-            id=migration_id,
-            tenant_id=uuid4(),
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.CUTOVER,
-        )
+        migration = _make_migration()
         migration_repo = AsyncMock(update_phase=AsyncMock())
         coordinator = _make_coordinator(migration_repo=migration_repo)
-        coordinator._lag_trackers[migration_id] = MagicMock()
-        coordinator._target_stores[migration_id] = MagicMock()
-
+        coordinator._lag_trackers[migration.id] = MagicMock()
+        coordinator._target_stores[migration.id] = MagicMock()
         await coordinator._complete_cutover(migration)
-
-        migration_repo.update_phase.assert_called_once_with(migration_id, MigrationPhase.COMPLETED)
-        assert migration_id not in coordinator._lag_trackers
-        assert migration_id not in coordinator._target_stores
+        migration_repo.update_phase.assert_called_once_with(migration.id, MigrationPhase.COMPLETED)
+        assert migration.id not in coordinator._lag_trackers
+        assert migration.id not in coordinator._target_stores
 
     @pytest.mark.asyncio
     async def test_complete_cutover_releases_migration_metrics(self) -> None:
-        """_complete_cutover() releases this migration's MigrationMetrics."""
         from eventsource.application.migration.metrics import (
             ActiveMigrationsTracker,
             clear_metrics_registry,
@@ -117,25 +93,13 @@ class TestCompleteCutover:
         )
 
         clear_metrics_registry()
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        migration = Migration(
-            id=migration_id,
-            tenant_id=tenant_id,
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.CUTOVER,
-        )
-        migration_repo = AsyncMock(update_phase=AsyncMock())
-        coordinator = _make_coordinator(migration_repo=migration_repo)
-
-        get_migration_metrics(str(migration_id), str(tenant_id))
+        migration = _make_migration()
+        coordinator = _make_coordinator(migration_repo=AsyncMock(update_phase=AsyncMock()))
+        get_migration_metrics(str(migration.id), str(migration.tenant_id))
         tracker = ActiveMigrationsTracker.get_instance()
-        assert str(migration_id) in tracker.active_migrations
-
+        assert str(migration.id) in tracker.active_migrations
         await coordinator._complete_cutover(migration)
-
-        assert str(migration_id) not in tracker.active_migrations
+        assert str(migration.id) not in tracker.active_migrations
         clear_metrics_registry()
 
 
@@ -143,21 +107,16 @@ class TestCleanupMigrationResources:
     """Tests for MigrationCoordinator._cleanup_migration_resources() method."""
 
     def test_cleanup_removes_lag_tracker(self) -> None:
-        """Test cleanup removes lag tracker."""
         migration_id = uuid4()
         coordinator = _make_coordinator()
         coordinator._lag_trackers[migration_id] = MagicMock()
         coordinator._target_stores[migration_id] = MagicMock()
-
         coordinator._cleanup_migration_resources(migration_id)
-
         assert migration_id not in coordinator._lag_trackers
         assert migration_id not in coordinator._target_stores
 
     def test_cleanup_handles_missing_resources(self) -> None:
-        """Test cleanup handles missing resources gracefully."""
-        coordinator = _make_coordinator()
-        coordinator._cleanup_migration_resources(uuid4())
+        _make_coordinator()._cleanup_migration_resources(uuid4())
 
 
 class TestAbortMigrationCleansUpP2Resources:
@@ -165,12 +124,10 @@ class TestAbortMigrationCleansUpP2Resources:
 
     @pytest.mark.asyncio
     async def test_abort_cleans_up_lag_tracker(self) -> None:
-        """Test abort_migration cleans up lag tracker."""
         migration_id = uuid4()
-        tenant_id = uuid4()
         migration = Migration(
             id=migration_id,
-            tenant_id=tenant_id,
+            tenant_id=uuid4(),
             source_store_id="default",
             target_store_id="dedicated",
             phase=MigrationPhase.DUAL_WRITE,
@@ -186,9 +143,7 @@ class TestAbortMigrationCleansUpP2Resources:
         coordinator = _make_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
         coordinator._lag_trackers[migration_id] = MagicMock()
         coordinator._target_stores[migration_id] = MagicMock()
-
         await coordinator.abort_migration(migration_id, reason="Test abort")
-
         assert migration_id not in coordinator._lag_trackers
         assert migration_id not in coordinator._target_stores
 
@@ -198,26 +153,15 @@ class TestFailMigrationCleansUpP2Resources:
 
     @pytest.mark.asyncio
     async def test_fail_cleans_up_lag_tracker(self) -> None:
-        """Test _fail_migration cleans up lag tracker."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        migration = Migration(
-            id=migration_id,
-            tenant_id=tenant_id,
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.DUAL_WRITE,
-        )
+        migration = _make_migration(phase=MigrationPhase.DUAL_WRITE)
         migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
         routing_repo = AsyncMock(clear_migration_state=AsyncMock())
         coordinator = _make_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
-        coordinator._lag_trackers[migration_id] = MagicMock()
-        coordinator._target_stores[migration_id] = MagicMock()
-
+        coordinator._lag_trackers[migration.id] = MagicMock()
+        coordinator._target_stores[migration.id] = MagicMock()
         await coordinator._fail_migration(migration, "Test failure")
-
-        assert migration_id not in coordinator._lag_trackers
-        assert migration_id not in coordinator._target_stores
+        assert migration.id not in coordinator._lag_trackers
+        assert migration.id not in coordinator._target_stores
 
 
 class TestStartMigrationStoresTargetStore:
@@ -225,16 +169,13 @@ class TestStartMigrationStoresTargetStore:
 
     @pytest.mark.asyncio
     async def test_start_migration_stores_target_store(self) -> None:
-        """Test start_migration stores target store for later use."""
-        tenant_id = uuid4()
+        tenant_id, migration_id = uuid4(), uuid4()
         target_store = AsyncMock()
-        target_store_id = "dedicated-tenant"
-        migration_id = uuid4()
         created_migration = Migration(
             id=migration_id,
             tenant_id=tenant_id,
             source_store_id="default",
-            target_store_id=target_store_id,
+            target_store_id="dedicated-tenant",
             phase=MigrationPhase.BULK_COPY,
             started_at=datetime.now(UTC),
         )
@@ -251,13 +192,8 @@ class TestStartMigrationStoresTargetStore:
             set_migration_state=AsyncMock(),
         )
         coordinator = _make_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
-
         with patch.object(coordinator, "_run_bulk_copy", new_callable=AsyncMock):
             migration = await coordinator.start_migration(
-                tenant_id=tenant_id,
-                target_store=target_store,
-                target_store_id=target_store_id,
+                tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated-tenant"
             )
-
-        assert migration.id in coordinator._target_stores
-        assert coordinator._target_stores[migration.id] is target_store
+        assert coordinator._target_stores.get(migration.id) is target_store
