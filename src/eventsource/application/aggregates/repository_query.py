@@ -6,6 +6,7 @@ Provides aggregate hydration from snapshots and event streams.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -46,36 +47,10 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
         raise NotImplementedError
 
     async def load(self, aggregate_id: UUID) -> TAggregate:
-        """
-        Load an aggregate from its event history.
-
-        If a snapshot store is configured and a valid snapshot exists,
-        the aggregate is restored from the snapshot and only events
-        since the snapshot are replayed. This significantly improves
-        load time for aggregates with many events.
-
-        Retrieves all events for the aggregate from the event store
-        and reconstitutes the aggregate state by replaying them.
-
-        Args:
-            aggregate_id: ID of the aggregate to load
-
-        Returns:
-            The reconstituted aggregate with current state
+        """Load an aggregate from its snapshot (if valid) and event history.
 
         Raises:
-            AggregateNotFoundError: If no events exist for the aggregate
-
-        Loading Sequence:
-            1. Check for valid snapshot (if snapshot_store configured)
-            2. If snapshot valid: restore state, get events from snapshot.version
-            3. If no snapshot: get all events from version 0
-            4. Apply events to aggregate
-            5. Return hydrated aggregate
-
-        Example:
-            >>> order = await repo.load(order_id)
-            >>> print(f"Order status: {order.state.status}")
+            AggregateNotFoundError: If no events exist for the aggregate.
         """
         with self._tracer.span(
             "eventsource.repository.load",
@@ -127,10 +102,6 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
                     aggregate._restore_from_snapshot(snapshot.state, snapshot.version)
                 except Exception as e:
                     # Deserialization failed - fall back to full replay.
-                    # Counted here rather than in read_valid_snapshot because
-                    # this is where a corrupt payload actually surfaces for
-                    # every in-tree adapter: they return the row intact and
-                    # the failure appears when the aggregate rebuilds state.
                     record_snapshot_miss(
                         SnapshotMissReason.STATE_RESTORE_FAILED, self._aggregate_type
                     )
@@ -170,39 +141,36 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
 
             return aggregate
 
+    async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
+        """Get an aggregate if it exists, or return None if not found."""
+        try:
+            return await self.load(aggregate_id)
+        except AggregateNotFoundError:
+            return None
+
+    async def load_many(
+        self, aggregate_ids: Iterable[UUID], *, ignore_missing: bool = False
+    ) -> dict[UUID, TAggregate]:
+        """Load multiple aggregates by ID into a mapping keyed by aggregate ID."""
+        results: dict[UUID, TAggregate] = {}
+        for agg_id in aggregate_ids:
+            if ignore_missing:
+                aggregate = await self.get_or_none(agg_id)
+                if aggregate is not None:
+                    results[agg_id] = aggregate
+            else:
+                results[agg_id] = await self.load(agg_id)
+        return results
+
     async def load_or_create(self, aggregate_id: UUID) -> TAggregate:
-        """
-        Load an existing aggregate or create a new one.
-
-        Useful when you want to work with an aggregate regardless of
-        whether it already exists.
-
-        Args:
-            aggregate_id: ID of the aggregate
-
-        Returns:
-            Existing aggregate if found, or new empty aggregate
-
-        Example:
-            >>> order = await repo.load_or_create(order_id)
-            >>> if order.version == 0:
-            ...     order.create(customer_id=customer_id)
-        """
+        """Load an existing aggregate or create a new empty one."""
         try:
             return await self.load(aggregate_id)
         except AggregateNotFoundError:
             return self._aggregate_factory(aggregate_id)
 
     async def exists(self, aggregate_id: UUID) -> bool:
-        """
-        Check if an aggregate exists.
-
-        Args:
-            aggregate_id: ID of the aggregate to check
-
-        Returns:
-            True if aggregate has events, False otherwise
-        """
+        """Check if an aggregate has events in the store."""
         with self._tracer.span(
             "eventsource.repository.exists",
             {
@@ -218,53 +186,15 @@ class AggregateRepositoryQueryMixin[TAggregate: AggregateRoot[Any]]:
             return exists
 
     async def get_version(self, aggregate_id: UUID) -> int:
-        """
-        Get the current version of an aggregate.
-
-        Args:
-            aggregate_id: ID of the aggregate
-
-        Returns:
-            Current version (0 if aggregate doesn't exist)
-        """
+        """Get the current version of an aggregate (0 if it does not exist)."""
         return await self._event_store.get_stream_version(self._stream(aggregate_id))
 
     async def get_or_raise(self, aggregate_id: UUID) -> TAggregate:
-        """
-        Get an aggregate, raising if it doesn't exist.
-
-        This is an alias for load() that makes the intent clearer
-        in calling code.
-
-        Args:
-            aggregate_id: ID of the aggregate
-
-        Returns:
-            The loaded aggregate
-
-        Raises:
-            AggregateNotFoundError: If aggregate doesn't exist
-        """
+        """Get an aggregate, raising AggregateNotFoundError if it does not exist."""
         return await self.load(aggregate_id)
 
     def create_new(self, aggregate_id: UUID) -> TAggregate:
-        """
-        Create a new, empty aggregate instance.
-
-        This does not persist anything - it just creates an in-memory
-        aggregate that can have commands applied and then saved.
-
-        Args:
-            aggregate_id: ID for the new aggregate
-
-        Returns:
-            New aggregate instance with version 0
-
-        Example:
-            >>> order = repo.create_new(uuid4())
-            >>> order.create(customer_id=customer_id)
-            >>> await repo.save(order)
-        """
+        """Create a new, empty in-memory aggregate instance with version 0."""
         return self._aggregate_factory(aggregate_id)
 
 
