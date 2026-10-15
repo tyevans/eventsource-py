@@ -1,7 +1,7 @@
 ---
 id: TASK-0272
 title: "Add assertions property to RecordingEventBus"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

@@ -1,7 +1,7 @@
 ---
 id: TASK-0268
 title: "Slim phase2 _anchor_base, rabbitmq test_dlq_admin, fixtures/aggregates, dual_write_operations, and postgresql_catchup benchmark below 295 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

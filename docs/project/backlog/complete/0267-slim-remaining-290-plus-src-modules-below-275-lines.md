@@ -1,7 +1,7 @@
 ---
 id: TASK-0267
 title: "Slim catchup_runner.py, rabbitmq/models.py, memory/bus.py, error_handling_types.py, sync_lag_tracker.py, and readmodels_query.py below 275 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

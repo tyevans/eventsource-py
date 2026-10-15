@@ -1,7 +1,7 @@
 ---
 id: TASK-0271
 title: "Slim coordinator subscriptions verify/migrate, position mapping lifecycle, module structure, sqlite construction, memory checkpoints, and subscriptions conftest below 295 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

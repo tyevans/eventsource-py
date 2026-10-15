@@ -1,7 +1,7 @@
 ---
 id: TASK-0269
 title: "Slim rabbitmq_opentelemetry, subscription_migrator_models_and_workflows, bulk_copier_run, sqlite_snapshots_operations, and basic_projection below 295 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

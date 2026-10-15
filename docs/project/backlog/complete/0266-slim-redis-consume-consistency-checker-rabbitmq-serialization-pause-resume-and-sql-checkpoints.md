@@ -1,7 +1,7 @@
 ---
 id: TASK-0266
 title: "Slim redis/bus_consume.py, consistency_stream_checker.py, rabbitmq/serialization.py, pause_resume.py, and sql/checkpoints.py below 275 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
