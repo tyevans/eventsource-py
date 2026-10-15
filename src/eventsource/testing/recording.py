@@ -14,6 +14,7 @@ from typing import TypeVar
 from eventsource.domain.event import DomainEvent
 from eventsource.ports.bus import EventBus, EventHandlerFunc
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
+from eventsource.testing.assertions import EventAssertions
 
 TEvent = TypeVar("TEvent", bound=DomainEvent)
 
@@ -41,6 +42,11 @@ class RecordingEventBus(EventBus):
     def wrapped(self) -> EventBus:
         """The underlying bus."""
         return self._wrapped
+
+    @property
+    def assertions(self) -> EventAssertions:
+        """Get an EventAssertions helper bound to currently published events."""
+        return EventAssertions(self.published_events)
 
     @property
     def published_events(self) -> list[DomainEvent]:
