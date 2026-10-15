@@ -27,33 +27,27 @@ class GlobalFeedConformance(ABC):
     async def test_full_read_returns_all_events_in_position_order(
         self, store: _AppenderFeed
     ) -> None:
-        stream_a = make_stream(aggregate_id=uuid4())
-        stream_b = make_stream(aggregate_id=uuid4())
+        stream_a, stream_b = make_stream(aggregate_id=uuid4()), make_stream(aggregate_id=uuid4())
         for s in (stream_a, stream_b, stream_a):
             await store.append(
                 s, [ConformanceEvent(aggregate_id=s.aggregate_id)], ExpectedVersion.any_()
             )
         envelopes = await collect(store.read_all())
-        assert len(envelopes) == 3
-        assert all(e.position is not None for e in envelopes)
+        assert len(envelopes) == 3 and all(e.position is not None for e in envelopes)
         positions: list[Position] = [e.position for e in envelopes if e.position is not None]
-        assert positions == sorted(positions)
-        assert len(set(positions)) == 3
+        assert positions == sorted(positions) and len(set(positions)) == 3
 
     async def test_exclusive_resumption_from_position(self, store: _AppenderFeed) -> None:
-        stream_a = make_stream(aggregate_id=uuid4())
-        stream_b = make_stream(aggregate_id=uuid4())
+        stream_a, stream_b = make_stream(aggregate_id=uuid4()), make_stream(aggregate_id=uuid4())
         for i in range(5):
-            stream = stream_a if i % 2 == 0 else stream_b
+            s = stream_a if i % 2 == 0 else stream_b
             await store.append(
-                stream,
-                [ConformanceEvent(aggregate_id=stream.aggregate_id, payload=str(i))],
+                s,
+                [ConformanceEvent(aggregate_id=s.aggregate_id, payload=str(i))],
                 ExpectedVersion.any_(),
             )
         full = await collect(store.read_all())
-        assert len(full) == 5
-        resume_position = full[1].position
-        assert resume_position is not None
+        assert len(full) == 5 and (resume_position := full[1].position) is not None
         resumed = await collect(store.read_all(from_position=resume_position))
         assert [e.event.event_id for e in resumed] == [e.event.event_id for e in full[2:]]
 
@@ -62,8 +56,7 @@ class GlobalFeedConformance(ABC):
         await store.append(
             stream, [ConformanceEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
         )
-        envelopes = await collect(store.read_all(from_position=None))
-        assert len(envelopes) == 1
+        assert len(await collect(store.read_all(from_position=None))) == 1
 
     async def test_current_position_none_when_empty(self, store: _AppenderFeed) -> None:
         assert await store.current_position() is None
@@ -77,8 +70,7 @@ class GlobalFeedConformance(ABC):
                 stream, [ConformanceEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
             )
         envelopes = await collect(store.read_all())
-        current = await store.current_position()
-        assert current == envelopes[-1].position
+        assert await store.current_position() == envelopes[-1].position
 
     async def test_tenant_filter_honored(self, store: _AppenderFeed) -> None:
         tenant_a, tenant_b = uuid4(), uuid4()
@@ -99,27 +91,16 @@ class GlobalFeedConformance(ABC):
     async def test_aggregate_type_filter_honored(self, store: _AppenderFeed) -> None:
         wanted = make_stream(category="Conformance", aggregate_id=uuid4())
         other = make_stream(category="ConformanceOther", aggregate_id=uuid4())
-        await store.append(
-            wanted,
-            [ConformanceEvent(aggregate_id=wanted.aggregate_id, payload="1")],
-            ExpectedVersion.any_(),
-        )
-        await store.append(
-            other,
-            [
-                ConformanceEvent(
-                    aggregate_id=other.aggregate_id,
-                    aggregate_type="ConformanceOther",
-                    payload="2",
-                )
-            ],
-            ExpectedVersion.any_(),
-        )
-        await store.append(
-            wanted,
-            [ConformanceEvent(aggregate_id=wanted.aggregate_id, payload="3")],
-            ExpectedVersion.any_(),
-        )
+        for s, agg_type, p in (
+            (wanted, "Conformance", "1"),
+            (other, "ConformanceOther", "2"),
+            (wanted, "Conformance", "3"),
+        ):
+            await store.append(
+                s,
+                [ConformanceEvent(aggregate_id=s.aggregate_id, aggregate_type=agg_type, payload=p)],
+                ExpectedVersion.any_(),
+            )
         envelopes = await collect(
             store.read_all(options=FeedReadOptions(aggregate_type="Conformance"))
         )
@@ -144,7 +125,7 @@ class GlobalFeedConformance(ABC):
                         aggregate_type="ConformanceOther",
                         payload=f"other-{i}",
                     )
-                ],
+                ],  # fmt: skip
                 ExpectedVersion.any_(),
             )
         options = FeedReadOptions(aggregate_type="Conformance")
@@ -153,8 +134,7 @@ class GlobalFeedConformance(ABC):
         page = await collect(
             store.read_all(options=FeedReadOptions(aggregate_type="Conformance", limit=2))
         )
-        assert [e.event.payload for e in page] == ["0", "1"]  # type: ignore[attr-defined]
-        assert page[-1].position is not None
+        assert [e.event.payload for e in page] == ["0", "1"] and page[-1].position is not None  # type: ignore[attr-defined]
         rest = await collect(store.read_all(from_position=page[-1].position, options=options))
         assert [e.event.payload for e in rest] == ["2", "3"]  # type: ignore[attr-defined]
 
@@ -163,10 +143,7 @@ class GlobalFeedConformance(ABC):
         await store.append(
             stream, [ConformanceEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
         )
-        envelopes = await collect(
-            store.read_all(options=FeedReadOptions(aggregate_type="NeverAppended"))
-        )
-        assert envelopes == []
+        assert await collect(store.read_all(options=FeedReadOptions(aggregate_type="NeverAppended"))) == []  # fmt: skip
 
     async def test_position_round_trip_resumption(self, store: _AppenderFeed) -> None:
         stream = make_stream()
@@ -177,8 +154,7 @@ class GlobalFeedConformance(ABC):
                 ExpectedVersion.any_(),
             )
         full = await collect(store.read_all())
-        position = full[0].position
-        assert position is not None
+        assert (position := full[0].position) is not None
         round_tripped = Position.from_str(position.to_str())
         direct = await collect(store.read_all(from_position=position))
         via_round_trip = await collect(store.read_all(from_position=round_tripped))
@@ -192,5 +168,4 @@ class GlobalFeedConformance(ABC):
                 [ConformanceEvent(aggregate_id=stream.aggregate_id, payload=str(i))],
                 ExpectedVersion.any_(),
             )
-        envelopes = await collect(store.read_all(options=FeedReadOptions(limit=2)))
-        assert len(envelopes) == 2
+        assert len(await collect(store.read_all(options=FeedReadOptions(limit=2)))) == 2

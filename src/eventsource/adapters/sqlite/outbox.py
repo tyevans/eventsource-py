@@ -47,33 +47,29 @@ class SQLiteOutboxRepository:
 
     async def add_event(self, event: DomainEvent) -> UUID:
         """Add an event to the outbox for publishing and return its outbox UUID."""
-        with self._tracer.span(
-            "eventsource.outbox.add",
-            {
-                ATTR_EVENT_ID: str(event.event_id),
-                ATTR_EVENT_TYPE: event.event_type,
-                ATTR_AGGREGATE_ID: str(event.aggregate_id),
-                ATTR_AGGREGATE_TYPE: event.aggregate_type,
-                ATTR_DB_SYSTEM: "sqlite",
-            },
-        ):
+        attrs = {
+            ATTR_EVENT_ID: str(event.event_id),
+            ATTR_EVENT_TYPE: event.event_type,
+            ATTR_AGGREGATE_ID: str(event.aggregate_id),
+            ATTR_AGGREGATE_TYPE: event.aggregate_type,
+            ATTR_DB_SYSTEM: "sqlite",
+        }
+        with self._tracer.span("eventsource.outbox.add", attrs):
             outbox_id = uuid4()
-            now = datetime.now(UTC)
-            event_data = outbox_event_data(event)
-
+            params = (
+                str(outbox_id),
+                str(event.event_id),
+                event.event_type,
+                str(event.aggregate_id),
+                event.aggregate_type,
+                str(event.tenant_id) if event.tenant_id else None,
+                json_dumps(outbox_event_data(event)),
+                datetime.now(UTC).isoformat(),
+            )
             await self._connection.execute(
                 "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
                 "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-                (
-                    str(outbox_id),
-                    str(event.event_id),
-                    event.event_type,
-                    str(event.aggregate_id),
-                    event.aggregate_type,
-                    str(event.tenant_id) if event.tenant_id else None,
-                    json_dumps(event_data),
-                    now.isoformat(),
-                ),
+                params,
             )
             await self._connection.commit()
             return outbox_id
@@ -89,21 +85,20 @@ class SQLiteOutboxRepository:
                 "WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
                 (limit,),
             )
-            rows = await cursor.fetchall()
             entries = [
                 OutboxEntry(
-                    id=UUID(row[0]),
-                    event_id=UUID(row[1]),
-                    event_type=row[2],
-                    aggregate_id=UUID(row[3]),
-                    aggregate_type=row[4],
-                    tenant_id=UUID(row[5]) if row[5] else None,
-                    event_data=row[6],
-                    created_at=self._parse_datetime(row[7]),
-                    status="pending",
-                    retry_count=row[8] or 0,
-                )
-                for row in rows
+                    UUID(r[0]),
+                    UUID(r[1]),
+                    r[2],
+                    UUID(r[3]),
+                    r[4],
+                    UUID(r[5]) if r[5] else None,
+                    r[6],
+                    self._parse_datetime(r[7]),
+                    "pending",
+                    retry_count=r[8] or 0,
+                )  # fmt: skip
+                for r in await cursor.fetchall()
             ]
             if span:
                 span.set_attribute(ATTR_EVENT_COUNT, len(entries))
@@ -111,10 +106,8 @@ class SQLiteOutboxRepository:
 
     async def mark_published(self, outbox_id: UUID) -> None:
         """Mark an outbox event as successfully published."""
-        with self._tracer.span(
-            "eventsource.outbox.mark_published",
-            {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "sqlite"},
-        ):
+        attrs = {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "sqlite"}
+        with self._tracer.span("eventsource.outbox.mark_published", attrs):
             await self._connection.execute(
                 "UPDATE event_outbox SET status = 'published', published_at = ? WHERE id = ?",
                 (datetime.now(UTC).isoformat(), str(outbox_id)),
@@ -123,11 +116,7 @@ class SQLiteOutboxRepository:
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """Increment retry count for a failed publishing attempt."""
-        attrs = {
-            "outbox.id": str(outbox_id),
-            "error": error[:100] if error else None,
-            ATTR_DB_SYSTEM: "sqlite",
-        }
+        attrs = {"outbox.id": str(outbox_id), "error": error[:100] if error else None, ATTR_DB_SYSTEM: "sqlite"}  # fmt: skip
         with self._tracer.span("eventsource.outbox.increment_retry", attrs):
             await self._connection.execute(
                 "UPDATE event_outbox SET retry_count = retry_count + 1, last_error = ? WHERE id = ?",
@@ -137,11 +126,7 @@ class SQLiteOutboxRepository:
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """Mark an outbox event as permanently failed."""
-        attrs = {
-            "outbox.id": str(outbox_id),
-            "error": error[:100] if error else None,
-            ATTR_DB_SYSTEM: "sqlite",
-        }
+        attrs = {"outbox.id": str(outbox_id), "error": error[:100] if error else None, ATTR_DB_SYSTEM: "sqlite"}  # fmt: skip
         with self._tracer.span("eventsource.outbox.mark_failed", attrs):
             await self._connection.execute(
                 "UPDATE event_outbox SET status = 'failed', last_error = ? WHERE id = ?",
@@ -168,30 +153,21 @@ class SQLiteOutboxRepository:
         """Return aggregate statistics for the outbox."""
         with self._tracer.span("eventsource.outbox.get_stats", {ATTR_DB_SYSTEM: "sqlite"}):
             cursor = await self._connection.execute(
-                "SELECT "
-                "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), "
+                "SELECT SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), "
                 "SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), "
                 "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), "
                 "MIN(CASE WHEN status = 'pending' THEN created_at END), "
-                "AVG(CASE WHEN status = 'pending' THEN retry_count END) "
-                "FROM event_outbox"
+                "AVG(CASE WHEN status = 'pending' THEN retry_count END) FROM event_outbox"
             )
-            row = await cursor.fetchone()
-            if row is None:
+            if (row := await cursor.fetchone()) is None:
                 return OutboxStats(0, 0, 0, None, 0.0)
-            oldest_pending = None
+            oldest = None
             if row[3]:
                 try:
-                    oldest_pending = datetime.fromisoformat(row[3].replace("Z", "+00:00"))
+                    oldest = datetime.fromisoformat(row[3].replace("Z", "+00:00"))
                 except (ValueError, TypeError):
-                    oldest_pending = None
-            return OutboxStats(
-                pending_count=row[0] or 0,
-                published_count=row[1] or 0,
-                failed_count=row[2] or 0,
-                oldest_pending=oldest_pending,
-                avg_retries=float(row[4]) if row[4] else 0.0,
-            )
+                    oldest = None
+            return OutboxStats(row[0] or 0, row[1] or 0, row[2] or 0, oldest, float(row[4]) if row[4] else 0.0)  # fmt: skip
 
 
 __all__ = ["SQLiteOutboxRepository"]
