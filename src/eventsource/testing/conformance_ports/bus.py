@@ -1,9 +1,4 @@
-"""
-Conformance test suite for EventBus implementations.
-
-Provides a base test class that verifies backend implementations conform to the
-EventBus contract. All test methods are async (use pytest with asyncio_mode="auto").
-"""
+"""Conformance test suite for EventBus implementations."""
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -14,43 +9,22 @@ from eventsource.ports.bus import EventBus
 
 
 class EventBusConformanceSuite(ABC):
-    """
-    Base test suite for EventBus implementations.
-
-    Subclasses must implement ``create_bus``, ``create_test_event``, and
-    ``create_subscriber`` factory methods to verify the EventBus contract:
-    publish/subscribe roundtrip, multiple subscribers, unsubscribe,
-    ``subscribe_all``, wildcard subscriptions, handler error isolation,
-    background delivery, and per-aggregate ordering.
-    """
+    """Base test suite verifying the EventBus contract across backend implementations."""
 
     @abstractmethod
     def create_bus(self) -> EventBus:
         """Create a fresh, empty EventBus instance for testing."""
-        pass
 
     @abstractmethod
     def create_test_event(self, aggregate_id: UUID) -> DomainEvent:
         """Create a test event with the given aggregate_id."""
-        pass
 
     @abstractmethod
     def create_subscriber(self, received: list[DomainEvent]) -> Any:
-        """
-        Create an EventSubscriber that appends handled events to ``received``.
-
-        The subscriber's ``subscribed_to()`` must return the type produced by
-        ``create_test_event``.
-        """
-        pass
+        """Create an EventSubscriber that appends handled events to ``received``."""
 
     async def await_delivery(self, bus: EventBus) -> None:
-        """
-        Wait for in-flight deliveries to land.
-
-        Defaults to a no-op for in-process buses; distributed backends override
-        this with a bounded poll or consumer drain.
-        """
+        """Wait for in-flight deliveries to land (no-op for in-process buses)."""
         return None
 
     async def test_publish_and_subscribe_roundtrip(self) -> None:
@@ -64,7 +38,6 @@ class EventBusConformanceSuite(ABC):
 
         bus.subscribe(type(event), handler)
         await bus.publish([event])
-
         assert len(received_events) == 1
         assert received_events[0].event_id == event.event_id
 
@@ -85,7 +58,6 @@ class EventBusConformanceSuite(ABC):
         bus.subscribe(event_type, handler1)
         bus.subscribe(event_type, handler2)
         await bus.publish([event])
-
         assert len(received_by_handler1) == 1
         assert len(received_by_handler2) == 1
         assert received_by_handler1[0].event_id == event.event_id
@@ -105,9 +77,7 @@ class EventBusConformanceSuite(ABC):
         bus.subscribe(event_type, handler)
         await bus.publish([event1])
         assert len(received_events) == 1
-
         assert bus.unsubscribe(event_type, handler)
-
         event2 = self.create_test_event(aggregate_id)
         await bus.publish([event2])
         assert len(received_events) == 1
@@ -124,7 +94,6 @@ class EventBusConformanceSuite(ABC):
         event1 = self.create_test_event(uuid4())
         event2 = self.create_test_event(uuid4())
         await bus.publish([event1, event2])
-
         assert len(received_events) == 2
         assert received_events[0].event_id == event1.event_id
         assert received_events[1].event_id == event2.event_id
@@ -141,9 +110,7 @@ class EventBusConformanceSuite(ABC):
         event1 = self.create_test_event(uuid4())
         await bus.publish([event1])
         assert len(received_events) == 1
-
         assert bus.unsubscribe_from_all_events(handler)
-
         event2 = self.create_test_event(uuid4())
         await bus.publish([event2])
         assert len(received_events) == 1
@@ -164,7 +131,6 @@ class EventBusConformanceSuite(ABC):
         bus.subscribe(event_type, failing_handler)
         bus.subscribe(event_type, good_handler)
         await bus.publish([event])
-
         assert len(received_by_good_handler) == 1
 
     async def test_background_publish_delivers(self) -> None:
@@ -179,7 +145,6 @@ class EventBusConformanceSuite(ABC):
         bus.subscribe(type(event), handler)
         await bus.publish([event], background=True)
         await self.await_delivery(bus)
-
         assert len(received_events) == 1
         assert received_events[0].event_id == event.event_id
 
@@ -196,7 +161,6 @@ class EventBusConformanceSuite(ABC):
         bus.subscribe(type(events[0]), handler)
         await bus.publish(events)
         await self.await_delivery(bus)
-
         assert len(received_events) == len(events)
         assert [e.event_id for e in received_events] == [e.event_id for e in events]
 
@@ -206,15 +170,11 @@ class EventBusConformanceSuite(ABC):
         received_events: list[DomainEvent] = []
         subscriber = self.create_subscriber(received_events)
         bus.subscribe_all(subscriber)
-
         event = self.create_test_event(uuid4())
         await bus.publish([event])
         await self.await_delivery(bus)
-
         assert len(received_events) == 1
         assert received_events[0].event_id == event.event_id
 
 
-__all__ = [
-    "EventBusConformanceSuite",
-]
+__all__ = ["EventBusConformanceSuite"]

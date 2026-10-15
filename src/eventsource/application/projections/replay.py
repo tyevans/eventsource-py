@@ -1,33 +1,10 @@
 """Driving projections over the global event feed to rebuild them.
 
-Deliberately small and explicit rather than a subscription runner: this is
-what a *rebuild* looks like, and a rebuild is a foreground operation someone
-is waiting on. `ProjectionCoordinator` polls on a timer for live catch-up,
-which is the other job.
-
-## A poison event must not wedge the rebuild
-
-`CheckpointTrackingProjection.handle` retries, writes to the DLQ, and then
-re-raises so a *live subscription* stops rather than checkpointing past a
-failure. A rebuild wants the opposite: stopping means one bad event denies the
-projection every event after it. So `replay` catches, records, and continues.
-`ReplayReport.failed` is a count rather than a bool, and `ReplayReport.failures`
-carries the position, event id, event type, rejecting projection name, and
-exception itself. `strict=True` stops at the first rejection and raises
-`ReplayFailedError` carrying the same `ReplayFailure`.
-
-## Why the failure list is bounded
-
-Each `ReplayFailure` holds a live exception and its `__traceback__`.
-`max_failures` caps what the report retains, `ReplayReport.failures_truncated`
-counts what the cap dropped, and `on_failure=` fires for *every* failure
-regardless of the cap so callers can stream them outside memory.
-
-## Scoping the read
-
-`tenant_id=` and `aggregate_type=` forward `FeedReadOptions` to the adapter,
-pushing the filter into the store query rather than filtering in Python after
-delivery.
+Foreground rebuild runner over `GlobalEventFeed`. By default, `replay` catches,
+records, and continues past projection errors so one poison event does not deny
+subsequent events (`strict=True` raises `ReplayFailedError` on the first error).
+`max_failures` bounds retained `ReplayFailure` items (`failures_truncated`
+counts dropped ones), while `on_failure` receives every failure.
 """
 
 from __future__ import annotations
@@ -56,26 +33,14 @@ __all__ = [
     "replay",
 ]
 
-#: Envelopes one feed read will pull into memory at a time. Bounded on the
-#: read because in-tree adapters materialize a batch before yielding.
 REPLAY_BATCH_SIZE = 1000
-
-#: Events one `replay` call will read before raising RuntimeError to guard
-#: against a non-advancing adapter cursor.
 MAX_EVENTS_PER_REPLAY = 10_000_000
-
-#: Failures one `ReplayReport` retains before counting the rest in
-#: `failures_truncated`.
 MAX_FAILURES_PER_REPLAY = 1000
 
 
 @dataclass(frozen=True, slots=True)
 class ReplayFailure:
-    """One projection's refusal of one event.
-
-    `projection` is the rejecting projection's class name rather than the live
-    object so the report does not hold a handle into the read model.
-    """
+    """One projection's refusal of one event (`projection` is the class name)."""
 
     position: Position | None
     event_id: UUID
@@ -86,12 +51,7 @@ class ReplayFailure:
 
 @dataclass(frozen=True, slots=True)
 class ReplayReport:
-    """What one `replay` call did.
-
-    `failed` is derived from `failures` by distinct `event_id` (since
-    `position` is optional on feedless stores and two projections can reject
-    the same event). It is a lower bound whenever `failures_truncated > 0`.
-    """
+    """Summary of a `replay` call (`failed` counts distinct event_ids in `failures`)."""
 
     applied: int
     last_position: Position | None
@@ -119,10 +79,7 @@ class ReplayReport:
 
 
 class ReplayFailedError(ProjectionError):
-    """A `strict=True` replay hit an event a projection rejected.
-
-    Rooted in `ProjectionError` and carries the `ReplayFailure` on `.failure`.
-    """
+    """Raised when a `strict=True` replay hits an event rejected by a projection."""
 
     def __init__(self, *, failure: ReplayFailure) -> None:
         self.failure = failure
@@ -146,15 +103,7 @@ async def replay(
     max_failures: int = MAX_FAILURES_PER_REPLAY,
     on_failure: Callable[[ReplayFailure], None] | None = None,
 ) -> ReplayReport:
-    """Read the feed from `from_position` and fold it into every projection.
-
-    - `from_position` is exclusive (`None` reads from the beginning).
-    - `tenant_id` and `aggregate_type` push filter options down to the store.
-    - `strict=True` raises `ReplayFailedError` on the first rejection.
-    - `max_failures` caps retained `ReplayFailure` items (`failures_truncated`
-      counts dropped ones); `on_failure` is invoked for every failure before
-      any strict raise.
-    """
+    """Read the feed from `from_position` (exclusive) and fold into every projection."""
     projection_list: tuple[EventSubscriber, ...] = (
         (cast("EventSubscriber", projections),)
         if hasattr(projections, "handle")

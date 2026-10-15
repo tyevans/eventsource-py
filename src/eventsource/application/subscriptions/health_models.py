@@ -11,22 +11,7 @@ from typing import Any
 
 @dataclass
 class SubscriptionHealth:
-    """
-    Health status of a single subscription.
-
-    Provides detailed health information for individual subscriptions.
-
-    Attributes:
-        name: Subscription name
-        status: Health status (healthy/degraded/unhealthy/critical)
-        state: Current subscription state
-        events_processed: Total events successfully processed
-        events_failed: Total events that failed processing
-        lag_events: Number of events behind
-        error_rate: Error rate per minute
-        last_error: Most recent error message if any
-        uptime_seconds: Time since subscription started
-    """
+    """Health status of a single subscription."""
 
     name: str
     status: str
@@ -55,68 +40,23 @@ class SubscriptionHealth:
 
 @dataclass
 class ManagerHealth:
-    """
-    Health status of the subscription manager.
-
-    Provides comprehensive health information including:
-    - Overall status (healthy/degraded/unhealthy)
-    - Running state
-    - Subscription counts by health status
-    - Total lag across all subscriptions
-    - Uptime information
-    - Per-subscription status details
-
-    This is designed to be JSON-serializable for health endpoints.
-
-    Example:
-        >>> health = await manager.health_check()
-        >>> if health.status == "unhealthy":
-        ...     await alert_ops_team(health.to_dict())
-    """
+    """Comprehensive health status of the subscription manager (JSON-serializable)."""
 
     status: str
-    """Overall health status: "healthy", "degraded", "unhealthy", or "critical"."""
-
     running: bool
-    """Whether the manager is currently running."""
-
     subscription_count: int
-    """Total number of registered subscriptions."""
-
     healthy_count: int
-    """Number of subscriptions in healthy state."""
-
     degraded_count: int
-    """Number of subscriptions in degraded state."""
-
     unhealthy_count: int
-    """Number of subscriptions in unhealthy or critical state."""
-
     total_events_processed: int
-    """Total events processed across all subscriptions."""
-
     total_events_failed: int
-    """Total events failed across all subscriptions."""
-
     total_lag_events: int
-    """Total lag (events behind) across all subscriptions."""
-
     uptime_seconds: float
-    """Time since manager started in seconds."""
-
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
-    """Timestamp of the health check."""
-
     subscriptions: list[SubscriptionHealth] = field(default_factory=list)
-    """Per-subscription health details."""
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            Dictionary suitable for JSON encoding and health endpoints.
-        """
+        """Convert to dictionary for JSON serialization."""
         return {
             "status": self.status,
             "running": self.running,
@@ -135,34 +75,12 @@ class ManagerHealth:
 
 @dataclass
 class ReadinessStatus:
-    """
-    Readiness probe status (Kubernetes-style).
-
-    Indicates whether the manager is ready to accept work.
-
-    A manager is ready when:
-    - It is running
-    - It has at least one subscription
-    - No subscriptions are in error state
-
-    Example:
-        >>> readiness = await manager.readiness_check()
-        >>> if readiness.ready:
-        ...     # Accept incoming work
-        ...     pass
-    """
+    """Readiness probe status (Kubernetes-style) indicating readiness to accept work."""
 
     ready: bool
-    """Whether the manager is ready to accept work."""
-
     reason: str
-    """Human-readable explanation of readiness state."""
-
     details: dict[str, Any] = field(default_factory=dict)
-    """Additional details about readiness."""
-
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
-    """Timestamp of the readiness check."""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -176,33 +94,12 @@ class ReadinessStatus:
 
 @dataclass
 class LivenessStatus:
-    """
-    Liveness probe status (Kubernetes-style).
-
-    Indicates whether the manager is still alive and responding.
-
-    A manager is live when:
-    - It is not shutting down
-    - Its internal systems are responsive
-
-    Example:
-        >>> liveness = await manager.liveness_check()
-        >>> if not liveness.alive:
-        ...     # Manager needs restart
-        ...     pass
-    """
+    """Liveness probe status (Kubernetes-style) indicating the manager is alive and responsive."""
 
     alive: bool
-    """Whether the manager is alive and responsive."""
-
     reason: str
-    """Human-readable explanation of liveness state."""
-
     details: dict[str, Any] = field(default_factory=dict)
-    """Additional details about liveness."""
-
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
-    """Timestamp of the liveness check."""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
