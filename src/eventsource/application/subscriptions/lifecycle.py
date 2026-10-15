@@ -45,10 +45,8 @@ class SubscriptionLifecycleManager:
     ) -> None:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self.event_store = event_store
-        self.event_bus = event_bus
-        self.checkpoint_repo = checkpoint_repo
-        self.leader_elector = leader_elector
+        self.event_store, self.event_bus = event_store, event_bus
+        self.checkpoint_repo, self.leader_elector = checkpoint_repo, leader_elector
         self._coordinators: dict[str, TransitionCoordinator] = {}
         self._start_resolver = StartFromResolver(event_store, checkpoint_repo)
 
@@ -56,8 +54,7 @@ class SubscriptionLifecycleManager:
         if self.leader_elector is None:
             return True
         try:
-            renewed = await self.leader_elector.renew()
-            return bool(renewed and self.leader_elector.is_leader)
+            return bool(await self.leader_elector.renew() and self.leader_elector.is_leader)
         except Exception as e:
             extra = {"identity": self.leader_elector.identity, "error": str(e)}
             logger.error("Leadership lease renewal failed", extra=extra, exc_info=True)
@@ -70,18 +67,17 @@ class SubscriptionLifecycleManager:
             try:
                 if self.leader_elector is not None and not await self.verify_leadership_lease():
                     ident = self.leader_elector.identity
+                    msg = f"Instance '{ident}' does not hold a valid leadership lease; "
                     raise TransitionError(
-                        f"Instance '{ident}' does not hold a valid leadership lease; "
-                        f"unauthorized cluster transition blocked for subscription '{name}'"
+                        f"{msg}unauthorized cluster transition blocked for subscription '{name}'"
                     )
                 start_pos = await self._start_resolver.resolve(subscription)
                 subscription.last_processed_position = start_pos
-                if span and (token := render_position(start_pos)) is not None:
-                    span.set_attribute(ATTR_POSITION, token)
-                logger.info(
-                    "Starting subscription",
-                    extra={"subscription": name, "start_position": render_position(start_pos)},
-                )
+                pos_token = render_position(start_pos)
+                if span and pos_token is not None:
+                    span.set_attribute(ATTR_POSITION, pos_token)
+                start_extra = {"subscription": name, "start_position": pos_token}
+                logger.info("Starting subscription", extra=start_extra)
                 coordinator = TransitionCoordinator(
                     self.event_store, self.event_bus, self.checkpoint_repo, subscription
                 )
@@ -95,16 +91,13 @@ class SubscriptionLifecycleManager:
                     )
                 if span:
                     span.set_attribute(ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
-                ok_extra = {
-                    "subscription": name,
-                    "catchup_events": result.catchup_events_processed,
-                    "buffer_events": result.buffer_events_processed,
-                    "final_position": render_position(result.final_position),
-                }
+                ok_extra = {"subscription": name, "catchup_events": result.catchup_events_processed}
+                ok_extra["buffer_events"] = result.buffer_events_processed
+                ok_extra["final_position"] = render_position(result.final_position)
                 logger.info("Subscription started successfully", extra=ok_extra)
             except Exception as e:
-                err_extra = {"subscription": name, "error": str(e)}
-                logger.error("Failed to start subscription", extra=err_extra, exc_info=True)
+                extra = {"subscription": name, "error": str(e)}
+                logger.error("Failed to start subscription", extra=extra, exc_info=True)
                 await subscription.set_error(e)
                 raise
 
@@ -118,18 +111,14 @@ class SubscriptionLifecycleManager:
     async def start_all(
         self, subscriptions: list[Subscription], concurrent: bool = True
     ) -> dict[str, Exception | None]:
-        start_extra = {"subscription_count": len(subscriptions), "concurrent": concurrent}
-        logger.info("Starting subscriptions", extra=start_extra)
+        extra_start = {"subscription_count": len(subscriptions), "concurrent": concurrent}
+        logger.info("Starting subscriptions", extra=extra_start)
         results: dict[str, Exception | None] = {}
         if concurrent and len(subscriptions) > 1:
+            coro = self.start_subscription_isolated
             tasks = [
-                (
-                    sub.name,
-                    asyncio.create_task(
-                        self.start_subscription_isolated(sub), name=f"start_{sub.name}"
-                    ),
-                )
-                for sub in subscriptions
+                (s.name, asyncio.create_task(coro(s), name=f"start_{s.name}"))
+                for s in subscriptions
             ]
             for name, task in tasks:
                 try:
@@ -137,18 +126,16 @@ class SubscriptionLifecycleManager:
                 except Exception as e:
                     results[name] = e
                     err_extra = {"subscription": name, "error": str(e)}
-                    logger.error(
-                        "Unexpected error starting subscription", extra=err_extra, exc_info=True
-                    )
+                    msg = "Unexpected error starting subscription"
+                    logger.error(msg, extra=err_extra, exc_info=True)
         else:
             for sub in subscriptions:
                 results[sub.name] = await self.start_subscription_isolated(sub)
 
         succeeded = sum(1 for r in results.values() if r is None)
-        failed = sum(1 for r in results.values() if r is not None)
-        if failed > 0:
-            extra = {"succeeded": succeeded, "failed": failed}
-            logger.warning("Some subscriptions failed to start", extra=extra)
+        if failed := sum(1 for r in results.values() if r is not None):
+            extra_warn = {"succeeded": succeeded, "failed": failed}
+            logger.warning("Some subscriptions failed to start", extra=extra_warn)
         else:
             logger.info("All subscriptions started successfully", extra={"count": succeeded})
         return results
@@ -168,13 +155,11 @@ class SubscriptionLifecycleManager:
     async def stop_all(self, subscriptions: list[Subscription], timeout: float = 30.0) -> None:
         extra = {"subscription_count": len(subscriptions), "timeout": timeout}
         logger.info("Stopping subscriptions", extra=extra)
-        stop_tasks = [
-            self.stop_subscription(s.name, timeout)
-            for s in subscriptions
-            if s.name in self._coordinators
-        ]
-        if stop_tasks:
-            await asyncio.gather(*stop_tasks, return_exceptions=True)
+        active = [s.name for s in subscriptions if s.name in self._coordinators]
+        if active:
+            await asyncio.gather(
+                *(self.stop_subscription(n, timeout) for n in active), return_exceptions=True
+            )
         for sub in subscriptions:
             if not sub.is_terminal:
                 await sub.transition_to(SubscriptionState.STOPPED)
@@ -184,12 +169,10 @@ class SubscriptionLifecycleManager:
         return self._coordinators.get(name)
 
     def get_handler_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
-        coord = self.get_coordinator(name)
-        return coord.handler_circuit_breaker if coord else None
+        return coord.handler_circuit_breaker if (coord := self.get_coordinator(name)) else None
 
     def get_infra_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
-        coord = self.get_coordinator(name)
-        return coord.infra_circuit_breaker if coord else None
+        return coord.infra_circuit_breaker if (coord := self.get_coordinator(name)) else None
 
     def remove_coordinator(self, name: str) -> TransitionCoordinator | None:
         return self._coordinators.pop(name, None)

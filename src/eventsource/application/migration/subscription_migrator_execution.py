@@ -45,22 +45,14 @@ class SubscriptionMigratorExecutionMixin:
     ) -> MigrationSummary:
         """Migrate subscription checkpoints to target store positions."""
         mid, tid, n_subs = str(migration_id), str(tenant_id), len(subscription_names)
-        span_attrs = {
-            "migration.id": mid,
-            "tenant.id": tid,
-            "subscription_count": n_subs,
-            "dry_run": dry_run,
-        }
+        attrs = {"migration.id": mid, "tenant.id": tid, "dry_run": dry_run}
+        attrs["subscription_count"] = n_subs
         span_name = "eventsource.subscription_migrator.migrate_subscriptions"
-        with self._tracer.span(span_name, span_attrs):
+        with self._tracer.span(span_name, attrs):
             start_time = datetime.now(UTC)
-            log_extra = {
-                "migration_id": mid,
-                "tenant_id": tid,
-                "subscription_count": n_subs,
-                "dry_run": dry_run,
-            }
-            logger.info("Starting subscription migration", extra=log_extra)
+            extra = {"migration_id": mid, "tenant_id": tid, "dry_run": dry_run}
+            extra["subscription_count"] = n_subs
+            logger.info("Starting subscription migration", extra=extra)
 
             if dry_run:
                 plan = await self.plan_migration(migration_id, tenant_id, subscription_names)
@@ -84,7 +76,7 @@ class SubscriptionMigratorExecutionMixin:
                 )
 
             results: list[SubscriptionMigrationResult] = []
-            successful_count = failed_count = skipped_count = 0
+            ok_cnt = fail_cnt = skip_cnt = 0
             for name in subscription_names:
                 try:
                     result = await self._migrate_single_subscription(migration_id, name)
@@ -92,87 +84,74 @@ class SubscriptionMigratorExecutionMixin:
                     msg = f"Critical error migrating subscription {name}: {e}"
                     raise SubscriptionMigrationError(msg, migration_id, name, str(e)) from e
                 if result is None:
-                    skipped_count += 1
+                    skip_cnt += 1
                 else:
                     results.append(result)
-                    successful_count += int(result.success)
-                    failed_count += int(not result.success)
+                    ok_cnt += int(result.success)
+                    fail_cnt += int(not result.success)
 
             end_time = datetime.now(UTC)
-            duration_ms = (end_time - start_time).total_seconds() * 1000
-            done_extra = {
-                "migration_id": mid,
-                "successful_count": successful_count,
-                "failed_count": failed_count,
-                "skipped_count": skipped_count,
-                "duration_ms": duration_ms,
-            }
+            dur_ms = (end_time - start_time).total_seconds() * 1000
+            done_extra = {"migration_id": mid, "successful_count": ok_cnt, "failed_count": fail_cnt}
+            done_extra.update(skipped_count=skip_cnt, duration_ms=dur_ms)
             logger.info("Subscription migration completed", extra=done_extra)
-            counts = (successful_count, failed_count, skipped_count)
+            counts = (ok_cnt, fail_cnt, skip_cnt)
             return MigrationSummary(
-                migration_id, tenant_id, results, *counts, start_time, end_time, duration_ms
+                migration_id, tenant_id, results, *counts, start_time, end_time, dur_ms
             )
 
     async def _migrate_single_subscription(
         self, migration_id: UUID, subscription_name: str
     ) -> SubscriptionMigrationResult | None:
-        log_ctx = {"subscription": subscription_name, "migration_id": str(migration_id)}
+        log_ctx: dict[str, object] = {
+            "subscription": subscription_name,
+            "migration_id": str(migration_id),
+        }
         span_attrs = {"migration.id": str(migration_id), "subscription.name": subscription_name}
         with self._tracer.span("eventsource.subscription_migrator.migrate_single", span_attrs):
-            current_position = await self._checkpoint_repo.get_position(subscription_name)
-            if current_position is None:
+            current_pos = await self._checkpoint_repo.get_position(subscription_name)
+            if current_pos is None:
                 logger.debug("Subscription has no checkpoint, skipping", extra=log_ctx)
                 return None
 
             checkpoints = await self._checkpoint_repo.get_all_checkpoints()
-            checkpoint_data = next(
-                (c for c in checkpoints if c.projection_name == subscription_name), None
-            )
-            if checkpoint_data is None or checkpoint_data.last_event_id is None:
+            cp = next((c for c in checkpoints if c.projection_name == subscription_name), None)
+            if cp is None or cp.last_event_id is None:
                 logger.warning("Checkpoint data incomplete, skipping", extra=log_ctx)
                 return None
 
             try:
-                translation = await self._position_mapper.translate_position(
-                    migration_id=migration_id, source_position=current_position, use_nearest=True
+                tr = await self._position_mapper.translate_position(
+                    migration_id=migration_id, source_position=current_pos, use_nearest=True
                 )
             except PositionMappingError as e:
-                err_ctx = {**log_ctx, "position": current_position.to_str(), "error": str(e)}
+                err_ctx = {**log_ctx, "position": current_pos.to_str(), "error": str(e)}
                 logger.error("Failed to translate position", extra=err_ctx)
                 err_msg = f"Position translation failed: {e}"
                 return SubscriptionMigrationResult(
-                    subscription_name, False, current_position, error_message=err_msg
+                    subscription_name, False, current_pos, error_message=err_msg
                 )
 
-            target_pos = translation.target_position
+            target_pos = tr.target_position
             try:
                 await self._checkpoint_repo.save_position(
                     subscription_id=subscription_name,
                     position=target_pos,
-                    event_id=checkpoint_data.last_event_id,
-                    event_type=checkpoint_data.last_event_type or "Unknown",
+                    event_id=cp.last_event_id,
+                    event_type=cp.last_event_type or "Unknown",
                 )
-                ok_ctx = {
-                    **log_ctx,
-                    "source_position": current_position.to_str(),
-                    "target_position": target_pos.to_str(),
-                    "is_exact": translation.is_exact,
-                }
+                ok_ctx = {**log_ctx, "source_position": current_pos.to_str()}
+                ok_ctx.update(target_position=target_pos.to_str(), is_exact=tr.is_exact)
                 logger.info("Subscription checkpoint migrated", extra=ok_ctx)
+                args = (subscription_name, True, current_pos, target_pos, tr.is_exact)
                 return SubscriptionMigrationResult(
-                    subscription_name,
-                    True,
-                    current_position,
-                    target_pos,
-                    is_exact_translation=translation.is_exact,
-                    nearest_source_position=translation.nearest_source_position,
-                    migrated_at=datetime.now(UTC),
+                    *args, tr.nearest_source_position, migrated_at=datetime.now(UTC)
                 )
             except Exception as e:
                 logger.error("Failed to update checkpoint", extra={**log_ctx, "error": str(e)})
                 err_msg = f"Checkpoint update failed: {e}"
                 return SubscriptionMigrationResult(
-                    subscription_name, False, current_position, target_pos, error_message=err_msg
+                    subscription_name, False, current_pos, target_pos, error_message=err_msg
                 )
 
     async def migrate_tenant_subscriptions(
@@ -190,13 +169,9 @@ class SubscriptionMigratorExecutionMixin:
             if subscription_names is None:
                 checkpoints = await self._checkpoint_repo.get_all_checkpoints()
                 subscription_names = [c.projection_name for c in checkpoints]
-            log_extra = {
-                "migration_id": mid,
-                "tenant_id": tid,
-                "subscription_count": len(subscription_names),
-                "dry_run": dry_run,
-            }
-            logger.info("Migrating tenant subscriptions", extra=log_extra)
+            extra = {"migration_id": mid, "tenant_id": tid, "dry_run": dry_run}
+            extra["subscription_count"] = len(subscription_names)
+            logger.info("Migrating tenant subscriptions", extra=extra)
             return await self.migrate_subscriptions(
                 migration_id, tenant_id, subscription_names, dry_run=dry_run
             )

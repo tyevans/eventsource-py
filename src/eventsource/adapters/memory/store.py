@@ -56,10 +56,8 @@ class InMemoryEventStore:
 
     def clear(self) -> None:
         with self._lock:
-            self._events.clear()
-            self._streams.clear()
-            self._categories.clear()
-            self._event_ids.clear()
+            for col in (self._events, self._streams, self._categories, self._event_ids):
+                col.clear()
 
     async def close(self) -> None:
         return None
@@ -91,8 +89,9 @@ class InMemoryEventStore:
             seen_in_batch: set[UUID] = set()
             for event in events:
                 if event.event_id in self._event_ids or event.event_id in seen_in_batch:
-                    msg = f"event_id {event.event_id} already exists in the store"
-                    raise DuplicateEventError(msg)
+                    raise DuplicateEventError(
+                        f"event_id {event.event_id} already exists in the store"
+                    )
                 seen_in_batch.add(event.event_id)
 
             now = datetime.now(UTC)
@@ -101,26 +100,17 @@ class InMemoryEventStore:
 
             new_indexes: list[int] = []
             for version, event in enumerate(events, start=current_version + 1):
-                index = len(self._events)
-                pos = self._position_of(index)
+                idx = len(self._events)
                 self._events.append(
-                    EventEnvelope(
-                        event=event,
-                        stream_id=stream,
-                        stream_version=version,
-                        position=pos,
-                        stored_at=now,
-                    )
+                    EventEnvelope(event, stream, version, self._position_of(idx), now)
                 )
                 self._event_ids.add(event.event_id)
-                new_indexes.append(index)
+                new_indexes.append(idx)
 
             self._streams.setdefault(key, []).extend(new_indexes)
             self._categories.setdefault(stream.category, []).extend(new_indexes)
             return AppendResult(
-                stream=stream,
-                new_version=current_version + len(events),
-                position=self._position_of(new_indexes[0]),
+                stream, current_version + len(events), self._position_of(new_indexes[0])
             )
 
     async def read_stream(
@@ -129,8 +119,7 @@ class InMemoryEventStore:
         opts = options or StreamReadOptions()
         if opts.limit is not None and opts.limit <= 0:
             return
-        events_snapshot = self._events
-        stream_list = self._streams.get(stream.render(), ())
+        events_snapshot, stream_list = self._events, self._streams.get(stream.render(), ())
         total = len(stream_list)
         start = max(0, opts.from_version - 1) if opts.from_version is not None else 0
         end = min(total, max(0, opts.to_version)) if opts.to_version is not None else total
@@ -138,12 +127,12 @@ class InMemoryEventStore:
             return
         if opts.direction == ReadDirection.BACKWARD:
             start = max(start, end - opts.limit) if opts.limit is not None else start
-            for i in reversed(stream_list[start:end]):
-                yield events_snapshot[i]
+            indices: Sequence[int] = list(reversed(stream_list[start:end]))
         else:
             end = min(end, start + opts.limit) if opts.limit is not None else end
-            for i in stream_list[start:end]:
-                yield events_snapshot[i]
+            indices = stream_list[start:end]
+        for i in indices:
+            yield events_snapshot[i]
 
     async def get_stream_version(self, stream: StreamId) -> int:
         return len(self._streams.get(stream.render(), ()))
@@ -156,8 +145,7 @@ class InMemoryEventStore:
     ) -> AsyncIterator[EventEnvelope]:
         if limit is not None and limit <= 0:
             return
-        events_snapshot = self._events
-        yielded = 0
+        events_snapshot, yielded = self._events, 0
         for i in indices:
             if limit is not None and yielded >= limit:
                 break
@@ -175,16 +163,12 @@ class InMemoryEventStore:
             return
         if from_position is not None:
             self._validate_position(from_position)
+        agg = opts.aggregate_type
         indices: Sequence[int] = (
-            self._categories.get(opts.aggregate_type, ())
-            if opts.aggregate_type is not None
-            else range(len(self._events))
+            self._categories.get(agg, ()) if agg is not None else range(len(self._events))
         )
-        start = (
-            bisect.bisect_right(indices, from_position.key, key=lambda i: (i + 1,))
-            if from_position is not None
-            else 0
-        )
+        key_fn = lambda i: (i + 1,)  # noqa: E731
+        start = bisect.bisect_right(indices, from_position.key, key=key_fn) if from_position else 0
         async for envelope in self._iter_filtered(indices[start:], opts.limit, opts.tenant_id):
             yield envelope
 
@@ -195,13 +179,10 @@ class InMemoryEventStore:
         self, category: str, options: CategoryReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         opts = options or CategoryReadOptions()
-        events_snapshot = self._events
-        indices: Sequence[int] = self._categories.get(category, ())
+        events_snapshot, indices = self._events, self._categories.get(category, ())
         ts = opts.from_timestamp
         start = (
-            bisect.bisect_left(indices, ts, key=lambda i: events_snapshot[i].stored_at)
-            if ts is not None
-            else 0
+            bisect.bisect_left(indices, ts, key=lambda i: events_snapshot[i].stored_at) if ts else 0
         )
         async for envelope in self._iter_filtered(indices[start:], opts.limit, opts.tenant_id):
             yield envelope

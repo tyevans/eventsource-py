@@ -44,42 +44,33 @@ class KafkaConsumerRetryMixin:
         self._stats.last_error_at = datetime.now(UTC)
         event_type = self._get_header_value(message.headers, "event_type")
         event_id = self._get_header_value(message.headers, "event_id")
+        base_extra = {
+            "event_type": event_type,
+            "event_id": event_id,
+            "max_retries": self._config.max_retries,
+            "error": str(error),
+        }
 
         if retry_count >= self._config.max_retries:
             logger.error(
                 "Max retries exceeded, message will be sent to DLQ",
-                extra={
-                    "event_type": event_type,
-                    "event_id": event_id,
-                    "retry_count": retry_count,
-                    "max_retries": self._config.max_retries,
-                    "error": str(error),
-                },
+                extra={**base_extra, "retry_count": retry_count},
             )
             retained = await self._send_to_dlq(message, error, retry_count)
-            if retained and self._consumer:
-                await self._consumer.commit()
-            elif not retained:
-                self._warn_uncommitted(message, "max_retries_exceeded")
-            return
+            stage = "max_retries_exceeded"
+        else:
+            delay = self._calculate_retry_delay(retry_count)
+            logger.warning(
+                "Message processing failed, republishing for retry",
+                extra={**base_extra, "retry_count": retry_count + 1, "retry_delay": delay},
+            )
+            retained = await self._republish_for_retry(message, retry_count + 1, delay)
+            stage = "retry_republish"
 
-        delay = self._calculate_retry_delay(retry_count)
-        logger.warning(
-            "Message processing failed, republishing for retry",
-            extra={
-                "event_type": event_type,
-                "event_id": event_id,
-                "retry_count": retry_count + 1,
-                "max_retries": self._config.max_retries,
-                "retry_delay": delay,
-                "error": str(error),
-            },
-        )
-        retained = await self._republish_for_retry(message, retry_count + 1, delay)
         if retained and self._consumer:
             await self._consumer.commit()
         elif not retained:
-            self._warn_uncommitted(message, "retry_republish")
+            self._warn_uncommitted(message, stage)
 
     async def _republish_for_retry(self, message: Any, new_retry_count: int, delay: float) -> bool:
         """Republish a failed message for retry."""
@@ -88,22 +79,21 @@ class KafkaConsumerRetryMixin:
                 "Cannot republish for retry: producer not connected; sending to DLQ",
                 extra={"retry_count": new_retry_count},
             )
+            err = RuntimeError("producer not connected; cannot republish for retry")
             return await self._send_to_dlq(
-                message,
-                RuntimeError("producer not connected; cannot republish for retry"),
-                new_retry_count - 1,
-                reason="republish_failed",
+                message, err, new_retry_count - 1, reason="republish_failed"
             )
 
-        new_headers: list[tuple[str, bytes]] = []
-        if message.headers:
-            for key, value in message.headers:
-                if key not in ("retry_count", "retry_after"):
-                    new_headers.append((key, value))
-
-        new_headers.append(("retry_count", str(new_retry_count).encode("utf-8")))
+        new_headers = [
+            (k, v) for k, v in (message.headers or ()) if k not in ("retry_count", "retry_after")
+        ]
         retry_after = datetime.now(UTC).timestamp() + delay
-        new_headers.append(("retry_after", str(retry_after).encode("utf-8")))
+        new_headers.extend(
+            [
+                ("retry_count", str(new_retry_count).encode("utf-8")),
+                ("retry_after", str(retry_after).encode("utf-8")),
+            ]
+        )
 
         try:
             await self._producer.send(
@@ -112,14 +102,12 @@ class KafkaConsumerRetryMixin:
                 value=message.value,
                 headers=new_headers,
             )
-            logger.debug(
-                "Message republished for retry",
-                extra={
-                    "event_type": self._get_header_value(message.headers, "event_type"),
-                    "retry_count": new_retry_count,
-                    "retry_after": retry_after,
-                },
-            )
+            extra = {
+                "event_type": self._get_header_value(message.headers, "event_type"),
+                "retry_count": new_retry_count,
+                "retry_after": retry_after,
+            }
+            logger.debug("Message republished for retry", extra=extra)
             return True
         except Exception as e:
             logger.error(
@@ -147,26 +135,22 @@ class KafkaConsumerRetryMixin:
         reason: str = "max_retries_exceeded",
     ) -> bool:
         """Send a failed message to the dead letter queue."""
+        event_type = self._get_header_value(message.headers, "event_type")
         if not self._config.enable_dlq:
             logger.warning(
                 "DLQ disabled, dropping failed message",
-                extra={
-                    "event_type": self._get_header_value(message.headers, "event_type"),
-                    "error": str(error),
-                },
+                extra={"event_type": event_type, "error": str(error)},
             )
             return True
 
         if not self._producer:
             logger.error(
-                "Cannot send to DLQ: producer not connected",
-                extra={"event_type": self._get_header_value(message.headers, "event_type")},
+                "Cannot send to DLQ: producer not connected", extra={"event_type": event_type}
             )
             return False
 
         dlq_headers = self._create_dlq_headers(message, error, retry_count, reason)
-        original_headers = list(message.headers) if message.headers else []
-        all_headers = original_headers + dlq_headers
+        all_headers = list(message.headers or ()) + dlq_headers
 
         try:
             await self._producer.send(
@@ -177,14 +161,13 @@ class KafkaConsumerRetryMixin:
             )
             self._stats.messages_sent_to_dlq += 1
             if self._metrics:
-                self._metrics.dlq_messages.add(
-                    1, attributes={"dlq.reason": reason, "error.type": type(error).__name__}
-                )
+                attrs = {"dlq.reason": reason, "error.type": type(error).__name__}
+                self._metrics.dlq_messages.add(1, attributes=attrs)
             logger.info(
                 "Message sent to DLQ",
                 extra={
                     "dlq_topic": self._config.dlq_topic_name,
-                    "event_type": self._get_header_value(message.headers, "event_type"),
+                    "event_type": event_type,
                     "event_id": self._get_header_value(message.headers, "event_id"),
                     "reason": reason,
                     "error": str(error)[:200],
