@@ -1,7 +1,7 @@
 ---
 id: TASK-0434
 title: "Add stream_exists(), read_events(), and single-event/default-expected append() to SyncEventStoreAdapter"
-status: Refined
+status: Complete
 target_bc: adapters
 dependencies: [TASK-0425]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md

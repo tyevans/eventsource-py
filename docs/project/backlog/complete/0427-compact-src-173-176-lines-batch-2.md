@@ -1,7 +1,7 @@
 ---
 id: TASK-0427
 title: "Compact 173-176 line src modules below 160 lines (Batch 2)"
-status: Refined
+status: Complete
 target_bc: architecture
 dependencies: [TASK-0425]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
