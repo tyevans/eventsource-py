@@ -18,6 +18,8 @@ from tests.unit.application.aggregates.test_repository._models import (
     MockEventPublisher,
 )
 
+CounterRepo = AggregateRepository[CounterAggregate]
+
 
 def _inc(agg_id: UUID, version: int, increment: int) -> CounterIncremented:
     return CounterIncremented(
@@ -26,6 +28,10 @@ def _inc(agg_id: UUID, version: int, increment: int) -> CounterIncremented:
         aggregate_version=version,
         increment=increment,
     )
+
+
+def _stream(agg_id: UUID) -> StreamId:
+    return StreamId(aggregate_id=agg_id, category="Counter")
 
 
 class TestRepositoryInitialization:
@@ -55,20 +61,16 @@ class TestRepositoryInitialization:
 class TestLoadAggregate:
     @pytest.mark.asyncio
     async def test_load_existing_aggregate(
-        self,
-        counter_repository: AggregateRepository[CounterAggregate],
-        event_store: InMemoryEventStore,
+        self, counter_repository: CounterRepo, event_store: InMemoryEventStore
     ) -> None:
         agg_id = uuid4()
-        events = [
-            _inc(agg_id, 1, 10),
-            _inc(agg_id, 2, 5),
-            CounterDecremented(
-                aggregate_id=agg_id, aggregate_type="Counter", aggregate_version=3, decrement=3
-            ),
-        ]
+        dec = CounterDecremented(
+            aggregate_id=agg_id, aggregate_type="Counter", aggregate_version=3, decrement=3
+        )
         await event_store.append(
-            StreamId(aggregate_id=agg_id, category="Counter"), events, ExpectedVersion.exact(0)
+            _stream(agg_id),
+            [_inc(agg_id, 1, 10), _inc(agg_id, 2, 5), dec],
+            ExpectedVersion.exact(0),
         )
         aggregate = await counter_repository.load(agg_id)
         assert aggregate.aggregate_id == agg_id and aggregate.version == 3
@@ -76,7 +78,7 @@ class TestLoadAggregate:
 
     @pytest.mark.asyncio
     async def test_load_nonexistent_aggregate_raises_error(
-        self, counter_repository: AggregateRepository[CounterAggregate]
+        self, counter_repository: CounterRepo
     ) -> None:
         nonexistent_id = uuid4()
         with pytest.raises(AggregateNotFoundError) as exc_info:
@@ -86,16 +88,10 @@ class TestLoadAggregate:
 
     @pytest.mark.asyncio
     async def test_load_aggregate_has_no_uncommitted_events(
-        self,
-        counter_repository: AggregateRepository[CounterAggregate],
-        event_store: InMemoryEventStore,
+        self, counter_repository: CounterRepo, event_store: InMemoryEventStore
     ) -> None:
         agg_id = uuid4()
-        await event_store.append(
-            StreamId(aggregate_id=agg_id, category="Counter"),
-            [_inc(agg_id, 1, 5)],
-            ExpectedVersion.exact(0),
-        )
+        await event_store.append(_stream(agg_id), [_inc(agg_id, 1, 5)], ExpectedVersion.exact(0))
         aggregate = await counter_repository.load(agg_id)
         assert not aggregate.has_uncommitted_events and len(aggregate.uncommitted_events) == 0
 
@@ -103,33 +99,24 @@ class TestLoadAggregate:
 class TestLoadOrCreate:
     @pytest.mark.asyncio
     async def test_load_or_create_loads_existing(
-        self,
-        counter_repository: AggregateRepository[CounterAggregate],
-        event_store: InMemoryEventStore,
+        self, counter_repository: CounterRepo, event_store: InMemoryEventStore
     ) -> None:
         agg_id = uuid4()
-        await event_store.append(
-            StreamId(aggregate_id=agg_id, category="Counter"),
-            [_inc(agg_id, 1, 10)],
-            ExpectedVersion.exact(0),
-        )
+        await event_store.append(_stream(agg_id), [_inc(agg_id, 1, 10)], ExpectedVersion.exact(0))
         aggregate = await counter_repository.load_or_create(agg_id)
         assert aggregate.aggregate_id == agg_id and aggregate.version == 1
         assert aggregate.state is not None and aggregate.state.value == 10
 
     @pytest.mark.asyncio
-    async def test_load_or_create_creates_new(
-        self, counter_repository: AggregateRepository[CounterAggregate]
-    ) -> None:
+    async def test_load_or_create_creates_new(self, counter_repository: CounterRepo) -> None:
         new_id = uuid4()
         aggregate = await counter_repository.load_or_create(new_id)
-        assert (
-            aggregate.aggregate_id == new_id and aggregate.version == 0 and aggregate.state is None
-        )
+        assert aggregate.aggregate_id == new_id and aggregate.version == 0
+        assert aggregate.state is None
 
     @pytest.mark.asyncio
     async def test_load_or_create_new_aggregate_can_be_modified(
-        self, counter_repository: AggregateRepository[CounterAggregate]
+        self, counter_repository: CounterRepo
     ) -> None:
         aggregate = await counter_repository.load_or_create(uuid4())
         aggregate.increment(5)
@@ -140,22 +127,16 @@ class TestLoadOrCreate:
 class TestGetOrRaise:
     @pytest.mark.asyncio
     async def test_get_or_raise_returns_existing(
-        self,
-        counter_repository: AggregateRepository[CounterAggregate],
-        event_store: InMemoryEventStore,
+        self, counter_repository: CounterRepo, event_store: InMemoryEventStore
     ) -> None:
         agg_id = uuid4()
-        await event_store.append(
-            StreamId(aggregate_id=agg_id, category="Counter"),
-            [_inc(agg_id, 1, 7)],
-            ExpectedVersion.exact(0),
-        )
+        await event_store.append(_stream(agg_id), [_inc(agg_id, 1, 7)], ExpectedVersion.exact(0))
         aggregate = await counter_repository.get_or_raise(agg_id)
         assert aggregate.aggregate_id == agg_id and aggregate.version == 1
 
     @pytest.mark.asyncio
     async def test_get_or_raise_raises_for_nonexistent(
-        self, counter_repository: AggregateRepository[CounterAggregate]
+        self, counter_repository: CounterRepo
     ) -> None:
         with pytest.raises(AggregateNotFoundError):
             await counter_repository.get_or_raise(uuid4())
@@ -163,9 +144,7 @@ class TestGetOrRaise:
 
 class TestExistsMethod:
     @pytest.mark.asyncio
-    async def test_exists_returns_true_for_existing(
-        self, counter_repository: AggregateRepository[CounterAggregate]
-    ) -> None:
+    async def test_exists_returns_true_for_existing(self, counter_repository: CounterRepo) -> None:
         agg_id = uuid4()
         aggregate = CounterAggregate(agg_id)
         aggregate.increment(5)
@@ -174,7 +153,7 @@ class TestExistsMethod:
 
     @pytest.mark.asyncio
     async def test_exists_returns_false_for_nonexistent(
-        self, counter_repository: AggregateRepository[CounterAggregate]
+        self, counter_repository: CounterRepo
     ) -> None:
         assert await counter_repository.exists(uuid4()) is False
 
@@ -182,7 +161,7 @@ class TestExistsMethod:
 class TestGetVersionMethod:
     @pytest.mark.asyncio
     async def test_get_version_returns_correct_version(
-        self, counter_repository: AggregateRepository[CounterAggregate]
+        self, counter_repository: CounterRepo
     ) -> None:
         agg_id = uuid4()
         aggregate = CounterAggregate(agg_id)
@@ -193,23 +172,19 @@ class TestGetVersionMethod:
 
     @pytest.mark.asyncio
     async def test_get_version_returns_zero_for_nonexistent(
-        self, counter_repository: AggregateRepository[CounterAggregate]
+        self, counter_repository: CounterRepo
     ) -> None:
         assert await counter_repository.get_version(uuid4()) == 0
 
 
 class TestCreateNewMethod:
-    def test_create_new_returns_empty_aggregate(
-        self, counter_repository: AggregateRepository[CounterAggregate]
-    ) -> None:
+    def test_create_new_returns_empty_aggregate(self, counter_repository: CounterRepo) -> None:
         new_id = uuid4()
         aggregate = counter_repository.create_new(new_id)
         assert aggregate.aggregate_id == new_id and aggregate.version == 0
         assert aggregate.state is None and not aggregate.has_uncommitted_events
 
-    def test_create_new_can_be_modified_and_saved(
-        self, counter_repository: AggregateRepository[CounterAggregate]
-    ) -> None:
+    def test_create_new_can_be_modified_and_saved(self, counter_repository: CounterRepo) -> None:
         aggregate = counter_repository.create_new(uuid4())
         aggregate.increment(5)
         assert aggregate.version == 1 and aggregate.has_uncommitted_events

@@ -31,11 +31,9 @@ class TestDatabaseProjection:
         projection = SimpleDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo
         )
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await projection.handle(event)
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert len(projection.events_handled) == 1
-        assert len(projection.received_conn) == 1
-        assert projection.received_conn[0] is mock_conn
+        assert projection.received_conn == [mock_conn]
 
     @pytest.mark.asyncio
     async def test_single_param_handler_still_works(
@@ -47,8 +45,7 @@ class TestDatabaseProjection:
         )
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await projection.handle(event)
-        assert len(projection.events_handled) == 1
-        assert projection.events_handled[0] == event
+        assert projection.events_handled == [event]
 
     @pytest.mark.asyncio
     async def test_checkpoint_updated_on_success(
@@ -64,8 +61,7 @@ class TestDatabaseProjection:
         projection = TestProjection(session_factory=factory, checkpoint_repo=checkpoint_repo)
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await projection.handle(event)
-        checkpoint = await checkpoint_repo.get_checkpoint("TestProjection")
-        assert checkpoint == event.event_id
+        assert await checkpoint_repo.get_checkpoint("TestProjection") == event.event_id
 
     @pytest.mark.asyncio
     async def test_checkpoint_not_updated_on_error(
@@ -82,11 +78,9 @@ class TestDatabaseProjection:
         projection = FailingProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo
         )
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         with pytest.raises(ValueError, match="Handler error"):
-            await projection.handle(event)
-        checkpoint = await checkpoint_repo.get_checkpoint("FailingProjection")
-        assert checkpoint is None
+            await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
+        assert await checkpoint_repo.get_checkpoint("FailingProjection") is None
 
     @pytest.mark.asyncio
     async def test_transaction_rollback_on_error(
@@ -101,17 +95,14 @@ class TestDatabaseProjection:
 
         async def capture_aexit(*args):
             exit_called.append(True)
-            if args[0] is not None:
-                return False
-            return await original_aexit(*args)
+            return False if args[0] is not None else await original_aexit(*args)
 
         session.begin.return_value.__aexit__ = capture_aexit
         projection = FailingDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo
         )
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         with pytest.raises(ValueError):
-            await projection.handle(event)
+            await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert len(exit_called) >= 1
 
     @pytest.mark.asyncio
@@ -122,10 +113,8 @@ class TestDatabaseProjection:
         projection = MultiHandlerDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo
         )
-        event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        event2 = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-        await projection.handle(event1)
-        await projection.handle(event2)
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
+        await projection.handle(OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"))
         assert len(projection.received_conns) == 2
         assert projection.received_conns[0] is mock_conn
         assert projection.received_conns[1] is mock_conn
@@ -138,9 +127,10 @@ class TestDatabaseProjection:
         projection = SimpleDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo
         )
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         with pytest.raises(RuntimeError, match="requires database connection"):
-            await projection._process_event(event)
+            await projection._process_event(
+                OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+            )
 
     @pytest.mark.asyncio
     async def test_unhandled_event_ignored_by_default(
@@ -153,9 +143,8 @@ class TestDatabaseProjection:
         projection = SimpleDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo
         )
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
         with caplog.at_level(logging.WARNING):
-            await projection.handle(event)
+            await projection.handle(OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"))
         assert not any("No handler registered" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
@@ -167,8 +156,7 @@ class TestDatabaseProjection:
             session_factory=factory, checkpoint_repo=checkpoint_repo
         )
         assert projection._current_connection is None
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await projection.handle(event)
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert projection._current_connection is None
 
     @pytest.mark.asyncio
@@ -182,9 +170,8 @@ class TestDatabaseProjection:
         projection = FailingDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo
         )
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         with pytest.raises(ValueError):
-            await projection.handle(event)
+            await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert projection._current_connection is None
 
     @pytest.mark.asyncio
@@ -195,14 +182,10 @@ class TestDatabaseProjection:
         projection = MixedDatabaseProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo
         )
-        created = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        shipped = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-        await projection.handle(created)
-        await projection.handle(shipped)
-        assert len(projection.two_param_events) == 1
-        assert len(projection.one_param_events) == 1
-        assert len(projection.received_conns) == 1
-        assert projection.received_conns[0] is mock_conn
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
+        await projection.handle(OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"))
+        assert len(projection.two_param_events) == 1 and len(projection.one_param_events) == 1
+        assert projection.received_conns == [mock_conn]
 
     def test_can_import_from_projections_module(self) -> None:
         from eventsource.adapters.sql.projection import DatabaseProjection as DBProjection

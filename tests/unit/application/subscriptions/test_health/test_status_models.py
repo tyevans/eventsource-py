@@ -39,17 +39,11 @@ class TestManagerHealth:
             uptime_seconds=7200.0,
             subscriptions=[_sample_sub_health()],
         )
-
-        assert health.status == "healthy"
-        assert health.running is True
-        assert health.subscription_count == 1
-        assert health.healthy_count == 1
-        assert health.degraded_count == 0
-        assert health.unhealthy_count == 0
-        assert health.total_events_processed == 100
-        assert health.total_events_failed == 2
-        assert health.total_lag_events == 5
-        assert health.uptime_seconds == 7200.0
+        assert health.status == "healthy" and health.running is True
+        assert (health.subscription_count, health.healthy_count) == (1, 1)
+        assert (health.degraded_count, health.unhealthy_count) == (0, 0)
+        assert (health.total_events_processed, health.total_events_failed) == (100, 2)
+        assert health.total_lag_events == 5 and health.uptime_seconds == 7200.0
         assert len(health.subscriptions) == 1
 
     def test_manager_health_to_dict(self):
@@ -66,20 +60,13 @@ class TestManagerHealth:
             uptime_seconds=1800.0,
             subscriptions=[_sample_sub_health()],
         )
-
         data = health.to_dict()
-        assert data["status"] == "degraded"
-        assert data["running"] is True
-        assert data["subscription_count"] == 2
-        assert data["healthy_count"] == 1
-        assert data["degraded_count"] == 1
-        assert data["unhealthy_count"] == 0
-        assert data["total_events_processed"] == 200
-        assert data["total_events_failed"] == 5
-        assert data["total_lag_events"] == 100
-        assert data["uptime_seconds"] == 1800.0
-        assert "timestamp" in data
-        assert len(data["subscriptions"]) == 1
+        assert data["status"] == "degraded" and data["running"] is True
+        assert (data["subscription_count"], data["healthy_count"]) == (2, 1)
+        assert (data["degraded_count"], data["unhealthy_count"]) == (1, 0)
+        assert (data["total_events_processed"], data["total_events_failed"]) == (200, 5)
+        assert data["total_lag_events"] == 100 and data["uptime_seconds"] == 1800.0
+        assert "timestamp" in data and len(data["subscriptions"]) == 1
 
 
 class TestSubscriptionHealth:
@@ -97,15 +84,10 @@ class TestSubscriptionHealth:
             last_error=None,
             uptime_seconds=86400.0,
         )
-
-        assert health.name == "OrderProjection"
-        assert health.status == "healthy"
-        assert health.state == "live"
-        assert health.events_processed == 5000
-        assert health.events_failed == 10
-        assert health.lag_events == 25
-        assert health.error_rate == 0.05
-        assert health.last_error is None
+        assert health.name == "OrderProjection" and health.status == "healthy"
+        assert health.state == "live" and health.events_processed == 5000
+        assert health.events_failed == 10 and health.lag_events == 25
+        assert health.error_rate == 0.05 and health.last_error is None
         assert health.uptime_seconds == 86400.0
 
     def test_subscription_health_with_error(self):
@@ -120,9 +102,7 @@ class TestSubscriptionHealth:
             last_error="Database connection failed",
             uptime_seconds=3600.0,
         )
-
-        assert health.status == "unhealthy"
-        assert health.state == "error"
+        assert health.status == "unhealthy" and health.state == "error"
         assert health.last_error == "Database connection failed"
 
     def test_subscription_health_to_dict(self):
@@ -137,16 +117,11 @@ class TestSubscriptionHealth:
             last_error="Timeout error",
             uptime_seconds=600.0,
         )
-
         data = health.to_dict()
-        assert data["name"] == "TestProjection"
-        assert data["status"] == "degraded"
-        assert data["state"] == "catching_up"
-        assert data["events_processed"] == 100
-        assert data["events_failed"] == 5
-        assert data["lag_events"] == 500
-        assert data["error_rate"] == 0.5
-        assert data["last_error"] == "Timeout error"
+        assert data["name"] == "TestProjection" and data["status"] == "degraded"
+        assert data["state"] == "catching_up" and data["events_processed"] == 100
+        assert data["events_failed"] == 5 and data["lag_events"] == 500
+        assert data["error_rate"] == 0.5 and data["last_error"] == "Timeout error"
         assert data["uptime_seconds"] == 600.0
 
 
@@ -157,16 +132,14 @@ class TestReadinessStatus:
         status = ReadinessStatus(
             ready=True, reason="Manager is ready", details={"subscription_count": 2}
         )
-        assert status.ready is True
-        assert status.reason == "Manager is ready"
+        assert status.ready is True and status.reason == "Manager is ready"
         assert status.details["subscription_count"] == 2
 
     def test_create_not_ready_status(self):
         status = ReadinessStatus(
             ready=False, reason="Manager is not running", details={"running": False}
         )
-        assert status.ready is False
-        assert status.reason == "Manager is not running"
+        assert status.ready is False and status.reason == "Manager is not running"
 
     def test_readiness_status_to_dict(self):
         status = ReadinessStatus(
@@ -175,10 +148,8 @@ class TestReadinessStatus:
             details={"running": True, "subscription_count": 3},
         )
         data = status.to_dict()
-        assert data["ready"] is True
-        assert data["reason"] == "All systems operational"
-        assert data["details"]["running"] is True
-        assert "timestamp" in data
+        assert data["ready"] is True and data["reason"] == "All systems operational"
+        assert data["details"]["running"] is True and "timestamp" in data
 
 
 class TestLivenessStatus:
@@ -190,8 +161,7 @@ class TestLivenessStatus:
             reason="Manager is alive and responsive",
             details={"uptime_seconds": 3600.0},
         )
-        assert status.alive is True
-        assert status.reason == "Manager is alive and responsive"
+        assert status.alive is True and status.reason == "Manager is alive and responsive"
         assert status.details["uptime_seconds"] == 3600.0
 
     def test_create_not_alive_status(self):
@@ -200,8 +170,7 @@ class TestLivenessStatus:
             reason="Internal lock not responsive (possible deadlock)",
             details={"lock_responsive": False},
         )
-        assert status.alive is False
-        assert "deadlock" in status.reason
+        assert status.alive is False and "deadlock" in status.reason
 
     def test_liveness_status_to_dict(self):
         status = LivenessStatus(
@@ -210,7 +179,5 @@ class TestLivenessStatus:
             details={"running": True, "lock_responsive": True},
         )
         data = status.to_dict()
-        assert data["alive"] is True
-        assert data["reason"] == "All checks passed"
-        assert data["details"]["lock_responsive"] is True
-        assert "timestamp" in data
+        assert data["alive"] is True and data["reason"] == "All checks passed"
+        assert data["details"]["lock_responsive"] is True and "timestamp" in data
