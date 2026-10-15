@@ -43,20 +43,18 @@ def stats() -> RabbitMQEventBusStats:
 
 
 def _message(headers: dict[str, Any] | None = None) -> mock.MagicMock:
-    body = json.dumps(
-        {
-            "event_type": "ConsumerTestEvent",
-            "aggregate_type": "Order",
-            "aggregate_id": str(uuid4()),
-        }
-    ).encode()
+    payload = {
+        "event_type": "ConsumerTestEvent",
+        "aggregate_type": "Order",
+        "aggregate_id": str(uuid4()),
+    }
     return mock.MagicMock(
         headers=headers if headers is not None else {"event_type": "ConsumerTestEvent"},
         message_id="test-message-id",
         routing_key="Order.ConsumerTestEvent",
         content_type="application/json",
         content_encoding="utf-8",
-        body=body,
+        body=json.dumps(payload).encode(),
         ack=mock.AsyncMock(),
         reject=mock.AsyncMock(),
     )
@@ -71,20 +69,18 @@ def _consumer(
     dlq_exchange: mock.AsyncMock | None = None,
     connection: mock.MagicMock | None = None,
 ) -> RabbitMQConsumer:
-    topology = mock.MagicMock(
-        exchange=exchange or mock.AsyncMock(),
-        dlq_exchange=dlq_exchange or mock.AsyncMock(),
-        consumer_queue=mock.MagicMock(),
-    )
-    retry = RetryPolicy(
-        config.retry_base_delay, config.retry_max_delay, config.retry_jitter, config.max_retries
-    )
     return RabbitMQConsumer(
         config=config,
         connection=connection or mock.MagicMock(),
-        topology=topology,
+        topology=mock.MagicMock(
+            exchange=exchange or mock.AsyncMock(),
+            dlq_exchange=dlq_exchange or mock.AsyncMock(),
+            consumer_queue=mock.MagicMock(),
+        ),
         stats=stats,
-        retry_policy=retry,
+        retry_policy=RetryPolicy(
+            config.retry_base_delay, config.retry_max_delay, config.retry_jitter, config.max_retries
+        ),
         handlers_for=lambda _event_type: handlers,
         resolve_event_class=lambda _name: ConsumerTestEvent,
         tracer=None,
@@ -106,16 +102,14 @@ async def test_all_handlers_run_when_first_fails_and_message_not_acked(
         calls.append("failing")
         raise ValueError("boom")
 
-    async def succeeding(event: DomainEvent) -> None:
-        calls.append("succeeding")
-
     consumer = _consumer(
-        config, stats, handlers=(HandlerAdapter(failing), HandlerAdapter(succeeding))
+        config,
+        stats,
+        handlers=(HandlerAdapter(failing), HandlerAdapter(lambda _e: calls.append("succeeding"))),
     )
     await consumer._process_message(_message())
     assert calls == ["failing", "succeeding"]
-    assert stats.events_processed_failed == 1
-    assert stats.events_processed_success == 0
+    assert (stats.events_processed_failed, stats.events_processed_success) == (1, 0)
 
 
 @pytest.mark.asyncio
@@ -136,16 +130,11 @@ async def test_success_path_acks(
     config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
 ) -> None:
     seen: list[DomainEvent] = []
-
-    async def handler(event: DomainEvent) -> None:
-        seen.append(event)
-
-    consumer = _consumer(config, stats, handlers=(HandlerAdapter(handler),))
+    consumer = _consumer(config, stats, handlers=(HandlerAdapter(seen.append),))
     message = _message()
     await consumer._process_message(message)
     message.ack.assert_awaited_once()
-    assert len(seen) == 1
-    assert stats.events_processed_success == 1
+    assert len(seen) == 1 and stats.events_processed_success == 1
 
 
 @pytest.mark.asyncio
@@ -155,10 +144,8 @@ async def test_failure_below_max_retries_republishes_with_incremented_count(
     exchange = mock.AsyncMock()
     consumer = _consumer(config, stats, handlers=(HandlerAdapter(_boom),), exchange=exchange)
     message = _message({"event_type": "ConsumerTestEvent", "x-retry-count": 1})
-
     await consumer._process_message(message)
     await consumer.drain_retries()
-
     exchange.publish.assert_awaited_once()
     assert exchange.publish.await_args.args[0].headers["x-retry-count"] == 2
     assert exchange.publish.await_args.kwargs["routing_key"] == "Order.ConsumerTestEvent"
@@ -174,14 +161,11 @@ async def test_failure_at_max_retries_goes_to_dlq_with_single_failure_unwrap(
         config, stats, handlers=(HandlerAdapter(_boom),), dlq_exchange=dlq_exchange
     )
     message = _message({"event_type": "ConsumerTestEvent", "x-retry-count": config.max_retries})
-
     await consumer._process_message(message)
-
     dlq_exchange.publish.assert_awaited_once()
-    dlq_message = dlq_exchange.publish.await_args.args[0]
-    assert dlq_message.headers["x-dlq-error-type"] == "ValueError"
-    assert dlq_message.headers["x-dlq-reason"] == "boom"
-    assert dlq_message.headers["x-dlq-retry-count"] == config.max_retries
+    dlq_headers = dlq_exchange.publish.await_args.args[0].headers
+    assert (dlq_headers["x-dlq-error-type"], dlq_headers["x-dlq-reason"]) == ("ValueError", "boom")
+    assert dlq_headers["x-dlq-retry-count"] == config.max_retries
     assert stats.messages_sent_to_dlq == 1
     message.ack.assert_awaited_once()
 
@@ -204,10 +188,8 @@ async def test_resume_if_was_consuming_restarts_only_when_previously_active(
     connection = mock.MagicMock(_was_consuming=False)
     consumer = _consumer(config, stats, connection=connection)
     consumer.start = mock.AsyncMock()  # type: ignore[method-assign]
-
     await consumer.resume_if_was_consuming()
     consumer.start.assert_not_called()
-
     connection._was_consuming = True
     await consumer.resume_if_was_consuming()
     await asyncio.sleep(0)

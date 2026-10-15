@@ -48,22 +48,21 @@ class TestSQLiteOutboxRepositoryStandalone:
     @pytest.mark.asyncio
     async def test_add_event(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
         outbox_id = await repo.add_event(sample_event)
-        assert outbox_id is not None
-        assert isinstance(outbox_id, UUID)
+        assert outbox_id is not None and isinstance(outbox_id, UUID)
         pending = await repo.get_pending_events()
         assert len(pending) == 1
-        assert pending[0].event_type == "SampleEvent"
-        assert pending[0].aggregate_type == "SampleAggregate"
+        assert (pending[0].event_type, pending[0].aggregate_type) == (
+            "SampleEvent",
+            "SampleAggregate",
+        )
 
     @pytest.mark.asyncio
     async def test_add_event_serializes_data(
         self, repo: SQLiteOutboxRepository, sample_event: SampleEvent
     ):
         await repo.add_event(sample_event)
-        pending = await repo.get_pending_events()
-        event_data = pending[0].event_data
-        assert isinstance(event_data, str)
-        assert "test_data" in event_data
+        event_data = (await repo.get_pending_events())[0].event_data
+        assert isinstance(event_data, str) and "test_data" in event_data
 
     @pytest.mark.asyncio
     async def test_get_pending_events_order(self, repo: SQLiteOutboxRepository):
@@ -71,43 +70,36 @@ class TestSQLiteOutboxRepositoryStandalone:
             await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}"))
         pending = await repo.get_pending_events()
         assert len(pending) == 3
-        assert "event_0" in pending[0].event_data
-        assert "event_1" in pending[1].event_data
-        assert "event_2" in pending[2].event_data
+        for i in range(3):
+            assert f"event_{i}" in pending[i].event_data
 
     @pytest.mark.asyncio
     async def test_get_pending_events_limit(self, repo: SQLiteOutboxRepository):
         for i in range(5):
             await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field=f"event_{i}"))
-        pending = await repo.get_pending_events(limit=3)
-        assert len(pending) == 3
+        assert len(await repo.get_pending_events(limit=3)) == 3
 
     @pytest.mark.asyncio
     async def test_get_pending_events_empty(self, repo: SQLiteOutboxRepository):
-        pending = await repo.get_pending_events()
-        assert pending == []
+        assert await repo.get_pending_events() == []
 
     @pytest.mark.asyncio
     async def test_mark_published(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
         await repo.add_event(sample_event)
         pending = await repo.get_pending_events()
         await repo.mark_published(pending[0].id)
-        pending = await repo.get_pending_events()
-        assert len(pending) == 0
+        assert len(await repo.get_pending_events()) == 0
         stats = await repo.get_stats()
-        assert stats.pending_count == 0
-        assert stats.published_count == 1
+        assert (stats.pending_count, stats.published_count) == (0, 1)
 
     @pytest.mark.asyncio
     async def test_mark_failed(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
         await repo.add_event(sample_event)
         pending = await repo.get_pending_events()
         await repo.mark_failed(pending[0].id, "Connection refused")
-        pending = await repo.get_pending_events()
-        assert len(pending) == 0
+        assert len(await repo.get_pending_events()) == 0
         stats = await repo.get_stats()
-        assert stats.pending_count == 0
-        assert stats.failed_count == 1
+        assert (stats.pending_count, stats.failed_count) == (0, 1)
 
     @pytest.mark.asyncio
     async def test_increment_retry(self, repo: SQLiteOutboxRepository, sample_event: SampleEvent):
@@ -116,8 +108,7 @@ class TestSQLiteOutboxRepositoryStandalone:
         await repo.increment_retry(outbox_id, "Temporary error")
         await repo.increment_retry(outbox_id, "Another error")
         pending = await repo.get_pending_events()
-        assert len(pending) == 1
-        assert pending[0].retry_count == 2
+        assert len(pending) == 1 and pending[0].retry_count == 2
 
     @pytest.mark.asyncio
     async def test_cleanup_published(
@@ -131,16 +122,13 @@ class TestSQLiteOutboxRepositoryStandalone:
             (str(outbox_id),),
         )
         await db_connection.commit()
-        deleted = await repo.cleanup_published(days=7)
-        assert deleted == 1
+        assert await repo.cleanup_published(days=7) == 1
 
     @pytest.mark.asyncio
     async def test_cleanup_keeps_recent_published(self, repo: SQLiteOutboxRepository):
         await repo.add_event(SampleEvent(aggregate_id=uuid4(), test_field="test"))
-        pending = await repo.get_pending_events()
-        await repo.mark_published(pending[0].id)
-        deleted = await repo.cleanup_published(days=7)
-        assert deleted == 0
+        await repo.mark_published((await repo.get_pending_events())[0].id)
+        assert await repo.cleanup_published(days=7) == 0
 
     @pytest.mark.asyncio
     async def test_get_stats(self, repo: SQLiteOutboxRepository):
@@ -151,20 +139,14 @@ class TestSQLiteOutboxRepositoryStandalone:
         await repo.mark_published(outbox_ids[1])
         await repo.mark_failed(outbox_ids[4], "Error")
         stats = await repo.get_stats()
-        assert stats.pending_count == 2
-        assert stats.published_count == 2
-        assert stats.failed_count == 1
-        assert stats.oldest_pending is not None
-        assert stats.avg_retries == 0.0
+        assert (stats.pending_count, stats.published_count, stats.failed_count) == (2, 2, 1)
+        assert stats.oldest_pending is not None and stats.avg_retries == 0.0
 
     @pytest.mark.asyncio
     async def test_get_stats_empty(self, repo: SQLiteOutboxRepository):
         stats = await repo.get_stats()
-        assert stats.pending_count == 0
-        assert stats.published_count == 0
-        assert stats.failed_count == 0
-        assert stats.oldest_pending is None
-        assert stats.avg_retries == 0.0
+        assert (stats.pending_count, stats.published_count, stats.failed_count) == (0, 0, 0)
+        assert stats.oldest_pending is None and stats.avg_retries == 0.0
 
     @pytest.mark.asyncio
     async def test_get_stats_avg_retries(self, repo: SQLiteOutboxRepository):
@@ -173,8 +155,7 @@ class TestSQLiteOutboxRepositoryStandalone:
         for i, p in enumerate(await repo.get_pending_events()):
             for _ in range(i * 2):
                 await repo.increment_retry(p.id, "Error")
-        stats = await repo.get_stats()
-        assert stats.avg_retries == 2.0
+        assert (await repo.get_stats()).avg_retries == 2.0
 
     @pytest.mark.asyncio
     async def test_event_with_tenant_id(self, repo: SQLiteOutboxRepository):
@@ -182,14 +163,12 @@ class TestSQLiteOutboxRepositoryStandalone:
         await repo.add_event(
             SampleEvent(aggregate_id=uuid4(), tenant_id=tenant_id, test_field="test")
         )
-        pending = await repo.get_pending_events()
-        assert pending[0].tenant_id == tenant_id
+        assert (await repo.get_pending_events())[0].tenant_id == tenant_id
 
     @pytest.mark.asyncio
     async def test_event_without_tenant_id(self, repo: SQLiteOutboxRepository):
         await repo.add_event(SampleEvent(aggregate_id=uuid4(), tenant_id=None, test_field="test"))
-        pending = await repo.get_pending_events()
-        assert pending[0].tenant_id is None
+        assert (await repo.get_pending_events())[0].tenant_id is None
 
     @pytest.mark.asyncio
     async def test_multiple_events_same_aggregate(self, repo: SQLiteOutboxRepository):
@@ -197,9 +176,7 @@ class TestSQLiteOutboxRepositoryStandalone:
         for i in range(3):
             await repo.add_event(SampleEvent(aggregate_id=aggregate_id, test_field=f"event_{i}"))
         pending = await repo.get_pending_events()
-        assert len(pending) == 3
-        for entry in pending:
-            assert entry.aggregate_id == aggregate_id
+        assert len(pending) == 3 and all(e.aggregate_id == aggregate_id for e in pending)
 
     @pytest.mark.asyncio
     async def test_pending_event_fields(self, repo: SQLiteOutboxRepository):
@@ -209,19 +186,14 @@ class TestSQLiteOutboxRepositoryStandalone:
         pending = await repo.get_pending_events()
         assert len(pending) == 1
         entry = pending[0]
-        assert entry.id is not None
-        assert entry.event_id == event.event_id
-        assert entry.event_type == "SampleEvent"
-        assert entry.aggregate_id == aggregate_id
-        assert entry.aggregate_type == "SampleAggregate"
-        assert entry.tenant_id == tenant_id
-        assert entry.event_data is not None
-        assert entry.created_at is not None
+        assert entry.id is not None and entry.event_id == event.event_id
+        assert (entry.event_type, entry.aggregate_type) == ("SampleEvent", "SampleAggregate")
+        assert (entry.aggregate_id, entry.tenant_id) == (aggregate_id, tenant_id)
+        assert entry.event_data is not None and entry.created_at is not None
         assert entry.retry_count == 0
 
 
 @pytest.mark.skipif(not AIOSQLITE_AVAILABLE, reason="aiosqlite not installed")
 class TestSQLiteOutboxRepositoryStandaloneProtocol:
     def test_implements_protocol(self, db_connection: aiosqlite.Connection):
-        repo = SQLiteOutboxRepository(db_connection)
-        assert isinstance(repo, OutboxRepository)
+        assert isinstance(SQLiteOutboxRepository(db_connection), OutboxRepository)

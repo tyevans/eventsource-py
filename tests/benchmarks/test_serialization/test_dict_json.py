@@ -10,29 +10,18 @@ from tests.fixtures import SampleEvent, create_event
 class TestEventSerializationBenchmarks:
     """Benchmarks for event serialization to dictionaries."""
 
-    def test_serialize_single_event_to_dict(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Serialize a single event to dictionary.
-        """
+    def test_serialize_single_event_to_dict(self, benchmark: Any) -> None:
+        """Benchmark: Serialize a single event to dictionary."""
         event = create_event(SampleEvent)
 
         def serialize_one() -> dict[str, Any]:
             return event.to_dict()
 
         result = benchmark(serialize_one)
-        assert "event_id" in result
-        assert "event_type" in result
+        assert "event_id" in result and "event_type" in result
 
-    def test_serialize_single_event_model_dump(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Serialize using model_dump() directly.
-        """
+    def test_serialize_single_event_model_dump(self, benchmark: Any) -> None:
+        """Benchmark: Serialize using model_dump() directly."""
         event = create_event(SampleEvent)
 
         def dump_one() -> dict[str, Any]:
@@ -42,13 +31,9 @@ class TestEventSerializationBenchmarks:
         assert "event_id" in result
 
     def test_serialize_100_events(
-        self,
-        benchmark: Any,
-        sample_events_100: list[DomainEvent],
+        self, benchmark: Any, sample_events_100: list[DomainEvent]
     ) -> None:
-        """
-        Benchmark: Serialize 100 events to dictionaries.
-        """
+        """Benchmark: Serialize 100 events to dictionaries."""
 
         def serialize_batch() -> list[dict[str, Any]]:
             return [event.to_dict() for event in sample_events_100]
@@ -57,13 +42,9 @@ class TestEventSerializationBenchmarks:
         assert len(result) == 100
 
     def test_serialize_1000_events(
-        self,
-        benchmark: Any,
-        sample_events_1000: list[DomainEvent],
+        self, benchmark: Any, sample_events_1000: list[DomainEvent]
     ) -> None:
-        """
-        Benchmark: Serialize 1000 events to dictionaries.
-        """
+        """Benchmark: Serialize 1000 events to dictionaries."""
 
         def serialize_batch() -> list[dict[str, Any]]:
             return [event.to_dict() for event in sample_events_1000]
@@ -71,13 +52,8 @@ class TestEventSerializationBenchmarks:
         result = benchmark.pedantic(serialize_batch, rounds=10)
         assert len(result) == 1000
 
-    def test_serialize_complex_event(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Serialize event with nested metadata.
-        """
+    def test_serialize_complex_event(self, benchmark: Any) -> None:
+        """Benchmark: Serialize event with nested metadata."""
         event = create_event(SampleEvent).with_metadata(
             trace_id="trace-123",
             request_id="req-456",
@@ -95,13 +71,8 @@ class TestEventSerializationBenchmarks:
 class TestEventDeserializationBenchmarks:
     """Benchmarks for event deserialization from dictionaries."""
 
-    def test_deserialize_single_event(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Deserialize a single event from dictionary.
-        """
+    def test_deserialize_single_event(self, benchmark: Any) -> None:
+        """Benchmark: Deserialize a single event from dictionary."""
         event = create_event(SampleEvent)
         event_dict = event.to_dict()
 
@@ -111,13 +82,8 @@ class TestEventDeserializationBenchmarks:
         result = benchmark(deserialize_one)
         assert result.event_id == event.event_id
 
-    def test_deserialize_single_event_model_validate(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Deserialize using model_validate() directly.
-        """
+    def test_deserialize_single_event_model_validate(self, benchmark: Any) -> None:
+        """Benchmark: Deserialize using model_validate() directly."""
         event = create_event(SampleEvent)
         event_dict = event.to_dict()
 
@@ -128,13 +94,9 @@ class TestEventDeserializationBenchmarks:
         assert result.event_id == event.event_id
 
     def test_deserialize_100_events(
-        self,
-        benchmark: Any,
-        sample_events_100: list[DomainEvent],
+        self, benchmark: Any, sample_events_100: list[DomainEvent]
     ) -> None:
-        """
-        Benchmark: Deserialize 100 events from dictionaries.
-        """
+        """Benchmark: Deserialize 100 events from dictionaries."""
         event_dicts = [event.to_dict() for event in sample_events_100]
 
         def deserialize_batch() -> list[SampleEvent]:
@@ -144,13 +106,9 @@ class TestEventDeserializationBenchmarks:
         assert len(result) == 100
 
     def test_deserialize_1000_events(
-        self,
-        benchmark: Any,
-        sample_events_1000: list[DomainEvent],
+        self, benchmark: Any, sample_events_1000: list[DomainEvent]
     ) -> None:
-        """
-        Benchmark: Deserialize 1000 events from dictionaries.
-        """
+        """Benchmark: Deserialize 1000 events from dictionaries."""
         event_dicts = [event.to_dict() for event in sample_events_1000]
 
         def deserialize_batch() -> list[SampleEvent]:
@@ -163,13 +121,8 @@ class TestEventDeserializationBenchmarks:
 class TestJSONSerializationBenchmarks:
     """Benchmarks for full JSON serialization (dict -> JSON string)."""
 
-    def test_json_serialize_single_event(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Full JSON serialization of a single event.
-        """
+    def test_json_serialize_single_event(self, benchmark: Any) -> None:
+        """Benchmark: Full JSON serialization of a single event."""
         event = create_event(SampleEvent)
 
         def to_json() -> str:
@@ -179,13 +132,9 @@ class TestJSONSerializationBenchmarks:
         assert '"event_type":' in result
 
     def test_json_serialize_100_events(
-        self,
-        benchmark: Any,
-        sample_events_100: list[DomainEvent],
+        self, benchmark: Any, sample_events_100: list[DomainEvent]
     ) -> None:
-        """
-        Benchmark: Full JSON serialization of 100 events.
-        """
+        """Benchmark: Full JSON serialization of 100 events."""
 
         def to_json_batch() -> list[str]:
             return [json.dumps(event.to_dict()) for event in sample_events_100]
@@ -193,13 +142,8 @@ class TestJSONSerializationBenchmarks:
         result = benchmark(to_json_batch)
         assert len(result) == 100
 
-    def test_json_deserialize_single_event(
-        self,
-        benchmark: Any,
-    ) -> None:
-        """
-        Benchmark: Full JSON deserialization of a single event.
-        """
+    def test_json_deserialize_single_event(self, benchmark: Any) -> None:
+        """Benchmark: Full JSON deserialization of a single event."""
         event = create_event(SampleEvent)
         json_str = json.dumps(event.to_dict())
 
@@ -210,13 +154,9 @@ class TestJSONSerializationBenchmarks:
         assert result.event_id == event.event_id
 
     def test_json_deserialize_100_events(
-        self,
-        benchmark: Any,
-        sample_events_100: list[DomainEvent],
+        self, benchmark: Any, sample_events_100: list[DomainEvent]
     ) -> None:
-        """
-        Benchmark: Full JSON deserialization of 100 events.
-        """
+        """Benchmark: Full JSON deserialization of 100 events."""
         json_strings = [json.dumps(event.to_dict()) for event in sample_events_100]
 
         def from_json_batch() -> list[SampleEvent]:
