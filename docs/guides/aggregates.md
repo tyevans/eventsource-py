@@ -151,13 +151,41 @@ TypeError: CounterAggregate does not support execute(); execute() requires an
 aggregate supporting execute(command) or apply_command(command), such as DeciderAggregate.
 ```
 
+### Querying aggregates with `get_or_none` and `exists`
+
+When looking up an aggregate that may not have been created yet, use
+`await repo.get_or_none(aggregate_id)` to return `TAggregate | None` instead of
+catching `AggregateNotFoundError` from `load()`, or `await repo.exists(aggregate_id)`
+to check whether its stream has at least one persisted event without replaying
+history:
+
+```python
+async def check_and_load_account(repo: AggregateRepository[Account]) -> None:
+    account_id = uuid4()
+
+    assert await repo.exists(account_id) is False
+    assert await repo.get_or_none(account_id) is None
+
+    await repo.execute(
+        account_id,
+        OpenAccount(account_id=account_id, owner="alice"),
+    )
+
+    assert await repo.exists(account_id) is True
+    account = await repo.get_or_none(account_id)
+    assert account is not None
+    assert account.state.owner == "alice"
+```
+
 ## Multi-tenant command execution with `TenantAwareRepository.execute`
 
-`TenantAwareRepository` exposes the same `execute(aggregate_id, command, *, create_if_missing=True)`
-method while enforcing your configured tenant policies:
+`TenantAwareRepository` exposes the same `execute(aggregate_id, command, *, create_if_missing=True)`,
+`get_or_none(aggregate_id)`, and `exists(aggregate_id)` methods while enforcing
+your configured tenant policies:
 
-- When `require_tenant_context=True`, `execute()` verifies that an active
-  `tenant_scope` is set before loading or creating the aggregate.
+- When `require_tenant_context=True`, `execute()`, `get_or_none()`, and `exists()`
+  verify that an active `tenant_scope` is set before accessing the underlying
+  repository.
 - When `validate_on_save=True` (the default), `execute()` validates that every
   uncommitted event produced by the command matches the active tenant context
   before delegating to `save()`, raising `TenantMismatchError` on a mismatch.
@@ -221,11 +249,19 @@ async def run_tenant_command() -> None:
         account_id = uuid4()
 
         async with tenant_scope(tenant_id):
+            assert await tenant_repo.exists(account_id) is False
+            assert await tenant_repo.get_or_none(account_id) is None
+
             account = await tenant_repo.execute(
                 account_id,
                 OpenTenantAccount(account_id=account_id, owner="alice"),
             )
             assert account.version == 1
+            assert await tenant_repo.exists(account_id) is True
+
+            loaded = await tenant_repo.get_or_none(account_id)
+            assert loaded is not None
+            assert loaded.state.owner == "alice"
 ```
 
 See [Multi-Tenancy](multi-tenant.md) for full details on `tenant_scope`,
