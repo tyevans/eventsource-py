@@ -1,22 +1,15 @@
-"""
-Test harness providing pre-configured in-memory infrastructure.
+"""Test harness providing pre-configured in-memory infrastructure.
 
-This module provides an InMemoryTestHarness class that bundles all the in-memory
-implementations needed for testing event-sourced applications. It eliminates
-boilerplate setup code and ensures consistent configuration across tests.
+Provides ``InMemoryTestHarness`` bundling all in-memory implementations needed
+for testing event-sourced applications without boilerplate setup.
 
 Example:
     >>> from eventsource.testing import InMemoryTestHarness
-    >>>
     >>> async def test_order_processing():
     ...     harness = InMemoryTestHarness()
     ...     repo = harness.create_repository(OrderAggregate)
-    ...
-    ...     # Create and save an aggregate
     ...     order = OrderAggregate.create(customer_id=customer_id)
     ...     await repo.save(order)
-    ...
-    ...     # Verify events were published
     ...     assert len(harness.published_events) == 1
 """
 
@@ -186,6 +179,7 @@ class InMemoryTestHarness:
 
     def reset(self) -> None:
         """Reset all state and create fresh in-memory components."""
+        self._event_store.clear()
         self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
