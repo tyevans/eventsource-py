@@ -58,24 +58,15 @@ class CoordinatorCopyMixin:
     _active_tasks: dict[UUID, asyncio.Task[None]]
     _interceptors: dict[UUID, DualWriteInterceptor]
     _lag_trackers: dict[UUID, SyncLagTracker]
-
-    # Bounded catch-up rounds after the main copy pass.
     _MAX_CATCHUP_ROUNDS = 10
 
-    async def _fail_migration(self, migration: Migration, error: str) -> None:
-        raise NotImplementedError
+    if TYPE_CHECKING:
 
-    async def _record_audit(self, entry: MigrationAuditEntry) -> None:
-        raise NotImplementedError
+        async def _fail_migration(self, migration: Migration, error: str) -> None: ...
+        async def _record_audit(self, entry: MigrationAuditEntry) -> None: ...
+        async def _notify_status_update(self, migration_id: UUID) -> None: ...
 
-    async def _notify_status_update(self, migration_id: UUID) -> None:
-        raise NotImplementedError
-
-    async def _run_bulk_copy(
-        self,
-        migration: Migration,
-        target_store: FullEventStore,
-    ) -> None:
+    async def _run_bulk_copy(self, migration: Migration, target_store: FullEventStore) -> None:
         """Install DualWriteInterceptor first, then stream historical events to target."""
         with self._tracer.span(
             "eventsource.coordinator.run_bulk_copy",
@@ -103,10 +94,9 @@ class CoordinatorCopyMixin:
                         break
                     if rounds >= self._MAX_CATCHUP_ROUNDS:
                         logger.warning(
-                            "Migration %s: %d mirror failures remain unabsorbed "
-                            "after %d catch-up rounds; the lag anchor stays "
-                            "clamped at the checkpoint until another copy pass "
-                            "absorbs them",
+                            "Migration %s: %d mirror failures remain unabsorbed after %d catch-up "
+                            "rounds; the lag anchor stays clamped at the checkpoint until another "
+                            "copy pass absorbs them",
                             migration.id,
                             remaining,
                             rounds,
@@ -123,7 +113,6 @@ class CoordinatorCopyMixin:
 
                 if completed:
                     await self._transition_to_dual_write(migration, target_store)
-
             except asyncio.CancelledError:
                 logger.info("Bulk copy cancelled for migration %s", migration.id)
                 raise
@@ -131,9 +120,8 @@ class CoordinatorCopyMixin:
                 logger.error("Bulk copy failed for migration %s: %s", migration.id, e)
                 await self._fail_migration(migration, str(e))
             finally:
-                get_migration_metrics(
-                    str(migration.id), str(migration.tenant_id)
-                ).record_phase_duration("bulk_copy", time.monotonic() - phase_start)
+                metrics = get_migration_metrics(str(migration.id), str(migration.tenant_id))
+                metrics.record_phase_duration("bulk_copy", time.monotonic() - phase_start)
                 self._active_copiers.pop(migration.id, None)
                 self._active_tasks.pop(migration.id, None)
 
@@ -144,9 +132,8 @@ class CoordinatorCopyMixin:
         store = target_store or self._target_stores.get(migration.id)
         if store is None:
             raise MigrationError(
-                "No target store registered for migration; the coordinator "
-                "that started it holds that registry in memory, so a "
-                "restarted coordinator must re-register before copying.",
+                "No target store registered for migration; the coordinator that started it holds "
+                "that registry in memory, so a restarted coordinator must re-register before copying.",
                 migration_id=migration.id,
             )
 
@@ -162,8 +149,7 @@ class CoordinatorCopyMixin:
     async def run_resync_pass(self, migration_id: UUID) -> int:
         """Run one bounded catch-up copy pass while in DUAL_WRITE."""
         with self._tracer.span(
-            "eventsource.coordinator.run_resync_pass",
-            {ATTR_MIGRATION_ID: str(migration_id)},
+            "eventsource.coordinator.run_resync_pass", {ATTR_MIGRATION_ID: str(migration_id)}
         ):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
@@ -180,8 +166,7 @@ class CoordinatorCopyMixin:
 
             if migration_id in self._active_copiers:
                 raise MigrationError(
-                    "A copy pass is already running for this migration",
-                    migration_id=migration_id,
+                    "A copy pass is already running for this migration", migration_id=migration_id
                 )
 
             copier = self._build_copier(migration)
@@ -193,8 +178,8 @@ class CoordinatorCopyMixin:
 
             if not completed:
                 raise MigrationError(
-                    "Resync pass did not run to completion; the lag anchor "
-                    "stays clamped (an incomplete pass attests nothing)",
+                    "Resync pass did not run to completion; the lag anchor stays clamped "
+                    "(an incomplete pass attests nothing)",
                     migration_id=migration_id,
                 )
 
@@ -205,10 +190,9 @@ class CoordinatorCopyMixin:
             interceptor = self._interceptors.get(migration_id)
             if interceptor is None:
                 logger.info(
-                    "Resync pass complete for migration %s: no interceptor "
-                    "registered (coordinator restarted since dual-write "
-                    "began), so no failures could be absorbed; the pass "
-                    "advanced the persisted checkpoint",
+                    "Resync pass complete for migration %s: no interceptor registered "
+                    "(coordinator restarted since dual-write began), so no failures could be "
+                    "absorbed; the pass advanced the persisted checkpoint",
                     migration_id,
                 )
                 return 0
@@ -238,13 +222,10 @@ class CoordinatorCopyMixin:
         return False
 
     def _install_interceptor(
-        self,
-        migration: Migration,
-        target_store: FullEventStore,
+        self, migration: Migration, target_store: FullEventStore
     ) -> DualWriteInterceptor:
         """Create and register the dual-write interceptor for a migration."""
-        interceptor = self._interceptors.get(migration.id)
-        if interceptor is not None:
+        if (interceptor := self._interceptors.get(migration.id)) is not None:
             return interceptor
 
         interceptor = DualWriteInterceptor(
@@ -259,9 +240,7 @@ class CoordinatorCopyMixin:
         return interceptor
 
     async def _transition_to_dual_write(
-        self,
-        migration: Migration,
-        target_store: FullEventStore,
+        self, migration: Migration, target_store: FullEventStore
     ) -> None:
         """Transition from bulk copy to dual-write phase."""
         with self._tracer.span(
@@ -281,20 +260,15 @@ class CoordinatorCopyMixin:
                 migration_id=migration.id,
                 enable_tracing=self._enable_tracing,
             )
-
             await self._migration_repo.update_phase(migration.id, MigrationPhase.DUAL_WRITE)
             await self._routing_repo.set_migration_state(
-                migration.tenant_id,
-                TenantMigrationState.DUAL_WRITE,
-                migration.id,
+                migration.tenant_id, TenantMigrationState.DUAL_WRITE, migration.id
             )
-
             logger.info(
                 "Migration %s transitioned to dual-write phase for tenant %s",
                 migration.id,
                 migration.tenant_id,
             )
-
             await self._record_audit(
                 MigrationAuditEntry.phase_change(
                     migration_id=migration.id,

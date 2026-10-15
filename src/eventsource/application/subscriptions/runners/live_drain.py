@@ -65,14 +65,12 @@ class LiveDrainMixin:
     def _subscribe_to_bus(self) -> None:
         """Subscribe to the event bus with our internal handler."""
         event_types = get_subscribed_event_types(self.subscription.subscriber)
-
         for event_type in event_types:
             handler = self._create_event_handler()
             self._handlers[event_type] = handler
             self.event_bus.subscribe(event_type, handler)
 
         self._subscribed = True
-
         logger.debug(
             "Subscribed to event types",
             extra={
@@ -86,25 +84,13 @@ class LiveDrainMixin:
         return _LiveEventHandler(self)
 
     async def _handle_live_event(self, event: DomainEvent) -> None:
-        """
-        Handle a wake-up notification from the event bus.
-
-        `event` is never delivered directly -- it carries no position and
-        the bus is not the ordered source of truth. It only signals that new
-        work may exist. When not buffering or paused, this drains the global
-        feed forward from the subscription's last checkpoint via
-        `_drain_feed()`.
-        """
+        """Handle a wake-up notification from the event bus by draining the global feed."""
         del event
-
         if self._buffer_enabled:
             self._buffered_wakes += 1
             logger.debug(
                 "Wake-up buffered",
-                extra={
-                    "subscription": self.subscription.name,
-                    "buffer_size": self._buffered_wakes,
-                },
+                extra={"subscription": self.subscription.name, "buffer_size": self._buffered_wakes},
             )
         elif self.subscription.is_paused:
             self._paused_wakes += 1
@@ -120,15 +106,9 @@ class LiveDrainMixin:
             await self._drain_feed()
 
     async def _drain_feed(self) -> int:
-        """
-        Read and process every envelope on the global feed past our checkpoint.
-
-        Returns:
-            Number of envelopes processed (including filtered ones)
-        """
+        """Read and process every envelope on the global feed past our checkpoint."""
         processed = 0
         options = FeedReadOptions(tenant_id=self.config.tenant_id, limit=self.config.batch_size)
-
         if self._batch_capable:
             return await self._drain_feed_grouped(options)
 
@@ -143,7 +123,6 @@ class LiveDrainMixin:
                 if self._stop_requested:
                     stopped = True
                     break
-
                 await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     stopped = True
@@ -155,23 +134,14 @@ class LiveDrainMixin:
                 processed += 1
                 envelopes_in_batch += 1
 
-            if stopped:
-                break
-
-            if envelopes_in_batch < self.config.batch_size:
+            if stopped or envelopes_in_batch < self.config.batch_size:
                 break
 
         return processed
 
     async def _drain_feed_grouped(self, options: FeedReadOptions) -> int:
-        """
-        Drain the feed delivering each read's envelopes through `handle_batch()`.
-
-        Returns:
-            Number of envelopes processed (including filtered ones)
-        """
+        """Drain the feed delivering each read's envelopes through `handle_batch()`."""
         processed = 0
-
         while not self._stop_requested:
             from_position = self.subscription.last_processed_position
             page = [
@@ -197,21 +167,13 @@ class LiveDrainMixin:
 
             await self._deliver_page(included)
             processed += len(included)
-
-            if len(included) < len(page):
-                break
-            if len(page) < self.config.batch_size:
+            if len(included) < len(page) or len(page) < self.config.batch_size:
                 break
 
         return processed
 
     async def process_buffer(self) -> int:
-        """
-        Drain the global feed to deliver whatever arrived during buffering.
-
-        Returns:
-            Number of envelopes processed from the feed
-        """
+        """Drain the global feed to deliver whatever arrived during buffering."""
         with self._tracer.span(
             "eventsource.live_runner.process_buffer",
             {
@@ -220,20 +182,13 @@ class LiveDrainMixin:
             },
         ) as span:
             self._buffered_wakes = 0
-
             processed = await self._drain_feed()
-
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-
             logger.info(
                 "Buffer processed",
-                extra={
-                    "subscription": self.subscription.name,
-                    "events_processed": processed,
-                },
+                extra={"subscription": self.subscription.name, "events_processed": processed},
             )
-
             return processed
 
     async def disable_buffer(self) -> None:
@@ -242,19 +197,13 @@ class LiveDrainMixin:
         await self.subscription.transition_to(SubscriptionState.LIVE)
         if self._metrics:
             self._metrics.record_state("live")
-
         logger.info(
             "Buffer disabled, now processing live",
             extra={"subscription": self.subscription.name},
         )
 
     async def process_pause_buffer(self) -> int:
-        """
-        Drain the global feed to deliver whatever arrived during pause.
-
-        Returns:
-            Number of envelopes processed from the feed
-        """
+        """Drain the global feed to deliver whatever arrived during pause."""
         with self._tracer.span(
             "eventsource.live_runner.process_pause_buffer",
             {
@@ -269,33 +218,19 @@ class LiveDrainMixin:
                     "pause_buffer_size": self._paused_wakes,
                 },
             )
-
             self._paused_wakes = 0
-
             processed = await self._drain_feed()
-
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-
             logger.info(
                 "Pause buffer processed",
-                extra={
-                    "subscription": self.subscription.name,
-                    "events_processed": processed,
-                },
+                extra={"subscription": self.subscription.name, "events_processed": processed},
             )
-
             self._events_buffered_during_pause = 0
-
             return processed
 
     async def clear_buffer(self) -> int:
-        """
-        Clear buffered wakes and pause buffer, reconciling subscription lag.
-
-        Returns:
-            Total count of dropped buffered wakes that were cleared.
-        """
+        """Clear buffered wakes and pause buffer, reconciling subscription lag."""
         dropped = self._buffered_wakes + self._paused_wakes
         self._buffered_wakes = 0
         self._paused_wakes = 0

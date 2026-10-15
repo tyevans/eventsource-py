@@ -1,8 +1,4 @@
-"""Message processing and event dispatch mixin for RabbitMQ consumer.
-
-Provides deserialization, distributed trace context propagation, handler dispatch
-with error isolation, and delivery acknowledgment.
-"""
+"""Message processing and event dispatch mixin for RabbitMQ consumer."""
 
 from __future__ import annotations
 
@@ -32,7 +28,6 @@ if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
     from eventsource.adapters.rabbitmq.models import RabbitMQEventBusStats
 
-# OpenTelemetry propagation import - kept separate for distributed tracing.
 try:
     from opentelemetry.propagate import extract
     from opentelemetry.trace import Status, StatusCode
@@ -59,10 +54,7 @@ class RabbitMQConsumerDispatchMixin:
     if TYPE_CHECKING:
 
         async def _handle_failed_message(
-            self,
-            message: AbstractIncomingMessage,
-            error: Exception,
-            retry_count: int,
+            self, message: AbstractIncomingMessage, error: Exception, retry_count: int
         ) -> None: ...
 
     def _deserialize_event(self, message: AbstractIncomingMessage) -> DomainEvent | None:
@@ -82,7 +74,6 @@ class RabbitMQConsumerDispatchMixin:
 
         death_info = death_headers.get_death_info(message)
         is_redelivered = death_headers.is_from_dlq(message)
-
         log_extra: dict[str, Any] = {
             "message_id": message.message_id,
             "event_type": event_type_name,
@@ -92,13 +83,11 @@ class RabbitMQConsumerDispatchMixin:
 
         if is_redelivered:
             log_extra.update(
-                {
-                    "is_dead_lettered": True,
-                    "death_count": death_info["death_count"],
-                    "first_death_queue": death_info["first_death_queue"],
-                    "first_death_reason": death_info["first_death_reason"],
-                    "original_routing_key": death_info["original_routing_key"],
-                }
+                is_dead_lettered=True,
+                death_count=death_info["death_count"],
+                first_death_queue=death_info["first_death_queue"],
+                first_death_reason=death_info["first_death_reason"],
+                original_routing_key=death_info["original_routing_key"],
             )
             self._logger.info(
                 f"Processing dead-lettered message: {event_type_name}", extra=log_extra
@@ -111,14 +100,12 @@ class RabbitMQConsumerDispatchMixin:
 
         processing_start = datetime.now(UTC)
         span = None
-        ctx = None
-
         if self._enable_tracing and PROPAGATION_AVAILABLE and self._tracer is not None:
             from eventsource.adapters.rabbitmq import consumer as _consumer_mod
 
-            if _consumer_mod.extract is not None:
-                ctx = _consumer_mod.extract(dict(headers))
-
+            ctx = (
+                _consumer_mod.extract(dict(headers)) if _consumer_mod.extract is not None else None
+            )
             span = self._tracer.start_span(
                 "eventsource.event_bus.consume",
                 kind=SpanKindEnum.CONSUMER,
@@ -155,8 +142,7 @@ class RabbitMQConsumerDispatchMixin:
             self._stats.events_consumed += 1
             self._stats.events_processed_success += 1
             self._stats.last_consume_at = datetime.now(UTC)
-            processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
-
+            duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
             if span:
                 span.set_status(Status(StatusCode.OK))
 
@@ -167,30 +153,27 @@ class RabbitMQConsumerDispatchMixin:
                     "event_id": str(event.event_id),
                     "event_type": event_type_name,
                     "retry_count": retry_count,
-                    "duration_ms": processing_duration * 1000,
+                    "duration_ms": duration_ms,
                     "success": True,
                 },
             )
-
         except Exception as e:
             self._stats.events_processed_failed += 1
             self._stats.last_error_at = datetime.now(UTC)
-            processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
+            duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
             error_extra: dict[str, Any] = {
                 "message_id": message.message_id,
                 "event_type": event_type_name,
                 "retry_count": retry_count,
-                "duration_ms": processing_duration * 1000,
+                "duration_ms": duration_ms,
                 "error": str(e),
                 "error_type": type(e).__name__,
             }
             if is_redelivered:
                 error_extra.update(
-                    {
-                        "is_dead_lettered": True,
-                        "death_count": death_info["death_count"],
-                        "first_death_queue": death_info["first_death_queue"],
-                    }
+                    is_dead_lettered=True,
+                    death_count=death_info["death_count"],
+                    first_death_queue=death_info["first_death_queue"],
                 )
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
@@ -203,16 +186,12 @@ class RabbitMQConsumerDispatchMixin:
                 else e
             )
             await self._handle_failed_message(message, dlq_error, retry_count)
-
         finally:
             if span:
                 span.end()
 
     async def _dispatch_event(
-        self,
-        event: DomainEvent,
-        message: AbstractIncomingMessage,
-        parent_span: Any = None,
+        self, event: DomainEvent, message: AbstractIncomingMessage, parent_span: Any = None
     ) -> None:
         """Dispatch an event to all matching handlers with error isolation."""
         handlers = self._handlers_for(type(event))
@@ -226,43 +205,45 @@ class RabbitMQConsumerDispatchMixin:
         if parent_span is not None:
             parent_span.set_attribute(ATTR_HANDLER_COUNT, len(handlers))
 
+        event_id_str = str(event.event_id)
         self._logger.debug(
             f"Dispatching {event.event_type} to {len(handlers)} handler(s)",
             extra={
                 "event_type": event.event_type,
-                "event_id": str(event.event_id),
+                "event_id": event_id_str,
                 "handler_count": len(handlers),
             },
         )
 
         failures: list[tuple[str, Exception]] = []
+        tracing_enabled = (
+            self._enable_tracing
+            and parent_span
+            and PROPAGATION_AVAILABLE
+            and self._tracer is not None
+        )
         for adapter in handlers:
             handler_name = adapter.name
             handler_start = datetime.now(UTC)
-            handler_span = None
-
-            if (
-                self._enable_tracing
-                and parent_span
-                and PROPAGATION_AVAILABLE
-                and self._tracer is not None
-            ):
-                handler_span = self._tracer.start_span(
+            handler_span = (
+                self._tracer.start_span(  # type: ignore[union-attr]
                     "eventsource.event_bus.handle",
                     kind=SpanKindEnum.INTERNAL,
                     attributes={
                         ATTR_HANDLER_NAME: handler_name,
                         ATTR_EVENT_TYPE: event.event_type,
-                        ATTR_EVENT_ID: str(event.event_id),
+                        ATTR_EVENT_ID: event_id_str,
                     },
                 )
+                if tracing_enabled
+                else None
+            )
 
             try:
                 await adapter.handle(event)
-                handler_duration = (datetime.now(UTC) - handler_start).total_seconds()
-
+                duration_ms = (datetime.now(UTC) - handler_start).total_seconds() * 1000
                 if handler_span:
-                    handler_span.set_attribute("handler.duration_ms", handler_duration * 1000)
+                    handler_span.set_attribute("handler.duration_ms", duration_ms)
                     handler_span.set_attribute(ATTR_HANDLER_SUCCESS, True)
                     handler_span.set_status(Status(StatusCode.OK))
 
@@ -271,16 +252,14 @@ class RabbitMQConsumerDispatchMixin:
                     extra={
                         "handler": handler_name,
                         "event_type": event.event_type,
-                        "event_id": str(event.event_id),
-                        "duration_ms": handler_duration * 1000,
+                        "event_id": event_id_str,
+                        "duration_ms": duration_ms,
                     },
                 )
-
             except Exception as e:
                 self._stats.handler_errors += 1
                 self._stats.last_error_at = datetime.now(UTC)
-                handler_duration = (datetime.now(UTC) - handler_start).total_seconds()
-
+                duration_ms = (datetime.now(UTC) - handler_start).total_seconds() * 1000
                 if handler_span:
                     handler_span.set_attribute(ATTR_HANDLER_SUCCESS, False)
                     handler_span.set_status(Status(StatusCode.ERROR, str(e)))
@@ -292,15 +271,14 @@ class RabbitMQConsumerDispatchMixin:
                     extra={
                         "handler": handler_name,
                         "event_type": event.event_type,
-                        "event_id": str(event.event_id),
+                        "event_id": event_id_str,
                         "message_id": message.message_id,
-                        "duration_ms": handler_duration * 1000,
+                        "duration_ms": duration_ms,
                         "error": str(e),
                         "error_type": type(e).__name__,
                     },
                 )
                 failures.append((handler_name, e))
-
             finally:
                 if handler_span:
                     handler_span.end()
