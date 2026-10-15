@@ -80,11 +80,13 @@ class ShutdownCoordinator:
     _periodic_checkpoint_task = _delegate("_periodic_manager", "_periodic_checkpoint_task")
     _periodic_checkpoints_saved = _delegate("_periodic_manager", "_periodic_checkpoints_saved")
     _shutdown_deadline = _delegate("_deadline_manager", "_shutdown_deadline")
-    is_shutting_down = _delegate("_signal_manager", "shutdown_requested")
-    phase = _delegate("_signal_manager", "phase")
-    deadline = _delegate("_deadline_manager", "deadline")
-    last_metrics_snapshot = property(lambda self: self._last_metrics_snapshot)
-    is_forced = property(lambda self: bool(self._phase == ShutdownPhase.FORCED))
+    is_shutting_down: bool = _delegate("_signal_manager", "shutdown_requested")
+    phase: ShutdownPhase = _delegate("_signal_manager", "phase")
+    deadline: datetime | None = _delegate("_deadline_manager", "deadline")
+    last_metrics_snapshot: ShutdownMetricsSnapshot | None = property(  # type: ignore[assignment]
+        lambda self: self._last_metrics_snapshot
+    )
+    is_forced: bool = property(lambda self: bool(self._phase == ShutdownPhase.FORCED))  # type: ignore[assignment]
 
     def register_signals(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._signal_manager.register_signals(loop)
