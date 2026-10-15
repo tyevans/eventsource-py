@@ -22,16 +22,14 @@ Example:
 
 from __future__ import annotations
 
-import threading
-from typing import TYPE_CHECKING
+from typing import TypeVar
 
 from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.domain.event import DomainEvent
 
-if TYPE_CHECKING:
-    pass
+TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class InMemoryTestHarness:
@@ -78,15 +76,6 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
-        self._published_lock = threading.RLock()
-        self._published: list[DomainEvent] = []
-        self._event_bus.subscribe_to_all_events(self._record_published)
-
-    async def _record_published(self, event: DomainEvent) -> None:
-        """Track a published event independently of the deprecated
-        ``InMemoryEventBus.published_events`` accessor."""
-        with self._published_lock:
-            self._published.append(event)
 
     @property
     def event_store(self) -> InMemoryEventStore:
@@ -168,8 +157,7 @@ class InMemoryTestHarness:
             >>> assert len(harness.published_events) == 2
             >>> assert harness.published_events[0] == event1
         """
-        with self._published_lock:
-            return list(self._published)
+        return self._event_bus.published_events
 
     def reset(self) -> None:
         """
@@ -189,9 +177,6 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
-        self._published_lock = threading.RLock()
-        self._published = []
-        self._event_bus.subscribe_to_all_events(self._record_published)
 
     def clear_published_events(self) -> None:
         """
@@ -208,10 +193,13 @@ class InMemoryTestHarness:
             >>> await execute_command(harness)
             >>> assert len(harness.published_events) == 1
         """
-        with self._published_lock:
-            self._published.clear()
+        self._event_bus.clear_published_events()
 
-    def get_events_of_type(self, event_type: type[DomainEvent]) -> list[DomainEvent]:
+    def published_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
+        """Return published events matching ``event_type`` in publication order."""
+        return self._event_bus.published_of_type(event_type)
+
+    def get_events_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
         """
         Filter published events by type.
 
@@ -229,7 +217,7 @@ class InMemoryTestHarness:
             >>> shipped_events = harness.get_events_of_type(OrderShipped)
             >>> assert len(shipped_events) == 1
         """
-        return [event for event in self.published_events if isinstance(event, event_type)]
+        return self._event_bus.published_of_type(event_type)
 
     def __repr__(self) -> str:
         """Return string representation for debugging."""

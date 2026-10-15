@@ -778,7 +778,7 @@ If you write your own event store adapter or `EventBus`, do not hand-write contr
 tests -- subclass the suites. The event store side is five narrow, per-port suites in
 `eventsource.testing.conformance_ports`, one per capability protocol in
 `eventsource.ports.store`; the bus side is the single `EventBusConformanceSuite` from
-`eventsource.testing.conformance`. Every suite supplies a set of `async def test_*`
+`eventsource.testing.conformance_ports`. Every suite supplies a set of `async def test_*`
 methods; pytest collects those inherited tests when your subclass is named `Test*`.
 
 ### The store side: one `store` fixture per port suite
@@ -831,7 +831,7 @@ The bus suite keeps its original factory-method shape:
 from uuid import UUID
 
 from eventsource import DomainEvent
-from eventsource.testing.conformance import EventBusConformanceSuite
+from eventsource.testing.conformance_ports import EventBusConformanceSuite
 
 
 class TestMyBusConformance(EventBusConformanceSuite):
@@ -941,6 +941,5 @@ You now have the whole testing toolkit:
   genuinely need it.
 - Tutorial 16 (Multi-Tenancy) -- `EventBuilder.with_tenant_id` and the projection's
   `tenant_filter` are the testing entry points there.
-- Read `src/eventsource/testing/conformance_ports/` and
-  `src/eventsource/testing/conformance.py` before writing a custom backend; together
-  they are the most precise statement of the store-port and `EventBus` contracts.
+- Read `src/eventsource/testing/conformance_ports/` before writing a custom backend; it is
+  the most precise statement of the store-port and `EventBus` contracts.

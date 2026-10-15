@@ -17,7 +17,7 @@ from eventsource import (
     RabbitMQEventBusConfig,
 )
 from eventsource.ports.bus import EventBus
-from eventsource.testing.conformance import EventBusConformanceSuite
+from eventsource.testing.conformance_ports import EventBusConformanceSuite
 from tests.integration.conftest import TestItemCreated
 
 from .conftest import skip_if_no_rabbitmq_infra

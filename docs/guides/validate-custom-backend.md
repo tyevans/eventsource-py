@@ -16,7 +16,7 @@ subclasses whichever suites the adapter honors; an adapter that only appends
 and reads streams (no global feed, no category queries) runs
 `AppenderConformance` and `StreamReaderConformance` and stops there. The bus
 side keeps its existing suite, `EventBusConformanceSuite` from
-`eventsource.testing.conformance`.
+`eventsource.testing.conformance_ports`.
 
 By the end you will have pytest classes that run the relevant inherited suites
 against your backend, grounded in the same pattern the library uses to certify

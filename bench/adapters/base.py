@@ -1,7 +1,7 @@
 """Adapter contract: how a backend plugs into the harness.
 
 Mirrors the conformance-suite factory pattern (see
-src/eventsource/testing/conformance.py): scenarios never know which
+src/eventsource/testing/conformance_ports/bus.py): scenarios never know which
 backend they run on.
 """
 

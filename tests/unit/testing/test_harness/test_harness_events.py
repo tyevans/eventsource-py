@@ -263,3 +263,27 @@ class TestHarnessGetEventsOfType:
         result = harness.get_events_of_type(HarnessOtherEvent)
 
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_published_of_type_delegates_to_bus(self, harness: InMemoryTestHarness) -> None:
+        """published_of_type delegates to event_bus and matches get_events_of_type."""
+        sample_event = HarnessSampleEvent(
+            aggregate_id=uuid4(),
+            aggregate_type="Sample",
+            aggregate_version=1,
+        )
+        other_event = HarnessOtherEvent(
+            aggregate_id=uuid4(),
+            aggregate_type="Other",
+            aggregate_version=1,
+        )
+        await harness.event_bus.publish([sample_event, other_event])
+
+        assert harness.published_of_type(HarnessSampleEvent) == [sample_event]
+        assert harness.published_of_type(HarnessOtherEvent) == [other_event]
+        assert harness.published_of_type(HarnessSampleEvent) == harness.get_events_of_type(
+            HarnessSampleEvent
+        )
+        assert harness.event_bus.get_wildcard_subscriber_count() == 0
+        harness.clear_published_events()
+        assert harness.event_bus.published_events == []

@@ -25,10 +25,7 @@ from eventsource.ports.readmodels.exceptions import (
 )
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
-from eventsource.ports.readmodels.repository import (
-    ReadModelRepository,
-    ReadModelRepositoryProtocol,
-)
+from eventsource.ports.readmodels.repository import ReadModelRepository
 
 __all__ = [
     "Filter",
@@ -39,5 +36,4 @@ __all__ = [
     "ReadModelSchemaMismatchError",
     "ReadModelNotFoundError",
     "ReadModelRepository",
-    "ReadModelRepositoryProtocol",
 ]

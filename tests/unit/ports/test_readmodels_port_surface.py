@@ -14,11 +14,10 @@ def test_public_names_import_from_the_port() -> None:
         ReadModelError,
         ReadModelNotFoundError,
         ReadModelRepository,
-        ReadModelRepositoryProtocol,
         ReadModelVersionConflictError,
     )
 
-    assert ReadModelRepositoryProtocol is ReadModelRepository
+    assert getattr(ReadModelRepository, "_is_runtime_protocol", False)
     assert issubclass(ReadModelVersionConflictError, ReadModelError)
     assert issubclass(ReadModelNotFoundError, ReadModelError)
     assert hasattr(ReadModel, "table_name")
