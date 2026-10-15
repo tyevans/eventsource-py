@@ -38,9 +38,7 @@ class ManagerLifecycleMixin:
     _tracer: Tracer
 
     async def start(
-        self,
-        subscription_names: list[str] | None = None,
-        concurrent: bool = True,
+        self, subscription_names: list[str] | None = None, concurrent: bool = True
     ) -> dict[str, Exception | None]:
         """Start registered subscriptions concurrently."""
         if self._running:
@@ -52,22 +50,19 @@ class ManagerLifecycleMixin:
         self._health_provider.set_started(self._started_at)
 
         all_subs = self._registry.get_all()
-        subscriptions_to_start = (
+        subs = (
             all_subs
             if subscription_names is None
             else [sub for sub in all_subs if sub.name in subscription_names]
         )
-
         logger.info(
             "Starting subscription manager",
-            extra={"subscription_count": len(subscriptions_to_start), "concurrent": concurrent},
+            extra={"subscription_count": len(subs), "concurrent": concurrent},
         )
-        return await self._lifecycle.start_all(subscriptions_to_start, concurrent)
+        return await self._lifecycle.start_all(subs, concurrent)
 
     async def stop(
-        self,
-        timeout: float = 30.0,
-        subscription_names: list[str] | None = None,
+        self, timeout: float = 30.0, subscription_names: list[str] | None = None
     ) -> None:
         """Stop subscriptions gracefully."""
         with self._tracer.span("eventsource.subscription_manager.stop"):
@@ -76,17 +71,17 @@ class ManagerLifecycleMixin:
 
             all_subs = self._registry.get_all()
             if subscription_names is None:
-                subscriptions_to_stop = all_subs
+                subs = all_subs
                 self._running = False
                 self._health_provider.clear_started()
             else:
-                subscriptions_to_stop = [sub for sub in all_subs if sub.name in subscription_names]
+                subs = [sub for sub in all_subs if sub.name in subscription_names]
 
             logger.info(
                 "Stopping subscription manager",
-                extra={"subscription_count": len(subscriptions_to_stop), "timeout": timeout},
+                extra={"subscription_count": len(subs), "timeout": timeout},
             )
-            await self._lifecycle.stop_all(subscriptions_to_stop, timeout)
+            await self._lifecycle.stop_all(subs, timeout)
             logger.info("Subscription manager stopped")
 
     @property
@@ -120,7 +115,6 @@ class ManagerLifecycleMixin:
             },
         )
         self.register_signals()
-
         try:
             await self.start()
             logger.info(
@@ -128,9 +122,8 @@ class ManagerLifecycleMixin:
                 extra={"subscriptions": self._registry.get_names()},
             )
             await self._shutdown_coordinator.wait_for_shutdown()
-            result = await self._execute_graceful_shutdown()
-            self._last_shutdown_result = result
-            return result
+            self._last_shutdown_result = await self._execute_graceful_shutdown()
+            return self._last_shutdown_result
         except Exception as e:
             logger.error("Error during run_until_shutdown", extra={"error": str(e)}, exc_info=True)
             await self.stop()
@@ -160,14 +153,12 @@ class ManagerLifecycleMixin:
         drain_tasks: list[tuple[str, asyncio.Task[int]]] = []
 
         for name, coordinator in self._lifecycle.coordinators.items():
-            flow_controller = coordinator.flow_controller
-            if flow_controller is None:
+            if (flow_controller := coordinator.flow_controller) is None:
                 logger.debug("No flow controller for subscription", extra={"subscription": name})
                 continue
 
             in_flight = flow_controller.in_flight
             total_in_flight += in_flight
-
             if in_flight > 0:
                 logger.info(
                     "Draining in-flight events for subscription",
@@ -228,15 +219,14 @@ class ManagerLifecycleMixin:
     async def _save_final_checkpoints(self) -> int:
         """Save final checkpoints for all subscriptions."""
         saved_count = 0
-        for name, subscription in self._registry.items():
-            if subscription.last_event_id is None or subscription.last_event_type is None:
+        for name, sub in self._registry.items():
+            if sub.last_event_id is None or sub.last_event_type is None:
                 logger.debug(
                     "Skipping checkpoint save - no event info", extra={"subscription": name}
                 )
                 continue
 
-            position = subscription.last_processed_position
-            if position is None:
+            if (position := sub.last_processed_position) is None:
                 logger.debug(
                     "Skipping checkpoint save - no position to checkpoint",
                     extra={"subscription": name},
@@ -247,8 +237,8 @@ class ManagerLifecycleMixin:
                 await self.checkpoint_repo.save_position(
                     subscription_id=name,
                     position=position,
-                    event_id=subscription.last_event_id,
-                    event_type=subscription.last_event_type,
+                    event_id=sub.last_event_id,
+                    event_type=sub.last_event_type,
                 )
                 saved_count += 1
                 logger.debug(
@@ -292,10 +282,7 @@ class ManagerLifecycleMixin:
         return self
 
     async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: Any,
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any
     ) -> None:
         """Async context manager exit."""
         await self.stop()

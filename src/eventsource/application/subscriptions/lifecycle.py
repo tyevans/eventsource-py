@@ -79,14 +79,12 @@ class SubscriptionLifecycleManager:
             {ATTR_SUBSCRIPTION_NAME: name},
         ) as span:
             try:
-                # Leadership lease verification guard: ensure lease is renewed and valid
                 if self.leader_elector is not None and not await self.verify_leadership_lease():
                     raise TransitionError(
                         f"Instance '{self.leader_elector.identity}' does not hold a valid leadership lease; "
                         f"unauthorized cluster transition blocked for subscription '{name}'"
                     )
 
-                # Resolve starting position
                 start_position = await self._start_resolver.resolve(subscription)
                 subscription.last_processed_position = start_position
 
@@ -95,13 +93,9 @@ class SubscriptionLifecycleManager:
 
                 logger.info(
                     "Starting subscription",
-                    extra={
-                        "subscription": name,
-                        "start_position": render_position(start_position),
-                    },
+                    extra={"subscription": name, "start_position": render_position(start_position)},
                 )
 
-                # Create and execute transition coordinator
                 coordinator = TransitionCoordinator(
                     event_store=self.event_store,
                     event_bus=self.event_bus,
@@ -110,9 +104,7 @@ class SubscriptionLifecycleManager:
                 )
                 self._coordinators[name] = coordinator
 
-                # Execute transition (catch-up to live)
                 result = await coordinator.execute()
-
                 if not result.success:
                     await subscription.set_error(
                         result.error or SubscriptionError("Transition failed")
@@ -133,23 +125,16 @@ class SubscriptionLifecycleManager:
                         "final_position": render_position(result.final_position),
                     },
                 )
-
             except Exception as e:
                 logger.error(
                     "Failed to start subscription",
-                    extra={
-                        "subscription": name,
-                        "error": str(e),
-                    },
+                    extra={"subscription": name, "error": str(e)},
                     exc_info=True,
                 )
                 await subscription.set_error(e)
                 raise
 
-    async def start_subscription_isolated(
-        self,
-        subscription: Subscription,
-    ) -> Exception | None:
+    async def start_subscription_isolated(self, subscription: Subscription) -> Exception | None:
         """Start a single subscription, returning any raised exception instead of propagating."""
         try:
             await self.start_subscription(subscription)
@@ -165,27 +150,24 @@ class SubscriptionLifecycleManager:
         """Start multiple subscriptions concurrently or sequentially."""
         logger.info(
             "Starting subscriptions",
-            extra={
-                "subscription_count": len(subscriptions),
-                "concurrent": concurrent,
-            },
+            extra={"subscription_count": len(subscriptions), "concurrent": concurrent},
         )
-
         results: dict[str, Exception | None] = {}
 
         if concurrent and len(subscriptions) > 1:
-            tasks = []
-            for subscription in subscriptions:
-                task = asyncio.create_task(
-                    self.start_subscription_isolated(subscription),
-                    name=f"start_{subscription.name}",
+            tasks = [
+                (
+                    sub.name,
+                    asyncio.create_task(
+                        self.start_subscription_isolated(sub),
+                        name=f"start_{sub.name}",
+                    ),
                 )
-                tasks.append((subscription.name, task))
-
+                for sub in subscriptions
+            ]
             for name, task in tasks:
                 try:
-                    result = await task
-                    results[name] = result
+                    results[name] = await task
                 except Exception as e:
                     results[name] = e
                     logger.error(
@@ -195,8 +177,7 @@ class SubscriptionLifecycleManager:
                     )
         else:
             for subscription in subscriptions:
-                result = await self.start_subscription_isolated(subscription)
-                results[subscription.name] = result
+                results[subscription.name] = await self.start_subscription_isolated(subscription)
 
         succeeded = sum(1 for r in results.values() if r is None)
         failed = sum(1 for r in results.values() if r is not None)
@@ -210,33 +191,21 @@ class SubscriptionLifecycleManager:
 
         return results
 
-    async def stop_subscription(
-        self,
-        name: str,
-        timeout: float = 30.0,
-    ) -> None:
+    async def stop_subscription(self, name: str, timeout: float = 30.0) -> None:
         """Stop a single subscription within the given shutdown timeout."""
         with self._tracer.span(
             "eventsource.lifecycle.stop_subscription",
             {ATTR_SUBSCRIPTION_NAME: name},
         ):
-            if name not in self._coordinators:
+            if (coordinator := self._coordinators.get(name)) is None:
                 return
-
-            coordinator = self._coordinators[name]
             try:
                 await asyncio.wait_for(coordinator.stop(), timeout=timeout)
-                logger.info(
-                    "Subscription stopped",
-                    extra={"subscription": name},
-                )
+                logger.info("Subscription stopped", extra={"subscription": name})
             except TimeoutError:
                 logger.warning(
                     "Subscription stop timed out",
-                    extra={
-                        "subscription": name,
-                        "timeout": timeout,
-                    },
+                    extra={"subscription": name, "timeout": timeout},
                 )
 
     async def stop_all(
@@ -247,18 +216,13 @@ class SubscriptionLifecycleManager:
         """Stop multiple subscriptions gracefully within the given timeout."""
         logger.info(
             "Stopping subscriptions",
-            extra={
-                "subscription_count": len(subscriptions),
-                "timeout": timeout,
-            },
+            extra={"subscription_count": len(subscriptions), "timeout": timeout},
         )
-
-        stop_tasks = []
-        for subscription in subscriptions:
-            name = subscription.name
-            if name in self._coordinators:
-                stop_tasks.append(self.stop_subscription(name, timeout))
-
+        stop_tasks = [
+            self.stop_subscription(sub.name, timeout)
+            for sub in subscriptions
+            if sub.name in self._coordinators
+        ]
         if stop_tasks:
             await asyncio.gather(*stop_tasks, return_exceptions=True)
 
