@@ -1,7 +1,7 @@
 ---
 id: TASK-0294
 title: "Sync Diataxis testing guide for EventBuilder.build_many and InMemoryTestHarness.append_events"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
