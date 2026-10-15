@@ -1,5 +1,6 @@
 """Tests for eventsource.observability.attributes module."""
 
+import eventsource.observability as obs_pkg
 from eventsource.observability import attributes
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -25,8 +26,6 @@ from eventsource.observability.attributes import (
 
 
 class TestAttributeConstants:
-    """Tests for attribute constant definitions."""
-
     def test_aggregate_attributes_have_eventsource_prefix(self):
         assert ATTR_AGGREGATE_ID.startswith("eventsource.")
         assert ATTR_AGGREGATE_TYPE.startswith("eventsource.")
@@ -64,8 +63,6 @@ class TestAttributeConstants:
 
 
 class TestAttributeValues:
-    """Tests for specific attribute value correctness."""
-
     def test_aggregate_id_value(self):
         assert ATTR_AGGREGATE_ID == "eventsource.aggregate.id"
 
@@ -110,17 +107,13 @@ class TestAttributeValues:
 
 
 class TestAttributeExports:
-    """Tests for module exports."""
-
     def test_all_exports_defined(self):
         for name in attributes.__all__:
             assert hasattr(attributes, name), f"{name} not defined in module"
 
     def test_imports_from_package(self):
-        from eventsource.observability import ATTR_AGGREGATE_ID, ATTR_EVENT_TYPE
-
-        assert ATTR_AGGREGATE_ID == "eventsource.aggregate.id"
-        assert ATTR_EVENT_TYPE == "eventsource.event.type"
+        assert obs_pkg.ATTR_AGGREGATE_ID == "eventsource.aggregate.id"
+        assert obs_pkg.ATTR_EVENT_TYPE == "eventsource.event.type"
 
     def test_attribute_values_are_strings(self):
         for name in attributes.__all__:
@@ -133,96 +126,56 @@ class TestAttributeExports:
             assert value == value.lower(), f"{name} value should be lowercase"
 
     def test_all_expected_exports_present(self):
-        expected = [
-            "ATTR_AGGREGATE_ID",
-            "ATTR_AGGREGATE_TYPE",
-            "ATTR_EVENT_ID",
-            "ATTR_EVENT_TYPE",
-            "ATTR_EVENT_COUNT",
-            "ATTR_VERSION",
-            "ATTR_EXPECTED_VERSION",
-            "ATTR_TENANT_ID",
-            "ATTR_PROJECTION_NAME",
-            "ATTR_HANDLER_NAME",
-            "ATTR_HANDLER_COUNT",
-            "ATTR_POSITION",
-            "ATTR_DB_SYSTEM",
-            "ATTR_DB_OPERATION",
-            "ATTR_MESSAGING_SYSTEM",
-            "ATTR_MESSAGING_DESTINATION",
-            "ATTR_MESSAGING_OPERATION",
-            "ATTR_RETRY_COUNT",
-            "ATTR_ERROR_TYPE",
-        ]
+        expected = [f"ATTR_{s}" for s in (
+            "AGGREGATE_ID", "AGGREGATE_TYPE", "EVENT_ID", "EVENT_TYPE", "EVENT_COUNT",
+            "VERSION", "EXPECTED_VERSION", "TENANT_ID", "PROJECTION_NAME", "HANDLER_NAME",
+            "HANDLER_COUNT", "POSITION", "DB_SYSTEM", "DB_OPERATION", "MESSAGING_SYSTEM",
+            "MESSAGING_DESTINATION", "MESSAGING_OPERATION", "RETRY_COUNT", "ERROR_TYPE",
+        )]  # fmt: skip
         for name in expected:
             assert name in attributes.__all__, f"{name} should be in __all__"
 
 
 class TestPackageLevelImports:
-    """Tests for package-level imports from eventsource.observability."""
-
     def test_all_aggregate_attributes_importable(self):
-        from eventsource.observability import ATTR_AGGREGATE_ID, ATTR_AGGREGATE_TYPE
-
-        assert ATTR_AGGREGATE_ID is not None
-        assert ATTR_AGGREGATE_TYPE is not None
+        assert obs_pkg.ATTR_AGGREGATE_ID is not None and obs_pkg.ATTR_AGGREGATE_TYPE is not None
 
     def test_all_event_attributes_importable(self):
-        from eventsource.observability import ATTR_EVENT_COUNT, ATTR_EVENT_ID, ATTR_EVENT_TYPE
-
-        assert ATTR_EVENT_ID is not None
-        assert ATTR_EVENT_TYPE is not None
-        assert ATTR_EVENT_COUNT is not None
+        assert None not in (
+            obs_pkg.ATTR_EVENT_ID,
+            obs_pkg.ATTR_EVENT_TYPE,
+            obs_pkg.ATTR_EVENT_COUNT,
+        )
 
     def test_all_version_attributes_importable(self):
-        from eventsource.observability import ATTR_EXPECTED_VERSION, ATTR_VERSION
-
-        assert ATTR_VERSION is not None
-        assert ATTR_EXPECTED_VERSION is not None
+        assert obs_pkg.ATTR_VERSION is not None and obs_pkg.ATTR_EXPECTED_VERSION is not None
 
     def test_all_tenant_actor_attributes_importable(self):
-        assert ATTR_TENANT_ID is not None
+        assert obs_pkg.ATTR_TENANT_ID is not None
 
     def test_all_component_attributes_importable(self):
-        from eventsource.observability import (
-            ATTR_HANDLER_COUNT,
-            ATTR_HANDLER_NAME,
-            ATTR_POSITION,
-            ATTR_PROJECTION_NAME,
+        assert None not in (
+            obs_pkg.ATTR_PROJECTION_NAME,
+            obs_pkg.ATTR_HANDLER_NAME,
+            obs_pkg.ATTR_HANDLER_COUNT,
+            obs_pkg.ATTR_POSITION,
         )
-
-        assert ATTR_PROJECTION_NAME is not None
-        assert ATTR_HANDLER_NAME is not None
-        assert ATTR_HANDLER_COUNT is not None
-        assert ATTR_POSITION is not None
 
     def test_all_db_attributes_importable(self):
-        from eventsource.observability import ATTR_DB_OPERATION, ATTR_DB_SYSTEM
-
-        assert ATTR_DB_SYSTEM is not None
-        assert ATTR_DB_OPERATION is not None
+        assert obs_pkg.ATTR_DB_SYSTEM is not None and obs_pkg.ATTR_DB_OPERATION is not None
 
     def test_all_messaging_attributes_importable(self):
-        from eventsource.observability import (
-            ATTR_MESSAGING_DESTINATION,
-            ATTR_MESSAGING_OPERATION,
-            ATTR_MESSAGING_SYSTEM,
+        assert None not in (
+            obs_pkg.ATTR_MESSAGING_SYSTEM,
+            obs_pkg.ATTR_MESSAGING_DESTINATION,
+            obs_pkg.ATTR_MESSAGING_OPERATION,
         )
 
-        assert ATTR_MESSAGING_SYSTEM is not None
-        assert ATTR_MESSAGING_DESTINATION is not None
-        assert ATTR_MESSAGING_OPERATION is not None
-
     def test_all_error_retry_attributes_importable(self):
-        from eventsource.observability import ATTR_ERROR_TYPE, ATTR_RETRY_COUNT
-
-        assert ATTR_RETRY_COUNT is not None
-        assert ATTR_ERROR_TYPE is not None
+        assert obs_pkg.ATTR_RETRY_COUNT is not None and obs_pkg.ATTR_ERROR_TYPE is not None
 
 
 class TestAttributeUsability:
-    """Tests demonstrating practical attribute usage patterns."""
-
     def test_attributes_usable_as_dict_keys(self):
         span_attributes = {
             ATTR_AGGREGATE_ID: "123e4567-e89b-12d3-a456-426614174000",
