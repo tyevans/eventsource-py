@@ -25,45 +25,21 @@ from eventsource.ports.outbox import OutboxEntry, OutboxStats, outbox_event_data
 
 
 class InMemoryOutboxRepository:
-    """
-    In-memory implementation of outbox repository for testing.
-
-    Stores outbox events in memory. All data is lost when process terminates.
-
-    Example:
-        >>> repo = InMemoryOutboxRepository()
-        >>> outbox_id = await repo.add_event(event)
-        >>> pending = await repo.get_pending_events()
-        >>> await repo.mark_published(pending[0].id)
-    """
+    """In-memory implementation of outbox repository for testing."""
 
     def __init__(
         self,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize an empty in-memory outbox repository.
-
-        Args:
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize an empty in-memory outbox repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._entries: dict[UUID, OutboxEntry] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
 
     async def add_event(self, event: DomainEvent) -> UUID:
-        """
-        Add an event to the outbox for publishing.
-
-        Args:
-            event: Domain event to publish
-
-        Returns:
-            Outbox record ID
-        """
+        """Add an event to the outbox for publishing and return its outbox record ID."""
         with self._tracer.span(
             "eventsource.outbox.add",
             {
@@ -95,15 +71,7 @@ class InMemoryOutboxRepository:
             return outbox_id
 
     async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
-        """
-        Get pending events that need to be published.
-
-        Args:
-            limit: Maximum number of events to return
-
-        Returns:
-            List of OutboxEntry instances
-        """
+        """Get pending events that need to be published, ordered oldest first."""
         with self._tracer.span(
             "eventsource.outbox.get_pending",
             {
@@ -121,12 +89,7 @@ class InMemoryOutboxRepository:
             return result
 
     async def mark_published(self, outbox_id: UUID) -> None:
-        """
-        Mark an outbox event as successfully published.
-
-        Args:
-            outbox_id: Outbox record ID
-        """
+        """Mark an outbox event as successfully published."""
         with self._tracer.span(
             "eventsource.outbox.mark_published",
             {
@@ -142,13 +105,7 @@ class InMemoryOutboxRepository:
                     entry.published_at = now
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
-        """
-        Increment retry count for a failed publishing attempt.
-
-        Args:
-            outbox_id: Outbox record ID
-            error: Error message (optional)
-        """
+        """Increment retry count for a failed publishing attempt."""
         with self._tracer.span(
             "eventsource.outbox.increment_retry",
             {
@@ -164,13 +121,7 @@ class InMemoryOutboxRepository:
                     entry.last_error = error
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
-        """
-        Mark an outbox event as permanently failed.
-
-        Args:
-            outbox_id: Outbox record ID
-            error: Error message
-        """
+        """Mark an outbox event as permanently failed."""
         with self._tracer.span(
             "eventsource.outbox.mark_failed",
             {
@@ -186,15 +137,7 @@ class InMemoryOutboxRepository:
                     entry.last_error = error
 
     async def cleanup_published(self, days: int = 7) -> int:
-        """
-        Clean up published events older than specified days.
-
-        Args:
-            days: Number of days to retain published events
-
-        Returns:
-            Number of records deleted
-        """
+        """Clean up published events older than specified days and return count deleted."""
         with self._tracer.span(
             "eventsource.outbox.cleanup",
             {
@@ -224,12 +167,7 @@ class InMemoryOutboxRepository:
             return deleted
 
     async def get_stats(self) -> OutboxStats:
-        """
-        Get outbox statistics.
-
-        Returns:
-            OutboxStats with outbox metrics
-        """
+        """Get outbox statistics."""
         with self._tracer.span(
             "eventsource.outbox.get_stats",
             {ATTR_DB_SYSTEM: "memory"},

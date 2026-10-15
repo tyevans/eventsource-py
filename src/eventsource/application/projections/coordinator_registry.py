@@ -23,28 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectionRegistry:
-    """
-    Registry for managing multiple projections.
-
-    Allows routing events to appropriate projections and handlers.
-    Supports concurrent execution for better throughput.
-    Optional OpenTelemetry tracing support (disabled by default).
-
-    Example:
-        >>> registry = ProjectionRegistry()
-        >>> registry.register_projection(order_projection)
-        >>> registry.register_projection(inventory_projection)
-        >>> registry.register_handler(notification_handler)
-        >>>
-        >>> # Dispatch events to all projections concurrently
-        >>> await registry.dispatch(order_created_event)
-        >>>
-        >>> # With tracing enabled
-        >>> registry = ProjectionRegistry(enable_tracing=True)
-        >>>
-        >>> # Cap fan-out concurrency for a large registry
-        >>> registry = ProjectionRegistry(max_concurrency=16)
-    """
+    """Registry for managing multiple projections and routing events concurrently."""
 
     def __init__(
         self,
@@ -52,24 +31,7 @@ class ProjectionRegistry:
         enable_tracing: bool = False,
         max_concurrency: int | None = None,
     ) -> None:
-        """
-        Initialize the projection registry.
-
-        Args:
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: If True and OpenTelemetry is available, emit traces.
-                          Default is False (tracing off for high-frequency operations).
-                          Ignored if tracer is explicitly provided.
-            max_concurrency: Maximum number of projections/handlers dispatched
-                          concurrently for a single event. `None` (the
-                          default) leaves fan-out uncapped. The bound applies
-                          per `dispatch()` call, not across the registry's
-                          lifetime, and is enforced with one semaphore owned
-                          by this instance -- never construct a new one per
-                          call, which multiplies the effective ceiling under
-                          concurrent callers.
-        """
+        """Initialize the projection registry with optional tracing and concurrency cap."""
         self._projections: list[Projection] = []
         self._handlers: list[EventHandlerBase] = []
         # Composition-based tracing (replaces TracingMixin)
@@ -78,12 +40,7 @@ class ProjectionRegistry:
         self._semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
 
     def register_projection(self, projection: Projection) -> None:
-        """
-        Register a projection.
-
-        Args:
-            projection: The projection to register
-        """
+        """Register a projection."""
         self._projections.append(projection)
         projection_name = projection.__class__.__name__
         logger.info(
@@ -93,12 +50,7 @@ class ProjectionRegistry:
         )
 
     def register_handler(self, handler: EventHandlerBase) -> None:
-        """
-        Register an event handler.
-
-        Args:
-            handler: The handler to register
-        """
+        """Register an event handler."""
         self._handlers.append(handler)
         handler_name = handler.__class__.__name__
         logger.info(
@@ -108,15 +60,7 @@ class ProjectionRegistry:
         )
 
     def unregister_projection(self, projection: Projection) -> bool:
-        """
-        Unregister a projection.
-
-        Args:
-            projection: The projection to unregister
-
-        Returns:
-            True if projection was found and removed, False otherwise
-        """
+        """Unregister a projection. Returns True if found and removed."""
         try:
             self._projections.remove(projection)
             logger.info(
@@ -129,15 +73,7 @@ class ProjectionRegistry:
             return False
 
     def unregister_handler(self, handler: EventHandlerBase) -> bool:
-        """
-        Unregister an event handler.
-
-        Args:
-            handler: The handler to unregister
-
-        Returns:
-            True if handler was found and removed, False otherwise
-        """
+        """Unregister an event handler. Returns True if found and removed."""
         try:
             self._handlers.remove(handler)
             logger.info(
@@ -150,16 +86,7 @@ class ProjectionRegistry:
             return False
 
     async def dispatch(self, event: DomainEvent) -> None:
-        """
-        Dispatch an event to all registered projections and handlers concurrently.
-
-        Uses asyncio.gather() to execute independent projections in parallel,
-        improving throughput by 3-5x. Errors in individual projections are
-        logged but don't prevent other projections from executing.
-
-        Args:
-            event: The event to dispatch
-        """
+        """Dispatch an event to all registered projections and handlers concurrently."""
         with self._tracer.span(
             "eventsource.projection.registry.dispatch",
             {
