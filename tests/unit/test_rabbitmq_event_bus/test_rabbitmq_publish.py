@@ -53,9 +53,7 @@ class TestRabbitMQPublish:
     ) -> None:
         """Test that publishing empty list does nothing and doesn't raise."""
         bus = RabbitMQEventBus(config=config)
-
         await bus.publish([])
-
         mock_aio_pika.connect_robust.assert_not_called()
         assert bus.is_connected is False
 
@@ -66,13 +64,9 @@ class TestRabbitMQPublish:
     ) -> None:
         """Test that publish auto-connects if not already connected."""
         _setup_mock_aio_pika(mock_aio_pika)
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
-
         assert bus.is_connected is False
-
-        await bus.publish([event])
-
+        await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
         assert bus.is_connected is True
         mock_aio_pika.connect_robust.assert_called_once()
 
@@ -89,7 +83,6 @@ class TestRabbitMQPublish:
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
         await bus.publish(sample_events)
-
         assert mock_exchange.publish.call_count == len(sample_events)
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -104,11 +97,8 @@ class TestRabbitMQPublish:
         _setup_mock_aio_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         assert bus.stats.events_published == 0
-
         await bus.publish(sample_events)
-
         assert bus.stats.events_published == len(sample_events)
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -123,11 +113,8 @@ class TestRabbitMQPublish:
         _setup_mock_aio_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         assert bus.stats.publish_confirms == 0
-
         await bus.publish(sample_events, background=False)
-
         assert bus.stats.publish_confirms == len(sample_events)
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -142,9 +129,7 @@ class TestRabbitMQPublish:
         _setup_mock_aio_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         await bus.publish(sample_events, background=True)
-
         assert bus.stats.events_published == len(sample_events)
         assert bus.stats.publish_confirms == 0
 
@@ -155,13 +140,12 @@ class TestRabbitMQPublish:
     ) -> None:
         """Test that publish uses the correct routing key for each event."""
         mock_exchange = _setup_mock_aio_pika(mock_aio_pika)
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-        await bus.publish([event])
-
-        call_kwargs = mock_exchange.publish.call_args.kwargs
-        assert call_kwargs["routing_key"] == "TestAggregate.PublishTestEvent"
+        await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
+        assert mock_exchange.publish.call_args.kwargs["routing_key"] == (
+            "TestAggregate.PublishTestEvent"
+        )
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -170,11 +154,9 @@ class TestRabbitMQPublish:
     ) -> None:
         """Test that publish creates AMQP message using _create_message."""
         mock_exchange = _setup_mock_aio_pika(mock_aio_pika)
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-        await bus.publish([event])
-
+        await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
         call_args = mock_exchange.publish.call_args
         published_message = call_args.args[0] if call_args.args else call_args.kwargs.get("message")
         assert isinstance(published_message, Message)
@@ -186,11 +168,9 @@ class TestRabbitMQPublish:
     ) -> None:
         """Test publishing a single event."""
         mock_exchange = _setup_mock_aio_pika(mock_aio_pika)
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-        await bus.publish([event])
-
+        await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
         assert mock_exchange.publish.call_count == 1
         assert bus.stats.events_published == 1
 
@@ -200,14 +180,11 @@ class TestRabbitMQPublish:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish raises RuntimeError if exchange is None after connect."""
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
-
         bus._connection_manager._connected = True
         bus._topology._exchange = None
-
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
-            await bus.publish([event])
+            await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -217,13 +194,10 @@ class TestRabbitMQPublish:
         """Test that publish re-raises exceptions from exchange.publish."""
         mock_exchange = _setup_mock_aio_pika(mock_aio_pika)
         mock_exchange.publish = AsyncMock(side_effect=Exception("Connection lost"))
-
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         with pytest.raises(Exception, match="Connection lost"):
-            await bus.publish([event])
+            await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -233,16 +207,11 @@ class TestRabbitMQPublish:
         """Test that stats are not incremented when publish fails."""
         mock_exchange = _setup_mock_aio_pika(mock_aio_pika)
         mock_exchange.publish = AsyncMock(side_effect=Exception("Publish failed"))
-
-        event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         initial_published = bus.stats.events_published
         initial_confirms = bus.stats.publish_confirms
-
         with pytest.raises(Exception, match="Publish failed"):
-            await bus.publish([event])
-
+            await bus.publish([PublishTestEvent(aggregate_id=uuid4())])
         assert bus.stats.events_published == initial_published
         assert bus.stats.publish_confirms == initial_confirms

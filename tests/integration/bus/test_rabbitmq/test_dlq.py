@@ -14,11 +14,7 @@ from tests.integration.conftest import TestItemCreated
 
 from .conftest import skip_if_no_rabbitmq_infra
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.rabbitmq,
-    skip_if_no_rabbitmq_infra,
-]
+pytestmark = [pytest.mark.integration, pytest.mark.rabbitmq, skip_if_no_rabbitmq_infra]
 
 
 async def _stop_consumer(bus: RabbitMQEventBus, consume_task: asyncio.Task[Any]) -> None:
@@ -31,11 +27,16 @@ async def _stop_consumer(bus: RabbitMQEventBus, consume_task: asyncio.Task[Any])
 
 
 def _make_item(name: str, quantity: int = 1) -> TestItemCreated:
-    return TestItemCreated(
-        aggregate_id=uuid4(),
-        aggregate_version=1,
-        name=name,
-        quantity=quantity,
+    return TestItemCreated(aggregate_id=uuid4(), aggregate_version=1, name=name, quantity=quantity)
+
+
+def _create_dlq_bus(factory: Any, prefix: str, max_retries: int = 0) -> RabbitMQEventBus:
+    suffix = uuid4().hex[:8]
+    return factory(
+        exchange_name=f"{prefix}_{suffix}",
+        consumer_group=f"{prefix}_group_{suffix}",
+        enable_dlq=True,
+        max_retries=max_retries,
     )
 
 
@@ -44,13 +45,7 @@ class TestRabbitMQEventBusDLQ:
 
     async def test_handler_exception_sends_to_dlq(self, rabbitmq_event_bus_factory: Any) -> None:
         """Test that handler exceptions result in message going to DLQ."""
-        unique_suffix = uuid4().hex[:8]
-        bus = rabbitmq_event_bus_factory(
-            exchange_name=f"test_dlq_{unique_suffix}",
-            consumer_group=f"test_dlq_group_{unique_suffix}",
-            enable_dlq=True,
-            max_retries=1,
-        )
+        bus = _create_dlq_bus(rabbitmq_event_bus_factory, "test_dlq", max_retries=1)
         await bus.connect()
         try:
             fail_count = 0
@@ -101,13 +96,7 @@ class TestRabbitMQReliabilityDLQ:
         self, rabbitmq_event_bus_factory: Any
     ) -> None:
         """Test that messages are sent to DLQ after max_retries failures."""
-        unique_suffix = uuid4().hex[:8]
-        bus = rabbitmq_event_bus_factory(
-            exchange_name=f"test_dlq_max_retries_{unique_suffix}",
-            consumer_group=f"test_dlq_group_{unique_suffix}",
-            enable_dlq=True,
-            max_retries=2,
-        )
+        bus = _create_dlq_bus(rabbitmq_event_bus_factory, "test_dlq_max_retries", max_retries=2)
         await bus.connect()
         try:
             failure_count = 0
@@ -139,13 +128,7 @@ class TestRabbitMQReliabilityDLQ:
 
     async def test_get_dlq_messages_returns_metadata(self, rabbitmq_event_bus_factory: Any) -> None:
         """Test that get_dlq_messages returns correct metadata."""
-        unique_suffix = uuid4().hex[:8]
-        bus = rabbitmq_event_bus_factory(
-            exchange_name=f"test_dlq_metadata_{unique_suffix}",
-            consumer_group=f"test_dlq_metadata_group_{unique_suffix}",
-            enable_dlq=True,
-            max_retries=0,
-        )
+        bus = _create_dlq_bus(rabbitmq_event_bus_factory, "test_dlq_metadata", max_retries=0)
         await bus.connect()
         try:
 
@@ -174,13 +157,7 @@ class TestRabbitMQReliabilityDLQ:
 
     async def test_replay_dlq_message_success(self, rabbitmq_event_bus_factory: Any) -> None:
         """Test replaying a message from DLQ back to main exchange."""
-        unique_suffix = uuid4().hex[:8]
-        bus = rabbitmq_event_bus_factory(
-            exchange_name=f"test_dlq_replay_{unique_suffix}",
-            consumer_group=f"test_dlq_replay_group_{unique_suffix}",
-            enable_dlq=True,
-            max_retries=0,
-        )
+        bus = _create_dlq_bus(rabbitmq_event_bus_factory, "test_dlq_replay", max_retries=0)
         await bus.connect()
         try:
             fail_once = True
@@ -220,13 +197,7 @@ class TestRabbitMQReliabilityDLQ:
     @pytest.mark.slow
     async def test_purge_dlq_removes_messages(self, rabbitmq_event_bus_factory: Any) -> None:
         """Test that purge_dlq removes all messages from DLQ."""
-        unique_suffix = uuid4().hex[:8]
-        bus = rabbitmq_event_bus_factory(
-            exchange_name=f"test_dlq_purge_{unique_suffix}",
-            consumer_group=f"test_dlq_purge_group_{unique_suffix}",
-            enable_dlq=True,
-            max_retries=0,
-        )
+        bus = _create_dlq_bus(rabbitmq_event_bus_factory, "test_dlq_purge", max_retries=0)
         await bus.connect()
         try:
 
