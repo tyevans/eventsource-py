@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING
 
 from eventsource.application.subscriptions.config import CheckpointStrategy
 from eventsource.application.subscriptions.runners.catchup_result import _BatchOutcome
-from eventsource.application.subscriptions.subscription import (
-    Subscription,
-    render_position,
-)
+from eventsource.application.subscriptions.subscription import Subscription, render_position
 from eventsource.ports.envelopes import EventEnvelope
 from eventsource.ports.positions import Position
 
@@ -52,6 +49,17 @@ class CatchUpBatchMixin:
             return await self._process_batch_grouped(target_position)
         return await self._process_batch_single(target_position)
 
+    async def _check_envelope_ready(
+        self, envelope: EventEnvelope, target_position: Position
+    ) -> bool:
+        if self._stop_requested:
+            return False
+        if envelope.position is None or envelope.position > target_position:
+            self._reached_target = True
+            return False
+        await self.subscription.wait_if_paused(self._stop_event)
+        return not self._stop_requested
+
     async def _process_batch_single(self, target_position: Position) -> _BatchOutcome:
         """Process a single batch of events, delivering one event at a time."""
         current_position = self.subscription.last_processed_position
@@ -61,28 +69,19 @@ class CatchUpBatchMixin:
             return _BatchOutcome(envelopes_read=0, events_delivered=0)
         await self.subscription.record_events_seen(len(envelopes))
 
-        events_in_batch = 0
-        events_filtered = 0
-        delivered_this_batch = 0
+        events_in_batch = events_filtered = delivered_this_batch = 0
         last_envelope: EventEnvelope | None = None
 
         try:
             for envelope in envelopes:
-                if self._stop_requested:
-                    break
-                if envelope.position is None or envelope.position > target_position:
-                    self._reached_target = True
-                    break
-                await self.subscription.wait_if_paused(self._stop_event)
-                if self._stop_requested:
+                if not await self._check_envelope_ready(envelope, target_position):
                     break
 
-                if not self._filter.matches(envelope.event):
+                ev = envelope.event
+                if not self._filter.matches(ev):
                     events_filtered += 1
                     await self.subscription.record_event_processed(
-                        position=envelope.position,
-                        event_id=envelope.event.event_id,
-                        event_type=envelope.event.event_type,
+                        position=envelope.position, event_id=ev.event_id, event_type=ev.event_type
                     )
                     delivered_this_batch += 1
                     last_envelope = envelope
@@ -91,9 +90,7 @@ class CatchUpBatchMixin:
                 async with await self._flow_controller.acquire():
                     await self._deliver_event(envelope)
                     await self.subscription.record_event_processed(
-                        position=envelope.position,
-                        event_id=envelope.event.event_id,
-                        event_type=envelope.event.event_type,
+                        position=envelope.position, event_id=ev.event_id, event_type=ev.event_type
                     )
 
                 last_envelope = envelope
@@ -108,21 +105,8 @@ class CatchUpBatchMixin:
             if (undelivered := len(envelopes) - delivered_this_batch) > 0:
                 await self.subscription.record_events_unseen(undelivered)
 
-        if (
-            (events_in_batch > 0 or events_filtered > 0)
-            and last_envelope is not None
-            and self.config.checkpoint_strategy == CheckpointStrategy.EVERY_BATCH
-        ):
-            await self._save_checkpoint_with_retry(last_envelope)
-
-        logger.debug(
-            "Batch processed",
-            extra={
-                "subscription": self.subscription.name,
-                "batch_size": events_in_batch,
-                "events_filtered": events_filtered,
-                "position": render_position(self.subscription.last_processed_position),
-            },
+        await self._finalize_batch(
+            "Batch processed", events_in_batch, events_filtered, last_envelope
         )
         return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
@@ -137,20 +121,12 @@ class CatchUpBatchMixin:
 
         included: list[tuple[EventEnvelope, bool]] = []
         for envelope in envelopes:
-            if self._stop_requested:
-                break
-            if envelope.position is None or envelope.position > target_position:
-                self._reached_target = True
-                break
-            await self.subscription.wait_if_paused(self._stop_event)
-            if self._stop_requested:
+            if not await self._check_envelope_ready(envelope, target_position):
                 break
             included.append((envelope, self._filter.matches(envelope.event)))
 
         deliverable = [envelope for envelope, passes in included if passes]
-        events_in_batch = 0
-        events_filtered = 0
-        delivered_this_batch = 0
+        events_in_batch = events_filtered = delivered_this_batch = 0
         last_envelope: EventEnvelope | None = None
 
         try:
@@ -177,6 +153,12 @@ class CatchUpBatchMixin:
             if (undelivered := len(envelopes) - delivered_this_batch) > 0:
                 await self.subscription.record_events_unseen(undelivered)
 
+        await self._finalize_batch(
+            "Batch processed via handle_batch", events_in_batch, events_filtered, last_envelope
+        )
+        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
+
+    async def _finalize_batch(self, log_msg: str, events_in_batch: int, events_filtered: int, last_envelope: EventEnvelope | None) -> None:  # fmt: skip
         if (
             (events_in_batch > 0 or events_filtered > 0)
             and last_envelope is not None
@@ -185,7 +167,7 @@ class CatchUpBatchMixin:
             await self._save_checkpoint_with_retry(last_envelope)
 
         logger.debug(
-            "Batch processed via handle_batch",
+            log_msg,
             extra={
                 "subscription": self.subscription.name,
                 "batch_size": events_in_batch,
@@ -193,14 +175,12 @@ class CatchUpBatchMixin:
                 "position": render_position(self.subscription.last_processed_position),
             },
         )
-        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
     async def _record_and_checkpoint(self, envelope: EventEnvelope, passes_filter: bool) -> None:
         """Record one envelope's position and checkpoint if appropriate."""
+        ev = envelope.event
         await self.subscription.record_event_processed(
-            position=envelope.position,
-            event_id=envelope.event.event_id,
-            event_type=envelope.event.event_type,
+            position=envelope.position, event_id=ev.event_id, event_type=ev.event_type
         )
         if not passes_filter:
             return

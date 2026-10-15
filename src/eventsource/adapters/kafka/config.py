@@ -16,19 +16,16 @@ logger = logging.getLogger("eventsource.bus.kafka")
 class KafkaEventBusConfig:
     """Configuration for Kafka event bus (connection, producer/consumer, retry, DLQ, security)."""
 
-    # Connection
     bootstrap_servers: str = "localhost:9092"
     topic_prefix: str = "events"
     consumer_group: str = "default"
     consumer_name: str | None = None
 
-    # Producer settings
     acks: str = "all"
     compression_type: str | None = "gzip"
     producer_max_batch_bytes: int = 16384
     linger_ms: int = 5
 
-    # Consumer settings
     auto_offset_reset: str = "earliest"
     session_timeout_ms: int = 30000
     heartbeat_interval_ms: int = 10000
@@ -36,19 +33,16 @@ class KafkaEventBusConfig:
     fetch_max_bytes: int = 52428800  # aiokafka default (50 MiB)
     max_partition_fetch_bytes: int = 1048576  # aiokafka default (1 MiB)
 
-    # Error handling
     max_retries: int = 3
     retry_base_delay: float = 1.0
     retry_max_delay: float = 60.0
     retry_jitter: float = 0.1
 
-    # DLQ settings
     enable_dlq: bool = True
     dlq_topic_suffix: str = ".dlq"
     dlq_consumer_group: str | None = None
     dlq_max_replay_attempts: int = 3
 
-    # Security
     security_protocol: str = "PLAINTEXT"
     sasl_mechanism: str | None = None
     sasl_username: str | None = None
@@ -58,7 +52,6 @@ class KafkaEventBusConfig:
     ssl_keyfile: str | None = None
     ssl_check_hostname: bool = True
 
-    # Observability & Shutdown
     enable_tracing: bool = True
     enable_metrics: bool = True
     shutdown_timeout: float = 30.0
@@ -152,20 +145,15 @@ class KafkaEventBusConfig:
     def _add_security_config(self, config: dict[str, Any]) -> None:
         """Add security configuration to a config dict."""
         config["security_protocol"] = self.security_protocol
-
-        if self.sasl_mechanism:
-            config["sasl_mechanism"] = self.sasl_mechanism
-        if self.sasl_username:
-            config["sasl_plain_username"] = self.sasl_username
-        if self.sasl_password:
-            config["sasl_plain_password"] = self.sasl_password
-        if self.ssl_cafile:
-            config["ssl_cafile"] = self.ssl_cafile
-        if self.ssl_certfile:
-            config["ssl_certfile"] = self.ssl_certfile
-        if self.ssl_keyfile:
-            config["ssl_keyfile"] = self.ssl_keyfile
-
+        optional = {
+            "sasl_mechanism": self.sasl_mechanism,
+            "sasl_plain_username": self.sasl_username,
+            "sasl_plain_password": self.sasl_password,
+            "ssl_cafile": self.ssl_cafile,
+            "ssl_certfile": self.ssl_certfile,
+            "ssl_keyfile": self.ssl_keyfile,
+        }
+        config.update({k: v for k, v in optional.items() if v})
         if "SSL" in self.security_protocol:
             config["ssl_check_hostname"] = self.ssl_check_hostname
 
@@ -173,25 +161,13 @@ class KafkaEventBusConfig:
         """Create and configure an SSLContext if using SSL/TLS, else None."""
         if "SSL" not in self.security_protocol:
             return None
-
         context = ssl.create_default_context()
-
         if self.ssl_cafile:
             context.load_verify_locations(self.ssl_cafile)
-
         if self.ssl_certfile and self.ssl_keyfile:
-            context.load_cert_chain(
-                certfile=self.ssl_certfile,
-                keyfile=self.ssl_keyfile,
-            )
-
-        if not self.ssl_check_hostname:
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        else:
-            context.check_hostname = True
-            context.verify_mode = ssl.CERT_REQUIRED
-
+            context.load_cert_chain(certfile=self.ssl_certfile, keyfile=self.ssl_keyfile)
+        context.check_hostname = bool(self.ssl_check_hostname)
+        context.verify_mode = ssl.CERT_REQUIRED if self.ssl_check_hostname else ssl.CERT_NONE
         return context
 
     def get_sanitized_config(self) -> dict[str, Any]:

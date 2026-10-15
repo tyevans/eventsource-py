@@ -53,33 +53,22 @@ class HandlerRegistry:
         for event_type, attr_name in discover_handlers(type(self._owner)).items():
             attr = getattr(self._owner, attr_name)
             is_async = inspect.iscoroutinefunction(attr)
-
             try:
-                sig = inspect.signature(attr)
-                param_count = len(list(sig.parameters.values()))
+                param_count = len(list(inspect.signature(attr).parameters.values()))
             except (ValueError, TypeError):
                 param_count = 1
 
             self._handlers[event_type] = HandlerInfo(
-                event_type=event_type,
-                handler_name=attr_name,
-                handler=attr,
-                is_async=is_async,
-                param_count=param_count,
+                event_type, attr_name, attr, is_async, param_count
             )
-
-            logger.debug(
-                "Registered handler %s for %s",
-                attr_name,
-                event_type.__name__,
-                extra={
-                    "owner": self._owner_name,
-                    "handler": attr_name,
-                    "event_type": event_type.__name__,
-                    "is_async": is_async,
-                    "param_count": param_count,
-                },
-            )
+            extra = {
+                "owner": self._owner_name,
+                "handler": attr_name,
+                "event_type": event_type.__name__,
+                "is_async": is_async,
+                "param_count": param_count,
+            }
+            logger.debug("Registered handler %s for %s", attr_name, event_type.__name__, extra=extra)  # fmt: skip
 
     def _validate_handlers(self) -> None:
         """Validate all discovered handlers."""
@@ -88,16 +77,13 @@ class HandlerRegistry:
 
     def _validate_handler(self, handler_info: HandlerInfo) -> None:
         """Validate a single handler's signature (async requirement, parameter count, annotation)."""
-        handler = handler_info.handler
-        handler_name = handler_info.handler_name
-        event_type = handler_info.event_type
+        handler_name, event_type = handler_info.handler_name, handler_info.event_type
 
         if self._require_async and not handler_info.is_async:
-            event_name = event_type.__name__
             raise ValueError(
                 f"Handler '{handler_name}' in {self._owner_name} must be async.\n\n"
                 f"Change:\n  def {handler_name}(self, ...)\n\n"
-                f"To:\n  async def {handler_name}(self, event: {event_name}) -> None"
+                f"To:\n  async def {handler_name}(self, event: {event_type.__name__}) -> None"
             )
 
         if handler_info.param_count < 1 or handler_info.param_count > 2:
@@ -110,25 +96,22 @@ class HandlerRegistry:
             )
 
         try:
-            sig = inspect.signature(handler)
-            event_param = list(sig.parameters.values())[-1]
-            if (
-                event_param.annotation != inspect.Parameter.empty
-                and isinstance(event_param.annotation, type)
-                and event_param.annotation != event_type
-            ):
+            sig = inspect.signature(handler_info.handler)
+            ann = list(sig.parameters.values())[-1].annotation
+            if ann != inspect.Parameter.empty and isinstance(ann, type) and ann != event_type:
+                extra = {
+                    "owner": self._owner_name,
+                    "handler": handler_name,
+                    "expected_type": event_type.__name__,
+                    "actual_annotation": ann.__name__,
+                }
                 logger.warning(
                     "Handler %s in %s: Event type annotation %s doesn't match @handles(%s)",
                     handler_name,
                     self._owner_name,
-                    event_param.annotation.__name__,
+                    ann.__name__,
                     event_type.__name__,
-                    extra={
-                        "owner": self._owner_name,
-                        "handler": handler_name,
-                        "expected_type": event_type.__name__,
-                        "actual_annotation": event_param.annotation.__name__,
-                    },
+                    extra=extra,
                 )
         except (ValueError, TypeError):
             pass
@@ -165,12 +148,12 @@ class HandlerRegistry:
 
     def _handle_unregistered_event(self, event: DomainEvent) -> None:
         """Handle an event that has no registered handler according to configured policy."""
-        event_type = type(event)
+        event_name = type(event).__name__
         available_handlers = [et.__name__ for et in self._handlers]
 
         if self._unregistered_event_handling == "error":
             raise UnhandledEventError(
-                event_type=event_type.__name__,
+                event_type=event_name,
                 event_id=event.event_id,
                 handler_class=self._owner_name,
                 available_handlers=available_handlers,
@@ -180,13 +163,13 @@ class HandlerRegistry:
                 "No handler registered for event type %s in %s. "
                 "Available handlers: %s. "
                 "Add @handles(%s) decorator to handle this event.",
-                event_type.__name__,
+                event_name,
                 self._owner_name,
                 ", ".join(available_handlers) if available_handlers else "none",
-                event_type.__name__,
+                event_name,
                 extra={
                     "owner": self._owner_name,
-                    "event_type": event_type.__name__,
+                    "event_type": event_name,
                     "event_id": str(event.event_id),
                     "available_handlers": available_handlers,
                 },
@@ -205,8 +188,7 @@ class HandlerRegistry:
     def __repr__(self) -> str:
         return (
             f"HandlerRegistry({self._owner_name}, "
-            f"handlers={self.handler_count}, "
-            f"require_async={self._require_async})"
+            f"handlers={self.handler_count}, require_async={self._require_async})"
         )
 
 
