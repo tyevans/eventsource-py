@@ -15,35 +15,25 @@ from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
 
 
-# Sample events for testing
 class OrderCreated(DomainEvent):
-    """Sample event for testing."""
-
     __test__ = False
     aggregate_type: str = "Order"
     order_number: str = Field(..., description="Order number")
 
 
 class OrderShipped(DomainEvent):
-    """Sample event for testing."""
-
     __test__ = False
     aggregate_type: str = "Order"
     tracking_number: str = Field(..., description="Tracking number")
 
 
 class OrderCancelled(DomainEvent):
-    """Sample event for testing - not handled by any projection."""
-
     __test__ = False
     aggregate_type: str = "Order"
     reason: str = Field(..., description="Cancellation reason")
 
 
-# Helper projection classes
 class CheckpointTestProjection(CheckpointTrackingProjection):
-    """Test projection for checkpoint tracking."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -58,14 +48,10 @@ class CheckpointTestProjection(CheckpointTrackingProjection):
 
 
 class TestProjection(CheckpointTestProjection):
-    """Test projection named TestProjection for class-name-based assertions."""
-
     __test__ = False
 
 
 class FailingCheckpointProjection(CheckpointTrackingProjection):
-    """Test projection that fails on processing with configurable retries."""
-
     __test__ = False
     MAX_RETRIES = 3
     RETRY_BACKOFF_BASE = 0
@@ -92,14 +78,10 @@ class FailingCheckpointProjection(CheckpointTrackingProjection):
 
 
 class FailingProjection(FailingCheckpointProjection):
-    """Test projection named FailingProjection for class-name-based assertions."""
-
     __test__ = False
 
 
 class BrokenCheckpoints(InMemoryCheckpointRepository):
-    """In-memory checkpoint store that simulates an unreachable database."""
-
     __test__ = False
 
     async def update_checkpoint(self, *args: object, **kwargs: object) -> None:
@@ -107,8 +89,6 @@ class BrokenCheckpoints(InMemoryCheckpointRepository):
 
 
 class CountingProjection(CheckpointTrackingProjection):
-    """Test projection that counts event invocations."""
-
     __test__ = False
     MAX_RETRIES = 2
     RETRY_BACKOFF_BASE = 0
@@ -125,8 +105,6 @@ class CountingProjection(CheckpointTrackingProjection):
 
 
 class MyCustomProjection(CheckpointTrackingProjection):
-    """Custom named projection for verifying class name default."""
-
     __test__ = False
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -137,8 +115,6 @@ class MyCustomProjection(CheckpointTrackingProjection):
 
 
 class SimpleDeclarativeProjection(DeclarativeProjection):
-    """Declarative projection for testing single handler."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -151,8 +127,6 @@ class SimpleDeclarativeProjection(DeclarativeProjection):
 
 
 class MultiHandlerDeclarativeProjection(DeclarativeProjection):
-    """Declarative projection for testing multiple handlers."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -170,8 +144,6 @@ class MultiHandlerDeclarativeProjection(DeclarativeProjection):
 
 
 class TwoParamDeclarativeProjection(DeclarativeProjection):
-    """Declarative projection for testing (conn, event) parameters."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -186,8 +158,6 @@ class TwoParamDeclarativeProjection(DeclarativeProjection):
 
 
 class PublicHandlerDeclarativeProjection(DeclarativeProjection):
-    """Declarative projection for testing public handler method."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -200,8 +170,6 @@ class PublicHandlerDeclarativeProjection(DeclarativeProjection):
 
 
 class FailingDeclarativeProjection(DeclarativeProjection):
-    """Declarative projection that raises in handler."""
-
     __test__ = False
     MAX_RETRIES = 1
     RETRY_BACKOFF_BASE = 0
@@ -212,8 +180,6 @@ class FailingDeclarativeProjection(DeclarativeProjection):
 
 
 class FailingDatabaseProjection(DatabaseProjection):
-    """Database projection that raises in handler."""
-
     __test__ = False
     MAX_RETRIES = 1
     RETRY_BACKOFF_BASE = 0
@@ -224,8 +190,6 @@ class FailingDatabaseProjection(DatabaseProjection):
 
 
 class SimpleDatabaseProjection(DatabaseProjection):
-    """Database projection for testing handlers."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -240,8 +204,6 @@ class SimpleDatabaseProjection(DatabaseProjection):
 
 
 class SingleParamDatabaseProjection(DatabaseProjection):
-    """Database projection with single param handler."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -254,8 +216,6 @@ class SingleParamDatabaseProjection(DatabaseProjection):
 
 
 class MultiHandlerDatabaseProjection(DatabaseProjection):
-    """Database projection with multiple handlers sharing connection."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -272,8 +232,6 @@ class MultiHandlerDatabaseProjection(DatabaseProjection):
 
 
 class MixedDatabaseProjection(DatabaseProjection):
-    """Database projection with mixed handler signatures."""
-
     __test__ = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
