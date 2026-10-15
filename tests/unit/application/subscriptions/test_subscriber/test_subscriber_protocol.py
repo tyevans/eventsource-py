@@ -12,24 +12,28 @@ from eventsource.application.subscriptions.subscriber import (
     SyncSubscriber,
 )
 from eventsource.domain.event import DomainEvent
+from eventsource.ports.handlers import EventSubscriber
 from tests.unit.application.subscriptions.test_subscriber._fixtures import (
     OrderCreated,
     OrderShipped,
 )
 
 
+class _BasicSubscriber:
+    def __init__(self, types: list[type[DomainEvent]] | None = None) -> None:
+        self._types = types or [OrderCreated]
+        self.events: list[DomainEvent] = []
+
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        return self._types
+
+    async def handle(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+
 class TestSubscriberProtocol:
-    """Tests for Subscriber protocol."""
-
     def test_protocol_is_runtime_checkable(self) -> None:
-        class MySubscriber:
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        assert isinstance(MySubscriber(), Subscriber)
+        assert isinstance(_BasicSubscriber(), Subscriber)
 
     def test_missing_subscribed_to_fails_check(self) -> None:
         class IncompleteSubscriber:
@@ -54,39 +58,17 @@ class TestSubscriberProtocol:
 
     @pytest.mark.asyncio
     async def test_subscriber_handles_event(self) -> None:
-        handled_events: list[DomainEvent] = []
-
-        class MySubscriber:
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated, OrderShipped]
-
-            async def handle(self, event: DomainEvent) -> None:
-                handled_events.append(event)
-
-        subscriber = MySubscriber()
+        sub = _BasicSubscriber([OrderCreated, OrderShipped])
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await subscriber.handle(event)
-
-        assert len(handled_events) == 1
-        assert handled_events[0] == event
+        await sub.handle(event)
+        assert sub.events == [event]
 
     def test_subscribed_to_returns_correct_types(self) -> None:
-        class MySubscriber:
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated, OrderShipped]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        types = MySubscriber().subscribed_to()
-        assert len(types) == 2
-        assert OrderCreated in types
-        assert OrderShipped in types
+        sub = _BasicSubscriber([OrderCreated, OrderShipped])
+        assert sub.subscribed_to() == [OrderCreated, OrderShipped]
 
 
 class TestSyncSubscriberProtocol:
-    """Tests for SyncSubscriber protocol."""
-
     def test_protocol_is_runtime_checkable(self) -> None:
         class MySyncSubscriber:
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -98,14 +80,7 @@ class TestSyncSubscriberProtocol:
         assert isinstance(MySyncSubscriber(), SyncSubscriber)
 
     def test_async_subscriber_matches_sync_protocol(self) -> None:
-        class AsyncSubscriber:
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        assert isinstance(AsyncSubscriber(), SyncSubscriber)
+        assert isinstance(_BasicSubscriber(), SyncSubscriber)
 
     def test_sync_subscriber_handles_event(self) -> None:
         handled_events: list[DomainEvent] = []
@@ -117,17 +92,12 @@ class TestSyncSubscriberProtocol:
             def handle(self, event: DomainEvent) -> None:
                 handled_events.append(event)
 
-        subscriber = MySyncSubscriber()
-        subscriber.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
+        MySyncSubscriber().handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert len(handled_events) == 1
 
 
 class TestSubscriberProtocolCompatibility:
-    """Tests for protocol compatibility with existing patterns."""
-
     def test_compatible_with_event_subscriber(self) -> None:
-        from eventsource.ports.handlers import EventSubscriber
-
         class MyProjection(EventSubscriber):
             def subscribed_to(self) -> list[type[DomainEvent]]:
                 return [OrderCreated]
@@ -136,8 +106,7 @@ class TestSubscriberProtocolCompatibility:
                 pass
 
         projection = MyProjection()
-        assert isinstance(projection, Subscriber)
-        assert isinstance(projection, EventSubscriber)
+        assert isinstance(projection, Subscriber) and isinstance(projection, EventSubscriber)
 
     def test_base_subscriber_matches_event_subscriber(self) -> None:
         class MySubscriber(BaseSubscriber):
@@ -151,8 +120,6 @@ class TestSubscriberProtocolCompatibility:
 
 
 class TestSubscriberDuckTyping:
-    """Tests for duck typing with subscriber protocols."""
-
     @pytest.mark.asyncio
     async def test_function_accepting_subscriber(self) -> None:
         async def process_events(subscriber: Subscriber, events: list[DomainEvent]) -> int:
@@ -163,24 +130,12 @@ class TestSubscriberDuckTyping:
                     count += 1
             return count
 
-        class OrderProjection:
-            def __init__(self) -> None:
-                self.events: list[DomainEvent] = []
-
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                self.events.append(event)
-
-        projection = OrderProjection()
+        projection = _BasicSubscriber([OrderCreated])
         events = [
             OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
             OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"),
         ]
-        count = await process_events(projection, events)
-        assert count == 1
-        assert len(projection.events) == 1
+        assert await process_events(projection, events) == 1 and len(projection.events) == 1
 
     @pytest.mark.asyncio
     async def test_function_accepting_batch_subscriber(self) -> None:
@@ -203,5 +158,4 @@ class TestSubscriberDuckTyping:
             OrderCreated(aggregate_id=uuid4(), order_number="ORD-002"),
         ]
         await process_batch(projection, events)
-        assert len(projection.batches) == 1
-        assert len(projection.batches[0]) == 2
+        assert len(projection.batches) == 1 and len(projection.batches[0]) == 2

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -27,16 +28,12 @@ _REGISTRY = EventRegistry()
 
 @register_event(registry=_REGISTRY)
 class ChaosTestEvent(DomainEvent):
-    """Test event for chaos testing."""
-
     aggregate_type: str = "ChaosAggregate"
     value: str = "test"
     sequence: int = 0
 
 
 class FailureMode(Enum):
-    """Types of failures that can be injected."""
-
     NONE = auto()
     FAIL_APPEND = auto()
     FAIL_READ = auto()
@@ -50,8 +47,6 @@ class FailureMode(Enum):
 
 @dataclass
 class FailureConfig:
-    """Configuration for failure injection."""
-
     mode: FailureMode = FailureMode.NONE
     fail_rate: float = 0.0
     delay_seconds: float = 0.0
@@ -63,8 +58,6 @@ class FailureConfig:
 
 
 class InjectedFailureError(Exception):
-    """Exception raised when a failure is injected."""
-
     def __init__(self, message: str, failure_mode: FailureMode):
         super().__init__(message)
         self.failure_mode = failure_mode
@@ -110,41 +103,30 @@ class FailureInjectableStore:
         config.operation_count += 1
         if not self._is_available:
             raise InjectedFailureError(
-                f"Network partition: store unavailable for {operation}",
-                FailureMode.FAIL_ALL,
+                f"Network partition: store unavailable for {operation}", FailureMode.FAIL_ALL
             )
         if config.mode == FailureMode.NONE:
             return
 
-        should_fail = False
-        delay = 0.0
-        if (
+        should_fail = (
             config.mode == FailureMode.FAIL_ALL
-            or config.mode == FailureMode.FAIL_APPEND
-            and operation == "append"
-            or config.mode == FailureMode.FAIL_READ
-            and operation == "read"
+            or (config.mode == FailureMode.FAIL_APPEND and operation == "append")
+            or (config.mode == FailureMode.FAIL_READ and operation == "read")
+            or (config.mode == FailureMode.INTERMITTENT and random.random() < config.fail_rate)
+            or (
+                config.mode == FailureMode.FAIL_AFTER_N_OPS
+                and config.operation_count > config.fail_after_n
+            )
+        )
+        if (config.mode == FailureMode.DELAY_APPEND and operation == "append") or (
+            config.mode == FailureMode.DELAY_READ and operation == "read"
         ):
-            should_fail = True
-        elif (
-            config.mode == FailureMode.DELAY_APPEND
-            and operation == "append"
-            or config.mode == FailureMode.DELAY_READ
-            and operation == "read"
-        ):
-            delay = config.delay_seconds
-        elif config.mode == FailureMode.INTERMITTENT:
-            import random
-
-            should_fail = random.random() < config.fail_rate
-        elif config.mode == FailureMode.FAIL_AFTER_N_OPS:
-            should_fail = config.operation_count > config.fail_after_n
+            if config.delay_seconds > 0:
+                await asyncio.sleep(config.delay_seconds)
         elif config.mode == FailureMode.TIMEOUT:
             await asyncio.sleep(config.timeout_seconds)
             should_fail = True
 
-        if delay > 0:
-            await asyncio.sleep(delay)
         if should_fail:
             config.failure_count += 1
             raise InjectedFailureError(
@@ -167,8 +149,8 @@ class FailureInjectableStore:
         self, stream: StreamId, options: StreamReadOptions | None
     ) -> AsyncIterator[EventEnvelope]:
         await self._maybe_fail("read")
-        async for envelope in self._inner.read_stream(stream, options):
-            yield envelope
+        async for env in self._inner.read_stream(stream, options):
+            yield env
 
     async def get_stream_version(self, stream: StreamId) -> int:
         await self._maybe_fail("read")
@@ -187,8 +169,8 @@ class FailureInjectableStore:
         self, from_position: Position | None, options: FeedReadOptions | None
     ) -> AsyncIterator[EventEnvelope]:
         await self._maybe_fail("read")
-        async for envelope in self._inner.read_all(from_position, options):
-            yield envelope
+        async for env in self._inner.read_all(from_position, options):
+            yield env
 
     async def current_position(self) -> Position | None:
         await self._maybe_fail("read")
@@ -203,5 +185,5 @@ class FailureInjectableStore:
         self, category: str, options: CategoryReadOptions | None
     ) -> AsyncIterator[EventEnvelope]:
         await self._maybe_fail("read")
-        async for envelope in self._inner.read_category(category, options):
-            yield envelope
+        async for env in self._inner.read_category(category, options):
+            yield env

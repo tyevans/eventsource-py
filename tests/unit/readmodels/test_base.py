@@ -22,6 +22,11 @@ class _AmountModel(ReadModel):
     amount: Decimal
 
 
+class _ProductView(ReadModel):
+    sku: str
+    price: Decimal
+
+
 class TestCamelToSnake:
     def test_simple_conversion(self) -> None:
         assert _camel_to_snake("OrderSummary") == "order_summary"
@@ -50,38 +55,31 @@ class TestCamelToSnake:
 
 class TestPluralize:
     def test_regular_plural(self) -> None:
-        assert _pluralize("order") == "orders"
-        assert _pluralize("user") == "users"
+        assert _pluralize("order") == "orders" and _pluralize("user") == "users"
         assert _pluralize("model") == "models"
 
     def test_y_ending_with_consonant(self) -> None:
-        assert _pluralize("summary") == "summaries"
-        assert _pluralize("category") == "categories"
+        assert _pluralize("summary") == "summaries" and _pluralize("category") == "categories"
         assert _pluralize("entity") == "entities"
 
     def test_y_ending_with_vowel(self) -> None:
-        assert _pluralize("day") == "days"
-        assert _pluralize("key") == "keys"
+        assert _pluralize("day") == "days" and _pluralize("key") == "keys"
         assert _pluralize("boy") == "boys"
 
     def test_s_ending(self) -> None:
-        assert _pluralize("address") == "addresses"
-        assert _pluralize("bus") == "buses"
+        assert _pluralize("address") == "addresses" and _pluralize("bus") == "buses"
         assert _pluralize("status") == "statuses"
 
     def test_x_ending(self) -> None:
-        assert _pluralize("box") == "boxes"
-        assert _pluralize("tax") == "taxes"
+        assert _pluralize("box") == "boxes" and _pluralize("tax") == "taxes"
         assert _pluralize("index") == "indexes"
 
     def test_ch_ending(self) -> None:
-        assert _pluralize("batch") == "batches"
-        assert _pluralize("match") == "matches"
+        assert _pluralize("batch") == "batches" and _pluralize("match") == "matches"
         assert _pluralize("search") == "searches"
 
     def test_sh_ending(self) -> None:
-        assert _pluralize("dash") == "dashes"
-        assert _pluralize("wish") == "wishes"
+        assert _pluralize("dash") == "dashes" and _pluralize("wish") == "wishes"
 
     def test_z_ending(self) -> None:
         assert _pluralize("quiz") == "quizes"
@@ -91,47 +89,33 @@ class TestReadModel:
     def test_create_with_required_fields(self) -> None:
         model_id = uuid4()
         model = _SimpleModel(id=model_id, name="test")
-        assert model.id == model_id
-        assert model.name == "test"
-        assert model.version == 1
+        assert model.id == model_id and model.name == "test" and model.version == 1
         assert model.deleted_at is None
-        assert isinstance(model.created_at, datetime)
-        assert isinstance(model.updated_at, datetime)
+        assert isinstance(model.created_at, datetime) and isinstance(model.updated_at, datetime)
 
     def test_table_name_derivation(self) -> None:
-        class OrderSummary(ReadModel):
-            status: str
-
-        assert OrderSummary.table_name() == "order_summaries"
+        cls = type("OrderSummary", (ReadModel,), {"__annotations__": {"status": str}})
+        assert cls.table_name() == "order_summaries"
 
     def test_table_name_with_multiple_words(self) -> None:
-        class UserProfileView(ReadModel):
-            email: str
-
-        assert UserProfileView.table_name() == "user_profile_views"
+        cls = type("UserProfileView", (ReadModel,), {"__annotations__": {"email": str}})
+        assert cls.table_name() == "user_profile_views"
 
     def test_table_name_override(self) -> None:
-        class CustomModel(ReadModel):
-            __table_name__ = "my_custom_table"
-            value: int
-
-        assert CustomModel.table_name() == "my_custom_table"
+        cls = type(
+            "CustomModel",
+            (ReadModel,),
+            {"__table_name__": "my_custom_table", "__annotations__": {"value": int}},
+        )
+        assert cls.table_name() == "my_custom_table"
 
     def test_field_names(self) -> None:
-        class ProductView(ReadModel):
-            sku: str
-            price: Decimal
-
-        names = ProductView.field_names()
+        names = _ProductView.field_names()
         for expected in ("id", "created_at", "updated_at", "version", "deleted_at", "sku", "price"):
             assert expected in names
 
     def test_custom_field_names(self) -> None:
-        class ProductView(ReadModel):
-            sku: str
-            price: Decimal
-
-        custom_names = ProductView.custom_field_names()
+        custom_names = _ProductView.custom_field_names()
         assert "sku" in custom_names and "price" in custom_names
         for base_field in ("id", "created_at", "updated_at", "version", "deleted_at"):
             assert base_field not in custom_names
@@ -149,19 +133,13 @@ class TestReadModel:
         assert model.name == "completed"
 
     def test_str_representation(self) -> None:
-        class OrderModel(ReadModel):
-            number: str
-
         model_id = uuid4()
-        result = str(OrderModel(id=model_id, number="ORD-001"))
-        assert "OrderModel" in result and str(model_id) in result and "version=1" in result
+        result = str(_OrderModel(id=model_id, number="ORD-001"))
+        assert "_OrderModel" in result and str(model_id) in result and "version=1" in result
 
     def test_repr_representation(self) -> None:
-        class OrderModel(ReadModel):
-            number: str
-
-        result = repr(OrderModel(id=uuid4(), number="ORD-001"))
-        for expected in ("OrderModel", "id=", "version=", "created_at=", "updated_at="):
+        result = repr(_OrderModel(id=uuid4(), number="ORD-001"))
+        for expected in ("_OrderModel", "id=", "version=", "created_at=", "updated_at="):
             assert expected in result
 
     def test_repr_with_deleted(self) -> None:
@@ -169,16 +147,16 @@ class TestReadModel:
         assert "deleted_at=" in repr(model)
 
     def test_from_attributes(self) -> None:
-        class SourceObject:
-            def __init__(self) -> None:
-                self.id = uuid4()
-                self.name = "from_attrs"
-                self.created_at = datetime.now(UTC)
-                self.updated_at = datetime.now(UTC)
-                self.version = 1
-                self.deleted_at = None
-
-        source = SourceObject()
+        now = datetime.now(UTC)
+        attrs = {
+            "id": uuid4(),
+            "name": "from_attrs",
+            "created_at": now,
+            "updated_at": now,
+            "version": 1,
+            "deleted_at": None,
+        }
+        source = type("SourceObject", (), attrs)()
         model = _SimpleModel.model_validate(source)
         assert model.name == "from_attrs" and model.id == source.id
 

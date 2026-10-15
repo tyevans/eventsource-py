@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource import (
-    AggregateRepository,
-    DomainEvent,
-    InMemoryEventBus,
-)
+from eventsource import AggregateRepository, DomainEvent, InMemoryEventBus
 from eventsource.adapters.postgresql import PostgreSQLEventStore
 from tests.integration.conftest import (
     TestOrderAggregate,
@@ -22,10 +17,6 @@ from tests.integration.conftest import (
 )
 
 from ._models import OrderSummary
-
-if TYPE_CHECKING:
-    pass
-
 
 pytestmark = [
     pytest.mark.integration,
@@ -61,25 +52,36 @@ class TestOrderProjection:
                 total_amount=event.total_amount,
                 status="created",
             )
-        elif isinstance(event, TestOrderItemAdded):
-            if event.aggregate_id in self._orders:
-                order = self._orders[event.aggregate_id]
-                self._orders[event.aggregate_id] = order.model_copy(
-                    update={
-                        "item_count": order.item_count + 1,
-                        "total_amount": order.total_amount + (event.quantity * event.unit_price),
-                    }
-                )
-        elif isinstance(event, TestOrderCompleted) and event.aggregate_id in self._orders:
+        elif isinstance(event, TestOrderItemAdded) and event.aggregate_id in self._orders:
             order = self._orders[event.aggregate_id]
             self._orders[event.aggregate_id] = order.model_copy(
                 update={
-                    "status": "completed",
-                    "completed_at": event.completed_at,
+                    "item_count": order.item_count + 1,
+                    "total_amount": order.total_amount + (event.quantity * event.unit_price),
                 }
             )
-
+        elif isinstance(event, TestOrderCompleted) and event.aggregate_id in self._orders:
+            order = self._orders[event.aggregate_id]
+            self._orders[event.aggregate_id] = order.model_copy(
+                update={"status": "completed", "completed_at": event.completed_at}
+            )
         self._events_processed += 1
+
+
+def _build_flow(
+    postgres_event_store: PostgreSQLEventStore,
+) -> tuple[AggregateRepository, TestOrderProjection]:
+    event_bus = InMemoryEventBus()
+    projection = TestOrderProjection()
+    event_bus.subscribe(TestOrderCreated, projection)
+    event_bus.subscribe(TestOrderItemAdded, projection)
+    event_bus.subscribe(TestOrderCompleted, projection)
+    repo = AggregateRepository(
+        event_store=postgres_event_store,
+        aggregate_factory=TestOrderAggregate,
+        event_publisher=event_bus,
+    )
+    return repo, projection
 
 
 class TestCommandToProjectionFlow:
@@ -90,28 +92,11 @@ class TestCommandToProjectionFlow:
         postgres_event_store: PostgreSQLEventStore,
         sample_customer_id: UUID,
     ) -> None:
-        """Test creating an order through the full flow."""
-        # Setup
-        event_bus = InMemoryEventBus()
-        projection = TestOrderProjection()
-        event_bus.subscribe(TestOrderCreated, projection)
-        event_bus.subscribe(TestOrderItemAdded, projection)
-        event_bus.subscribe(TestOrderCompleted, projection)
-
-        repo = AggregateRepository(
-            event_store=postgres_event_store,
-            aggregate_factory=TestOrderAggregate,
-            event_publisher=event_bus,
-        )
-
-        # Execute command
+        repo, projection = _build_flow(postgres_event_store)
         order_id = uuid4()
         order = TestOrderAggregate(order_id)
         order.create_order(customer_id=sample_customer_id, total_amount=0.0)
-
         await repo.save(order)
-
-        # Verify projection was updated
         assert order_id in projection.orders
         assert projection.orders[order_id].customer_id == sample_customer_id
         assert projection.orders[order_id].status == "created"
@@ -121,87 +106,38 @@ class TestCommandToProjectionFlow:
         postgres_event_store: PostgreSQLEventStore,
         sample_customer_id: UUID,
     ) -> None:
-        """Test adding items to an order through the full flow."""
-        # Setup
-        event_bus = InMemoryEventBus()
-        projection = TestOrderProjection()
-        event_bus.subscribe(TestOrderCreated, projection)
-        event_bus.subscribe(TestOrderItemAdded, projection)
-        event_bus.subscribe(TestOrderCompleted, projection)
-
-        repo = AggregateRepository(
-            event_store=postgres_event_store,
-            aggregate_factory=TestOrderAggregate,
-            event_publisher=event_bus,
-        )
-
-        # Create order
+        repo, projection = _build_flow(postgres_event_store)
         order_id = uuid4()
         order = TestOrderAggregate(order_id)
         order.create_order(customer_id=sample_customer_id)
         await repo.save(order)
 
-        # Add items
         order = await repo.load(order_id)
-        order.add_item(
-            item_id=uuid4(),
-            item_name="Widget",
-            quantity=2,
-            unit_price=10.0,
-        )
-        order.add_item(
-            item_id=uuid4(),
-            item_name="Gadget",
-            quantity=1,
-            unit_price=25.0,
-        )
+        order.add_item(item_id=uuid4(), item_name="Widget", quantity=2, unit_price=10.0)
+        order.add_item(item_id=uuid4(), item_name="Gadget", quantity=1, unit_price=25.0)
         await repo.save(order)
 
-        # Verify projection
         summary = projection.orders[order_id]
-        assert summary.item_count == 2
-        assert summary.total_amount == 45.0  # 2*10 + 1*25
+        assert summary.item_count == 2 and summary.total_amount == 45.0
 
     async def test_complete_order_flow(
         self,
         postgres_event_store: PostgreSQLEventStore,
         sample_customer_id: UUID,
     ) -> None:
-        """Test completing an order through the full flow."""
-        # Setup
-        event_bus = InMemoryEventBus()
-        projection = TestOrderProjection()
-        event_bus.subscribe(TestOrderCreated, projection)
-        event_bus.subscribe(TestOrderItemAdded, projection)
-        event_bus.subscribe(TestOrderCompleted, projection)
-
-        repo = AggregateRepository(
-            event_store=postgres_event_store,
-            aggregate_factory=TestOrderAggregate,
-            event_publisher=event_bus,
-        )
-
-        # Create and add item
+        repo, projection = _build_flow(postgres_event_store)
         order_id = uuid4()
         order = TestOrderAggregate(order_id)
         order.create_order(customer_id=sample_customer_id)
         await repo.save(order)
 
         order = await repo.load(order_id)
-        order.add_item(
-            item_id=uuid4(),
-            item_name="Product",
-            quantity=1,
-            unit_price=50.0,
-        )
+        order.add_item(item_id=uuid4(), item_name="Product", quantity=1, unit_price=50.0)
         await repo.save(order)
 
-        # Complete order
         order = await repo.load(order_id)
         order.complete_order()
         await repo.save(order)
 
-        # Verify projection
         summary = projection.orders[order_id]
-        assert summary.status == "completed"
-        assert summary.completed_at is not None
+        assert summary.status == "completed" and summary.completed_at is not None

@@ -25,20 +25,32 @@ from tests.unit.application.migration.test_phase3_integration._repositories impo
 )
 
 
+def _coord(*args: object, position_mapper: PositionMapper | None = None) -> MigrationCoordinator:
+    src, mig_repo, route_repo, router, lock_mgr = args
+    return MigrationCoordinator(
+        src,  # type: ignore[arg-type]
+        mig_repo,  # type: ignore[arg-type]
+        route_repo,  # type: ignore[arg-type]
+        router,  # type: ignore[arg-type]
+        lock_manager=lock_mgr,  # type: ignore[arg-type]
+        position_mapper=position_mapper,
+        source_store_id="default",
+        enable_tracing=False,
+    )
+
+
 class TestPositionMapperEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_batch_mapping(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        count = await position_mapper.record_mappings_batch(migration_id=migration_id, mappings=[])
-        assert count == 0
+        assert await position_mapper.record_mappings_batch(migration_id, []) == 0
 
     @pytest.mark.asyncio
     async def test_get_position_bounds_no_mappings(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        bounds = await position_mapper.get_position_bounds(migration_id)
-        assert bounds is None
+        assert await position_mapper.get_position_bounds(migration_id) is None
 
     @pytest.mark.asyncio
     async def test_get_position_bounds_with_mappings(
@@ -48,8 +60,10 @@ class TestPositionMapperEdgeCases:
         await position_mapper.record_mapping(
             migration_id, source_pos(500), target_pos(250), uuid4()
         )
-        bounds = await position_mapper.get_position_bounds(migration_id)
-        assert bounds == (source_pos(100), source_pos(500))
+        assert await position_mapper.get_position_bounds(migration_id) == (
+            source_pos(100),
+            source_pos(500),
+        )
 
     @pytest.mark.asyncio
     async def test_clear_mappings(
@@ -59,8 +73,7 @@ class TestPositionMapperEdgeCases:
         await position_mapper.record_mapping(
             migration_id, source_pos(200), target_pos(100), uuid4()
         )
-        count = await position_mapper.clear_mappings(migration_id)
-        assert count == 2
+        assert await position_mapper.clear_mappings(migration_id) == 2
         assert await position_mapper.get_mapping_count(migration_id) == 0
 
     @pytest.mark.asyncio
@@ -72,19 +85,15 @@ class TestPositionMapperEdgeCases:
             migration_id, source_pos(100), target_pos(50), event_id
         )
         mapping = await position_mapper.get_mapping_by_event_id(migration_id, event_id)
-        assert mapping is not None
+        assert mapping is not None and mapping.event_id == event_id
         assert mapping.source_position == source_pos(100)
         assert mapping.target_position == target_pos(50)
-        assert mapping.event_id == event_id
 
     @pytest.mark.asyncio
     async def test_translate_empty_batch(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        results = await position_mapper.translate_positions_batch(
-            migration_id=migration_id, source_positions=[]
-        )
-        assert results == []
+        assert await position_mapper.translate_positions_batch(migration_id, []) == []
 
 
 class TestMissingMappingErrors:
@@ -116,8 +125,7 @@ class TestMissingMappingErrors:
         )
         migrator = SubscriptionMigrator(position_mapper, checkpoint_repo, enable_tracing=False)
         summary = await migrator.migrate_subscriptions(migration_id, tenant_id, ["OrderProjection"])
-        assert summary.all_successful is False
-        assert summary.failed_count == 1
+        assert summary.all_successful is False and summary.failed_count == 1
         assert summary.results[0].error_message is not None
 
 
@@ -132,22 +140,11 @@ class TestCoordinatorErrorHandling:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        coordinator = MigrationCoordinator(
-            source_store,
-            migration_repo,
-            routing_repo,
-            router,
-            lock_manager=lock_manager,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        migration = Migration(
-            uuid4(), tenant_id, "default", "dedicated", phase=MigrationPhase.BULK_COPY
-        )
+        coordinator = _coord(source_store, migration_repo, routing_repo, router, lock_manager)
+        migration = Migration(uuid4(), tenant_id, "default", "dedicated", MigrationPhase.BULK_COPY)
         await migration_repo.create(migration)
-        with pytest.raises(MigrationError) as exc_info:
+        with pytest.raises(MigrationError, match="Target store not found"):
             await coordinator.verify_consistency(migration.id)
-        assert "Target store not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_without_position_mapper(
@@ -159,22 +156,11 @@ class TestCoordinatorErrorHandling:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        coordinator = MigrationCoordinator(
-            source_store,
-            migration_repo,
-            routing_repo,
-            router,
-            lock_manager=lock_manager,
-            source_store_id="default",
-            enable_tracing=False,
-        )
-        migration = Migration(
-            uuid4(), tenant_id, "default", "dedicated", phase=MigrationPhase.COMPLETED
-        )
+        coordinator = _coord(source_store, migration_repo, routing_repo, router, lock_manager)
+        migration = Migration(uuid4(), tenant_id, "default", "dedicated", MigrationPhase.COMPLETED)
         await migration_repo.create(migration)
-        with pytest.raises(MigrationError) as exc_info:
+        with pytest.raises(MigrationError, match="position_mapper not provided"):
             await coordinator.migrate_subscriptions(migration.id)
-        assert "position_mapper not provided" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_without_checkpoint_repo(
@@ -187,21 +173,11 @@ class TestCoordinatorErrorHandling:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
-        coordinator = MigrationCoordinator(
-            source_store,
-            migration_repo,
-            routing_repo,
-            router,
-            lock_manager=lock_manager,
-            position_mapper=position_mapper,
-            source_store_id="default",
-            enable_tracing=False,
+        mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
+        coordinator = _coord(
+            source_store, migration_repo, routing_repo, router, lock_manager, position_mapper=mapper
         )
-        migration = Migration(
-            uuid4(), tenant_id, "default", "dedicated", phase=MigrationPhase.COMPLETED
-        )
+        migration = Migration(uuid4(), tenant_id, "default", "dedicated", MigrationPhase.COMPLETED)
         await migration_repo.create(migration)
-        with pytest.raises(MigrationError) as exc_info:
+        with pytest.raises(MigrationError, match="checkpoint_repo not provided"):
             await coordinator.migrate_subscriptions(migration.id)
-        assert "checkpoint_repo not provided" in str(exc_info.value)
