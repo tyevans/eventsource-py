@@ -11,15 +11,7 @@ from eventsource.adapters.rabbitmq import death_headers, serialization
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
-from eventsource.observability.attributes import (
-    ATTR_EVENT_ID,
-    ATTR_EVENT_TYPE,
-    ATTR_HANDLER_COUNT,
-    ATTR_HANDLER_NAME,
-    ATTR_HANDLER_SUCCESS,
-    ATTR_MESSAGING_DESTINATION,
-    ATTR_MESSAGING_SYSTEM,
-)
+from eventsource.observability import attributes as attr
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractIncomingMessage
@@ -58,7 +50,6 @@ class RabbitMQConsumerDispatchMixin:
         ) -> None: ...
 
     def _deserialize_event(self, message: AbstractIncomingMessage) -> DomainEvent | None:
-        """Deserialize an AMQP message to a domain event."""
         return serialization.deserialize_event(message, self._resolve_event_class, self._logger)
 
     async def _process_message(self, message: AbstractIncomingMessage) -> None:
@@ -67,8 +58,10 @@ class RabbitMQConsumerDispatchMixin:
         event_type_name = str(headers.get("event_type", "unknown"))
         raw_retry = headers.get("x-retry-count")
         retry_count = int(str(raw_retry)) if raw_retry is not None else 0
-        death_info = death_headers.get_death_info(message)
-        is_redelivered = death_headers.is_from_dlq(message)
+        death_info, is_redelivered = (
+            death_headers.get_death_info(message),
+            death_headers.is_from_dlq(message),
+        )
         log_extra: dict[str, Any] = {
             "message_id": message.message_id,
             "event_type": event_type_name,
@@ -83,9 +76,8 @@ class RabbitMQConsumerDispatchMixin:
                 first_death_reason=death_info["first_death_reason"],
                 original_routing_key=death_info["original_routing_key"],
             )
-            self._logger.info(
-                f"Processing dead-lettered message: {event_type_name}", extra=log_extra
-            )
+            msg = f"Processing dead-lettered message: {event_type_name}"
+            self._logger.info(msg, extra=log_extra)
         else:
             msg = f"Processing message (attempt {retry_count + 1}): {event_type_name}"
             self._logger.debug(msg, extra=log_extra)
@@ -93,24 +85,19 @@ class RabbitMQConsumerDispatchMixin:
         processing_start = datetime.now(UTC)
         span = None
         if self._enable_tracing and PROPAGATION_AVAILABLE and self._tracer is not None:
-            from eventsource.adapters.rabbitmq import consumer as _consumer_mod
+            from eventsource.adapters.rabbitmq import consumer as _c
 
-            ctx = (
-                _consumer_mod.extract(dict(headers)) if _consumer_mod.extract is not None else None
-            )
+            ctx = _c.extract(dict(headers)) if _c.extract is not None else None
             span_attrs = {
-                ATTR_MESSAGING_SYSTEM: "rabbitmq",
-                ATTR_MESSAGING_DESTINATION: self._config.queue_name,
+                attr.ATTR_MESSAGING_SYSTEM: "rabbitmq",
+                attr.ATTR_MESSAGING_DESTINATION: self._config.queue_name,
                 "messaging.destination_kind": "queue",
                 "messaging.message_id": message.message_id or "",
-                ATTR_EVENT_TYPE: event_type_name,
+                attr.ATTR_EVENT_TYPE: event_type_name,
                 "messaging.rabbitmq.routing_key": message.routing_key or "",
             }
             span = self._tracer.start_span(
-                "eventsource.event_bus.consume",
-                kind=SpanKindEnum.CONSUMER,
-                attributes=span_attrs,
-                context=ctx,
+                "eventsource.event_bus.consume", SpanKindEnum.CONSUMER, span_attrs, context=ctx
             )
 
         try:
@@ -131,16 +118,18 @@ class RabbitMQConsumerDispatchMixin:
                 span.set_attribute("event.id", str(event.event_id))
             await self._dispatch_event(event, message, span)
             await message.ack()
-
             self._stats.events_consumed += 1
             self._stats.events_processed_success += 1
             self._stats.last_consume_at = datetime.now(UTC)
             duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
             if span:
                 span.set_status(Status(StatusCode.OK))
-            ok_extra = dict(
-                log_extra, event_id=str(event.event_id), duration_ms=duration_ms, success=True
-            )
+            ok_extra = {
+                **log_extra,
+                "event_id": str(event.event_id),
+                "duration_ms": duration_ms,
+                "success": True,
+            }
             self._logger.debug(f"Successfully processed {event_type_name}", extra=ok_extra)
         except Exception as e:
             self._stats.events_processed_failed += 1
@@ -164,12 +153,12 @@ class RabbitMQConsumerDispatchMixin:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
             self._logger.error(f"Failed to process message: {e}", exc_info=True, extra=error_extra)
-            dlq_error = (
+            dlq_err = (
                 e.failures[0][1]
                 if isinstance(e, HandlerDispatchError) and len(e.failures) == 1
                 else e
             )
-            await self._handle_failed_message(message, dlq_error, retry_count)
+            await self._handle_failed_message(message, dlq_err, retry_count)
         finally:
             if span:
                 span.end()
@@ -185,71 +174,59 @@ class RabbitMQConsumerDispatchMixin:
             return
 
         if parent_span is not None:
-            parent_span.set_attribute(ATTR_HANDLER_COUNT, len(handlers))
+            parent_span.set_attribute(attr.ATTR_HANDLER_COUNT, len(handlers))
         event_id_str = str(event.event_id)
         base_extra = {"event_type": event.event_type, "event_id": event_id_str}
-        self._logger.debug(
-            f"Dispatching {event.event_type} to {len(handlers)} handler(s)",
-            extra={**base_extra, "handler_count": len(handlers)},
-        )
+        msg = f"Dispatching {event.event_type} to {len(handlers)} handler(s)"
+        self._logger.debug(msg, extra={**base_extra, "handler_count": len(handlers)})
 
         failures: list[tuple[str, Exception]] = []
-        tracer = (
-            self._tracer
-            if (self._enable_tracing and parent_span and PROPAGATION_AVAILABLE)
-            else None
-        )
+        use_tracer = bool(self._enable_tracing and parent_span and PROPAGATION_AVAILABLE)
+        tracer = self._tracer if use_tracer else None
         for adapter in handlers:
-            handler_name = adapter.name
-            handler_start = datetime.now(UTC)
+            handler_name, handler_start = adapter.name, datetime.now(UTC)
             span_attrs = {
-                ATTR_HANDLER_NAME: handler_name,
-                ATTR_EVENT_TYPE: event.event_type,
-                ATTR_EVENT_ID: event_id_str,
+                attr.ATTR_HANDLER_NAME: handler_name,
+                attr.ATTR_EVENT_TYPE: event.event_type,
+                attr.ATTR_EVENT_ID: event_id_str,
             }
-            handler_span = (
-                tracer.start_span(
-                    "eventsource.event_bus.handle",
-                    kind=SpanKindEnum.INTERNAL,
-                    attributes=span_attrs,
-                )
-                if tracer is not None
-                else None
+            span_name = "eventsource.event_bus.handle"
+            h_span = (
+                tracer.start_span(span_name, SpanKindEnum.INTERNAL, span_attrs) if tracer else None
             )
             try:
                 await adapter.handle(event)
                 duration_ms = (datetime.now(UTC) - handler_start).total_seconds() * 1000
-                if handler_span:
-                    handler_span.set_attribute("handler.duration_ms", duration_ms)
-                    handler_span.set_attribute(ATTR_HANDLER_SUCCESS, True)
-                    handler_span.set_status(Status(StatusCode.OK))
+                if h_span:
+                    h_span.set_attribute("handler.duration_ms", duration_ms)
+                    h_span.set_attribute(attr.ATTR_HANDLER_SUCCESS, True)
+                    h_span.set_status(Status(StatusCode.OK))
+                ok_extra = {**base_extra, "handler": handler_name, "duration_ms": duration_ms}
                 self._logger.debug(
-                    f"Handler {handler_name} processed {event.event_type}",
-                    extra={**base_extra, "handler": handler_name, "duration_ms": duration_ms},
+                    f"Handler {handler_name} processed {event.event_type}", extra=ok_extra
                 )
             except Exception as e:
                 self._stats.handler_errors += 1
                 self._stats.last_error_at = datetime.now(UTC)
                 duration_ms = (datetime.now(UTC) - handler_start).total_seconds() * 1000
-                if handler_span:
-                    handler_span.set_attribute(ATTR_HANDLER_SUCCESS, False)
-                    handler_span.set_status(Status(StatusCode.ERROR, str(e)))
-                    handler_span.record_exception(e)
-                err_extra = dict(
-                    base_extra,
-                    handler=handler_name,
-                    message_id=message.message_id,
-                    duration_ms=duration_ms,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                self._logger.error(
-                    f"Handler {handler_name} failed: {e}", exc_info=True, extra=err_extra
-                )
+                if h_span:
+                    h_span.set_attribute(attr.ATTR_HANDLER_SUCCESS, False)
+                    h_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    h_span.record_exception(e)
+                err_extra = {
+                    **base_extra,
+                    "handler": handler_name,
+                    "message_id": message.message_id,
+                    "duration_ms": duration_ms,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+                err_msg = f"Handler {handler_name} failed: {e}"
+                self._logger.error(err_msg, exc_info=True, extra=err_extra)
                 failures.append((handler_name, e))
             finally:
-                if handler_span:
-                    handler_span.end()
+                if h_span:
+                    h_span.end()
 
         if failures:
             raise HandlerDispatchError(failures)

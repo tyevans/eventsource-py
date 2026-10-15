@@ -1,9 +1,4 @@
-"""RabbitMQ exchange/queue topology declaration.
-
-Owns declaring the main exchange, the consumer queue, DLQ exchange/queue,
-and the bindings between them, plus additional event-type/routing-key
-bindings exposed on the facade.
-"""
+"""RabbitMQ exchange/queue topology declaration."""
 
 from __future__ import annotations
 
@@ -28,11 +23,7 @@ logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
 
 class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
-    """Declares and owns the RabbitMQ exchange/queue topology.
-
-    Declaration order: DLQ exchange+queue (if enabled), then main exchange,
-    then consumer queue, then the binding between queue and exchange.
-    """
+    """Declares and owns the RabbitMQ exchange/queue topology."""
 
     def __init__(
         self,
@@ -41,32 +32,26 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
     ) -> None:
         self._config = config
         self._connection = connection
-
         self._exchange: AbstractExchange | None = None
         self._dlq_exchange: AbstractExchange | None = None
         self._consumer_queue: AbstractQueue | None = None
         self._dlq_queue: AbstractQueue | None = None
-
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
     @property
     def exchange(self) -> AbstractExchange | None:
-        """Get the declared main exchange, if any."""
         return self._exchange
 
     @property
     def dlq_exchange(self) -> AbstractExchange | None:
-        """Get the declared DLQ exchange, if any."""
         return self._dlq_exchange
 
     @property
     def consumer_queue(self) -> AbstractQueue | None:
-        """Get the declared consumer queue, if any."""
         return self._consumer_queue
 
     @property
     def dlq_queue(self) -> AbstractQueue | None:
-        """Get the declared DLQ queue, if any."""
         return self._dlq_queue
 
     async def declare_all(self) -> None:
@@ -82,22 +67,15 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         await self.declare_all()
 
     async def queue_health(self, queue_name: str) -> QueueInfo | None:
-        """Passively query a queue's message and consumer counts.
-
-        Returns ``QueueInfo`` with ``state`` "running"/"idle" on success,
-        ``state="error"`` if the passive declare raises, or ``None`` if no
-        live channel is available.
-        """
+        """Passively query a queue's message and consumer counts."""
         channel = self._connection.channel
         if channel is None or channel.is_closed:
             return None
-
         try:
             declared = await channel.declare_queue(name=queue_name, passive=True)
             message_count = declared.declaration_result.message_count or 0
             consumer_count = declared.declaration_result.consumer_count or 0
             state = "running" if consumer_count > 0 else "idle"
-
             self._logger.debug(
                 f"Queue info retrieved: {queue_name}",
                 extra={
@@ -107,7 +85,6 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
                     "state": state,
                 },
             )
-
             return QueueInfo(
                 name=queue_name,
                 message_count=message_count,
@@ -135,25 +112,21 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
     async def _declare_exchange(self) -> None:
         """Declare the main event exchange with the configured exchange type."""
         channel = self._connection.require_channel()
-
         exchange_type_map = {
             "topic": ExchangeType.TOPIC,
             "direct": ExchangeType.DIRECT,
             "fanout": ExchangeType.FANOUT,
             "headers": ExchangeType.HEADERS,
         }
-
         exchange_type = exchange_type_map.get(
             self._config.exchange_type.lower(), ExchangeType.TOPIC
         )
-
         self._exchange = await channel.declare_exchange(
             name=self._config.exchange_name,
             type=exchange_type,
             durable=self._config.durable,
             auto_delete=self._config.auto_delete,
         )
-
         self._logger.info(
             f"Declared exchange: {self._config.exchange_name}",
             extra={
@@ -167,20 +140,16 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
     async def _declare_queue(self) -> None:
         """Declare the consumer queue with optional DLQ arguments."""
         channel = self._connection.require_channel()
-
         arguments: dict[str, Any] = {}
-
         if self._config.enable_dlq:
             arguments["x-dead-letter-exchange"] = self._config.dlq_exchange_name
             arguments["x-dead-letter-routing-key"] = self._config.queue_name
-
         self._consumer_queue = await channel.declare_queue(
             name=self._config.queue_name,
             durable=self._config.durable,
             auto_delete=self._config.auto_delete,
             arguments=arguments if arguments else None,
         )
-
         self._logger.info(
             f"Declared queue: {self._config.queue_name}",
             extra={
@@ -194,14 +163,12 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
     async def _declare_dlq(self) -> None:
         """Declare the dead letter direct exchange, queue, and binding."""
         channel = self._connection.require_channel()
-
         self._dlq_exchange = await channel.declare_exchange(
             name=self._config.dlq_exchange_name,
             type=ExchangeType.DIRECT,
             durable=self._config.durable,
             auto_delete=self._config.auto_delete,
         )
-
         self._logger.info(
             f"Declared DLQ exchange: {self._config.dlq_exchange_name}",
             extra={
@@ -209,24 +176,17 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
                 "durable": self._config.durable,
             },
         )
-
-        # Build DLQ queue arguments
         dlq_arguments: dict[str, Any] = {}
-
         if self._config.dlq_message_ttl is not None:
             dlq_arguments["x-message-ttl"] = self._config.dlq_message_ttl
-
         if self._config.dlq_max_length is not None:
             dlq_arguments["x-max-length"] = self._config.dlq_max_length
-
-        # Declare DLQ queue with optional TTL and max_length
         self._dlq_queue = await channel.declare_queue(
             name=self._config.dlq_queue_name,
             durable=self._config.durable,
             auto_delete=self._config.auto_delete,
             arguments=dlq_arguments if dlq_arguments else None,
         )
-
         self._logger.info(
             f"Declared DLQ queue: {self._config.dlq_queue_name}",
             extra={
@@ -236,14 +196,10 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
                 "dlq_max_length": self._config.dlq_max_length,
             },
         )
-
-        # Bind DLQ queue to DLQ exchange
-        # Uses the main queue name as routing key (matches x-dead-letter-routing-key)
         await self._dlq_queue.bind(
             exchange=self._dlq_exchange,
             routing_key=self._config.queue_name,
         )
-
         self._logger.info(
             f"Bound DLQ queue {self._config.dlq_queue_name} to DLQ exchange "
             f"{self._config.dlq_exchange_name} with routing key '{self._config.queue_name}'",
