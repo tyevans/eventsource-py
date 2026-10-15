@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -27,29 +27,46 @@ class TestInMemoryDLQRepository:
         """Create a fresh repository for each test."""
         return InMemoryDLQRepository()
 
+    async def _add_sample_failed(
+        self,
+        repo: InMemoryDLQRepository,
+        *,
+        event_id: UUID | None = None,
+        projection_name: str = "TestProjection",
+        event_type: str = "TestEvent",
+        event_data: dict | None = None,
+        error_msg: str = "Error",
+        retry_count: int = 1,
+    ) -> UUID:
+        eid = event_id or uuid4()
+        await repo.add_failed_event(
+            event_id=eid,
+            projection_name=projection_name,
+            event_type=event_type,
+            event_data=event_data if event_data is not None else {},
+            error=Exception(error_msg),
+            retry_count=retry_count,
+        )
+        return eid
+
     @pytest.mark.asyncio
     async def test_add_failed_event(self, repo: InMemoryDLQRepository):
         """Test adding a failed event to DLQ."""
         event_id = uuid4()
-        projection_name = "TestProjection"
-        event_type = "TestEvent"
-        event_data = {"key": "value"}
-        error = Exception("Test error")
-
         await repo.add_failed_event(
             event_id=event_id,
-            projection_name=projection_name,
-            event_type=event_type,
-            event_data=event_data,
-            error=error,
+            projection_name="TestProjection",
+            event_type="TestEvent",
+            event_data={"key": "value"},
+            error=Exception("Test error"),
             retry_count=1,
         )
 
         failed_events = await repo.get_failed_events()
         assert len(failed_events) == 1
         assert failed_events[0].event_id == event_id
-        assert failed_events[0].projection_name == projection_name
-        assert failed_events[0].event_type == event_type
+        assert failed_events[0].projection_name == "TestProjection"
+        assert failed_events[0].event_type == "TestEvent"
         assert failed_events[0].retry_count == 1
         assert failed_events[0].status == "failed"
         assert "Test error" in failed_events[0].error_message
@@ -58,29 +75,9 @@ class TestInMemoryDLQRepository:
     async def test_add_failed_event_upsert(self, repo: InMemoryDLQRepository):
         """Test that adding same event twice updates retry count."""
         event_id = uuid4()
-        projection_name = "TestProjection"
+        await self._add_sample_failed(repo, event_id=event_id, error_msg="Error 1", retry_count=1)
+        await self._add_sample_failed(repo, event_id=event_id, error_msg="Error 2", retry_count=2)
 
-        # Add first time
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name=projection_name,
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error 1"),
-            retry_count=1,
-        )
-
-        # Add second time (should update)
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name=projection_name,
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error 2"),
-            retry_count=2,
-        )
-
-        # Verify only one record with updated retry count
         failed_events = await repo.get_failed_events()
         assert len(failed_events) == 1
         assert failed_events[0].retry_count == 2
@@ -89,32 +86,20 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_get_failed_events_with_projection_filter(self, repo: InMemoryDLQRepository):
         """Test filtering failed events by projection name."""
-        # Add events for different projections
-        await repo.add_failed_event(
-            event_id=uuid4(),
-            projection_name="Projection1",
-            event_type="Event1",
-            event_data={},
-            error=Exception("Error 1"),
+        await self._add_sample_failed(
+            repo, projection_name="Projection1", event_type="Event1", error_msg="Error 1"
         )
-        await repo.add_failed_event(
-            event_id=uuid4(),
-            projection_name="Projection2",
-            event_type="Event2",
-            event_data={},
-            error=Exception("Error 2"),
+        await self._add_sample_failed(
+            repo, projection_name="Projection2", event_type="Event2", error_msg="Error 2"
         )
 
-        # Get all
         all_events = await repo.get_failed_events()
         assert len(all_events) == 2
 
-        # Filter by projection1
         proj1_events = await repo.get_failed_events(projection_name="Projection1")
         assert len(proj1_events) == 1
         assert proj1_events[0].projection_name == "Projection1"
 
-        # Filter by projection2
         proj2_events = await repo.get_failed_events(projection_name="Projection2")
         assert len(proj2_events) == 1
         assert proj2_events[0].projection_name == "Projection2"
@@ -122,65 +107,34 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_get_failed_events_with_status_filter(self, repo: InMemoryDLQRepository):
         """Test filtering failed events by status."""
-        event_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
-        # Get dlq_id
+        await self._add_sample_failed(repo)
         events = await repo.get_failed_events()
-        dlq_id = events[0].id
+        await repo.mark_retrying(events[0].id)
 
-        # Mark as retrying
-        await repo.mark_retrying(dlq_id)
-
-        # Filter by failed status (should be empty)
         failed_events = await repo.get_failed_events(status="failed")
         assert len(failed_events) == 0
 
-        # Filter by retrying status
         retrying_events = await repo.get_failed_events(status="retrying")
         assert len(retrying_events) == 1
 
     @pytest.mark.asyncio
     async def test_get_failed_events_limit(self, repo: InMemoryDLQRepository):
         """Test limiting number of returned events."""
-        # Add 5 events
         for i in range(5):
-            await repo.add_failed_event(
-                event_id=uuid4(),
-                projection_name="TestProjection",
-                event_type=f"Event{i}",
-                event_data={},
-                error=Exception(f"Error {i}"),
-            )
+            await self._add_sample_failed(repo, event_type=f"Event{i}", error_msg=f"Error {i}")
 
-        # Get with limit
         limited = await repo.get_failed_events(limit=3)
         assert len(limited) == 3
 
     @pytest.mark.asyncio
     async def test_get_failed_event_by_id(self, repo: InMemoryDLQRepository):
         """Test getting a specific failed event by ID."""
-        event_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data={"test": "data"},
-            error=Exception("Test error"),
-            retry_count=2,
+        event_id = await self._add_sample_failed(
+            repo, event_data={"test": "data"}, error_msg="Test error", retry_count=2
         )
-
-        # Get the DLQ ID
         events = await repo.get_failed_events()
         dlq_id = events[0].id
 
-        # Get by ID
         event = await repo.get_failed_event_by_id(dlq_id)
         assert event is not None
         assert event.id == dlq_id
@@ -196,15 +150,7 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_mark_resolved(self, repo: InMemoryDLQRepository):
         """Test marking a DLQ entry as resolved."""
-        event_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
+        await self._add_sample_failed(repo)
         events = await repo.get_failed_events()
         dlq_id = events[0].id
 
@@ -218,16 +164,8 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_mark_resolved_with_uuid(self, repo: InMemoryDLQRepository):
         """Test marking resolved with UUID as resolved_by."""
-        event_id = uuid4()
         user_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
+        await self._add_sample_failed(repo)
         events = await repo.get_failed_events()
         dlq_id = events[0].id
 
@@ -239,19 +177,9 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_mark_retrying(self, repo: InMemoryDLQRepository):
         """Test marking a DLQ entry as retrying."""
-        event_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
+        await self._add_sample_failed(repo)
         events = await repo.get_failed_events()
-        dlq_id = events[0].id
-
-        await repo.mark_retrying(dlq_id)
+        await repo.mark_retrying(events[0].id)
 
         retrying = await repo.get_failed_events(status="retrying")
         assert len(retrying) == 1
@@ -260,14 +188,9 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_get_failure_stats(self, repo: InMemoryDLQRepository):
         """Test getting DLQ statistics."""
-        # Add some failed events for different projections
         for i in range(3):
-            await repo.add_failed_event(
-                event_id=uuid4(),
-                projection_name=f"Projection{i % 2}",
-                event_type="TestEvent",
-                event_data={},
-                error=Exception(f"Error {i}"),
+            await self._add_sample_failed(
+                repo, projection_name=f"Projection{i % 2}", error_msg=f"Error {i}"
             )
 
         stats = await repo.get_failure_stats()
@@ -279,17 +202,9 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_get_failure_stats_with_retrying(self, repo: InMemoryDLQRepository):
         """Test failure stats includes retrying count."""
-        # Add two events
         for i in range(2):
-            await repo.add_failed_event(
-                event_id=uuid4(),
-                projection_name="TestProjection",
-                event_type="TestEvent",
-                event_data={},
-                error=Exception(f"Error {i}"),
-            )
+            await self._add_sample_failed(repo, error_msg=f"Error {i}")
 
-        # Mark one as retrying
         events = await repo.get_failed_events()
         await repo.mark_retrying(events[0].id)
 
@@ -310,21 +225,12 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_get_projection_failure_counts(self, repo: InMemoryDLQRepository):
         """Test getting failure counts grouped by projection."""
-        # Add events for different projections
         for i in range(5):
             projection = "HighFailure" if i < 3 else "LowFailure"
-            await repo.add_failed_event(
-                event_id=uuid4(),
-                projection_name=projection,
-                event_type="TestEvent",
-                event_data={},
-                error=Exception(f"Error {i}"),
-            )
+            await self._add_sample_failed(repo, projection_name=projection, error_msg=f"Error {i}")
 
         counts = await repo.get_projection_failure_counts()
         assert len(counts) == 2
-
-        # Should be ordered by count descending
         assert counts[0].projection_name == "HighFailure"
         assert counts[0].failure_count == 3
         assert counts[1].projection_name == "LowFailure"
@@ -333,39 +239,18 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_delete_resolved_events(self, repo: InMemoryDLQRepository):
         """Test deleting resolved events older than specified days."""
-        # Add and resolve an event
-        event_id = uuid4()
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data={},
-            error=Exception("Error"),
-        )
-
+        await self._add_sample_failed(repo)
         events = await repo.get_failed_events()
-        dlq_id = events[0].id
-        await repo.mark_resolved(dlq_id, resolved_by="admin")
+        await repo.mark_resolved(events[0].id, resolved_by="admin")
 
-        # Delete resolved events older than 0 days (should delete)
         deleted = await repo.delete_resolved_events(older_than_days=0)
-
-        # Note: In-memory implementation uses datetime comparison
-        # The event was just resolved, so it might not be deleted
-        # This test verifies the method works without error
         assert deleted >= 0
 
     @pytest.mark.asyncio
     async def test_clear(self, repo: InMemoryDLQRepository):
         """Test clearing all entries."""
         for i in range(3):
-            await repo.add_failed_event(
-                event_id=uuid4(),
-                projection_name="TestProjection",
-                event_type="TestEvent",
-                event_data={},
-                error=Exception(f"Error {i}"),
-            )
+            await self._add_sample_failed(repo, error_msg=f"Error {i}")
 
         await repo.clear()
 
@@ -375,23 +260,14 @@ class TestInMemoryDLQRepository:
     @pytest.mark.asyncio
     async def test_event_data_serialization(self, repo: InMemoryDLQRepository):
         """Test that event data is properly serialized."""
-        event_id = uuid4()
         tenant_id = uuid4()
         event_data = {
             "tenant_id": str(tenant_id),
             "items": ["a", "b", "c"],
             "nested": {"key": "value"},
         }
-
-        await repo.add_failed_event(
-            event_id=event_id,
-            projection_name="TestProjection",
-            event_type="TestEvent",
-            event_data=event_data,
-            error=Exception("Error"),
-        )
+        await self._add_sample_failed(repo, event_data=event_data)
 
         events = await repo.get_failed_events()
-        # event_data should be a JSON string
         assert isinstance(events[0].event_data, str)
         assert str(tenant_id) in events[0].event_data
