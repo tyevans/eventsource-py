@@ -16,26 +16,21 @@ from eventsource.domain.event import DomainEvent
 
 
 class OrderCreated(DomainEvent):
-    __test__ = False
     aggregate_type: str = "Order"
     order_number: str = Field(..., description="Order number")
 
 
 class OrderShipped(DomainEvent):
-    __test__ = False
     aggregate_type: str = "Order"
     tracking_number: str = Field(..., description="Tracking number")
 
 
 class OrderCancelled(DomainEvent):
-    __test__ = False
     aggregate_type: str = "Order"
     reason: str = Field(..., description="Cancellation reason")
 
 
 class CheckpointTestProjection(CheckpointTrackingProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.events_processed: list[DomainEvent] = []
@@ -52,7 +47,6 @@ class TestProjection(CheckpointTestProjection):
 
 
 class FailingCheckpointProjection(CheckpointTrackingProjection):
-    __test__ = False
     MAX_RETRIES = 3
     RETRY_BACKOFF_BASE = 0
 
@@ -64,10 +58,8 @@ class FailingCheckpointProjection(CheckpointTrackingProjection):
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        if max_retries is not None:
-            self.MAX_RETRIES = max_retries
-        self.error_message = error_message
-        self.attempt_count = 0
+        self.MAX_RETRIES = max_retries if max_retries is not None else self.MAX_RETRIES
+        self.error_message, self.attempt_count = error_message, 0
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
         return [OrderCreated]
@@ -78,18 +70,15 @@ class FailingCheckpointProjection(CheckpointTrackingProjection):
 
 
 class FailingProjection(FailingCheckpointProjection):
-    __test__ = False
+    pass
 
 
 class BrokenCheckpoints(InMemoryCheckpointRepository):
-    __test__ = False
-
     async def update_checkpoint(self, *args: object, **kwargs: object) -> None:
         raise ConnectionError("checkpoint store unreachable")
 
 
 class CountingProjection(CheckpointTrackingProjection):
-    __test__ = False
     MAX_RETRIES = 2
     RETRY_BACKOFF_BASE = 0
 
@@ -105,8 +94,6 @@ class CountingProjection(CheckpointTrackingProjection):
 
 
 class MyCustomProjection(CheckpointTrackingProjection):
-    __test__ = False
-
     def subscribed_to(self) -> list[type[DomainEvent]]:
         return [OrderCreated]
 
@@ -115,8 +102,6 @@ class MyCustomProjection(CheckpointTrackingProjection):
 
 
 class SimpleDeclarativeProjection(DeclarativeProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.events_handled: list[DomainEvent] = []
@@ -127,8 +112,6 @@ class SimpleDeclarativeProjection(DeclarativeProjection):
 
 
 class MultiHandlerDeclarativeProjection(DeclarativeProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.created_events: list[OrderCreated] = []
@@ -144,8 +127,6 @@ class MultiHandlerDeclarativeProjection(DeclarativeProjection):
 
 
 class TwoParamDeclarativeProjection(DeclarativeProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.events_handled: list[DomainEvent] = []
@@ -158,8 +139,6 @@ class TwoParamDeclarativeProjection(DeclarativeProjection):
 
 
 class PublicHandlerDeclarativeProjection(DeclarativeProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.events_handled: list[DomainEvent] = []
@@ -170,7 +149,6 @@ class PublicHandlerDeclarativeProjection(DeclarativeProjection):
 
 
 class FailingDeclarativeProjection(DeclarativeProjection):
-    __test__ = False
     MAX_RETRIES = 1
     RETRY_BACKOFF_BASE = 0
 
@@ -180,7 +158,6 @@ class FailingDeclarativeProjection(DeclarativeProjection):
 
 
 class FailingDatabaseProjection(DatabaseProjection):
-    __test__ = False
     MAX_RETRIES = 1
     RETRY_BACKOFF_BASE = 0
 
@@ -190,8 +167,6 @@ class FailingDatabaseProjection(DatabaseProjection):
 
 
 class SimpleDatabaseProjection(DatabaseProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.received_conn: list[object] = []
@@ -204,8 +179,6 @@ class SimpleDatabaseProjection(DatabaseProjection):
 
 
 class SingleParamDatabaseProjection(DatabaseProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.events_handled: list[DomainEvent] = []
@@ -216,8 +189,6 @@ class SingleParamDatabaseProjection(DatabaseProjection):
 
 
 class MultiHandlerDatabaseProjection(DatabaseProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.received_conns: list[object] = []
@@ -232,8 +203,6 @@ class MultiHandlerDatabaseProjection(DatabaseProjection):
 
 
 class MixedDatabaseProjection(DatabaseProjection):
-    __test__ = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.one_param_events: list[DomainEvent] = []
