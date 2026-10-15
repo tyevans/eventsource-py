@@ -1,7 +1,7 @@
 ---
 id: "0185"
 title: Remove Migration Cutover & Exception Legacy Shims and Decompose Audit Log Modules
-status: Refined
+status: Complete
 target_bc: application
 governing_adrs:
   - ADR-0002

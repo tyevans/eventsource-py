@@ -1,7 +1,7 @@
 ---
 id: "0186"
 title: Remove RabbitMQEventBus Private Proxy Shims and Decompose RabbitMQ Topology
-status: Refined
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

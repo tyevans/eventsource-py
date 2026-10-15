@@ -1,7 +1,7 @@
 ---
 id: "0188"
 title: Remove InMemoryReadModelRepository Legacy Shim, Decompose Outbox Tests, and Sync Outbox Documentation
-status: Refined
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

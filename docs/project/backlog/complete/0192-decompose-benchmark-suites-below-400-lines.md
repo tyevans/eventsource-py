@@ -1,7 +1,7 @@
 ---
 id: "0192"
 title: Decompose Benchmark Suites Below 400-Line Threshold
-status: Proposed
+status: Complete
 target_bc: testing
 governing_adrs:
   - ADR-0002

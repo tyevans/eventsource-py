@@ -1,7 +1,7 @@
 ---
 id: "0182"
 title: Non-Blocking Kafka Retry Scheduling, Remove Kafka Bus Shims, and Deterministic Bus Benchmarks
-status: Refined
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

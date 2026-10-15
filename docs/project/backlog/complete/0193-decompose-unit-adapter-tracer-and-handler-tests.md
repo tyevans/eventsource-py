@@ -1,7 +1,7 @@
 ---
 id: "0193"
 title: Decompose Unit Adapter, Tracer, and Handler Test Modules Below 400 Lines
-status: Proposed
+status: Complete
 target_bc: testing
 governing_adrs:
   - ADR-0002

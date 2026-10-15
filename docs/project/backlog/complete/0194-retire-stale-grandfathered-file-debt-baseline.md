@@ -1,7 +1,7 @@
 ---
 id: "0194"
 title: Retire Stale Grandfathered File Debt Baseline and Enforce Zero-Warning Health Gate
-status: Proposed
+status: Complete
 target_bc: core
 governing_adrs:
   - ADR-0002
