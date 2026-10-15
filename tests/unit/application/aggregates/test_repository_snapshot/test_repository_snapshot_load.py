@@ -70,17 +70,18 @@ def snapshot_store() -> InMemorySnapshotStore:
 class TestRepositoryConstructor:
     def test_constructor_without_snapshot_params(self, event_store: InMemoryEventStore) -> None:
         repo = _make_repo(event_store)
-        assert repo.snapshot_store is None
-        assert repo.snapshot_threshold is None
-        assert repo.snapshot_mode == "sync"
-        assert repo.has_snapshot_support is False
+        assert (
+            repo.snapshot_store,
+            repo.snapshot_threshold,
+            repo.snapshot_mode,
+            repo.has_snapshot_support,
+        ) == (None, None, "sync", False)
 
     def test_constructor_with_snapshot_store(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         repo = _make_repo(event_store, snapshot_store)
-        assert repo.snapshot_store is snapshot_store
-        assert repo.has_snapshot_support is True
+        assert repo.snapshot_store is snapshot_store and repo.has_snapshot_support is True
 
     def test_constructor_with_all_params(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
@@ -88,8 +89,7 @@ class TestRepositoryConstructor:
         repo = _make_repo(
             event_store, snapshot_store, snapshot_threshold=100, snapshot_mode="background"
         )
-        assert repo.snapshot_threshold == 100
-        assert repo.snapshot_mode == "background"
+        assert (repo.snapshot_threshold, repo.snapshot_mode) == (100, "background")
 
     def test_constructor_with_manual_mode(
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
@@ -108,8 +108,7 @@ class TestRepositorySnapshotLoad:
         aggregate.do_something("test-value")
         await repo.save(aggregate)
         loaded = await repo.load(aggregate.aggregate_id)
-        assert loaded.version == 1
-        assert loaded.state.value == "test-value"
+        assert (loaded.version, loaded.state.value) == (1, "test-value")
 
     @pytest.mark.asyncio
     async def test_load_uses_snapshot_when_available(
@@ -129,9 +128,7 @@ class TestRepositorySnapshotLoad:
         )
         await event_store.append(stream, [event], ExpectedVersion.exact(5))
         loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
-        assert loaded.version == 6
-        assert loaded.state.value == "after_snapshot"
-        assert loaded.state.count == 6
+        assert (loaded.version, loaded.state.value, loaded.state.count) == (6, "after_snapshot", 6)
 
     @pytest.mark.asyncio
     async def test_load_falls_back_on_schema_mismatch(
@@ -143,26 +140,18 @@ class TestRepositorySnapshotLoad:
                 aggregate_id, {"value": "old_snapshot", "count": 5, "items": []}, schema_version=99
             )
         )
-        await event_store.append(
-            StreamId(aggregate_id=aggregate_id, category="Test"),
-            _make_events(aggregate_id, 3),
-            ExpectedVersion.exact(0),
-        )
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
+        await event_store.append(stream, _make_events(aggregate_id, 3), ExpectedVersion.exact(0))
         loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
-        assert loaded.version == 3
-        assert loaded.state.count == 3
-        assert loaded.state.value == "event_2"
+        assert (loaded.version, loaded.state.count, loaded.state.value) == (3, 3, "event_2")
 
     @pytest.mark.asyncio
     async def test_load_falls_back_on_snapshot_error(self, event_store: InMemoryEventStore) -> None:
         mock_snapshot_store = MagicMock()
         mock_snapshot_store.get_snapshot = AsyncMock(side_effect=Exception("Store error"))
         aggregate_id = uuid4()
-        await event_store.append(
-            StreamId(aggregate_id=aggregate_id, category="Test"),
-            _make_events(aggregate_id, 1),
-            ExpectedVersion.exact(0),
-        )
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
+        await event_store.append(stream, _make_events(aggregate_id, 1), ExpectedVersion.exact(0))
         loaded = await _make_repo(event_store, mock_snapshot_store).load(aggregate_id)
         assert loaded.version == 1
 
@@ -176,11 +165,8 @@ class TestRepositorySnapshotLoad:
                 aggregate_id, {"value": "test", "count": {"invalid": "type"}, "items": []}
             )
         )
-        await event_store.append(
-            StreamId(aggregate_id=aggregate_id, category="Test"),
-            _make_events(aggregate_id, 2),
-            ExpectedVersion.exact(0),
-        )
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
+        await event_store.append(stream, _make_events(aggregate_id, 2), ExpectedVersion.exact(0))
         loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
         assert loaded.version == 2
 
@@ -200,5 +186,4 @@ class TestRepositorySnapshotLoad:
             _make_snapshot(aggregate_id, {"value": "snapshot_only", "count": 5, "items": []})
         )
         loaded = await _make_repo(event_store, snapshot_store).load(aggregate_id)
-        assert loaded.version == 5
-        assert loaded.state.value == "snapshot_only"
+        assert (loaded.version, loaded.state.value) == (5, "snapshot_only")

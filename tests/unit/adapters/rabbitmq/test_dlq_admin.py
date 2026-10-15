@@ -39,13 +39,12 @@ def make_admin(
 
 class TestGetMessages:
     async def test_returns_empty_when_not_connected(self) -> None:
-        assert (
-            await make_admin(connected=False, channel=AsyncMock())[0].get_messages(limit=10) == []
-        )
+        admin, _, _ = make_admin(connected=False, channel=AsyncMock())
+        assert await admin.get_messages(limit=10) == []
 
     async def test_returns_empty_when_dlq_disabled(self) -> None:
-        cfg = make_config(enable_dlq=False)
-        assert await make_admin(config=cfg, channel=AsyncMock())[0].get_messages(limit=10) == []
+        admin, _, _ = make_admin(config=make_config(enable_dlq=False), channel=AsyncMock())
+        assert await admin.get_messages(limit=10) == []
 
     async def test_returns_empty_when_channel_not_initialized(self) -> None:
         assert await make_admin(channel=None)[0].get_messages(limit=10) == []
@@ -60,11 +59,9 @@ class TestGetMessages:
         ]
         mock_queue.get.side_effect = messages + [None]
         mock_channel.get_queue.return_value = mock_queue
-        admin, _, _ = make_admin(channel=mock_channel)
-
-        result = await admin.get_messages(limit=3)
+        result = await make_admin(channel=mock_channel)[0].get_messages(limit=3)
         assert len(result) == 3 and all(isinstance(m, DLQMessage) for m in result)
-        assert result[0].message_id == "msg-0" and result[0].dlq_reason == "Handler error"
+        assert (result[0].message_id, result[0].dlq_reason) == ("msg-0", "Handler error")
         messages[0].reject.assert_called_once_with(requeue=True)
 
     async def test_handles_exception(self) -> None:
@@ -126,13 +123,9 @@ class TestReplayMessage:
             "x-original-routing-key": "Test.TestEvent",
         }
         mock_message = AsyncMock(
-            message_id="target-id",
-            routing_key="dlq-routing-key",
-            body=b'{"data": "test"}',
-            content_type="application/json",
-            content_encoding="utf-8",
-            headers=hdrs,
-        )
+            message_id="target-id", routing_key="dlq-routing-key", body=b'{"data": "test"}',
+            content_type="application/json", content_encoding="utf-8", headers=hdrs,
+        )  # fmt: skip
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
         admin, _, _ = make_admin(channel=mock_channel, exchange=mock_exchange)
@@ -155,16 +148,12 @@ class TestReplayMessage:
         assert await admin.replay_message("test-id") is False
 
     async def test_returns_false_when_exchange_not_initialized(self) -> None:
-        assert (
-            await make_admin(channel=AsyncMock(), exchange=None)[0].replay_message("test-id")
-            is False
-        )
+        admin, _, _ = make_admin(channel=AsyncMock(), exchange=None)
+        assert await admin.replay_message("test-id") is False
 
     async def test_returns_false_when_channel_not_initialized(self) -> None:
-        assert (
-            await make_admin(channel=None, exchange=AsyncMock())[0].replay_message("test-id")
-            is False
-        )
+        admin, _, _ = make_admin(channel=None, exchange=AsyncMock())
+        assert await admin.replay_message("test-id") is False
 
     async def test_handles_exception(self) -> None:
         mock_channel, mock_exchange = AsyncMock(), AsyncMock()
@@ -188,17 +177,12 @@ class TestReplayMessageHelper:
             "x-death": [{"queue": "test"}],
             "x-retry-count": 5,
         }
-        mock_message = AsyncMock(
-            body=b'{"data": "test"}',
-            content_type="application/json",
-            content_encoding="utf-8",
-            message_id="test-id",
-            routing_key="dlq-key",
-            headers=hdrs,
-        )
-        await admin._replay_message(mock_message)
-        replay_msg = mock_exchange.publish.call_args[0][0]
-        assert "x-dlq-reason" not in replay_msg.headers and "x-death" not in replay_msg.headers
-        assert replay_msg.headers["x-retry-count"] == 0
-        assert "x-replayed-from-dlq" in replay_msg.headers
-        assert replay_msg.headers["event_type"] == "TestEvent"
+        msg = AsyncMock(
+            body=b'{"data": "test"}', content_type="application/json", content_encoding="utf-8",
+            message_id="test-id", routing_key="dlq-key", headers=hdrs,
+        )  # fmt: skip
+        await admin._replay_message(msg)
+        replay_hdrs = mock_exchange.publish.call_args[0][0].headers
+        assert "x-dlq-reason" not in replay_hdrs and "x-death" not in replay_hdrs
+        assert (replay_hdrs["x-retry-count"], replay_hdrs["event_type"]) == (0, "TestEvent")
+        assert "x-replayed-from-dlq" in replay_hdrs

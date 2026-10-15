@@ -21,7 +21,6 @@ pytestmark = pytest.mark.asyncio
 
 
 async def position_after(store, n: int):
-    """The token of the nth (1-based) event in the feed."""
     envelopes = [e async for e in store.read_all()]
     position = envelopes[n - 1].position
     assert position is not None
@@ -29,8 +28,6 @@ async def position_after(store, n: int):
 
 
 class TestLiveEventDelivery:
-    """Tests for live event delivery after transition."""
-
     async def test_receives_live_events_after_catchup(
         self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
@@ -41,8 +38,7 @@ class TestLiveEventDelivery:
         await projection.wait_for_events(20)
         for i in range(5):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"LIVE-{i:03d}")
-        assert await projection.wait_for_events(25)
-        assert projection.event_count == 25
+        assert await projection.wait_for_events(25) and projection.event_count == 25
 
     async def test_live_only_subscription(
         self, in_memory_event_store, in_memory_event_bus, subscription_manager
@@ -55,10 +51,8 @@ class TestLiveEventDelivery:
         assert projection.event_count == 0
         for i in range(10):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"LIVE-{i:03d}")
-        assert await projection.wait_for_events(10)
-        assert projection.event_count == 10
-        for event in projection.events:
-            assert event.order_number.startswith("LIVE-")
+        assert await projection.wait_for_events(10) and projection.event_count == 10
+        assert all(event.order_number.startswith("LIVE-") for event in projection.events)
 
     async def test_live_events_with_different_types(
         self, in_memory_event_store, in_memory_event_bus, subscription_manager
@@ -74,15 +68,12 @@ class TestLiveEventDelivery:
         shipped = SubTestOrderShipped(aggregate_id=order_id, tracking_number="TRK-001")
         await in_memory_event_store.append(stream_id, [shipped], ExpectedVersion.exact(1))
         await in_memory_event_bus.publish([shipped])
-        assert await projection.wait_for_events(2)
-        assert projection.event_count == 2
+        assert await projection.wait_for_events(2) and projection.event_count == 2
         assert isinstance(projection.events[0], SubTestOrderCreated)
         assert isinstance(projection.events[1], SubTestOrderShipped)
 
 
 class TestLiveEventOrdering:
-    """Tests for event ordering in live mode."""
-
     async def test_live_events_maintain_order(
         self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
@@ -111,21 +102,17 @@ class TestLiveEventOrdering:
         ]
         assert len(events_published) == 100
         assert await projection.wait_for_events(100, timeout=10.0)
-        assert projection.event_count == 100
-        assert not projection.has_duplicates()
+        assert projection.event_count == 100 and not projection.has_duplicates()
 
 
 class TestLiveSubscriptionHealth:
-    """Tests for live subscription health and state."""
-
     async def test_live_subscription_state(self, subscription_manager):
         projection = CollectingProjection()
         await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await asyncio.sleep(0.1)
         subscription = subscription_manager.get_subscription("CollectingProjection")
-        assert subscription is not None
-        assert subscription.state.value == "live"
+        assert subscription is not None and subscription.state.value == "live"
 
     async def test_live_subscription_stats(self, in_memory_event_store, subscription_manager):
         await populate_event_store(in_memory_event_store, 30)
@@ -134,13 +121,10 @@ class TestLiveSubscriptionHealth:
         await subscription_manager.start()
         await projection.wait_for_events(30)
         subscription = subscription_manager.get_subscription("CollectingProjection")
-        assert subscription.events_processed >= 30
-        assert subscription.events_failed == 0
+        assert subscription.events_processed >= 30 and subscription.events_failed == 0
 
 
 class TestLiveSubscriptionRecovery:
-    """Tests for live subscription handling edge cases."""
-
     async def test_multiple_live_subscriptions(
         self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
@@ -154,8 +138,7 @@ class TestLiveSubscriptionRecovery:
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:03d}")
         await projection1.wait_for_events(10)
         await projection2.wait_for_events(10)
-        assert projection1.event_count == 10
-        assert projection2.event_count == 10
+        assert (projection1.event_count, projection2.event_count) == (10, 10)
 
     async def test_live_subscription_continues_after_stop_start(
         self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
@@ -199,6 +182,5 @@ class TestLiveSubscriptionRecovery:
         await manager2.start()
         success = await projection2.wait_for_events(10, timeout=10.0)
         assert success, f"Expected 10 events, got {projection2.event_count}"
-        assert projection2.event_count == 10
-        assert projection2.events[0].order_number == "ORD-020"
+        assert (projection2.event_count, projection2.events[0].order_number) == (10, "ORD-020")
         await manager2.stop()
