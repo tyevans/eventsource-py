@@ -1,7 +1,7 @@
 ---
 id: TASK-0210
 title: "Slim projections/handlers.py, subscriptions/manager_lifecycle.py, and subscriptions/filtering.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

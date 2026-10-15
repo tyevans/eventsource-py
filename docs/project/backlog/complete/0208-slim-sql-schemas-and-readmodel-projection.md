@@ -1,7 +1,7 @@
 ---
 id: TASK-0208
 title: "Slim sql/schemas/__init__.py and sql/readmodel_projection.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

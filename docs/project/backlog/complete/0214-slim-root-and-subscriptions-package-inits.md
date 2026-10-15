@@ -1,7 +1,7 @@
 ---
 id: TASK-0214
 title: "Slim eventsource/__init__.py and application/subscriptions/__init__.py below 330 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

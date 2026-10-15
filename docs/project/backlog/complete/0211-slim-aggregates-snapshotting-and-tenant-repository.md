@@ -1,7 +1,7 @@
 ---
 id: TASK-0211
 title: "Slim aggregates/snapshotting.py and aggregates/tenant_repository.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

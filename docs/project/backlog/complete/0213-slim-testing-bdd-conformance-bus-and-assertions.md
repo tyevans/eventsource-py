@@ -1,7 +1,7 @@
 ---
 id: TASK-0213
 title: "Slim testing/bdd.py, testing/conformance_ports/bus.py, and testing/assertions.py below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

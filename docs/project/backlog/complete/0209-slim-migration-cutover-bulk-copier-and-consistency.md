@@ -1,7 +1,7 @@
 ---
 id: TASK-0209
 title: "Slim migration cutover_execution, bulk_copier, and consistency modules below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
