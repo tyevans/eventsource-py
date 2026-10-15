@@ -41,13 +41,7 @@ class SQLiteNotAvailableError(ImportError):
 
 
 class SQLiteSnapshotStore:
-    """SQLite implementation of `SnapshotStore`.
-
-    Opens a single aiosqlite connection lazily on first use, applies the
-    `snapshots` schema idempotently, and reuses the connection for the
-    store's lifetime under `self._lock`. Implements `SupportsClose` and
-    `async with` so callers release the background worker thread on exit.
-    """
+    """SQLite implementation of `SnapshotStore`."""
 
     def __init__(
         self,
@@ -60,7 +54,6 @@ class SQLiteSnapshotStore:
         """Initialize the SQLite snapshot store."""
         if not AIOSQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
-
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._database_path = database_path
@@ -74,17 +67,14 @@ class SQLiteSnapshotStore:
         """Return the live connection, opening and initializing it on first use."""
         if self._connection is not None:
             return self._connection
-
         async with self._init_lock:
             if self._connection is not None:
                 return self._connection
-
             conn = await aiosqlite.connect(self._database_path)
             await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
             conn.row_factory = aiosqlite.Row
             await conn.executescript(get_schema("snapshots", backend="sqlite"))
             await conn.commit()
-
             self._connection = conn
             return conn
 
@@ -135,12 +125,7 @@ class SQLiteSnapshotStore:
                     ),
                 )
                 await conn.commit()
-            logger.debug(
-                "Saved snapshot for %s/%s at version %d",
-                snapshot.aggregate_type,
-                snapshot.aggregate_id,
-                snapshot.version,
-            )
+            logger.debug("Saved snapshot for %s/%s", snapshot.aggregate_type, snapshot.aggregate_id)
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
         """Get the snapshot for an aggregate, or None if not found."""
@@ -154,20 +139,15 @@ class SQLiteSnapshotStore:
                     (str(aggregate_id), aggregate_type),
                 )
                 row = await cursor.fetchone()
-
             if row is None:
                 logger.debug("No snapshot found for %s/%s", aggregate_type, aggregate_id)
                 return None
-
             try:
                 state = json_loads(row["state"])
             except (ValueError, TypeError) as e:
                 raise SnapshotDeserializationError(
-                    aggregate_id=UUID(row["aggregate_id"]),
-                    aggregate_type=row["aggregate_type"],
-                    original_error=e,
+                    UUID(row["aggregate_id"]), row["aggregate_type"], e
                 ) from e
-
             snapshot = Snapshot(
                 aggregate_id=UUID(row["aggregate_id"]),
                 aggregate_type=row["aggregate_type"],
@@ -176,12 +156,7 @@ class SQLiteSnapshotStore:
                 state=state,
                 created_at=datetime.fromisoformat(row["created_at"]),
             )
-            logger.debug(
-                "Retrieved snapshot for %s/%s at version %d",
-                aggregate_type,
-                aggregate_id,
-                snapshot.version,
-            )
+            logger.debug("Retrieved snapshot for %s/%s", aggregate_type, aggregate_id)
             return snapshot
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
@@ -218,9 +193,7 @@ class SQLiteSnapshotStore:
                 return bool(row[0]) if row else False
 
     async def delete_snapshots_by_type(
-        self,
-        aggregate_type: str,
-        schema_version_below: int | None = None,
+        self, aggregate_type: str, schema_version_below: int | None = None
     ) -> int:
         """Delete all snapshots for a given aggregate type."""
         with self._tracer.span(
@@ -235,18 +208,16 @@ class SQLiteSnapshotStore:
                     )
                 else:
                     cursor = await conn.execute(
-                        "DELETE FROM snapshots WHERE aggregate_type = ?",
-                        (aggregate_type,),
+                        "DELETE FROM snapshots WHERE aggregate_type = ?", (aggregate_type,)
                     )
                 await conn.commit()
                 count: int = cursor.rowcount
-
             if count > 0:
+                suffix = (
+                    f" (schema_version < {schema_version_below})" if schema_version_below else ""
+                )
                 logger.info(
-                    "Deleted %d snapshots for aggregate type %s%s",
-                    count,
-                    aggregate_type,
-                    f" (schema_version < {schema_version_below})" if schema_version_below else "",
+                    "Deleted %d snapshots for aggregate type %s%s", count, aggregate_type, suffix
                 )
             return count
 

@@ -1,6 +1,4 @@
-"""
-Position translation, batch translation, and nearest-neighbor query operations.
-"""
+"""Position translation, batch translation, and nearest-neighbor query operations."""
 
 from __future__ import annotations
 
@@ -36,25 +34,7 @@ class PositionMapperQueryMixin:
         *,
         use_nearest: bool = True,
     ) -> TranslationResult:
-        """
-        Translate a source position to target position.
-
-        First attempts an exact match lookup. If not found and use_nearest
-        is True, finds the nearest mapping with source_position <= given
-        position. This is the primary method for checkpoint translation.
-
-        Args:
-            migration_id: ID of the migration.
-            source_position: Position in the source store to translate.
-            use_nearest: Whether to use nearest-neighbor lookup if exact
-                match is not found (default True).
-
-        Returns:
-            TranslationResult with translated position and metadata.
-
-        Raises:
-            PositionMappingError: If no mapping can be found.
-        """
+        """Translate a source position to target position via exact or nearest-neighbor lookup."""
         with self._tracer.span(
             "eventsource.position_mapper.translate_position",
             {
@@ -63,11 +43,7 @@ class PositionMapperQueryMixin:
                 "use_nearest": use_nearest,
             },
         ):
-            # Try exact match first
-            exact_mapping = await self._repo.find_by_source_position(
-                migration_id,
-                source_position,
-            )
+            exact_mapping = await self._repo.find_by_source_position(migration_id, source_position)
 
             if exact_mapping is not None:
                 logger.debug(
@@ -81,7 +57,6 @@ class PositionMapperQueryMixin:
                     is_exact=True,
                 )
 
-            # Try nearest match
             if use_nearest:
                 nearest_mapping = await self._repo.find_nearest_source_position(
                     migration_id,
@@ -102,7 +77,6 @@ class PositionMapperQueryMixin:
                         nearest_source_position=nearest_mapping.source_position,
                     )
 
-            # No mapping found
             raise PositionMappingError(
                 "No mapping found for source position",
                 migration_id=migration_id,
@@ -115,22 +89,7 @@ class PositionMapperQueryMixin:
         migration_id: UUID,
         target_position: Position,
     ) -> ReverseTranslationResult:
-        """
-        Translate a target position back to source position.
-
-        Looks up the mapping by target position. This is useful for
-        debugging and verification purposes.
-
-        Args:
-            migration_id: ID of the migration.
-            target_position: Position in the target store to translate.
-
-        Returns:
-            ReverseTranslationResult with translated position and metadata.
-
-        Raises:
-            PositionMappingError: If no mapping can be found.
-        """
+        """Translate a target position back to source position."""
         with self._tracer.span(
             "eventsource.position_mapper.translate_position_reverse",
             {
@@ -138,10 +97,7 @@ class PositionMapperQueryMixin:
                 "target_position": target_position.to_str(),
             },
         ):
-            mapping = await self._repo.find_by_target_position(
-                migration_id,
-                target_position,
-            )
+            mapping = await self._repo.find_by_target_position(migration_id, target_position)
 
             if mapping is not None:
                 logger.debug(
@@ -155,7 +111,6 @@ class PositionMapperQueryMixin:
                     is_exact=True,
                 )
 
-            # No exact match found
             raise PositionMappingError(
                 f"No mapping found for target position {target_position.to_str()}",
                 migration_id=migration_id,
@@ -169,28 +124,7 @@ class PositionMapperQueryMixin:
         *,
         use_nearest: bool = True,
     ) -> list[TranslationResult]:
-        """
-        Translate multiple source positions to target positions.
-
-        Delegates to `translate_position` for each position. Positions are
-        opaque tokens, so the previous int-range optimization (fetching a
-        padded window of mappings and searching it in memory) no longer
-        applies -- there is no arithmetic "buffer" to pad a token range
-        with. Each lookup is still O(log n) via the repository's binary
-        search over the row ordinal.
-
-        Args:
-            migration_id: ID of the migration.
-            source_positions: List of source positions to translate.
-            use_nearest: Whether to use nearest-neighbor lookup if exact
-                match is not found (default True).
-
-        Returns:
-            List of TranslationResult for each position.
-
-        Raises:
-            PositionMappingError: If any position cannot be translated.
-        """
+        """Translate multiple source positions to target positions."""
         if not source_positions:
             return []
 
@@ -223,22 +157,10 @@ class PositionMapperQueryMixin:
         sorted_mappings: list[PositionMapping],
         source_position: Position,
     ) -> PositionMapping | None:
-        """
-        Find the nearest mapping with source_position <= given position.
-
-        Uses binary search for efficiency.
-
-        Args:
-            sorted_mappings: List of mappings sorted by source_position.
-            source_position: Position to find nearest mapping for.
-
-        Returns:
-            Nearest PositionMapping or None if no suitable mapping exists.
-        """
+        """Find the nearest mapping with source_position <= given position via binary search."""
         if not sorted_mappings:
             return None
 
-        # Binary search for the nearest position <= source_position
         left = 0
         right = len(sorted_mappings) - 1
         result: PositionMapping | None = None
