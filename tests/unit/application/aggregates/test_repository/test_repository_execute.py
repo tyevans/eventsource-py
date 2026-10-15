@@ -21,7 +21,11 @@ from eventsource.domain.command import DomainCommand
 from eventsource.domain.decider import DeciderAggregate
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import AggregateNotFoundError, TenantMismatchError
-from tests.unit.application.aggregates.test_repository._models import CounterAggregate
+from tests.unit.application.aggregates.test_repository._models import (
+    CounterAggregate,
+    CounterDecremented,
+    CounterIncremented,
+)
 from tests.unit.domain.test_decider_aggregate import (
     Account,
     AccountOpened,
@@ -39,9 +43,14 @@ class TenantAccountOpened(TenantDomainEvent):
 
 def _make_store() -> InMemoryEventStore:
     registry = EventRegistry()
-    registry.register(AccountOpened)
-    registry.register(MoneyDeposited)
-    registry.register(TenantAccountOpened)
+    for evt in (
+        AccountOpened,
+        MoneyDeposited,
+        TenantAccountOpened,
+        CounterIncremented,
+        CounterDecremented,
+    ):
+        registry.register(evt)
     return InMemoryEventStore(event_registry=registry)
 
 
@@ -69,8 +78,7 @@ class TenantAccount(DeciderAggregate[AccountState, OpenTenantAccount]):
             ]
         return [
             TenantAccountOpened.with_tenant_context(
-                aggregate_id=command.account_id,
-                owner=command.owner,
+                aggregate_id=command.account_id, owner=command.owner
             )
         ]
 
@@ -81,43 +89,54 @@ class TenantAccount(DeciderAggregate[AccountState, OpenTenantAccount]):
         return state
 
 
+def _make_tenant_repo(require_tenant_context: bool = True) -> TenantAwareRepository[TenantAccount]:
+    base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
+    return TenantAwareRepository(base_repo, require_tenant_context=require_tenant_context)
+
+
 class TestAggregateRepositoryExecute:
     @pytest.mark.asyncio
     async def test_execute_creates_decides_and_saves_new_aggregate(self) -> None:
-        store = _make_store()
-        repo = AggregateRepository(event_store=store, aggregate_factory=Account)
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=Account)
         agg_id = uuid4()
 
         agg = await repo.execute(agg_id, OpenAccount(account_id=agg_id, owner="alice"))
+        assert agg.state.is_open is True and agg.state.owner == "alice"
+        assert agg.version == 1 and not agg.has_uncommitted_events
 
-        assert agg.state.is_open is True
-        assert agg.state.owner == "alice"
-        assert agg.version == 1
-        assert not agg.has_uncommitted_events
-
-        # Subsequent execute loads existing aggregate and appends next event
         updated = await repo.execute(agg_id, DepositMoney(account_id=agg_id, amount=75.0))
-        assert updated.state.balance == 75.0
-        assert updated.version == 2
+        assert updated.state.balance == 75.0 and updated.version == 2
 
     @pytest.mark.asyncio
     async def test_execute_create_if_missing_false_raises_when_missing(self) -> None:
-        store = _make_store()
-        repo = AggregateRepository(event_store=store, aggregate_factory=Account)
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=Account)
         agg_id = uuid4()
-
         with pytest.raises(AggregateNotFoundError):
             await repo.execute(
-                agg_id,
-                DepositMoney(account_id=agg_id, amount=10.0),
-                create_if_missing=False,
+                agg_id, DepositMoney(account_id=agg_id, amount=10.0), create_if_missing=False
             )
 
     @pytest.mark.asyncio
-    async def test_execute_raises_type_error_for_non_executable_aggregate(self) -> None:
-        store = _make_store()
-        repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
+    async def test_execute_callable_creates_and_updates_imperative_aggregate(self) -> None:
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=CounterAggregate)
+        agg_id = uuid4()
 
+        created = await repo.execute(agg_id, lambda c: c.increment(5))
+        assert created.state is not None and created.state.value == 5
+        assert created.version == 1 and not created.has_uncommitted_events
+
+        updated = await repo.execute(agg_id, lambda c: c.decrement(2), create_if_missing=False)
+        assert updated.state is not None and updated.state.value == 3 and updated.version == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_callable_create_if_missing_false_raises_when_missing(self) -> None:
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=CounterAggregate)
+        with pytest.raises(AggregateNotFoundError):
+            await repo.execute(uuid4(), lambda c: c.increment(1), create_if_missing=False)
+
+    @pytest.mark.asyncio
+    async def test_execute_raises_type_error_for_non_executable_aggregate(self) -> None:
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=CounterAggregate)
         with pytest.raises(TypeError, match="DeciderAggregate"):
             await repo.execute(uuid4(), object())
 
@@ -125,28 +144,31 @@ class TestAggregateRepositoryExecute:
 class TestTenantAwareRepositoryExecute:
     @pytest.mark.asyncio
     async def test_tenant_execute_persists_when_tenant_matches(self) -> None:
-        store = _make_store()
-        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
-        tenant_id = uuid4()
-        agg_id = uuid4()
+        tenant_repo = _make_tenant_repo(require_tenant_context=True)
+        tenant_id, agg_id = uuid4(), uuid4()
 
         async with tenant_scope(tenant_id):
             agg = await tenant_repo.execute(
-                agg_id,
-                OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=tenant_id),
+                agg_id, OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=tenant_id)
             )
-            assert agg.state.owner == "alice"
-            assert agg.version == 1
+            assert agg.state.owner == "alice" and agg.version == 1
+
+    @pytest.mark.asyncio
+    async def test_tenant_execute_callable_command(self) -> None:
+        base_repo = AggregateRepository(
+            event_store=_make_store(), aggregate_factory=CounterAggregate
+        )
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_id, agg_id = uuid4(), uuid4()
+
+        async with tenant_scope(tenant_id):
+            agg = await tenant_repo.execute(agg_id, lambda c: c.increment(10))
+            assert agg.state is not None and agg.state.value == 10 and agg.version == 1
 
     @pytest.mark.asyncio
     async def test_tenant_execute_rejects_mismatched_tenant(self) -> None:
-        store = _make_store()
-        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo)
-        scope_tenant = uuid4()
-        wrong_tenant = uuid4()
-        agg_id = uuid4()
+        tenant_repo = _make_tenant_repo(require_tenant_context=False)
+        scope_tenant, wrong_tenant, agg_id = uuid4(), uuid4(), uuid4()
 
         async with tenant_scope(scope_tenant):
             with pytest.raises(TenantMismatchError):
@@ -159,23 +181,17 @@ class TestTenantAwareRepositoryExecute:
 class TestAggregateRepositoryGetOrNone:
     @pytest.mark.asyncio
     async def test_get_or_none_returns_existing_aggregate(self) -> None:
-        store = _make_store()
-        repo = AggregateRepository(event_store=store, aggregate_factory=Account)
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=Account)
         agg_id = uuid4()
         await repo.execute(agg_id, OpenAccount(account_id=agg_id, owner="alice"))
 
         found = await repo.get_or_none(agg_id)
-
-        assert found is not None
-        assert found.aggregate_id == agg_id
-        assert found.version == 1
-        assert found.state.owner == "alice"
+        assert found is not None and found.aggregate_id == agg_id
+        assert found.version == 1 and found.state.owner == "alice"
 
     @pytest.mark.asyncio
     async def test_get_or_none_returns_none_when_not_found(self) -> None:
-        store = _make_store()
-        repo = AggregateRepository(event_store=store, aggregate_factory=Account)
-
+        repo = AggregateRepository(event_store=_make_store(), aggregate_factory=Account)
         assert await repo.get_or_none(uuid4()) is None
 
 
@@ -188,40 +204,27 @@ class TestTenantAwareRepositoryGetOrNone:
 
     @pytest.mark.asyncio
     async def test_get_or_none_returns_existing_aggregate(self) -> None:
-        store = _make_store()
-        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
-        tenant_id = uuid4()
-        agg_id = uuid4()
+        tenant_repo = _make_tenant_repo()
+        tenant_id, agg_id = uuid4(), uuid4()
 
         async with tenant_scope(tenant_id):
             await tenant_repo.execute(
-                agg_id,
-                OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=tenant_id),
+                agg_id, OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=tenant_id)
             )
             found = await tenant_repo.get_or_none(agg_id)
 
-        assert found is not None
-        assert found.aggregate_id == agg_id
-        assert found.version == 1
-        assert found.state.owner == "alice"
+        assert found is not None and found.aggregate_id == agg_id
+        assert found.version == 1 and found.state.owner == "alice"
 
     @pytest.mark.asyncio
     async def test_get_or_none_returns_none_when_not_found(self) -> None:
-        store = _make_store()
-        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
-        tenant_id = uuid4()
-
-        async with tenant_scope(tenant_id):
+        tenant_repo = _make_tenant_repo()
+        async with tenant_scope(uuid4()):
             assert await tenant_repo.get_or_none(uuid4()) is None
 
     @pytest.mark.asyncio
     async def test_get_or_none_propagates_missing_tenant_context(self) -> None:
-        store = _make_store()
-        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
-
+        tenant_repo = _make_tenant_repo()
         with pytest.raises(TenantContextNotSetError):
             await tenant_repo.get_or_none(uuid4())
 
@@ -259,8 +262,7 @@ class TestTenantAwareRepositoryExists:
 
     @pytest.mark.asyncio
     async def test_exists_returns_true_when_aggregate_exists(self) -> None:
-        base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_repo = _make_tenant_repo()
         tenant_id, agg_id = uuid4(), uuid4()
         async with tenant_scope(tenant_id):
             await tenant_repo.execute(
@@ -270,15 +272,13 @@ class TestTenantAwareRepositoryExists:
 
     @pytest.mark.asyncio
     async def test_exists_returns_false_when_not_found(self) -> None:
-        base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_repo = _make_tenant_repo()
         async with tenant_scope(uuid4()):
             assert await tenant_repo.exists(uuid4()) is False
 
     @pytest.mark.asyncio
     async def test_exists_propagates_missing_tenant_context(self) -> None:
-        base_repo = AggregateRepository(event_store=_make_store(), aggregate_factory=TenantAccount)
-        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_repo = _make_tenant_repo()
         with pytest.raises(TenantContextNotSetError):
             await tenant_repo.exists(uuid4())
 
