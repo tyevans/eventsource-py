@@ -21,19 +21,20 @@ from eventsource.application.subscriptions.shutdown import (
 )
 
 
-class TestShutdownMetricsSnapshot:
-    """Tests for ShutdownMetricsSnapshot dataclass."""
+def _sample_snapshot(outcome: str = "clean") -> ShutdownMetricsSnapshot:
+    return ShutdownMetricsSnapshot(
+        shutdown_duration_seconds=5.5,
+        drain_duration_seconds=2.0,
+        events_drained=100,
+        checkpoints_saved=3,
+        in_flight_at_start=150,
+        outcome=outcome,
+    )
 
+
+class TestShutdownMetricsSnapshot:
     def test_create_snapshot(self):
-        """Test creating a metrics snapshot."""
-        snapshot = ShutdownMetricsSnapshot(
-            shutdown_duration_seconds=5.5,
-            drain_duration_seconds=2.0,
-            events_drained=100,
-            checkpoints_saved=3,
-            in_flight_at_start=150,
-            outcome="clean",
-        )
+        snapshot = _sample_snapshot("clean")
         assert snapshot.shutdown_duration_seconds == 5.5
         assert snapshot.drain_duration_seconds == 2.0
         assert snapshot.events_drained == 100
@@ -42,29 +43,12 @@ class TestShutdownMetricsSnapshot:
         assert snapshot.outcome == "clean"
 
     def test_snapshot_is_frozen(self):
-        """Test snapshot is immutable."""
-        snapshot = ShutdownMetricsSnapshot(
-            shutdown_duration_seconds=5.0,
-            drain_duration_seconds=2.0,
-            events_drained=50,
-            checkpoints_saved=2,
-            in_flight_at_start=100,
-            outcome="clean",
-        )
+        snapshot = _sample_snapshot("clean")
         with pytest.raises(AttributeError):
             snapshot.outcome = "forced"  # type: ignore[misc]
 
     def test_snapshot_to_dict(self):
-        """Test to_dict conversion."""
-        snapshot = ShutdownMetricsSnapshot(
-            shutdown_duration_seconds=5.5,
-            drain_duration_seconds=2.0,
-            events_drained=100,
-            checkpoints_saved=3,
-            in_flight_at_start=150,
-            outcome="timeout",
-        )
-        d = snapshot.to_dict()
+        d = _sample_snapshot("timeout").to_dict()
         assert d["shutdown_duration_seconds"] == 5.5
         assert d["drain_duration_seconds"] == 2.0
         assert d["events_drained"] == 100
@@ -74,8 +58,6 @@ class TestShutdownMetricsSnapshot:
 
 
 class TestShutdownMetricsFunctions:
-    """Tests for shutdown metrics recording functions."""
-
     def setup_method(self):
         reset_shutdown_metrics()
 
@@ -83,31 +65,25 @@ class TestShutdownMetricsFunctions:
         reset_shutdown_metrics()
 
     def test_record_shutdown_initiated_no_crash(self):
-        """Test record_shutdown_initiated doesn't crash."""
         record_shutdown_initiated()
 
     def test_record_shutdown_completed_no_crash(self):
-        """Test record_shutdown_completed doesn't crash."""
         record_shutdown_completed("clean", 5.0)
         record_shutdown_completed("forced", 10.0)
         record_shutdown_completed("timeout", 30.0)
 
     def test_record_drain_duration_no_crash(self):
-        """Test record_drain_duration doesn't crash."""
         record_drain_duration(2.5)
 
     def test_record_events_drained_no_crash(self):
-        """Test record_events_drained doesn't crash."""
         record_events_drained(100)
         record_events_drained(0)
 
     def test_record_in_flight_at_shutdown(self):
-        """Test record_in_flight_at_shutdown records value."""
         record_in_flight_at_shutdown(150)
         assert get_in_flight_at_shutdown() == 150
 
     def test_reset_shutdown_metrics_clears_in_flight(self):
-        """Test reset_shutdown_metrics clears in-flight count."""
         record_in_flight_at_shutdown(100)
         assert get_in_flight_at_shutdown() == 100
         reset_shutdown_metrics()
@@ -115,8 +91,6 @@ class TestShutdownMetricsFunctions:
 
 
 class TestShutdownCoordinatorMetrics:
-    """Tests for metrics integration in ShutdownCoordinator."""
-
     def setup_method(self):
         reset_shutdown_metrics()
 
@@ -125,7 +99,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_shutdown_creates_metrics_snapshot(self):
-        """Test shutdown creates a metrics snapshot."""
         coordinator = ShutdownCoordinator()
         await coordinator.shutdown(stop_func=AsyncMock())
         assert coordinator.last_metrics_snapshot is not None
@@ -134,7 +107,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_clean_shutdown_outcome(self):
-        """Test clean shutdown has correct outcome."""
         coordinator = ShutdownCoordinator()
         result = await coordinator.shutdown(stop_func=AsyncMock())
         assert result.phase == ShutdownPhase.STOPPED
@@ -143,7 +115,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_timeout_shutdown_outcome(self):
-        """Test timeout shutdown has correct outcome."""
         coordinator = ShutdownCoordinator(drain_timeout=0.1)
 
         async def slow_drain():
@@ -157,7 +128,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_forced_shutdown_outcome(self):
-        """Test forced shutdown (double signal) has correct outcome."""
         coordinator = ShutdownCoordinator()
 
         async def slow_drain():
@@ -174,7 +144,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_drain_duration_recorded(self):
-        """Test drain duration is recorded in metrics."""
         coordinator = ShutdownCoordinator(drain_timeout=5.0)
 
         async def timed_drain():
@@ -187,7 +156,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_events_drained_recorded(self):
-        """Test events drained count is recorded in metrics."""
         coordinator = ShutdownCoordinator()
         await coordinator.shutdown(stop_func=AsyncMock(), drain_func=AsyncMock(return_value=50))
         assert coordinator.last_metrics_snapshot is not None
@@ -195,7 +163,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_checkpoints_saved_recorded(self):
-        """Test checkpoints saved count is recorded in metrics."""
         coordinator = ShutdownCoordinator()
         await coordinator.shutdown(stop_func=AsyncMock(), checkpoint_func=AsyncMock(return_value=5))
         assert coordinator.last_metrics_snapshot is not None
@@ -203,7 +170,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_set_in_flight_count(self):
-        """Test set_in_flight_count records value."""
         coordinator = ShutdownCoordinator()
         coordinator.set_in_flight_count(150)
         await coordinator.shutdown(stop_func=AsyncMock())
@@ -213,7 +179,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_reset_clears_metrics_snapshot(self):
-        """Test reset clears the metrics snapshot."""
         coordinator = ShutdownCoordinator()
         await coordinator.shutdown(stop_func=AsyncMock())
         assert coordinator.last_metrics_snapshot is not None
@@ -222,7 +187,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_reset_clears_in_flight_count(self):
-        """Test reset clears the in-flight count."""
         coordinator = ShutdownCoordinator()
         coordinator.set_in_flight_count(100)
         await coordinator.shutdown(stop_func=AsyncMock())
@@ -231,7 +195,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_no_drain_means_zero_drain_duration(self):
-        """Test shutdown without drain has zero drain duration."""
         coordinator = ShutdownCoordinator()
         await coordinator.shutdown(stop_func=AsyncMock())
         assert coordinator.last_metrics_snapshot is not None
@@ -239,7 +202,6 @@ class TestShutdownCoordinatorMetrics:
 
     @pytest.mark.asyncio
     async def test_metrics_snapshot_survives_multiple_shutdowns(self):
-        """Test metrics snapshot is updated on each shutdown."""
         coordinator = ShutdownCoordinator()
         stop_func = AsyncMock()
         await coordinator.shutdown(stop_func=stop_func)
@@ -247,28 +209,27 @@ class TestShutdownCoordinatorMetrics:
         coordinator.reset()
         await coordinator.shutdown(stop_func=stop_func)
         second_snapshot = coordinator.last_metrics_snapshot
-        assert first_snapshot is not None
-        assert second_snapshot is not None
+        assert first_snapshot is not None and second_snapshot is not None
         assert first_snapshot is not second_snapshot
 
 
 class TestMetricsModuleImports:
-    """Tests for metrics module imports."""
-
     def test_import_metrics_snapshot(self):
-        """Test ShutdownMetricsSnapshot import."""
         assert ShutdownMetricsSnapshot is not None
 
     def test_import_metrics_functions(self):
-        """Test metrics function imports."""
-        assert record_shutdown_initiated is not None
-        assert record_shutdown_completed is not None
-        assert record_drain_duration is not None
-        assert record_events_drained is not None
-        assert record_in_flight_at_shutdown is not None
-        assert get_in_flight_at_shutdown is not None
-        assert reset_shutdown_metrics is not None
+        assert all(
+            fn is not None
+            for fn in (
+                record_shutdown_initiated,
+                record_shutdown_completed,
+                record_drain_duration,
+                record_events_drained,
+                record_in_flight_at_shutdown,
+                get_in_flight_at_shutdown,
+                reset_shutdown_metrics,
+            )
+        )
 
     def test_import_otel_available_flag(self):
-        """Test OTEL_METRICS_AVAILABLE import."""
         assert isinstance(OTEL_METRICS_AVAILABLE, bool)

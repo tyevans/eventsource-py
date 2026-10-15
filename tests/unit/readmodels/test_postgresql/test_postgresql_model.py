@@ -31,32 +31,20 @@ class TestPostgreSQLReadModelRepositoryConstruction:
     """Tests for repository construction and initialization."""
 
     def test_constructor_with_model_class(self) -> None:
-        """Test repository construction stores model class."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo._model_class == OrderSummary
         assert repo.model_class == OrderSummary
 
     def test_constructor_derives_table_name(self) -> None:
-        """Test table name is derived from model class."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo._table_name == "order_summaries"
 
     def test_constructor_custom_table_name(self) -> None:
-        """Test custom table name is respected."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, CustomTableModel, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), CustomTableModel, enable_tracing=False)
         assert repo._table_name == "custom_orders"
 
     def test_constructor_stores_field_names(self) -> None:
-        """Test field names are extracted from model."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         expected_fields = [
             "id",
             "created_at",
@@ -70,10 +58,7 @@ class TestPostgreSQLReadModelRepositoryConstruction:
         assert repo._field_names == expected_fields
 
     def test_repr(self) -> None:
-        """Test string representation."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         repr_str = repr(repo)
         assert "PostgreSQLReadModelRepository" in repr_str
         assert "OrderSummary" in repr_str
@@ -81,29 +66,16 @@ class TestPostgreSQLReadModelRepositoryConstruction:
         assert "disabled" in repr_str
 
     def test_repr_with_tracing(self) -> None:
-        """Test string representation with tracing enabled."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=True)
-
-        repr_str = repr(repo)
-        assert "enabled" in repr_str
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=True)
+        assert "enabled" in repr(repo)
 
 
 class TestFilterToSQL:
-    """PostgreSQL's rendering of a filter.
-
-    The *semantics* -- which operators exist, how they treat NULL, and that
-    an unknown field or operator raises -- are pinned once for every backend
-    in `ReadModelRepositoryConformance`. What stays here is only what makes
-    this dialect different: named parameters, and `= ANY` / `!= ALL` over a
-    single bound array instead of an expanded placeholder list.
-    """
+    """PostgreSQL's rendering of a filter (named parameters and ANY/ALL over a bound array)."""
 
     @pytest.fixture
     def repo(self) -> PostgreSQLReadModelRepository[OrderSummary]:
-        """Create repository for testing."""
-        mock_conn = MagicMock()
-        return PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_scalar_operators_bind_named_parameters(
         self, repo: PostgreSQLReadModelRepository[OrderSummary]
@@ -119,7 +91,6 @@ class TestFilterToSQL:
     def test_null_tolerant_operators_say_so_explicitly(
         self, repo: PostgreSQLReadModelRepository[OrderSummary]
     ) -> None:
-        """SQL would drop NULL rows from `!=`; the contract keeps them."""
         clause, params = repo._filter_to_sql(Filter.ne("status", "cancelled"), 1)
         assert clause == "(status IS NULL OR status != :p1)"
         assert params == {"p1": "cancelled"}
@@ -147,27 +118,12 @@ class TestRowToModel:
 
     @pytest.fixture
     def repo(self) -> PostgreSQLReadModelRepository[OrderSummary]:
-        """Create repository for testing."""
-        mock_conn = MagicMock()
-        return PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_row_to_model(self, repo: PostgreSQLReadModelRepository[OrderSummary]) -> None:
-        """Test converting database row to model."""
         model_id = uuid4()
         now = datetime.now(UTC)
-
-        # Row values in field_names order
-        row = (
-            model_id,  # id
-            now,  # created_at
-            now,  # updated_at
-            1,  # version
-            None,  # deleted_at
-            "ORD-001",  # order_number
-            "pending",  # status
-            Decimal("99.99"),  # total_amount
-        )
-
+        row = (model_id, now, now, 1, None, "ORD-001", "pending", Decimal("99.99"))
         model = repo._row_to_model(row)
 
         assert model.id == model_id
@@ -181,32 +137,22 @@ class TestRowToModel:
 
 
 class TestAsyncOperations:
-    """Tests for async operations - primarily testing early returns and edge cases.
-
-    Note: Full database integration tests are in P2-004. These unit tests
-    focus on early return conditions that don't require database access.
-    """
+    """Tests for async operations early returns and edge cases."""
 
     @pytest.fixture
     def repo(self) -> PostgreSQLReadModelRepository[OrderSummary]:
-        """Create repository with mock connection for testing."""
-        mock_conn = MagicMock()
-        return PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     @pytest.mark.asyncio
     async def test_get_many_empty_list_returns_empty(
         self, repo: PostgreSQLReadModelRepository[OrderSummary]
     ) -> None:
-        """Test get_many with empty list returns empty list immediately."""
-        result = await repo.get_many([])
-        assert result == []
+        assert await repo.get_many([]) == []
 
     @pytest.mark.asyncio
     async def test_save_many_empty_list_does_nothing(
         self, repo: PostgreSQLReadModelRepository[OrderSummary]
     ) -> None:
-        """Test save_many with empty list returns immediately."""
-        # Should not raise and should not call database
         await repo.save_many([])
 
 
@@ -214,17 +160,11 @@ class TestModelClassProperty:
     """Tests for model_class property."""
 
     def test_model_class_returns_correct_class(self) -> None:
-        """Test model_class property returns the model class."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo.model_class is OrderSummary
 
     def test_model_class_custom_model(self) -> None:
-        """Test model_class property with custom model."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, CustomTableModel, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), CustomTableModel, enable_tracing=False)
         assert repo.model_class is CustomTableModel
 
 
@@ -232,24 +172,15 @@ class TestTracingConfiguration:
     """Tests for tracing configuration."""
 
     def test_tracing_disabled_by_flag(self) -> None:
-        """Test tracing can be disabled via constructor flag."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo._enable_tracing is False
 
     def test_tracing_enabled_by_default(self) -> None:
-        """Test tracing is enabled by default."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary)
         assert repo._enable_tracing is True
 
     def test_tracing_can_be_explicitly_enabled(self) -> None:
-        """Test tracing can be explicitly enabled."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=True)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=True)
         assert repo._enable_tracing is True
 
 
@@ -257,18 +188,11 @@ class TestSQLSecurityAnnotations:
     """Tests to verify SQL security annotations are present."""
 
     def test_table_name_from_trusted_source(self) -> None:
-        """Test that table names come from trusted class definitions."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
-        # Table name should be derived from model class, not user input
+        repo = PostgreSQLReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo._table_name == OrderSummary.table_name()
         assert repo._table_name == "order_summaries"
 
     def test_custom_table_name_from_class(self) -> None:
-        """Test custom table names come from class definition."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLReadModelRepository(mock_conn, CustomTableModel, enable_tracing=False)
-
+        repo = PostgreSQLReadModelRepository(MagicMock(), CustomTableModel, enable_tracing=False)
         assert repo._table_name == "custom_orders"
         assert repo._table_name == CustomTableModel.table_name()

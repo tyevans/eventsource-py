@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -13,6 +14,19 @@ from eventsource.adapters.sql.migration.audit_log import (
     PostgreSQLMigrationAuditLogRepository,
 )
 from eventsource.ports.migration.models import AuditEventType, MigrationPhase
+
+
+@contextmanager
+def _patched_sql_conn(*, fetchall=None, fetchone=None):
+    with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
+        mock_conn = AsyncMock()
+        mock_result = MagicMock()
+        if fetchall is not None:
+            mock_result.fetchall.return_value = fetchall
+        mock_result.fetchone.return_value = fetchone
+        mock_conn.execute.return_value = mock_result
+        mock_ctx.return_value.__aenter__.return_value = mock_conn
+        yield mock_conn
 
 
 class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
@@ -30,15 +44,8 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
     async def test_get_by_migration_returns_empty_list(
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = []
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.get_by_migration(uuid4())
-            assert result == []
+        with _patched_sql_conn(fetchall=[]):
+            assert await repo.get_by_migration(uuid4()) == []
 
     @pytest.mark.asyncio
     async def test_get_by_migration_returns_entries(
@@ -69,13 +76,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
             ),
         ]
 
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = rows
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchall=rows):
             result = await repo.get_by_migration(migration_id)
             assert len(result) == 2
             assert result[0].id == 1
@@ -91,13 +92,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
         migration_id = uuid4()
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = []
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchall=[]) as mock_conn:
             await repo.get_by_migration(
                 migration_id,
                 event_types=[AuditEventType.PHASE_CHANGED, AuditEventType.ERROR_OCCURRED],
@@ -114,13 +109,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         since = datetime.now(UTC) - timedelta(hours=1)
         until = datetime.now(UTC)
 
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = []
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchall=[]) as mock_conn:
             await repo.get_by_migration(migration_id, since=since, until=until)
             params = mock_conn.execute.call_args[0][1]
             assert params["since"] == since
@@ -131,13 +120,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
         migration_id = uuid4()
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = []
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchall=[]) as mock_conn:
             await repo.get_by_migration(migration_id, limit=10)
             query = str(mock_conn.execute.call_args[0][0])
             assert "LIMIT 10" in query
@@ -158,15 +141,8 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetLatest:
     async def test_get_latest_returns_none_when_no_entries(
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = None
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.get_latest(uuid4())
-            assert result is None
+        with _patched_sql_conn(fetchone=None):
+            assert await repo.get_latest(uuid4()) is None
 
     @pytest.mark.asyncio
     async def test_get_latest_returns_most_recent(
@@ -174,24 +150,9 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetLatest:
     ) -> None:
         migration_id = uuid4()
         now = datetime.now(UTC)
-        row = (
-            10,
-            migration_id,
-            "migration_completed",
-            "cutover",
-            "completed",
-            None,
-            "system",
-            now,
-        )
+        row = (10, migration_id, "migration_completed", "cutover", "completed", None, "system", now)
 
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = row
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchone=row):
             result = await repo.get_latest(migration_id)
             assert result is not None
             assert result.id == 10
@@ -202,13 +163,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetLatest:
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
         migration_id = uuid4()
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = None
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchone=None) as mock_conn:
             await repo.get_latest(migration_id, event_type=AuditEventType.ERROR_OCCURRED)
             params = mock_conn.execute.call_args[0][1]
             assert params["event_type"] == "error_occurred"
@@ -229,43 +184,22 @@ class TestPostgreSQLMigrationAuditLogRepositoryCountByMigration:
     async def test_count_by_migration_returns_zero_when_empty(
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = (0,)
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.count_by_migration(uuid4())
-            assert result == 0
+        with _patched_sql_conn(fetchone=(0,)):
+            assert await repo.count_by_migration(uuid4()) == 0
 
     @pytest.mark.asyncio
     async def test_count_by_migration_returns_count(
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        migration_id = uuid4()
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = (15,)
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.count_by_migration(migration_id)
-            assert result == 15
+        with _patched_sql_conn(fetchone=(15,)):
+            assert await repo.count_by_migration(uuid4()) == 15
 
     @pytest.mark.asyncio
     async def test_count_by_migration_with_event_type_filter(
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
         migration_id = uuid4()
-        with patch("eventsource.adapters.sql.migration.audit_log.sql_connection") as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = (3,)
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with _patched_sql_conn(fetchone=(3,)) as mock_conn:
             result = await repo.count_by_migration(
                 migration_id, event_type=AuditEventType.ERROR_OCCURRED
             )
