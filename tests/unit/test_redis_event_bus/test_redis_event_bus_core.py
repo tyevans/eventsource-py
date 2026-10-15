@@ -14,13 +14,7 @@ from eventsource.adapters.redis.bus import (
     ResponseError,
 )
 
-from ._fixtures import (
-    SampleOrderCreated,
-    bus,
-    config,
-    event_registry,
-    mock_redis,
-)
+from ._fixtures import SampleOrderCreated, bus, config, event_registry, mock_redis
 
 __all__ = [
     "TestRedisEventBusConnection",
@@ -46,14 +40,12 @@ class TestRedisEventBusConnection:
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
 
             assert bus_instance.is_connected is True
             mock_redis.ping.assert_called_once()
             mock_redis.xgroup_create.assert_called_once()
-
             await bus_instance.disconnect()
 
     async def test_disconnect(self, config: RedisEventBusConfig, mock_redis: AsyncMock) -> None:
@@ -63,7 +55,6 @@ class TestRedisEventBusConnection:
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
             await bus_instance.disconnect()
@@ -80,15 +71,12 @@ class TestRedisEventBusConnection:
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-
             bus_instance = RedisEventBus(config=config)
             await bus_instance.connect()
-            await bus_instance.connect()  # Should log warning, not error
+            await bus_instance.connect()
 
             assert bus_instance.is_connected is True
-            # ping should only be called once
             assert mock_redis.ping.call_count == 1
-
             await bus_instance.disconnect()
 
     async def test_consumer_group_already_exists(
@@ -104,9 +92,7 @@ class TestRedisEventBusConnection:
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-
             bus_instance = RedisEventBus(config=config)
-            # Should not raise, just log
             await bus_instance.connect()
 
             assert bus_instance.is_connected is True
@@ -119,11 +105,8 @@ class TestRedisEventBusPublish:
     async def test_publish_single_event(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         """Test publishing a single event."""
         event = SampleOrderCreated(
-            aggregate_id=uuid4(),
-            order_number="ORD-001",
-            customer_id=uuid4(),
+            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
         )
-
         await bus.publish([event])
 
         mock_redis.xadd.assert_called_once()
@@ -137,17 +120,11 @@ class TestRedisEventBusPublish:
     ) -> None:
         """Test that publishing multiple events uses pipeline."""
         events = [
-            SampleOrderCreated(
-                aggregate_id=uuid4(),
-                order_number=f"ORD-{i}",
-                customer_id=uuid4(),
-            )
+            SampleOrderCreated(aggregate_id=uuid4(), order_number=f"ORD-{i}", customer_id=uuid4())
             for i in range(5)
         ]
-
         await bus.publish(events)
 
-        # Should use pipeline, not individual xadd
         mock_redis.pipeline.assert_called_once()
         assert mock_redis.xadd.call_count == 0
 
@@ -161,11 +138,8 @@ class TestRedisEventBusPublish:
     async def test_publish_updates_stats(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         """Test that publishing updates statistics."""
         event = SampleOrderCreated(
-            aggregate_id=uuid4(),
-            order_number="ORD-001",
-            customer_id=uuid4(),
+            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
         )
-
         initial_count = bus.stats.events_published
         await bus.publish([event])
 
@@ -178,16 +152,11 @@ class TestRedisEventBusPublish:
         aggregate_id = uuid4()
         customer_id = uuid4()
         event = SampleOrderCreated(
-            aggregate_id=aggregate_id,
-            order_number="ORD-001",
-            customer_id=customer_id,
+            aggregate_id=aggregate_id, order_number="ORD-001", customer_id=customer_id
         )
-
         await bus.publish([event])
 
-        call_args = mock_redis.xadd.call_args
-        fields = call_args.kwargs["fields"]
-
+        fields = mock_redis.xadd.call_args.kwargs["fields"]
         assert fields["event_id"] == str(event.event_id)
         assert fields["aggregate_id"] == str(aggregate_id)
         assert fields["event_type"] == "SampleOrderCreated"
@@ -196,11 +165,7 @@ class TestRedisEventBusPublish:
     async def test_background_publish_returns_before_pipeline_completes(
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
-        """background=True must not await the Redis round-trip.
-
-        Regression: RedisEventBus previously documented background as
-        "Ignored for Redis" and always awaited.
-        """
+        """background=True must not await the Redis round-trip."""
         release = asyncio.Event()
 
         async def slow_xadd(*args: Any, **kwargs: Any) -> str:
@@ -208,14 +173,10 @@ class TestRedisEventBusPublish:
             return "1-0"
 
         mock_redis.xadd = slow_xadd
-
         event = SampleOrderCreated(
-            aggregate_id=uuid4(),
-            order_number="ORD-001",
-            customer_id=uuid4(),
+            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
         )
 
-        # Must return promptly even though xadd is blocked.
         await asyncio.wait_for(bus.publish([event], background=True), timeout=1.0)
         assert bus.get_background_task_count() == 1
 
@@ -255,7 +216,6 @@ class TestRedisEventBusStreamInfo:
         ):
             bus_instance = RedisEventBus(config=config)
             info = await bus_instance.get_stream_info()
-
             assert info["connected"] is False
 
 
@@ -264,11 +224,8 @@ class TestRedisEventBusStatistics:
 
     async def test_get_stats_dict(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         """Test getting statistics as dictionary."""
-        # Publish some events to update stats
         event = SampleOrderCreated(
-            aggregate_id=uuid4(),
-            order_number="ORD-001",
-            customer_id=uuid4(),
+            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
         )
         await bus.publish([event])
 

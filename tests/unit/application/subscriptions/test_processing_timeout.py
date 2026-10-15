@@ -1,17 +1,7 @@
-"""
-Unit tests for `SubscriptionConfig.processing_timeout` enforcement.
+"""Unit tests for `SubscriptionConfig.processing_timeout` enforcement.
 
-Covers task #13: the field was validated at construction and read *nowhere*.
-Both runners awaited the subscriber's handler as a bare `await`, so a handler
-that hung blocked its subscription forever -- no timeout, no error, no metric,
-and no log line. The subscription simply stopped making progress.
-
-These tests assert from the documented contract: `processing_timeout` bounds a
-single handler call. There are exactly three handler dispatch sites --
-`CatchUpRunner`'s `handle_batch()` and its per-event `handle()`, and
-`LiveRunner`'s `handle()` -- and each must be bounded. A timed-out call is a
-handler failure like any other, so `continue_on_error` governs what happens
-next and the handler circuit breaker sees it.
+Verifies `processing_timeout` bounds all three handler dispatch sites:
+`CatchUpRunner`'s `handle_batch()` and `handle()`, and `LiveRunner`'s `handle()`.
 """
 
 import asyncio
@@ -34,13 +24,7 @@ from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion, Position
 
 _REGISTRY = EventRegistry()
-
-# Long enough that a broken implementation visibly hangs rather than racing,
-# short enough that the suite does not pay for it: every test here sets
-# processing_timeout well below this.
 HANG_SECONDS = 30.0
-
-# The timeout each test configures. Small so an enforced timeout fires fast.
 SHORT_TIMEOUT = 0.05
 
 
@@ -133,11 +117,7 @@ async def add_events(store: InMemoryEventStore, count: int) -> list[DomainEvent]
 
 
 async def wake(bus: InMemoryEventBus) -> None:
-    """Publish a bus notification to wake a live runner into draining the feed.
-
-    The published event's content is never delivered -- only events already
-    committed to the store are. Mirrors `test_live_runner.py`'s idiom.
-    """
+    """Publish a bus notification to wake a live runner into draining the feed."""
     await bus.publish([TimeoutTestEvent(aggregate_id=uuid4(), data="__wake__")])
 
 
@@ -151,12 +131,9 @@ class TestCatchUpRunnerTimeout:
     """Both catch-up dispatch sites are bounded."""
 
     async def test_hanging_handle_batch_times_out(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """A `handle_batch()` that hangs is abandoned at processing_timeout
-        rather than blocking the runner forever."""
+        """A `handle_batch()` that hangs is abandoned at processing_timeout."""
         subscriber = HangingBatchSubscriber()
         config = SubscriptionConfig(
             batch_size=10,
@@ -168,8 +145,6 @@ class TestCatchUpRunnerTimeout:
         await add_events(event_store, 3)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
-        # The whole run must finish in well under HANG_SECONDS. Without
-        # enforcement this outer bound is what fails, after hanging.
         async with asyncio.timeout(10.0):
             await runner.run_until_position(await current(event_store))
 
@@ -177,9 +152,7 @@ class TestCatchUpRunnerTimeout:
         assert not subscriber.completed_normally
 
     async def test_hanging_handle_times_out(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         """The per-event `handle()` path is bounded too."""
         subscriber = HangingSubscriber()
@@ -200,12 +173,9 @@ class TestCatchUpRunnerTimeout:
         assert not subscriber.completed_normally
 
     async def test_handler_inside_budget_is_untouched(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """A handler slower than zero but faster than the budget still runs to
-        completion -- the timeout bounds hangs, it does not police latency."""
+        """A handler faster than the budget still runs to completion."""
         subscriber = SlowButFineSubscriber(delay=0.01)
         config = SubscriptionConfig(
             batch_size=10,
@@ -222,13 +192,9 @@ class TestCatchUpRunnerTimeout:
         assert len(subscriber.handled) == 3
 
     async def test_timeout_is_a_handler_failure_and_stops_when_told(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """With continue_on_error=False a timed-out handler stops the
-        subscription, exactly as any other handler exception would -- the
-        timeout is not a special quiet case."""
+        """With continue_on_error=False a timed-out handler stops the subscription."""
         subscriber = HangingSubscriber()
         config = SubscriptionConfig(
             batch_size=10,
@@ -247,13 +213,9 @@ class TestCatchUpRunnerTimeout:
         assert not subscriber.completed_normally
 
     async def test_timeout_does_not_checkpoint_past_the_hung_event(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """continue_on_error=False must not advance the checkpoint past an
-        event whose handler never completed -- otherwise the timeout converts
-        a hang into silent data loss on restart."""
+        """continue_on_error=False must not advance the checkpoint past a hung event."""
         subscriber = HangingSubscriber()
         config = SubscriptionConfig(
             batch_size=10,
@@ -281,8 +243,7 @@ class TestLiveRunnerTimeout:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """A hung live handler does not wedge the subscription: the call is
-        abandoned at processing_timeout and `stop()` still completes."""
+        """A hung live handler is abandoned at processing_timeout and `stop()` completes."""
         subscriber = HangingSubscriber()
         config = SubscriptionConfig(
             processing_timeout=SHORT_TIMEOUT,
@@ -302,7 +263,6 @@ class TestLiveRunnerTimeout:
             await wake(event_bus)
             async with asyncio.timeout(10.0):
                 await asyncio.wait_for(subscriber.handle_started.wait(), timeout=5.0)
-                # Give the enforced timeout room to fire and the loop to move on.
                 await asyncio.sleep(SHORT_TIMEOUT * 4)
             assert not subscriber.completed_normally
         finally:

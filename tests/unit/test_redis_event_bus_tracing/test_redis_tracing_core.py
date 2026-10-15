@@ -29,8 +29,6 @@ class TestRedisEventBusTracerComposition:
         """RedisEventBus uses composition-based Tracer instead of inheritance."""
         from eventsource.adapters.redis.bus import RedisEventBus
 
-        # RedisEventBus should use Tracer composition
-        # Check that it has a _tracer attribute (set in __init__)
         assert hasattr(RedisEventBus, "__init__")
 
     async def test_tracing_enabled_by_default(
@@ -48,8 +46,6 @@ class TestRedisEventBusTracerComposition:
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus = RedisEventBus(config=config, event_registry=event_registry)
-
-            # Check that tracing was initialized with composition pattern
             assert hasattr(bus, "_enable_tracing")
             assert hasattr(bus, "_tracer")
             assert isinstance(bus._tracer, Tracer)
@@ -68,9 +64,7 @@ class TestRedisEventBusTracerComposition:
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
             bus = RedisEventBus(config=config, event_registry=event_registry)
-
             assert bus._enable_tracing is False
-            # With composition, tracer is always set (NullTracer when disabled)
             assert isinstance(bus._tracer, NullTracer)
 
     async def test_has_enable_tracing_attribute(self, bus):
@@ -87,16 +81,10 @@ class TestRedisEventBusPublishSpanCreation:
         """publish creates a span with correct name."""
         bus._tracer = mock_tracer
         bus._enable_tracing = True
-
-        aggregate_id = uuid4()
-        event = RedisTracingTestEvent(
-            aggregate_id=aggregate_id,
-            name="Test",
-        )
+        event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
 
         await bus.publish([event])
 
-        # Verify span was created with correct name
         assert "eventsource.event_bus.publish" in mock_tracer.span_names
 
     @pytest.mark.asyncio
@@ -104,7 +92,6 @@ class TestRedisEventBusPublishSpanCreation:
         """publish span includes correct standard attributes."""
         bus._tracer = mock_tracer
         bus._enable_tracing = True
-
         aggregate_id = uuid4()
         events = [
             RedisTracingTestEvent(aggregate_id=aggregate_id, name=f"Test {i}") for i in range(3)
@@ -112,8 +99,6 @@ class TestRedisEventBusPublishSpanCreation:
 
         await bus.publish(events)
 
-        # Verify correct attributes using standard constants
-        # MockTracer.spans stores tuples: (name, attributes)
         publish_spans = [
             (name, attrs)
             for name, attrs in mock_tracer.spans
@@ -133,13 +118,10 @@ class TestRedisEventBusPublishSpanCreation:
         """publish sets success attribute on span."""
         bus._tracer = mock_tracer
         bus._enable_tracing = True
-
-        aggregate_id = uuid4()
-        event = RedisTracingTestEvent(aggregate_id=aggregate_id, name="Test")
+        event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
 
         await bus.publish([event])
 
-        # Verify span was created
         assert "eventsource.event_bus.publish" in mock_tracer.span_names
 
 
@@ -153,28 +135,17 @@ class TestRedisEventBusTracingDisabled:
         """publish works correctly when tracing is disabled."""
         from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
-        config = RedisEventBusConfig(
-            redis_url="redis://localhost:6379",
-            enable_tracing=False,
-        )
+        config = RedisEventBusConfig(redis_url="redis://localhost:6379", enable_tracing=False)
 
         with (
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-
             bus = RedisEventBus(config=config, event_registry=event_registry)
             await bus.connect()
-
-            event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
-
-            # Should not raise
-            await bus.publish([event])
-
-            # Verify the event was published
+            await bus.publish([RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")])
             mock_redis.xadd.assert_called_once()
-
             await bus.disconnect()
 
     @pytest.mark.asyncio
@@ -184,31 +155,21 @@ class TestRedisEventBusTracingDisabled:
         """_dispatch_event works correctly when tracing is disabled."""
         from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 
-        config = RedisEventBusConfig(
-            redis_url="redis://localhost:6379",
-            enable_tracing=False,
-        )
+        config = RedisEventBusConfig(redis_url="redis://localhost:6379", enable_tracing=False)
 
         with (
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-
             bus = RedisEventBus(config=config, event_registry=event_registry)
             await bus.connect()
-
             handler = TracingTestHandler()
             bus.subscribe(RedisTracingTestEvent, handler)
-
-            event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
-
-            # Should not raise
-            await bus._dispatch_event(event, "msg-123")
-
-            # Verify the handler was invoked
+            await bus._dispatch_event(
+                RedisTracingTestEvent(aggregate_id=uuid4(), name="Test"), "msg-123"
+            )
             assert len(handler.handled_events) == 1
-
             await bus.disconnect()
 
 
@@ -225,7 +186,6 @@ class TestRedisEventBusStandardAttributes:
             text=True,
             cwd=Path(__file__).resolve().parents[3],
         )
-        # Should be 0 - no local definition
         assert result.stdout.strip() == "0", (
             f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in redis.py"
         )
@@ -245,9 +205,9 @@ class TestRedisEventBusStandardAttributes:
             text=True,
             cwd=Path(__file__).resolve().parents[3],
         )
-        # Should be at least 1 - imports from observability
-        count = int(result.stdout.strip())
-        assert count >= 1, "RedisEventBus should import from eventsource.observability"
+        assert int(result.stdout.strip()) >= 1, (
+            "RedisEventBus should import from eventsource.observability"
+        )
 
     def test_uses_standard_attribute_constants(self):
         """Verify RedisEventBus uses ATTR_* constants."""
@@ -259,7 +219,6 @@ class TestRedisEventBusStandardAttributes:
             text=True,
             cwd=Path(__file__).resolve().parents[3],
         )
-        # Should find multiple ATTR_* usages
         count = int(result.stdout.strip())
         assert count >= 10, f"Expected at least 10 ATTR_* usages, found {count}"
 
@@ -273,7 +232,6 @@ class TestRedisEventBusStandardAttributes:
             text=True,
             cwd=Path(__file__).resolve().parents[3],
         )
-        # Should find multiple _tracer.span usages
         count = int(result.stdout.strip())
         assert count >= 3, f"Expected at least 3 _tracer.span usages, found {count}"
 
@@ -287,8 +245,7 @@ class TestRedisEventBusSpanNaming:
         bus._tracer = mock_tracer
         bus._enable_tracing = True
 
-        event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
-        await bus.publish([event])
+        await bus.publish([RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")])
 
         assert "eventsource.event_bus.publish" in mock_tracer.span_names
 
@@ -299,12 +256,12 @@ class TestRedisEventBusSpanNaming:
         """dispatch span name follows eventsource.event_bus.* convention."""
         bus._tracer = mock_tracer
         bus._enable_tracing = True
-
         handler = TracingTestHandler()
         bus.subscribe(RedisTracingTestEvent, handler)
 
-        event = RedisTracingTestEvent(aggregate_id=uuid4(), name="Test")
-        await bus._dispatch_event(event, "msg-123")
+        await bus._dispatch_event(
+            RedisTracingTestEvent(aggregate_id=uuid4(), name="Test"), "msg-123"
+        )
 
         assert "eventsource.event_bus.dispatch" in mock_tracer.span_names
         assert "eventsource.event_bus.handle" in mock_tracer.span_names
