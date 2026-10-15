@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from typing import TypeVar
 
 from eventsource.domain.event import DomainEvent
 from eventsource.ports.bus import EventBus, EventHandlerFunc
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
+
+TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class RecordingEventBus(EventBus):
@@ -49,6 +52,10 @@ class RecordingEventBus(EventBus):
         """Discard the recorded events."""
         with self._lock:
             self._published.clear()
+
+    def published_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
+        """Return recorded events matching ``event_type``, in publication order."""
+        return [e for e in self.published_events if isinstance(e, event_type)]
 
     async def publish(
         self,
