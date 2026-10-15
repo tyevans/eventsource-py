@@ -15,12 +15,8 @@ class TestReadOperations:
     """Tests for read operations (should delegate to source store)."""
 
     async def test_read_category_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
-        """Test that read_category delegates to source store."""
         source_called = False
         target_called = False
 
@@ -36,65 +32,45 @@ class TestReadOperations:
 
         source_store.read_category = source_read_category
         target_store.read_category = target_read_category
-
         async for _ in interceptor.read_category("TestAggregate"):
             pass
-
         assert source_called is True
         assert target_called is False
 
     async def test_event_exists_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
-        """Test that event_exists delegates to source store."""
         event_id = uuid4()
         await interceptor.event_exists(event_id)
         source_store.event_exists.assert_called_once_with(event_id)
         target_store.event_exists.assert_not_called()
 
     async def test_get_stream_version_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
-        """Test that get_stream_version delegates to source store."""
         stream = sid()
         await interceptor.get_stream_version(stream)
         source_store.get_stream_version.assert_called_once_with(stream)
         target_store.get_stream_version.assert_not_called()
 
     async def test_current_position_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
-        """Test that current_position delegates to source store."""
         result = await interceptor.current_position()
         assert result == Position(store_id="source", key=(100,))
         source_store.current_position.assert_called_once()
         target_store.current_position.assert_not_called()
 
     async def test_read_stream_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock
     ) -> None:
-        """Test that read_stream delegates to source store."""
         stream = sid()
         events_read = [event async for event in interceptor.read_stream(stream)]
         assert events_read == []
 
     async def test_read_all_delegates_to_source(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock
     ) -> None:
-        """Test that read_all delegates to source store."""
         events_read = [event async for event in interceptor.read_all()]
         assert events_read == []
 
@@ -103,12 +79,8 @@ class TestRouterIntegration:
     """Tests for the interceptor as a `FullEventStore` structural replacement."""
 
     async def test_interceptor_stands_in_for_full_event_store(
-        self,
-        source_store: MagicMock,
-        target_store: MagicMock,
-        tenant_id: UUID,
+        self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """The interceptor is a drop-in wherever a `FullEventStore` is expected."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
@@ -116,7 +88,6 @@ class TestRouterIntegration:
             enable_tracing=False,
         )
         _: FullEventStore = interceptor_inst  # mypy-checked structural conformance
-
         aggregate_id = uuid4()
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         event = TestEvent(aggregate_id=aggregate_id)
@@ -137,12 +108,8 @@ class TestConcurrentOperations:
     """Tests for concurrent operation handling."""
 
     async def test_concurrent_writes(
-        self,
-        source_store: MagicMock,
-        target_store: MagicMock,
-        tenant_id: UUID,
+        self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test that concurrent writes work correctly."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
@@ -158,19 +125,14 @@ class TestConcurrentOperations:
 
         tasks = [asyncio.create_task(do_write(i)) for i in range(10)]
         results = await asyncio.gather(*tasks)
-
         assert len(results) == 10
         assert all(isinstance(r, AppendResult) for r in results)
         assert source_store.append.call_count == 10
         assert target_store.append.call_count == 10
 
     async def test_concurrent_writes_with_target_failures(
-        self,
-        source_store: MagicMock,
-        target_store: MagicMock,
-        tenant_id: UUID,
+        self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test concurrent writes when target fails intermittently."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
@@ -197,7 +159,6 @@ class TestConcurrentOperations:
 
         tasks = [asyncio.create_task(do_write(i)) for i in range(10)]
         results = await asyncio.gather(*tasks)
-
         assert len(results) == 10
         assert all(isinstance(r, AppendResult) for r in results)
         assert interceptor_inst.get_failure_stats().total_failures == 5
@@ -207,60 +168,42 @@ class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     async def test_multiple_events_single_write(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
-        """Test writing multiple events in single append."""
         aggregate_id = uuid4()
         events = [TestEvent(aggregate_id=aggregate_id, data=f"event-{i}") for i in range(5)]
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-
         result = await interceptor.append(stream, events, ExpectedVersion.no_stream())
-
         assert result.stream == stream
         source_store.append.assert_called_once_with(stream, events, ExpectedVersion.no_stream())
         target_store.append.assert_called_once_with(stream, events, ExpectedVersion.exact(0))
 
     async def test_failure_tracking_multiple_events(
-        self,
-        interceptor: DualWriteInterceptor,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, target_store: MagicMock
     ) -> None:
-        """Test that multiple events in failed write are all tracked."""
         aggregate_id = uuid4()
         events = [TestEvent(aggregate_id=aggregate_id, data=f"event-{i}") for i in range(3)]
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         target_store.append.side_effect = Exception("Error")
-
         await interceptor.append(stream, events, ExpectedVersion.no_stream())
-
         failed_writes = interceptor.get_failed_writes()
         assert len(failed_writes) == 1
         assert len(failed_writes[0].event_ids) == 3
         assert interceptor.get_failure_stats().total_events_failed == 3
 
     async def test_source_position_tracked_in_failure(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
-        """Test that the FIRST event's source position is tracked when target fails."""
         aggregate_id = uuid4()
         event = TestEvent(aggregate_id=aggregate_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-
         expected_position = Position(store_id="source", key=(500,))
         source_store.append.side_effect = None
         source_store.append.return_value = AppendResult(
             stream=stream, new_version=1, position=expected_position
         )
         target_store.append.side_effect = Exception("Error")
-
         await interceptor.append(stream, [event], ExpectedVersion.no_stream())
-
         failed_writes = interceptor.get_failed_writes()
         assert failed_writes[0].source_position == expected_position
 
