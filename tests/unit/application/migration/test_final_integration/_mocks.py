@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
+from eventsource.ports.exceptions import LockAcquisitionError
 from eventsource.ports.migration.models import (
     AuditEventType,
     MigrationAuditEntry,
@@ -60,9 +61,7 @@ class InMemoryAuditLogRepository:
         return next((e for e in self._entries if e.id == entry_id), None)
 
     async def get_latest(
-        self,
-        migration_id: UUID,
-        event_type: AuditEventType | None = None,
+        self, migration_id: UUID, event_type: AuditEventType | None = None
     ) -> MigrationAuditEntry | None:
         filtered = [e for e in self._entries if e.migration_id == migration_id]
         if event_type:
@@ -73,9 +72,7 @@ class InMemoryAuditLogRepository:
         return filtered[0]
 
     async def count_by_migration(
-        self,
-        migration_id: UUID,
-        event_type: AuditEventType | None = None,
+        self, migration_id: UUID, event_type: AuditEventType | None = None
     ) -> int:
         filtered = [e for e in self._entries if e.migration_id == migration_id]
         if event_type:
@@ -101,9 +98,7 @@ class InMemoryPositionMappingRepository:
         return len(mappings)
 
     async def find_by_source_position(
-        self,
-        migration_id: UUID,
-        source_position: Position,
+        self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
         return next(
             (
@@ -115,25 +110,19 @@ class InMemoryPositionMappingRepository:
         )
 
     async def find_nearest_source_position(
-        self,
-        migration_id: UUID,
-        source_position: Position,
+        self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
         nearest: PositionMapping | None = None
-        for mapping in self._mappings:
+        for m in self._mappings:
             if (
-                mapping.migration_id == migration_id
-                and mapping.source_position <= source_position
-                and (nearest is None or mapping.source_position > nearest.source_position)
+                m.migration_id == migration_id
+                and m.source_position <= source_position
+                and (nearest is None or m.source_position > nearest.source_position)
             ):
-                nearest = mapping
+                nearest = m
         return nearest
 
-    async def find_by_event_id(
-        self,
-        migration_id: UUID,
-        event_id: UUID,
-    ) -> PositionMapping | None:
+    async def find_by_event_id(self, migration_id: UUID, event_id: UUID) -> PositionMapping | None:
         return next(
             (
                 m
@@ -146,14 +135,9 @@ class InMemoryPositionMappingRepository:
     async def count_by_migration(self, migration_id: UUID) -> int:
         return len([m for m in self._mappings if m.migration_id == migration_id])
 
-    async def get_position_bounds(
-        self,
-        migration_id: UUID,
-    ) -> tuple[Position, Position] | None:
+    async def get_position_bounds(self, migration_id: UUID) -> tuple[Position, Position] | None:
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
-        if not filtered:
-            return None
-        return (filtered[0].source_position, filtered[-1].source_position)
+        return (filtered[0].source_position, filtered[-1].source_position) if filtered else None
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
         original_count = len(self._mappings)
@@ -161,10 +145,7 @@ class InMemoryPositionMappingRepository:
         return original_count - len(self._mappings)
 
     async def list_by_migration(
-        self,
-        migration_id: UUID,
-        limit: int = 100,
-        offset: int = 0,
+        self, migration_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[PositionMapping]:
         filtered = [m for m in self._mappings if m.migration_id == migration_id]
         sorted_mappings = sorted(filtered, key=lambda m: m.source_position)
@@ -173,42 +154,24 @@ class InMemoryPositionMappingRepository:
 
 @dataclass
 class MockLockInfo:
-    """Mock lock info for testing."""
-
     key: str
     acquired_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class MockLockManager:
-    """Mock implementation of LockManager for testing."""
-
-    def __init__(
-        self,
-        *,
-        should_fail: bool = False,
-        fail_after: int | None = None,
-    ) -> None:
+    def __init__(self, *, should_fail: bool = False, fail_after: int | None = None) -> None:
         self._should_fail = should_fail
         self._fail_after = fail_after
         self._acquire_count = 0
         self._held_locks: dict[str, MockLockInfo] = {}
 
     @asynccontextmanager
-    async def acquire(
-        self,
-        key: str,
-        timeout: float | None = None,
-    ) -> AsyncIterator[MockLockInfo]:
+    async def acquire(self, key: str, timeout: float | None = None) -> AsyncIterator[MockLockInfo]:
         self._acquire_count += 1
         if self._should_fail:
-            from eventsource.ports.exceptions import LockAcquisitionError
-
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
         if self._fail_after is not None and self._acquire_count > self._fail_after:
-            from eventsource.ports.exceptions import LockAcquisitionError
-
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
-
         lock_info = MockLockInfo(key=key)
         self._held_locks[key] = lock_info
         try:
@@ -222,10 +185,7 @@ class MockLockManager:
         return MockLockInfo(key=key)
 
     async def release(self, key: str) -> bool:
-        if key in self._held_locks:
-            del self._held_locks[key]
-            return True
-        return False
+        return self._held_locks.pop(key, None) is not None
 
 
 __all__ = [  # pragma: allowlist secret

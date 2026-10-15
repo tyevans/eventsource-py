@@ -15,26 +15,25 @@ from tests.unit.application.projections.test_projection_coordinator._fixtures im
 )
 
 
+def _orders(*numbers: str) -> list[DomainEvent]:
+    return [OrderCreated(aggregate_id=uuid4(), order_number=n) for n in numbers]
+
+
 class TestProjectionCoordinator:
     """Tests for ProjectionCoordinator."""
 
     @pytest.fixture
     def registry(self) -> ProjectionRegistry:
-        """Create a registry with projections."""
         return ProjectionRegistry()
 
     @pytest.fixture
     def coordinator(self, registry: ProjectionRegistry) -> ProjectionCoordinator:
-        """Create a coordinator."""
         return ProjectionCoordinator(registry=registry)
 
     @pytest.mark.asyncio
     async def test_dispatch_events(
-        self,
-        registry: ProjectionRegistry,
-        coordinator: ProjectionCoordinator,
+        self, registry: ProjectionRegistry, coordinator: ProjectionCoordinator
     ) -> None:
-        """dispatch_events dispatches to registry."""
         events: list[DomainEvent] = []
 
         class TestProjection(Projection):
@@ -45,22 +44,13 @@ class TestProjectionCoordinator:
                 events.clear()
 
         registry.register_projection(TestProjection())
-
-        event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        event2 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-002")
-
-        count = await coordinator.dispatch_events([event1, event2])
-
-        assert count == 2
-        assert len(events) == 2
+        count = await coordinator.dispatch_events(_orders("ORD-001", "ORD-002"))
+        assert count == 2 and len(events) == 2
 
     @pytest.mark.asyncio
     async def test_rebuild_all(
-        self,
-        registry: ProjectionRegistry,
-        coordinator: ProjectionCoordinator,
+        self, registry: ProjectionRegistry, coordinator: ProjectionCoordinator
     ) -> None:
-        """rebuild_all resets and replays events."""
         reset_called = False
         events: list[DomainEvent] = []
 
@@ -74,23 +64,13 @@ class TestProjectionCoordinator:
                 events.clear()
 
         registry.register_projection(TestProjection())
-
-        event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        event2 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-002")
-
-        count = await coordinator.rebuild_all([event1, event2])
-
-        assert count == 2
-        assert reset_called is True
-        assert len(events) == 2
+        count = await coordinator.rebuild_all(_orders("ORD-001", "ORD-002"))
+        assert count == 2 and reset_called is True and len(events) == 2
 
     @pytest.mark.asyncio
     async def test_rebuild_projection(
-        self,
-        registry: ProjectionRegistry,
-        coordinator: ProjectionCoordinator,
+        self, registry: ProjectionRegistry, coordinator: ProjectionCoordinator
     ) -> None:
-        """rebuild_projection resets single projection and replays."""
         events: list[DomainEvent] = []
         reset_called = False
 
@@ -105,22 +85,13 @@ class TestProjectionCoordinator:
 
         projection = TestProjection()
         registry.register_projection(projection)
-
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-
-        count = await coordinator.rebuild_projection(projection, [event])
-
-        assert count == 1
-        assert reset_called is True
-        assert len(events) == 1
+        count = await coordinator.rebuild_projection(projection, _orders("ORD-001"))
+        assert count == 1 and reset_called is True and len(events) == 1
 
     @pytest.mark.asyncio
     async def test_catchup(
-        self,
-        registry: ProjectionRegistry,
-        coordinator: ProjectionCoordinator,
+        self, registry: ProjectionRegistry, coordinator: ProjectionCoordinator
     ) -> None:
-        """catchup processes events without reset."""
         events: list[DomainEvent] = []
         reset_called = False
 
@@ -134,22 +105,12 @@ class TestProjectionCoordinator:
 
         projection = TestProjection()
         registry.register_projection(projection)
-
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-
-        count = await coordinator.catchup(projection, [event])
-
-        assert count == 1
-        assert reset_called is False  # No reset for catchup
-        assert len(events) == 1
+        count = await coordinator.catchup(projection, _orders("ORD-001"))
+        assert count == 1 and reset_called is False and len(events) == 1
 
     def test_get_projection_info(
-        self,
-        registry: ProjectionRegistry,
-        coordinator: ProjectionCoordinator,
+        self, registry: ProjectionRegistry, coordinator: ProjectionCoordinator
     ) -> None:
-        """get_projection_info returns projection info."""
-
         class TestProjection(Projection):
             async def handle(self, event: DomainEvent) -> None:
                 pass
@@ -158,20 +119,13 @@ class TestProjectionCoordinator:
                 pass
 
         registry.register_projection(TestProjection())
-
         info = coordinator.get_projection_info()
-
-        assert len(info) == 1
-        assert info[0]["name"] == "TestProjection"
+        assert len(info) == 1 and info[0]["name"] == "TestProjection"
 
     @pytest.mark.asyncio
     async def test_health_check(
-        self,
-        registry: ProjectionRegistry,
-        coordinator: ProjectionCoordinator,
+        self, registry: ProjectionRegistry, coordinator: ProjectionCoordinator
     ) -> None:
-        """health_check returns status."""
-
         class TestProjection(Projection):
             async def handle(self, event: DomainEvent) -> None:
                 pass
@@ -188,18 +142,13 @@ class TestProjectionCoordinator:
 
         registry.register_projection(TestProjection())
         registry.register_handler(TestHandler())
-
         health = await coordinator.health_check()
-
         assert health["status"] == "healthy"
-        assert health["projection_count"] == 1
-        assert health["handler_count"] == 1
-        assert "TestProjection" in health["projections"]
-        assert "TestHandler" in health["handlers"]
+        assert health["projection_count"] == 1 and health["handler_count"] == 1
+        assert "TestProjection" in health["projections"] and "TestHandler" in health["handlers"]
 
     @pytest.mark.asyncio
     async def test_registry_register_and_coordinator_sequence_init(self) -> None:
-        """ProjectionRegistry.register and ProjectionCoordinator([proj, handler]) wire items directly."""
         seen: list[str] = []
 
         class TestProjection(Projection):
@@ -216,20 +165,14 @@ class TestProjectionCoordinator:
             async def handle(self, event: DomainEvent) -> None:
                 seen.append("handler")
 
-        proj = TestProjection()
-        handler = TestHandler()
+        proj, handler = TestProjection(), TestHandler()
         reg = ProjectionRegistry(projections=[proj], handlers=[handler])
-        assert reg.get_projection_count() == 1
-        assert reg.get_handler_count() == 1
+        assert reg.get_projection_count() == 1 and reg.get_handler_count() == 1
 
         with pytest.raises(TypeError, match="Expected Projection or EventHandlerBase"):
             reg.register("invalid")  # type: ignore[arg-type]
 
         coord = ProjectionCoordinator([proj, handler])
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        count = await coord.dispatch_events([event])
-        assert count == 1
-        assert sorted(seen) == ["handler", "proj"]
-
-        empty_coord = ProjectionCoordinator()
-        assert empty_coord.registry.get_projection_count() == 0
+        count = await coord.dispatch_events(_orders("ORD-001"))
+        assert count == 1 and sorted(seen) == ["handler", "proj"]
+        assert ProjectionCoordinator().registry.get_projection_count() == 0

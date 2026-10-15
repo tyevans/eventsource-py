@@ -14,6 +14,10 @@ from eventsource.domain.event import DomainEvent
 from tests.unit.application.subscriptions.test_subscriber._fixtures import OrderCreated
 
 
+def _orders(*numbers: str) -> list[DomainEvent]:
+    return [OrderCreated(aggregate_id=uuid4(), order_number=n) for n in numbers]
+
+
 class TestBatchSubscriberProtocol:
     """Tests for BatchSubscriber protocol."""
 
@@ -48,14 +52,8 @@ class TestBatchSubscriberProtocol:
             async def handle_batch(self, events: Sequence[DomainEvent]) -> None:
                 handled_batches.append(list(events))
 
-        subscriber = MyBatchSubscriber()
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-002"),
-        ]
-        await subscriber.handle_batch(events)
-        assert len(handled_batches) == 1
-        assert len(handled_batches[0]) == 2
+        await MyBatchSubscriber().handle_batch(_orders("ORD-001", "ORD-002"))
+        assert len(handled_batches) == 1 and len(handled_batches[0]) == 2
 
     @pytest.mark.asyncio
     async def test_batch_subscriber_handles_empty_batch(self) -> None:
@@ -69,8 +67,7 @@ class TestBatchSubscriberProtocol:
                 nonlocal call_count
                 call_count += 1
 
-        subscriber = MyBatchSubscriber()
-        await subscriber.handle_batch([])
+        await MyBatchSubscriber().handle_batch([])
         assert call_count == 1
 
 
@@ -116,13 +113,7 @@ class TestBatchAwareSubscriber:
             async def handle(self, event: DomainEvent) -> None:
                 handled.append(event)
 
-        subscriber = MySubscriber()
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-002"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-003"),
-        ]
-        await subscriber.handle_batch(events)
+        await MySubscriber().handle_batch(_orders("ORD-001", "ORD-002", "ORD-003"))
         assert len(handled) == 3
 
     @pytest.mark.asyncio
@@ -139,12 +130,7 @@ class TestBatchAwareSubscriber:
             async def handle_batch(self, events: Sequence[DomainEvent]) -> None:
                 batch_calls.append(len(events))
 
-        subscriber = MySubscriber()
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-002"),
-        ]
-        await subscriber.handle_batch(events)
+        await MySubscriber().handle_batch(_orders("ORD-001", "ORD-002"))
         assert batch_calls == [2]
 
     @pytest.mark.asyncio
@@ -158,8 +144,7 @@ class TestBatchAwareSubscriber:
             async def handle(self, event: DomainEvent) -> None:
                 handled.append(event)
 
-        subscriber = MySubscriber()
-        await subscriber.handle_batch([])
+        await MySubscriber().handle_batch([])
         assert len(handled) == 0
 
     @pytest.mark.asyncio
@@ -173,15 +158,9 @@ class TestBatchAwareSubscriber:
             async def handle(self, event: DomainEvent) -> None:
                 handled.append(event)
 
-        subscriber = MySubscriber()
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-002"),
-        ]
-        success_count, failures = await subscriber.handle_batch_with_error_tracking(events)
-        assert success_count == 2
-        assert len(failures) == 0
-        assert len(handled) == 2
+        events = _orders("ORD-001", "ORD-002")
+        success_count, failures = await MySubscriber().handle_batch_with_error_tracking(events)
+        assert success_count == 2 and len(failures) == 0 and len(handled) == 2
 
     @pytest.mark.asyncio
     async def test_handle_batch_with_error_tracking_partial_failure(self) -> None:
@@ -193,18 +172,10 @@ class TestBatchAwareSubscriber:
                 if isinstance(event, OrderCreated) and "fail" in event.order_number:
                     raise ValueError(f"Failed: {event.order_number}")
 
-        subscriber = MySubscriber()
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
-            OrderCreated(aggregate_id=uuid4(), order_number="fail-002"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-003"),
-            OrderCreated(aggregate_id=uuid4(), order_number="fail-004"),
-        ]
-        success_count, failures = await subscriber.handle_batch_with_error_tracking(events)
-        assert success_count == 2
-        assert len(failures) == 2
-        assert "fail-002" in str(failures[0][1])
-        assert "fail-004" in str(failures[1][1])
+        events = _orders("ORD-001", "fail-002", "ORD-003", "fail-004")
+        success_count, failures = await MySubscriber().handle_batch_with_error_tracking(events)
+        assert success_count == 2 and len(failures) == 2
+        assert "fail-002" in str(failures[0][1]) and "fail-004" in str(failures[1][1])
 
     @pytest.mark.asyncio
     async def test_handle_batch_with_error_tracking_all_fail(self) -> None:
@@ -215,14 +186,9 @@ class TestBatchAwareSubscriber:
             async def handle(self, event: DomainEvent) -> None:
                 raise ValueError("Always fails")
 
-        subscriber = MySubscriber()
-        events = [
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"),
-            OrderCreated(aggregate_id=uuid4(), order_number="ORD-002"),
-        ]
-        success_count, failures = await subscriber.handle_batch_with_error_tracking(events)
-        assert success_count == 0
-        assert len(failures) == 2
+        events = _orders("ORD-001", "ORD-002")
+        success_count, failures = await MySubscriber().handle_batch_with_error_tracking(events)
+        assert success_count == 0 and len(failures) == 2
 
     def test_matches_batch_subscriber_protocol(self) -> None:
         class MySubscriber(BatchAwareSubscriber):
