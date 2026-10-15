@@ -11,19 +11,14 @@ class TestKafkaEventBusConfig:
     def test_default_values(self) -> None:
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             config = KafkaEventBusConfig()
-
         assert config.bootstrap_servers == "localhost:9092"
         assert config.topic_prefix == "events"
         assert config.consumer_group == "default"
         assert config.consumer_name is not None
-        assert config.acks == "all"
-        assert config.compression_type == "gzip"
-        assert config.producer_max_batch_bytes == 16384
-        assert config.linger_ms == 5
-        assert config.auto_offset_reset == "earliest"
-        assert config.security_protocol == "PLAINTEXT"
-        assert config.enable_dlq is True
-        assert config.enable_tracing is True
+        assert config.acks == "all" and config.compression_type == "gzip"
+        assert config.producer_max_batch_bytes == 16384 and config.linger_ms == 5
+        assert config.auto_offset_reset == "earliest" and config.security_protocol == "PLAINTEXT"
+        assert config.enable_dlq is True and config.enable_tracing is True
 
     def test_custom_values(self) -> None:
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
@@ -35,12 +30,9 @@ class TestKafkaEventBusConfig:
                 acks="1",
                 compression_type="snappy",
             )
-
         assert config.bootstrap_servers == "kafka1:9092,kafka2:9092"
-        assert config.topic_prefix == "myapp.events"
-        assert config.consumer_group == "projections"
-        assert config.consumer_name == "worker-1"
-        assert config.acks == "1"
+        assert config.topic_prefix == "myapp.events" and config.consumer_group == "projections"
+        assert config.consumer_name == "worker-1" and config.acks == "1"
         assert config.compression_type == "snappy"
 
     def test_topic_name_property(self) -> None:
@@ -50,17 +42,13 @@ class TestKafkaEventBusConfig:
 
     def test_dlq_topic_name_property(self) -> None:
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
-            config = KafkaEventBusConfig(
-                topic_prefix="orders",
-                dlq_topic_suffix=".dead-letters",
-            )
+            config = KafkaEventBusConfig(topic_prefix="orders", dlq_topic_suffix=".dead-letters")
         assert config.dlq_topic_name == "orders.stream.dead-letters"
 
     def test_auto_generated_consumer_name(self) -> None:
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             config = KafkaEventBusConfig()
-        assert config.consumer_name is not None
-        assert "-" in config.consumer_name
+        assert config.consumer_name is not None and "-" in config.consumer_name
 
 
 class TestKafkaEventBusConfigSanitization:
@@ -86,16 +74,14 @@ class TestKafkaEventBusConfigSanitization:
             ssl_keyfile="/path/to/private.key",
         )
         sanitized = config.get_sanitized_config()
-        assert sanitized["ssl_keyfile"] == "***"
-        assert sanitized["ssl_certfile"] == "/path/to/cert.pem"
+        assert (
+            sanitized["ssl_keyfile"] == "***" and sanitized["ssl_certfile"] == "/path/to/cert.pem"
+        )
 
     def test_sanitized_config_handles_none_values(self) -> None:
-        config = KafkaEventBusConfig(security_protocol="PLAINTEXT")
-        sanitized = config.get_sanitized_config()
-        assert sanitized["sasl_password"] is None
-        assert sanitized["ssl_keyfile"] is None
-        assert sanitized["sasl_username"] is None
-        assert sanitized["sasl_mechanism"] is None
+        sanitized = KafkaEventBusConfig(security_protocol="PLAINTEXT").get_sanitized_config()
+        for key in ("sasl_password", "ssl_keyfile", "sasl_username", "sasl_mechanism"):
+            assert sanitized[key] is None
 
     def test_sanitized_config_includes_all_fields(self) -> None:
         config = KafkaEventBusConfig(
@@ -108,7 +94,7 @@ class TestKafkaEventBusConfigSanitization:
             enable_tracing=False,
         )
         sanitized = config.get_sanitized_config()
-        for field in (
+        assert {
             "bootstrap_servers",
             "topic_prefix",
             "consumer_group",
@@ -123,8 +109,7 @@ class TestKafkaEventBusConfigSanitization:
             "ssl_check_hostname",
             "enable_dlq",
             "enable_tracing",
-        ):
-            assert field in sanitized
+        }.issubset(sanitized)
 
 
 class TestKafkaEventBusConfigProducerConsumer:
@@ -141,10 +126,8 @@ class TestKafkaEventBusConfigProducerConsumer:
         )
         producer_config = config.get_producer_config()
         assert producer_config["bootstrap_servers"] == "kafka:9092"
-        assert producer_config["acks"] == "all"
-        assert producer_config["compression_type"] == "gzip"
-        assert producer_config["max_batch_size"] == 32768
-        assert producer_config["linger_ms"] == 10
+        assert producer_config["acks"] == "all" and producer_config["compression_type"] == "gzip"
+        assert producer_config["max_batch_size"] == 32768 and producer_config["linger_ms"] == 10
         assert producer_config["security_protocol"] == "PLAINTEXT"
 
     def test_get_producer_config_with_security(self) -> None:
@@ -182,22 +165,18 @@ class TestKafkaEventBusConfigProducerConsumer:
 
     def test_get_consumer_config_fetch_bounds_configurable(self) -> None:
         config = KafkaEventBusConfig(
-            fetch_max_bytes=1024,
-            max_partition_fetch_bytes=512,
-            security_protocol="PLAINTEXT",
+            fetch_max_bytes=1024, max_partition_fetch_bytes=512, security_protocol="PLAINTEXT"
         )
         consumer_config = config.get_consumer_config()
         assert consumer_config["fetch_max_bytes"] == 1024
         assert consumer_config["max_partition_fetch_bytes"] == 512
 
     def test_get_consumer_config_overrides(self) -> None:
-        config = KafkaEventBusConfig(
-            consumer_group="main-group",
-            security_protocol="PLAINTEXT",
-        )
+        config = KafkaEventBusConfig(consumer_group="main-group", security_protocol="PLAINTEXT")
         consumer_config = config.get_consumer_config(group_id=None, consumer_timeout_ms=5000)
-        assert consumer_config["group_id"] is None
-        assert consumer_config["consumer_timeout_ms"] == 5000
+        assert (
+            consumer_config["group_id"] is None and consumer_config["consumer_timeout_ms"] == 5000
+        )
         assert consumer_config["fetch_max_bytes"] == 52428800
 
     def test_get_security_config_matches_producer_and_consumer(self) -> None:
@@ -211,7 +190,6 @@ class TestKafkaEventBusConfigProducerConsumer:
         security_config = config.get_security_config()
         consumer_config = config.get_consumer_config()
         producer_config = config.get_producer_config()
-
         assert security_config["ssl_check_hostname"] is False
         for key in security_config:
             assert consumer_config[key] == security_config[key]

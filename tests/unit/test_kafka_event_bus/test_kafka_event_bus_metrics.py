@@ -18,30 +18,18 @@ from eventsource.adapters.kafka.bus import _get_meter
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
 
-from ._fixtures import (
-    OTEL_METRICS_AVAILABLE,
-    InMemoryMetricReader,
-    MeterProvider,
-    OrderHandler,
-    SampleOrderCreated,
-    _get_histogram_sum,
-    _get_metric_attributes,
-    _get_metric_value,
-    _has_histogram_data,
-    skip_if_no_otel_metrics,
-)
+from . import _fixtures as fx
 
 
 @pytest.fixture(autouse=True)
 def _reset_kafka_meter() -> Generator[None]:
-    """Reset cached meter before and after each test."""
     kafka_module._meter = None
     yield
     kafka_module._meter = None
 
 
-def _sample_event() -> SampleOrderCreated:
-    return SampleOrderCreated(
+def _sample_event() -> fx.SampleOrderCreated:
+    return fx.SampleOrderCreated(
         aggregate_id=uuid4(),
         aggregate_version=1,
         order_number="ORD-001",
@@ -53,67 +41,63 @@ def _sample_event() -> SampleOrderCreated:
 class TestKafkaEventBusMetricsInfrastructure:
     """Tests for metrics infrastructure."""
 
-    @skip_if_no_otel_metrics
+    @fx.skip_if_no_otel_metrics
     def test_get_meter_returns_meter(self) -> None:
-        """Test _get_meter returns a meter instance."""
         assert _get_meter() is not None
 
-    @skip_if_no_otel_metrics
+    @fx.skip_if_no_otel_metrics
     def test_get_meter_cached(self) -> None:
-        """Test _get_meter returns cached meter on subsequent calls."""
-        meter1 = _get_meter()
-        meter2 = _get_meter()
-        assert meter1 is meter2
+        assert _get_meter() is _get_meter()
 
     def test_get_meter_none_when_otel_unavailable(self) -> None:
-        """Test _get_meter returns None when OpenTelemetry not installed."""
         with patch.object(kafka_module, "OTEL_AVAILABLE", False):
             assert _get_meter() is None
 
-    @skip_if_no_otel_metrics
+    @fx.skip_if_no_otel_metrics
     def test_metrics_class_creates_all_counters(self) -> None:
-        """Test KafkaEventBusMetrics creates all counter instruments."""
         metrics = KafkaEventBusMetrics(_get_meter())
-        assert hasattr(metrics, "messages_published")
-        assert hasattr(metrics, "messages_consumed")
-        assert hasattr(metrics, "handler_invocations")
-        assert hasattr(metrics, "handler_errors")
-        assert hasattr(metrics, "dlq_messages")
-        assert hasattr(metrics, "connection_errors")
-        assert hasattr(metrics, "reconnections")
-        assert hasattr(metrics, "rebalances")
-        assert hasattr(metrics, "publish_errors")
+        for attr in (
+            "messages_published",
+            "messages_consumed",
+            "handler_invocations",
+            "handler_errors",
+            "dlq_messages",
+            "connection_errors",
+            "reconnections",
+            "rebalances",
+            "publish_errors",
+        ):
+            assert hasattr(metrics, attr)
 
-    @skip_if_no_otel_metrics
+    @fx.skip_if_no_otel_metrics
     def test_metrics_class_creates_all_histograms(self) -> None:
-        """Test KafkaEventBusMetrics creates all histogram instruments."""
         metrics = KafkaEventBusMetrics(_get_meter())
-        assert hasattr(metrics, "publish_duration")
-        assert hasattr(metrics, "consume_duration")
-        assert hasattr(metrics, "handler_duration")
-        assert hasattr(metrics, "batch_publish_size")
+        for attr in (
+            "publish_duration",
+            "consume_duration",
+            "handler_duration",
+            "batch_publish_size",
+        ):
+            assert hasattr(metrics, attr)
 
 
 @pytest.mark.skipif(not KAFKA_AVAILABLE, reason="aiokafka not installed")
 class TestKafkaEventBusMetricsConfig:
     """Tests for metrics configuration."""
 
-    @skip_if_no_otel_metrics
+    @fx.skip_if_no_otel_metrics
     def test_metrics_enabled_by_default(self) -> None:
-        """Test metrics are enabled by default."""
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus(config=KafkaEventBusConfig())
         assert bus._connection_manager.metrics is not None
 
-    @skip_if_no_otel_metrics
+    @fx.skip_if_no_otel_metrics
     def test_metrics_disabled_when_config_false(self) -> None:
-        """Test metrics disabled when enable_metrics=False."""
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus(config=KafkaEventBusConfig(enable_metrics=False))
         assert bus._connection_manager.metrics is None
 
     def test_metrics_none_when_otel_unavailable(self) -> None:
-        """Test metrics is None when OpenTelemetry not installed."""
         with (
             patch.object(kafka_module, "OTEL_AVAILABLE", False),
             patch.object(KafkaEventBusConfig, "_validate_security_config"),
@@ -127,14 +111,12 @@ class _MetricsTestBase:
 
     @pytest.fixture(autouse=True)
     def setup_metrics(self) -> Generator[None]:
-        """Set up metrics for each test."""
-        self.reader = InMemoryMetricReader()
-        self.provider = MeterProvider(metric_readers=[self.reader])
+        self.reader = fx.InMemoryMetricReader()
+        self.provider = fx.MeterProvider(metric_readers=[self.reader])
         self.meter = self.provider.get_meter("test.kafka.eventbus")
         yield
 
     def _create_bus_with_test_metrics(self) -> KafkaEventBus:
-        """Create a bus and set up metrics with our test provider."""
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             bus = KafkaEventBus()
         test_metrics = KafkaEventBusMetrics(self.meter)
@@ -146,93 +128,82 @@ class _MetricsTestBase:
 
 
 @pytest.mark.skipif(not KAFKA_AVAILABLE, reason="aiokafka not installed")
-@pytest.mark.skipif(not OTEL_METRICS_AVAILABLE, reason="opentelemetry-sdk not installed")
+@pytest.mark.skipif(not fx.OTEL_METRICS_AVAILABLE, reason="opentelemetry-sdk not installed")
 class TestKafkaEventBusCounterMetrics(_MetricsTestBase):
     """Tests for counter metrics."""
 
     @pytest.mark.asyncio
     async def test_handler_invocation_counter(self) -> None:
-        """Test handler invocation increments counter."""
         bus = self._create_bus_with_test_metrics()
-        bus.subscribe(SampleOrderCreated, OrderHandler())
+        bus.subscribe(fx.SampleOrderCreated, fx.OrderHandler())
         await bus._consumer_loop._dispatch_to_handlers(
-            _sample_event(), bus._handlers_for(SampleOrderCreated)
+            _sample_event(), bus._handlers_for(fx.SampleOrderCreated)
         )
         metrics_data = self.reader.get_metrics_data()
-        assert _get_metric_value(metrics_data, "kafka.eventbus.handler.invocations") == 1
+        assert fx._get_metric_value(metrics_data, "kafka.eventbus.handler.invocations") == 1
 
     @pytest.mark.asyncio
     async def test_handler_error_counter(self) -> None:
-        """Test handler error increments error counter."""
-
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Test error")
 
         bus = self._create_bus_with_test_metrics()
-        bus.subscribe(SampleOrderCreated, failing_handler)
+        bus.subscribe(fx.SampleOrderCreated, failing_handler)
         with pytest.raises(HandlerDispatchError):
             await bus._consumer_loop._dispatch_to_handlers(
-                _sample_event(), bus._handlers_for(SampleOrderCreated)
+                _sample_event(), bus._handlers_for(fx.SampleOrderCreated)
             )
         metrics_data = self.reader.get_metrics_data()
-        assert _get_metric_value(metrics_data, "kafka.eventbus.handler.errors") == 1
-        attributes = _get_metric_attributes(metrics_data, "kafka.eventbus.handler.errors")
+        assert fx._get_metric_value(metrics_data, "kafka.eventbus.handler.errors") == 1
+        attributes = fx._get_metric_attributes(metrics_data, "kafka.eventbus.handler.errors")
         assert attributes.get("error.type") == "ValueError"
 
     @pytest.mark.asyncio
     async def test_reconnection_counter(self) -> None:
-        """Test reconnection counter increments end-to-end through OTel."""
         bus = self._create_bus_with_test_metrics()
         bus._connection_manager.record_reconnection()
         bus._connection_manager.record_reconnection()
         metrics_data = self.reader.get_metrics_data()
-        assert _get_metric_value(metrics_data, "kafka.eventbus.reconnections") == 2
+        assert fx._get_metric_value(metrics_data, "kafka.eventbus.reconnections") == 2
 
     @pytest.mark.asyncio
     async def test_rebalance_counter(self) -> None:
-        """Test rebalance counter increments end-to-end through OTel."""
         bus = self._create_bus_with_test_metrics()
         bus._connection_manager.record_rebalance()
         metrics_data = self.reader.get_metrics_data()
-        assert _get_metric_value(metrics_data, "kafka.eventbus.rebalances") == 1
+        assert fx._get_metric_value(metrics_data, "kafka.eventbus.rebalances") == 1
 
     @pytest.mark.asyncio
     async def test_connection_error_counter(self) -> None:
-        """Test connection error counter on connect failure."""
         mock_producer = AsyncMock()
         mock_producer.start.side_effect = Exception("Connection failed")
         bus = self._create_bus_with_test_metrics()
+        conn_mod = "eventsource.adapters.kafka.connection"
         with (
-            patch(
-                "eventsource.adapters.kafka.connection.AIOKafkaProducer", return_value=mock_producer
-            ),
-            patch(
-                "eventsource.adapters.kafka.connection.AIOKafkaConsumer", return_value=AsyncMock()
-            ),
+            patch(f"{conn_mod}.AIOKafkaProducer", return_value=mock_producer),
+            patch(f"{conn_mod}.AIOKafkaConsumer", return_value=AsyncMock()),
         ):
             with pytest.raises(Exception, match="Connection failed"):
                 await bus.connect()
             metrics_data = self.reader.get_metrics_data()
-            assert _get_metric_value(metrics_data, "kafka.eventbus.connection.errors") == 1
+            assert fx._get_metric_value(metrics_data, "kafka.eventbus.connection.errors") == 1
 
 
 @pytest.mark.skipif(not KAFKA_AVAILABLE, reason="aiokafka not installed")
-@pytest.mark.skipif(not OTEL_METRICS_AVAILABLE, reason="opentelemetry-sdk not installed")
+@pytest.mark.skipif(not fx.OTEL_METRICS_AVAILABLE, reason="opentelemetry-sdk not installed")
 class TestKafkaEventBusHistogramMetrics(_MetricsTestBase):
     """Tests for histogram metrics."""
 
     @pytest.mark.asyncio
     async def test_handler_duration_recorded(self) -> None:
-        """Test handler duration is recorded."""
-
         async def slow_handler(event: DomainEvent) -> None:
             await asyncio.sleep(0.01)
 
         bus = self._create_bus_with_test_metrics()
-        bus.subscribe(SampleOrderCreated, slow_handler)
+        bus.subscribe(fx.SampleOrderCreated, slow_handler)
         await bus._consumer_loop._dispatch_to_handlers(
-            _sample_event(), bus._handlers_for(SampleOrderCreated)
+            _sample_event(), bus._handlers_for(fx.SampleOrderCreated)
         )
         metrics_data = self.reader.get_metrics_data()
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.handler.duration")
-        assert _get_histogram_sum(metrics_data, "kafka.eventbus.handler.duration") >= 10
+        assert fx._has_histogram_data(metrics_data, "kafka.eventbus.handler.duration")
+        assert fx._get_histogram_sum(metrics_data, "kafka.eventbus.handler.duration") >= 10

@@ -22,30 +22,24 @@ def _handler(event: DomainEvent) -> None:
 
 
 def _make_handlers() -> list[Any]:
-    handlers: list[Any] = []
-    for i in range(5):
+    def make(idx: int) -> Any:
+        def h(event: DomainEvent) -> None: ...
 
-        def make(idx: int) -> Any:
-            def h(event: DomainEvent) -> None: ...
+        h.__name__ = f"handler_{idx}"
+        return h
 
-            h.__name__ = f"handler_{idx}"
-            return h
-
-        handlers.append(make(i))
-    return handlers
+    return [make(i) for i in range(5)]
 
 
 def test_add_then_handlers_for_returns_the_handler() -> None:
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)
     handlers = registry.handlers_for(RegistryEventA)
-    assert len(handlers) == 1
-    assert handlers[0].original is _handler
+    assert len(handlers) == 1 and handlers[0].original is _handler
 
 
 def test_handlers_for_unknown_type_is_empty() -> None:
-    registry = SubscriptionRegistry()
-    assert registry.handlers_for(RegistryEventA) == ()
+    assert SubscriptionRegistry().handlers_for(RegistryEventA) == ()
 
 
 def test_remove_returns_true_when_present_false_when_absent() -> None:
@@ -57,13 +51,11 @@ def test_remove_returns_true_when_present_false_when_absent() -> None:
 
 def test_specific_handlers_precede_wildcard_handlers() -> None:
     registry = SubscriptionRegistry()
-
-    def wildcard(event: DomainEvent) -> None: ...
-
-    registry.add_wildcard(wildcard)
-    registry.add(RegistryEventA, _handler)
+    registry.add_wildcard(_handler)
+    other = _make_handlers()[0]
+    registry.add(RegistryEventA, other)
     handlers = registry.handlers_for(RegistryEventA)
-    assert [h.original for h in handlers] == [_handler, wildcard]
+    assert [h.original for h in handlers] == [other, _handler]
 
 
 def test_wildcard_reaches_every_event_type() -> None:
@@ -74,65 +66,43 @@ def test_wildcard_reaches_every_event_type() -> None:
 
 
 def test_handlers_for_is_stable_across_calls_without_mutation() -> None:
-    """The combined tuple is cached, so dispatch allocates nothing per event."""
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)
-    first = registry.handlers_for(RegistryEventA)
-    second = registry.handlers_for(RegistryEventA)
-    assert first is second
+    assert registry.handlers_for(RegistryEventA) is registry.handlers_for(RegistryEventA)
 
 
 def test_handlers_for_cache_is_keyed_by_event_type_and_reused() -> None:
-    """Verify combined handler tuple cache is keyed by event type and short-circuits."""
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)
-
-    def wildcard(event: DomainEvent) -> None: ...
-
-    registry.add_wildcard(wildcard)
+    registry.add_wildcard(_make_handlers()[0])
     first = registry.handlers_for(RegistryEventA)
-    second = registry.handlers_for(RegistryEventA)
-    assert first is second
-    assert len(first) == 2
-
+    assert first is registry.handlers_for(RegistryEventA) and len(first) == 2
     third = registry.handlers_for(RegistryEventB)
-    assert third is not first
-    assert len(third) == 1
+    assert third is not first and len(third) == 1
 
 
 def test_cache_is_invalidated_on_mutation() -> None:
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)
     before = registry.handlers_for(RegistryEventA)
-
-    def other(event: DomainEvent) -> None: ...
-
-    registry.add(RegistryEventA, other)
+    registry.add(RegistryEventA, _make_handlers()[0])
     after = registry.handlers_for(RegistryEventA)
-    assert before is not after
-    assert len(after) == 2
+    assert before is not after and len(after) == 2
 
 
 def test_wildcard_mutation_invalidates_specific_type_cache() -> None:
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)
     before = registry.handlers_for(RegistryEventA)
-
-    def wildcard(event: DomainEvent) -> None: ...
-
-    registry.add_wildcard(wildcard)
+    registry.add_wildcard(_make_handlers()[0])
     after = registry.handlers_for(RegistryEventA)
-    assert before is not after
-    assert len(after) == 2
+    assert before is not after and len(after) == 2
 
 
 def test_count_and_wildcard_count() -> None:
     registry = SubscriptionRegistry()
-
-    def other(event: DomainEvent) -> None: ...
-
     registry.add(RegistryEventA, _handler)
-    registry.add(RegistryEventA, other)
+    registry.add(RegistryEventA, _make_handlers()[0])
     registry.add(RegistryEventB, _handler)
     registry.add_wildcard(_handler)
     assert registry.count() == 3
@@ -146,8 +116,7 @@ def test_clear_removes_everything() -> None:
     registry.add(RegistryEventA, _handler)
     registry.add_wildcard(_handler)
     registry.clear()
-    assert registry.count() == 0
-    assert registry.wildcard_count() == 0
+    assert registry.count() == 0 and registry.wildcard_count() == 0
 
 
 def test_add_subscriber_registers_every_declared_type() -> None:
@@ -159,12 +128,10 @@ def test_add_subscriber_registers_every_declared_type() -> None:
 
     registry = SubscriptionRegistry()
     registry.add_subscriber(Subscriber())
-    assert registry.count(RegistryEventA) == 1
-    assert registry.count(RegistryEventB) == 1
+    assert registry.count(RegistryEventA) == 1 and registry.count(RegistryEventB) == 1
 
 
 def test_the_same_handler_may_subscribe_twice() -> None:
-    """Duplicate registration is allowed; each remove strips one."""
     registry = SubscriptionRegistry()
     registry.add(RegistryEventA, _handler)
     registry.add(RegistryEventA, _handler)
@@ -173,7 +140,6 @@ def test_the_same_handler_may_subscribe_twice() -> None:
     assert registry.count(RegistryEventA) == 1
 
 
-# Each op is (kind, handler_index). kind: 0=add, 1=remove, 2=add_wc, 3=remove_wc
 _OPS = st.lists(
     st.tuples(st.integers(min_value=0, max_value=3), st.integers(min_value=0, max_value=4)),
     max_size=40,
@@ -182,12 +148,10 @@ _OPS = st.lists(
 
 @given(ops=_OPS)
 def test_counts_track_net_operations(ops: list[tuple[int, int]]) -> None:
-    """count() and wildcard_count() always equal the net number of live handlers."""
     handlers = _make_handlers()
     registry = SubscriptionRegistry()
     specific: list[Any] = []
     wildcard: list[Any] = []
-
     for kind, idx in ops:
         handler = handlers[idx]
         if kind == 0:
@@ -206,20 +170,16 @@ def test_counts_track_net_operations(ops: list[tuple[int, int]]) -> None:
             assert registry.remove_wildcard(handler) is expected
             if expected:
                 wildcard.remove(handler)
-
         assert registry.count(RegistryEventA) == len(specific)
         assert registry.wildcard_count() == len(wildcard)
         assert len(registry.handlers_for(RegistryEventA)) == len(specific) + len(wildcard)
 
 
 @given(ops=_OPS)
-def test_handlers_for_always_orders_specific_before_wildcard(
-    ops: list[tuple[int, int]],
-) -> None:
+def test_handlers_for_always_orders_specific_before_wildcard(ops: list[tuple[int, int]]) -> None:
     handlers = _make_handlers()
     registry = SubscriptionRegistry()
     specific_count = 0
-
     for kind, idx in ops:
         handler = handlers[idx]
         if kind == 0:
@@ -232,7 +192,6 @@ def test_handlers_for_always_orders_specific_before_wildcard(
             registry.add_wildcard(handler)
         else:
             registry.remove_wildcard(handler)
-
     combined = registry.handlers_for(RegistryEventA)
     assert len(combined) == registry.count(RegistryEventA) + registry.wildcard_count()
     assert len(combined[:specific_count]) == specific_count

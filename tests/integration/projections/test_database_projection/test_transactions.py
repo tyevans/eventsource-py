@@ -38,16 +38,14 @@ class TestDatabaseProjectionTransactions:
         orders_table: AsyncGenerator[None],
         postgres_engine: AsyncEngine,
     ) -> None:
-        """Handler can execute SQL against real PostgreSQL."""
-
         class OrderProjection(DatabaseProjection):
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
                 await conn.execute(
-                    text("""
-                        INSERT INTO test_orders (id, order_number, amount, status)
-                        VALUES (:id, :order_number, :amount, 'created')
-                    """),
+                    text(
+                        "INSERT INTO test_orders (id, order_number, amount, status) "
+                        "VALUES (:id, :order_number, :amount, 'created')"
+                    ),
                     {
                         "id": event.aggregate_id,
                         "order_number": event.order_number,
@@ -56,14 +54,10 @@ class TestDatabaseProjectionTransactions:
                 )
 
         projection = OrderProjection(session_factory=postgres_session_factory)
-
         aggregate_id = uuid4()
-        event = OrderCreated(
-            aggregate_id=aggregate_id,
-            order_number="ORD-001",
-            amount=99.99,
+        await projection.handle(
+            OrderCreated(aggregate_id=aggregate_id, order_number="ORD-001", amount=99.99)
         )
-        await projection.handle(event)
 
         async with postgres_engine.begin() as conn:
             result = await conn.execute(
@@ -84,16 +78,14 @@ class TestDatabaseProjectionTransactions:
         orders_table: AsyncGenerator[None],
         postgres_engine: AsyncEngine,
     ) -> None:
-        """Transaction commits successfully when handler completes."""
-
         class OrderProjection(DatabaseProjection):
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
                 await conn.execute(
-                    text("""
-                        INSERT INTO test_orders (id, order_number, amount)
-                        VALUES (:id, :order_number, :amount)
-                    """),
+                    text(
+                        "INSERT INTO test_orders (id, order_number, amount) "
+                        "VALUES (:id, :order_number, :amount)"
+                    ),
                     {
                         "id": event.aggregate_id,
                         "order_number": event.order_number,
@@ -102,19 +94,14 @@ class TestDatabaseProjectionTransactions:
                 )
 
         projection = OrderProjection(session_factory=postgres_session_factory)
-
         aggregate_id = uuid4()
-        event = OrderCreated(
-            aggregate_id=aggregate_id,
-            order_number="ORD-002",
-            amount=149.99,
+        await projection.handle(
+            OrderCreated(aggregate_id=aggregate_id, order_number="ORD-002", amount=149.99)
         )
-        await projection.handle(event)
 
         async with postgres_engine.begin() as conn:
             result = await conn.execute(
-                text("SELECT COUNT(*) FROM test_orders WHERE id = :id"),
-                {"id": aggregate_id},
+                text("SELECT COUNT(*) FROM test_orders WHERE id = :id"), {"id": aggregate_id}
             )
             count = result.scalar()
 
@@ -127,10 +114,6 @@ class TestDatabaseProjectionTransactions:
         orders_table: AsyncGenerator[None],
         postgres_engine: AsyncEngine,
     ) -> None:
-        """Transaction is rolled back when handler raises error."""
-        checkpoint_repo = InMemoryCheckpointRepository()
-        dlq_repo = InMemoryDLQRepository()
-
         class FailingProjection(DatabaseProjection):
             MAX_RETRIES = 1
             RETRY_BACKOFF_BASE = 0
@@ -138,10 +121,10 @@ class TestDatabaseProjectionTransactions:
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
                 await conn.execute(
-                    text("""
-                        INSERT INTO test_orders (id, order_number, amount)
-                        VALUES (:id, :order_number, :amount)
-                    """),
+                    text(
+                        "INSERT INTO test_orders (id, order_number, amount) "
+                        "VALUES (:id, :order_number, :amount)"
+                    ),
                     {
                         "id": event.aggregate_id,
                         "order_number": event.order_number,
@@ -152,24 +135,18 @@ class TestDatabaseProjectionTransactions:
 
         projection = FailingProjection(
             session_factory=postgres_session_factory,
-            checkpoint_repo=checkpoint_repo,
-            dlq_repo=dlq_repo,
+            checkpoint_repo=InMemoryCheckpointRepository(),
+            dlq_repo=InMemoryDLQRepository(),
         )
-
         aggregate_id = uuid4()
-        event = OrderCreated(
-            aggregate_id=aggregate_id,
-            order_number="ORD-003",
-            amount=199.99,
-        )
+        event = OrderCreated(aggregate_id=aggregate_id, order_number="ORD-003", amount=199.99)
 
         with pytest.raises(ValueError, match="Simulated handler error"):
             await projection.handle(event)
 
         async with postgres_engine.begin() as conn:
             result = await conn.execute(
-                text("SELECT COUNT(*) FROM test_orders WHERE id = :id"),
-                {"id": aggregate_id},
+                text("SELECT COUNT(*) FROM test_orders WHERE id = :id"), {"id": aggregate_id}
             )
             count = result.scalar()
 
@@ -182,21 +159,18 @@ class TestDatabaseProjectionTransactions:
         orders_table: AsyncGenerator[None],
         postgres_engine: AsyncEngine,
     ) -> None:
-        """Multiple inserts in one handler are rolled back together on error."""
-        checkpoint_repo = InMemoryCheckpointRepository()
-        dlq_repo = InMemoryDLQRepository()
-
         class FailingProjection(DatabaseProjection):
             MAX_RETRIES = 1
             RETRY_BACKOFF_BASE = 0
 
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
+                sql = text(
+                    "INSERT INTO test_orders (id, order_number, amount) "
+                    "VALUES (:id, :order_number, :amount)"
+                )
                 await conn.execute(
-                    text("""
-                        INSERT INTO test_orders (id, order_number, amount)
-                        VALUES (:id, :order_number, :amount)
-                    """),
+                    sql,
                     {
                         "id": event.aggregate_id,
                         "order_number": event.order_number,
@@ -204,10 +178,7 @@ class TestDatabaseProjectionTransactions:
                     },
                 )
                 await conn.execute(
-                    text("""
-                        INSERT INTO test_orders (id, order_number, amount)
-                        VALUES (:id, :order_number, :amount)
-                    """),
+                    sql,
                     {
                         "id": uuid4(),
                         "order_number": f"{event.order_number}-RELATED",
@@ -218,15 +189,10 @@ class TestDatabaseProjectionTransactions:
 
         projection = FailingProjection(
             session_factory=postgres_session_factory,
-            checkpoint_repo=checkpoint_repo,
-            dlq_repo=dlq_repo,
+            checkpoint_repo=InMemoryCheckpointRepository(),
+            dlq_repo=InMemoryDLQRepository(),
         )
-
-        event = OrderCreated(
-            aggregate_id=uuid4(),
-            order_number="ORD-007",
-            amount=200.00,
-        )
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-007", amount=200.00)
 
         with pytest.raises(ValueError):
             await projection.handle(event)
