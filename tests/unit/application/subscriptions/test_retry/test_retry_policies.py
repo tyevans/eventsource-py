@@ -25,11 +25,7 @@ class TestRetryConfigCreation:
 
     def test_custom_values(self):
         config = RetryConfig(
-            max_retries=3,
-            initial_delay=0.5,
-            max_delay=30.0,
-            exponential_base=3.0,
-            jitter=0.2,
+            max_retries=3, initial_delay=0.5, max_delay=30.0, exponential_base=3.0, jitter=0.2
         )
         assert config.max_retries == 3
         assert config.initial_delay == 0.5
@@ -38,8 +34,7 @@ class TestRetryConfigCreation:
         assert config.jitter == 0.2
 
     def test_zero_retries_allowed(self):
-        config = RetryConfig(max_retries=0)
-        assert config.max_retries == 0
+        assert RetryConfig(max_retries=0).max_retries == 0
 
     def test_negative_max_retries_raises(self):
         with pytest.raises(ValueError) as exc_info:
@@ -82,12 +77,10 @@ class TestRetryConfigCreation:
         assert "jitter must be between 0.0 and 1.0" in str(exc_info.value)
 
     def test_jitter_zero_allowed(self):
-        config = RetryConfig(jitter=0.0)
-        assert config.jitter == 0.0
+        assert RetryConfig(jitter=0.0).jitter == 0.0
 
     def test_jitter_one_allowed(self):
-        config = RetryConfig(jitter=1.0)
-        assert config.jitter == 1.0
+        assert RetryConfig(jitter=1.0).jitter == 1.0
 
 
 class TestRetryStats:
@@ -115,9 +108,7 @@ class TestRetryStats:
         assert result["last_error"] == "Connection refused"
 
     def test_to_dict_with_none_error(self):
-        stats = RetryStats()
-        result = stats.to_dict()
-        assert result["last_error"] is None
+        assert RetryStats().to_dict()["last_error"] is None
 
 
 class TestRetryError:
@@ -137,16 +128,10 @@ class TestRetryError:
 class TestCalculateBackoff:
     def test_first_attempt(self):
         config = RetryConfig(initial_delay=1.0, jitter=0.0)
-        delay = calculate_backoff(0, config)
-        assert delay == 1.0
+        assert calculate_backoff(0, config) == 1.0
 
     def test_exponential_growth(self):
-        config = RetryConfig(
-            initial_delay=1.0,
-            exponential_base=2.0,
-            max_delay=100.0,
-            jitter=0.0,
-        )
+        config = RetryConfig(initial_delay=1.0, exponential_base=2.0, max_delay=100.0, jitter=0.0)
         assert calculate_backoff(0, config) == 1.0
         assert calculate_backoff(1, config) == 2.0
         assert calculate_backoff(2, config) == 4.0
@@ -167,14 +152,12 @@ class TestCalculateBackoff:
 
     def test_jitter_zero_no_variation(self):
         config = RetryConfig(initial_delay=5.0, jitter=0.0)
-        delays = [calculate_backoff(0, config) for _ in range(10)]
-        assert all(d == 5.0 for d in delays)
+        assert all(calculate_backoff(0, config) == 5.0 for _ in range(10))
 
     def test_delay_never_negative(self):
         config = RetryConfig(initial_delay=0.1, jitter=1.0)
         for _ in range(100):
-            delay = calculate_backoff(0, config)
-            assert delay >= 0
+            assert calculate_backoff(0, config) >= 0
 
 
 class TestIsRetryableException:
@@ -197,14 +180,8 @@ class TestIsRetryableException:
         class CustomError(Exception):
             pass
 
-        assert is_retryable_exception(
-            CustomError("Custom"),
-            retryable_exceptions=(CustomError,),
-        )
-        assert not is_retryable_exception(
-            ValueError("Value"),
-            retryable_exceptions=(CustomError,),
-        )
+        assert is_retryable_exception(CustomError("Custom"), retryable_exceptions=(CustomError,))
+        assert not is_retryable_exception(ValueError("Value"), retryable_exceptions=(CustomError,))
 
 
 class TestTransientExceptions:

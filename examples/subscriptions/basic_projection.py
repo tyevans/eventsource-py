@@ -59,8 +59,6 @@ class OrderState(BaseModel):
 
 
 class OrderAggregate(AggregateRoot[OrderState]):
-    """Event-sourced order aggregate."""
-
     aggregate_type = "Order"
 
     def _get_initial_state(self) -> OrderState:
@@ -82,48 +80,30 @@ class OrderAggregate(AggregateRoot[OrderState]):
     def place(self, customer_id: UUID, customer_name: str, total_amount: float) -> None:
         if self.version > 0:
             raise ValueError("Order already placed")
-        ver = self.get_next_version()
-        self.apply_event(
-            OrderPlaced(
-                aggregate_id=self.aggregate_id,
-                customer_id=customer_id,
-                customer_name=customer_name,
-                total_amount=total_amount,
-                aggregate_version=ver,
-            )
+        self.create_event(
+            OrderPlaced,
+            customer_id=customer_id,
+            customer_name=customer_name,
+            total_amount=total_amount,
         )
 
     def ship(self, tracking_number: str, carrier: str) -> None:
         if not self.state or self.state.status != "placed":
             raise ValueError("Order must be placed to ship")
-        ver, aid = self.get_next_version(), self.aggregate_id
-        self.apply_event(
-            OrderShipped(
-                aggregate_id=aid,
-                tracking_number=tracking_number,
-                carrier=carrier,
-                aggregate_version=ver,
-            )
-        )
+        self.create_event(OrderShipped, tracking_number=tracking_number, carrier=carrier)
 
     def deliver(self) -> None:
         if not self.state or self.state.status != "shipped":
             raise ValueError("Order must be shipped to deliver")
-        ver, aid = self.get_next_version(), self.aggregate_id
-        self.apply_event(
-            OrderDelivered(aggregate_id=aid, delivered_at=datetime.now(), aggregate_version=ver)
-        )
+        self.create_event(OrderDelivered, delivered_at=datetime.now())
 
     def cancel(self, reason: str) -> None:
         if not self.state or self.state.status in ("delivered", "cancelled"):
             raise ValueError("Cannot cancel this order")
-        ver, aid = self.get_next_version(), self.aggregate_id
-        self.apply_event(OrderCancelled(aggregate_id=aid, reason=reason, aggregate_version=ver))
+        self.create_event(OrderCancelled, reason=reason)
 
 
 class OrderSummaryProjection:
-    """Projection that maintains order counts by status."""
-
     def __init__(self):
         self.order_counts: dict[str, int] = defaultdict(int)
         self.total_revenue: float = 0.0
@@ -172,7 +152,6 @@ def _print_summary(projection: OrderSummaryProjection) -> None:
 
 
 async def main():
-    """Demonstrate basic SubscriptionManager usage."""
     print("=" * 60 + "\nBasic Subscription Manager Example\n" + "=" * 60)
     event_store, event_bus = InMemoryEventStore(), InMemoryEventBus()
     checkpoint_repo = InMemoryCheckpointRepository()
@@ -194,12 +173,9 @@ async def main():
     order.cancel("Customer request")
     await repo.save(order)
 
-    manager = SubscriptionManager(
-        event_store=event_store, event_bus=event_bus, checkpoint_repo=checkpoint_repo
-    )
-    await manager.subscribe(
-        projection, SubscriptionConfig(start_from="beginning", batch_size=100), "OrderSummary"
-    )
+    manager = SubscriptionManager(event_store, event_bus, checkpoint_repo)
+    cfg = SubscriptionConfig(start_from="beginning", batch_size=100)
+    await manager.subscribe(projection, cfg, "OrderSummary")
     await manager.start()
     await asyncio.sleep(0.5)
     print("\nAfter catch-up:")
