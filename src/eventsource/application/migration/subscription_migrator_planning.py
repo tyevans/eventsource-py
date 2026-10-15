@@ -1,6 +1,4 @@
-"""
-Subscription migration planning and dry-run preview operations.
-"""
+"""Subscription migration planning and dry-run preview operations."""
 
 from __future__ import annotations
 
@@ -36,29 +34,7 @@ class SubscriptionMigratorPlanningMixin:
         tenant_id: UUID,
         subscription_names: list[str],
     ) -> MigrationPlan:
-        """
-        Plan subscription migrations without executing them (dry-run).
-
-        Creates a preview of what migrations would be performed,
-        including position translations and any warnings.
-
-        Args:
-            migration_id: ID of the migration.
-            tenant_id: Tenant being migrated.
-            subscription_names: Names of subscriptions to migrate.
-
-        Returns:
-            MigrationPlan with details of planned migrations.
-
-        Example:
-            >>> plan = await migrator.plan_migration(
-            ...     migration_id=migration_id,
-            ...     tenant_id=tenant_id,
-            ...     subscription_names=["OrderProjection", "InventoryProjection"],
-            ... )
-            >>> for m in plan.planned_migrations:
-            ...     print(f"{m.subscription_name}: {m.current_position} -> {m.planned_target_position}")
-        """
+        """Plan subscription migrations without executing them (dry-run preview)."""
         with self._tracer.span(
             "eventsource.subscription_migrator.plan_migration",
             {
@@ -75,7 +51,6 @@ class SubscriptionMigratorPlanningMixin:
                     "subscription_count": len(subscription_names),
                 },
             )
-
             planned_migrations: list[PlannedMigration] = []
             skipped_subscriptions: list[str] = []
 
@@ -84,7 +59,6 @@ class SubscriptionMigratorPlanningMixin:
                     migration_id=migration_id,
                     subscription_name=name,
                 )
-
                 if planned is not None:
                     planned_migrations.append(planned)
                 else:
@@ -98,7 +72,6 @@ class SubscriptionMigratorPlanningMixin:
                 total_subscriptions=len(subscription_names),
                 migratable_count=len(planned_migrations),
             )
-
             logger.info(
                 "Migration plan created",
                 extra={
@@ -107,7 +80,6 @@ class SubscriptionMigratorPlanningMixin:
                     "skipped_count": len(skipped_subscriptions),
                 },
             )
-
             return plan
 
     async def _plan_single_migration(
@@ -115,45 +87,27 @@ class SubscriptionMigratorPlanningMixin:
         migration_id: UUID,
         subscription_name: str,
     ) -> PlannedMigration | None:
-        """
-        Plan migration for a single subscription.
-
-        Args:
-            migration_id: ID of the migration.
-            subscription_name: Name of the subscription.
-
-        Returns:
-            PlannedMigration or None if subscription should be skipped.
-        """
-        # The checkpoint repo returns a Position, and the mapper is token-keyed,
-        # so it flows straight through with no conversion.
+        """Plan migration for a single subscription, or return None if skipped."""
         current_position = await self._checkpoint_repo.get_position(subscription_name)
-
         if current_position is None:
             logger.debug(
                 "Subscription has no checkpoint, skipping",
-                extra={
-                    "subscription": subscription_name,
-                    "migration_id": str(migration_id),
-                },
+                extra={"subscription": subscription_name, "migration_id": str(migration_id)},
             )
             return None
 
-        # Try to translate position
         try:
             translation = await self._position_mapper.translate_position(
                 migration_id=migration_id,
                 source_position=current_position,
                 use_nearest=True,
             )
-
             warning = None
             if not translation.is_exact:
                 warning = (
                     f"Using nearest position mapping: source {current_position.to_str()} "
                     f"-> nearest {render_position(translation.nearest_source_position)}"
                 )
-
             return PlannedMigration(
                 subscription_name=subscription_name,
                 current_position=current_position,
@@ -162,7 +116,6 @@ class SubscriptionMigratorPlanningMixin:
                 nearest_source_position=translation.nearest_source_position,
                 warning=warning,
             )
-
         except PositionMappingError as e:
             logger.warning(
                 "Cannot translate position for subscription",
