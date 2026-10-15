@@ -20,11 +20,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 
-# ============================================================================
-# Test Events
-# ============================================================================
-
-
 class OrderCreated(DomainEvent):
     """Test event for order creation."""
 
@@ -54,11 +49,6 @@ class OrderCompleted(DomainEvent):
     aggregate_type: str = "Order"
 
 
-# ============================================================================
-# Test Read Model
-# ============================================================================
-
-
 class OrderSummary(ReadModel):
     """Test read model for integration tests."""
 
@@ -67,11 +57,6 @@ class OrderSummary(ReadModel):
     status: str
     total_amount: Decimal
     tracking_number: str | None = None
-
-
-# ============================================================================
-# Test Projections
-# ============================================================================
 
 
 class OrderProjection(ReadModelProjection[OrderSummary]):
@@ -145,11 +130,6 @@ class FailingProjection(ReadModelProjection[OrderSummary]):
         raise ValueError("Simulated handler failure")
 
 
-# ============================================================================
-# PostgreSQL Fixtures
-# ============================================================================
-
-
 @pytest_asyncio.fixture
 async def postgresql_projection(
     postgres_engine: AsyncEngine,
@@ -163,14 +143,12 @@ async def postgresql_projection(
         schema_sql = generate_schema(OrderSummary, dialect="postgresql", if_not_exists=False)
         await conn.execute(text(schema_sql))
 
-    projection = OrderProjection(
+    yield OrderProjection(
         session_factory=postgres_session_factory,
         model_class=OrderSummary,
         checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
         enable_tracing=False,
     )
-
-    yield projection
 
     async with postgres_engine.begin() as conn:
         await conn.execute(text(f"DROP TABLE IF EXISTS {OrderSummary.table_name()}"))
@@ -189,14 +167,12 @@ async def postgresql_mixed_projection(
         schema_sql = generate_schema(OrderSummary, dialect="postgresql", if_not_exists=False)
         await conn.execute(text(schema_sql))
 
-    projection = MixedHandlerProjection(
+    yield MixedHandlerProjection(
         session_factory=postgres_session_factory,
         model_class=OrderSummary,
         checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
         enable_tracing=False,
     )
-
-    yield projection
 
     async with postgres_engine.begin() as conn:
         await conn.execute(text(f"DROP TABLE IF EXISTS {OrderSummary.table_name()}"))
@@ -215,26 +191,16 @@ async def postgresql_failing_projection(
         schema_sql = generate_schema(OrderSummary, dialect="postgresql", if_not_exists=False)
         await conn.execute(text(schema_sql))
 
-    checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
-    dlq_repo = InMemoryDLQRepository()
-
-    projection = FailingProjection(
+    yield FailingProjection(
         session_factory=postgres_session_factory,
         model_class=OrderSummary,
-        checkpoint_repo=checkpoint_repo,
-        dlq_repo=dlq_repo,
+        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
+        dlq_repo=InMemoryDLQRepository(),
         enable_tracing=False,
     )
 
-    yield projection
-
     async with postgres_engine.begin() as conn:
         await conn.execute(text(f"DROP TABLE IF EXISTS {OrderSummary.table_name()}"))
-
-
-# ============================================================================
-# SQLite Fixtures
-# ============================================================================
 
 
 @pytest_asyncio.fixture
@@ -245,23 +211,16 @@ async def sqlite_projection(tmp_path: Any) -> AsyncIterator[OrderProjection]:
 
     db_path = tmp_path / "test_projection.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-
     async with aiosqlite.connect(db_path) as db:
-        schema_sql = generate_schema(OrderSummary, dialect="sqlite", if_not_exists=False)
-        await db.execute(schema_sql)
+        await db.execute(generate_schema(OrderSummary, dialect="sqlite", if_not_exists=False))
         await db.commit()
 
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    projection = OrderProjection(
-        session_factory=session_factory,
+    yield OrderProjection(
+        session_factory=async_sessionmaker(engine, expire_on_commit=False),
         model_class=OrderSummary,
         checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
         enable_tracing=False,
     )
-
-    yield projection
-
     await engine.dispose()
 
 
@@ -273,23 +232,16 @@ async def sqlite_mixed_projection(tmp_path: Any) -> AsyncIterator[MixedHandlerPr
 
     db_path = tmp_path / "test_mixed_projection.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-
     async with aiosqlite.connect(db_path) as db:
-        schema_sql = generate_schema(OrderSummary, dialect="sqlite", if_not_exists=False)
-        await db.execute(schema_sql)
+        await db.execute(generate_schema(OrderSummary, dialect="sqlite", if_not_exists=False))
         await db.commit()
 
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    projection = MixedHandlerProjection(
-        session_factory=session_factory,
+    yield MixedHandlerProjection(
+        session_factory=async_sessionmaker(engine, expire_on_commit=False),
         model_class=OrderSummary,
         checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
         enable_tracing=False,
     )
-
-    yield projection
-
     await engine.dispose()
 
 
@@ -301,24 +253,15 @@ async def sqlite_failing_projection(tmp_path: Any) -> AsyncIterator[FailingProje
 
     db_path = tmp_path / "test_failing_projection.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-
     async with aiosqlite.connect(db_path) as db:
-        schema_sql = generate_schema(OrderSummary, dialect="sqlite", if_not_exists=False)
-        await db.execute(schema_sql)
+        await db.execute(generate_schema(OrderSummary, dialect="sqlite", if_not_exists=False))
         await db.commit()
 
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
-    dlq_repo = InMemoryDLQRepository()
-
-    projection = FailingProjection(
-        session_factory=session_factory,
+    yield FailingProjection(
+        session_factory=async_sessionmaker(engine, expire_on_commit=False),
         model_class=OrderSummary,
-        checkpoint_repo=checkpoint_repo,
-        dlq_repo=dlq_repo,
+        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
+        dlq_repo=InMemoryDLQRepository(),
         enable_tracing=False,
     )
-
-    yield projection
-
     await engine.dispose()

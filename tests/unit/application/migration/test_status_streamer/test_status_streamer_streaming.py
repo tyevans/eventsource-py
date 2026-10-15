@@ -4,15 +4,41 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from eventsource.application.migration.status_streamer import StatusStreamer
-from eventsource.ports.migration.models import (
-    MigrationPhase,
-    MigrationStatus,
-)
+from eventsource.ports.migration.models import MigrationPhase, MigrationStatus
+
+
+def _make_status(
+    migration_id: UUID,
+    tenant_id: UUID,
+    phase: MigrationPhase = MigrationPhase.COMPLETED,
+    progress_percent: float = 100.0,
+    events_copied: int = 1000,
+    events_remaining: int = 0,
+    rate: float = 0.0,
+) -> MigrationStatus:
+    """Create a MigrationStatus instance for testing."""
+    return MigrationStatus(
+        migration_id=migration_id,
+        tenant_id=tenant_id,
+        phase=phase,
+        progress_percent=progress_percent,
+        events_total=1000,
+        events_copied=events_copied,
+        events_remaining=events_remaining,
+        sync_lag_events=0,
+        sync_lag_ms=0.0,
+        error_count=0,
+        started_at=datetime.now(UTC),
+        phase_started_at=datetime.now(UTC),
+        estimated_completion=None,
+        current_rate_events_per_sec=rate,
+        is_paused=False,
+    )
 
 
 class TestStatusStreamerStreamStatus:
@@ -24,7 +50,6 @@ class TestStatusStreamerStreamStatus:
     ) -> None:
         """Test stream_status yields initial status when include_initial=True."""
         mock_coordinator.get_status = AsyncMock(return_value=base_status)
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
             migration_id=base_status.migration_id,
@@ -44,37 +69,18 @@ class TestStatusStreamerStreamStatus:
         self, mock_coordinator: MagicMock, base_status: MigrationStatus
     ) -> None:
         """Test stream_status skips initial status when include_initial=False."""
-        # Return terminal status after first call to end the stream
-        terminal_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=MigrationPhase.COMPLETED,
-            progress_percent=100.0,
-            events_total=1000,
-            events_copied=1000,
-            events_remaining=0,
-            sync_lag_events=0,
-            sync_lag_ms=0.0,
-            error_count=0,
-            started_at=datetime.now(UTC),
-            phase_started_at=datetime.now(UTC),
-            estimated_completion=None,
-            current_rate_events_per_sec=0.0,
-            is_paused=False,
-        )
+        terminal_status = _make_status(base_status.migration_id, base_status.tenant_id)
         mock_coordinator.get_status = AsyncMock(return_value=terminal_status)
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
 
-        statuses = []
-        async for status in streamer.stream_status(update_interval=0.1, include_initial=False):
-            statuses.append(status)
+        statuses = [
+            s async for s in streamer.stream_status(update_interval=0.1, include_initial=False)
+        ]
 
-        # Should yield the terminal status (after waiting, not as initial)
         assert len(statuses) == 1
         assert statuses[0].phase == MigrationPhase.COMPLETED
 
@@ -83,36 +89,16 @@ class TestStatusStreamerStreamStatus:
         self, mock_coordinator: MagicMock, base_status: MigrationStatus
     ) -> None:
         """Test stream_status stops when migration reaches terminal phase."""
-        terminal_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=MigrationPhase.COMPLETED,
-            progress_percent=100.0,
-            events_total=1000,
-            events_copied=1000,
-            events_remaining=0,
-            sync_lag_events=0,
-            sync_lag_ms=0.0,
-            error_count=0,
-            started_at=datetime.now(UTC),
-            phase_started_at=datetime.now(UTC),
-            estimated_completion=None,
-            current_rate_events_per_sec=0.0,
-            is_paused=False,
-        )
+        terminal_status = _make_status(base_status.migration_id, base_status.tenant_id)
         mock_coordinator.get_status = AsyncMock(return_value=terminal_status)
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
 
-        statuses = []
-        async for status in streamer.stream_status(update_interval=0.1):
-            statuses.append(status)
+        statuses = [s async for s in streamer.stream_status(update_interval=0.1)]
 
-        # Should stop after terminal phase
         assert len(statuses) == 1
         assert statuses[0].phase == MigrationPhase.COMPLETED
 
@@ -141,7 +127,6 @@ class TestStatusStreamerStreamStatus:
             migration_id=uuid4(),
             enable_tracing=False,
         )
-
         await streamer.close()
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -155,27 +140,8 @@ class TestStatusStreamerStreamStatus:
         self, mock_coordinator: MagicMock, base_status: MigrationStatus
     ) -> None:
         """Test stream_status registers and unregisters with coordinator."""
-        # Return non-terminal status first, then terminal on second call
-        terminal_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=MigrationPhase.COMPLETED,
-            progress_percent=100.0,
-            events_total=1000,
-            events_copied=1000,
-            events_remaining=0,
-            sync_lag_events=0,
-            sync_lag_ms=0.0,
-            error_count=0,
-            started_at=datetime.now(UTC),
-            phase_started_at=datetime.now(UTC),
-            estimated_completion=None,
-            current_rate_events_per_sec=0.0,
-            is_paused=False,
-        )
-        # First call returns non-terminal (for initial), second returns terminal
+        terminal_status = _make_status(base_status.migration_id, base_status.tenant_id)
         mock_coordinator.get_status = AsyncMock(side_effect=[base_status, terminal_status])
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
             migration_id=base_status.migration_id,
@@ -185,7 +151,6 @@ class TestStatusStreamerStreamStatus:
         async for _ in streamer.stream_status(update_interval=0.1):
             pass
 
-        # Verify registration happened (only happens when initial is not terminal)
         mock_coordinator.register_status_queue.assert_called_once()
         mock_coordinator.unregister_status_queue.assert_called_once()
 
@@ -194,20 +159,14 @@ class TestStatusStreamerStreamStatus:
         self, mock_coordinator: MagicMock, base_status: MigrationStatus
     ) -> None:
         """Test stream_status stops when migration is not found."""
-        # First call returns status, second returns None (not found)
         mock_coordinator.get_status = AsyncMock(side_effect=[base_status, None])
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
 
-        statuses = []
-        async for status in streamer.stream_status(update_interval=0.05):
-            statuses.append(status)
-
-        # Should yield initial status and then stop
+        statuses = [s async for s in streamer.stream_status(update_interval=0.05)]
         assert len(statuses) == 1
 
 
@@ -221,15 +180,12 @@ class TestStatusStreamerMultipleSubscribers:
         mock_coordinator.register_status_queue = MagicMock()
         mock_coordinator.unregister_status_queue = MagicMock()
 
-        migration_id = uuid4()
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
-            migration_id=migration_id,
+            migration_id=uuid4(),
             enable_tracing=False,
         )
 
-        # Register multiple subscribers manually
         sub1 = await streamer._register_subscriber()
         sub2 = await streamer._register_subscriber()
         sub3 = await streamer._register_subscriber()
@@ -237,7 +193,6 @@ class TestStatusStreamerMultipleSubscribers:
         assert streamer.subscriber_count == 3
         assert sub1 != sub2 != sub3
 
-        # Unregister them
         await streamer._unregister_subscriber(sub1)
         await streamer._unregister_subscriber(sub2)
         await streamer._unregister_subscriber(sub3)
@@ -253,71 +208,33 @@ class TestStatusStreamerMultipleSubscribers:
 
         migration_id = uuid4()
         tenant_id = uuid4()
-
-        # Use a call counter to return active then terminal
         call_count = {"value": 0}
 
         async def get_status_impl(*args, **kwargs):
             call_count["value"] += 1
-            # Return active for first call of each stream, then terminal
             if call_count["value"] % 2 == 1:
-                return MigrationStatus(
-                    migration_id=migration_id,
-                    tenant_id=tenant_id,
+                return _make_status(
+                    migration_id,
+                    tenant_id,
                     phase=MigrationPhase.BULK_COPY,
                     progress_percent=50.0,
-                    events_total=1000,
                     events_copied=500,
                     events_remaining=500,
-                    sync_lag_events=0,
-                    sync_lag_ms=0.0,
-                    error_count=0,
-                    started_at=datetime.now(UTC),
-                    phase_started_at=datetime.now(UTC),
-                    estimated_completion=None,
-                    current_rate_events_per_sec=100.0,
-                    is_paused=False,
+                    rate=100.0,
                 )
-            else:
-                return MigrationStatus(
-                    migration_id=migration_id,
-                    tenant_id=tenant_id,
-                    phase=MigrationPhase.COMPLETED,
-                    progress_percent=100.0,
-                    events_total=1000,
-                    events_copied=1000,
-                    events_remaining=0,
-                    sync_lag_events=0,
-                    sync_lag_ms=0.0,
-                    error_count=0,
-                    started_at=datetime.now(UTC),
-                    phase_started_at=datetime.now(UTC),
-                    estimated_completion=None,
-                    current_rate_events_per_sec=0.0,
-                    is_paused=False,
-                )
+            return _make_status(migration_id, tenant_id)
 
         mock_coordinator.get_status = AsyncMock(side_effect=get_status_impl)
-
         streamer = StatusStreamer(
             coordinator=mock_coordinator,
             migration_id=migration_id,
             enable_tracing=False,
         )
 
-        # Run two streams sequentially to avoid race conditions
-        collected_1 = []
-        async for status in streamer.stream_status(update_interval=0.05):
-            collected_1.append(status)
+        collected_1 = [s async for s in streamer.stream_status(update_interval=0.05)]
+        collected_2 = [s async for s in streamer.stream_status(update_interval=0.05)]
 
-        collected_2 = []
-        async for status in streamer.stream_status(update_interval=0.05):
-            collected_2.append(status)
-
-        # Both should have collected statuses
         assert len(collected_1) >= 1
         assert len(collected_2) >= 1
-
-        # Both should have registered with the coordinator
         assert mock_coordinator.register_status_queue.call_count == 2
         assert mock_coordinator.unregister_status_queue.call_count == 2
