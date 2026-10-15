@@ -1,9 +1,4 @@
-"""
-MigrationAuditLogRepository - Data access for migration audit logs.
-
-Provides append-only operations for recording and querying migration lifecycle
-events, operator actions, errors, and cutover events.
-"""
+"""MigrationAuditLogRepository - Data access for migration audit logs."""
 
 from __future__ import annotations
 
@@ -24,12 +19,7 @@ from eventsource.ports.migration.models import AuditEventType, MigrationAuditEnt
 
 
 class PostgreSQLMigrationAuditLogRepository:
-    """
-    PostgreSQL implementation of MigrationAuditLogRepository.
-
-    Persists audit entries to the `migration_audit_log` table with append-only
-    writes, filtered queries, and OpenTelemetry tracing.
-    """
+    """PostgreSQL implementation of MigrationAuditLogRepository."""
 
     def __init__(
         self,
@@ -37,7 +27,6 @@ class PostgreSQLMigrationAuditLogRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """Initialize the repository with a database connection/engine and tracer."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._conn = conn
@@ -52,16 +41,13 @@ class PostgreSQLMigrationAuditLogRepository:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
-                INSERT INTO migration_audit_log (
-                    migration_id, event_type, old_phase, new_phase,
-                    details, operator, occurred_at
-                ) VALUES (
-                    :migration_id, :event_type, :old_phase, :new_phase,
-                    :details, :operator, :occurred_at
-                )
-                RETURNING id
-            """)
+            query = text(
+                "INSERT INTO migration_audit_log ("
+                "migration_id, event_type, old_phase, new_phase, details, operator, occurred_at"
+                ") VALUES ("
+                ":migration_id, :event_type, :old_phase, :new_phase, :details, :operator, :occurred_at"
+                ") RETURNING id"
+            )
             params = {
                 "migration_id": entry.migration_id,
                 "event_type": entry.event_type.value,
@@ -108,15 +94,12 @@ class PostgreSQLMigrationAuditLogRepository:
 
             where_clause = " AND ".join(conditions)
             limit_clause = f"LIMIT {limit}" if limit else ""
-            query = text(f"""
-                SELECT
-                    id, migration_id, event_type, old_phase, new_phase,
-                    details, operator, occurred_at
-                FROM migration_audit_log
-                WHERE {where_clause}
-                ORDER BY occurred_at ASC
-                {limit_clause}
-            """)  # nosec B608 - no user input in SQL construction
+            sql = (
+                "SELECT id, migration_id, event_type, old_phase, new_phase, "  # nosec B608
+                f"details, operator, occurred_at FROM migration_audit_log WHERE {where_clause} "
+                f"ORDER BY occurred_at ASC {limit_clause}"
+            )
+            query = text(sql)
 
             async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, params)
@@ -130,18 +113,13 @@ class PostgreSQLMigrationAuditLogRepository:
             "eventsource.audit_log_repo.get_by_id",
             {"audit.entry_id": entry_id, ATTR_DB_SYSTEM: "postgresql"},
         ):
-            query = text("""
-                SELECT
-                    id, migration_id, event_type, old_phase, new_phase,
-                    details, operator, occurred_at
-                FROM migration_audit_log
-                WHERE id = :id
-            """)
-
+            query = text(
+                "SELECT id, migration_id, event_type, old_phase, new_phase, "
+                "details, operator, occurred_at FROM migration_audit_log WHERE id = :id"
+            )
             async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": entry_id})
                 row = result.fetchone()
-
             return None if row is None else self._row_to_entry(row)
 
     async def get_latest(
@@ -155,30 +133,22 @@ class PostgreSQLMigrationAuditLogRepository:
             {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             if event_type:
-                query = text("""
-                    SELECT
-                        id, migration_id, event_type, old_phase, new_phase,
-                        details, operator, occurred_at
-                    FROM migration_audit_log
-                    WHERE migration_id = :migration_id
-                      AND event_type = :event_type
-                    ORDER BY occurred_at DESC
-                    LIMIT 1
-                """)
+                query = text(
+                    "SELECT id, migration_id, event_type, old_phase, new_phase, details, "
+                    "operator, occurred_at FROM migration_audit_log "
+                    "WHERE migration_id = :migration_id AND event_type = :event_type "
+                    "ORDER BY occurred_at DESC LIMIT 1"
+                )
                 params: dict[str, Any] = {
                     "migration_id": migration_id,
                     "event_type": event_type.value,
                 }
             else:
-                query = text("""
-                    SELECT
-                        id, migration_id, event_type, old_phase, new_phase,
-                        details, operator, occurred_at
-                    FROM migration_audit_log
-                    WHERE migration_id = :migration_id
-                    ORDER BY occurred_at DESC
-                    LIMIT 1
-                """)
+                query = text(
+                    "SELECT id, migration_id, event_type, old_phase, new_phase, details, "
+                    "operator, occurred_at FROM migration_audit_log "
+                    "WHERE migration_id = :migration_id ORDER BY occurred_at DESC LIMIT 1"
+                )
                 params = {"migration_id": migration_id}
 
             async with sql_connection(self._conn, write=False) as conn:
@@ -198,22 +168,18 @@ class PostgreSQLMigrationAuditLogRepository:
             {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             if event_type:
-                query = text("""
-                    SELECT COUNT(*)
-                    FROM migration_audit_log
-                    WHERE migration_id = :migration_id
-                      AND event_type = :event_type
-                """)
+                query = text(
+                    "SELECT COUNT(*) FROM migration_audit_log "
+                    "WHERE migration_id = :migration_id AND event_type = :event_type"
+                )
                 params: dict[str, Any] = {
                     "migration_id": migration_id,
                     "event_type": event_type.value,
                 }
             else:
-                query = text("""
-                    SELECT COUNT(*)
-                    FROM migration_audit_log
-                    WHERE migration_id = :migration_id
-                """)
+                query = text(
+                    "SELECT COUNT(*) FROM migration_audit_log WHERE migration_id = :migration_id"
+                )
                 params = {"migration_id": migration_id}
 
             async with sql_connection(self._conn, write=False) as conn:
@@ -223,7 +189,6 @@ class PostgreSQLMigrationAuditLogRepository:
             return 0 if row is None else int(row[0])
 
     def _row_to_entry(self, row: Sequence[Any]) -> MigrationAuditEntry:
-        """Convert database row to MigrationAuditEntry instance."""
         return row_to_audit_entry(row)
 
 

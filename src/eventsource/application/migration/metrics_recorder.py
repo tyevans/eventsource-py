@@ -20,13 +20,7 @@ from eventsource.application.migration.metrics_types import (
 
 @dataclass
 class MigrationMetrics:
-    """
-    Container for migration metrics instruments.
-
-    Provides methods to record events copied, sync lag, phase duration,
-    cutover timing, and error counts. All methods are safe to call
-    even when OpenTelemetry is not installed - they become no-ops.
-    """
+    """Container for migration metrics instruments (no-op safe when OpenTelemetry is absent)."""
 
     migration_id: str
     tenant_id: str
@@ -48,14 +42,12 @@ class MigrationMetrics:
     _cutover_durations: list[float] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Initialize metric instruments."""
         if self.enable_metrics and OTEL_METRICS_AVAILABLE:
             self._setup_metrics()
         else:
             self._setup_noop()
 
     def _setup_metrics(self) -> None:
-        """Set up OpenTelemetry metric instruments."""
         self._meter = _get_meter()
         if self._meter is None:
             self._setup_noop()
@@ -100,7 +92,6 @@ class MigrationMetrics:
         )
 
     def _setup_noop(self) -> None:
-        """Set up no-op instruments when OTel not available."""
         self._events_copied_counter = NoOpCounter()
         self._phase_duration_histogram = NoOpHistogram()
         self._cutover_duration_histogram = NoOpHistogram()
@@ -108,35 +99,23 @@ class MigrationMetrics:
         self._verification_failures_counter = NoOpCounter()
 
     def _base_attributes(self) -> dict[str, str]:
-        """Get base attributes for all metrics."""
         return {"migration_id": self.migration_id, "tenant_id": self.tenant_id}
 
     def _observe_events_copied_rate(self, options: Any) -> Any:
-        """Callback for observable events copied rate gauge."""
         if OTEL_METRICS_AVAILABLE:
             from opentelemetry.metrics import Observation
 
             yield Observation(
-                value=self._events_copied_rate_value,
-                attributes=self._base_attributes(),
+                value=self._events_copied_rate_value, attributes=self._base_attributes()
             )
 
     def _observe_sync_lag(self, options: Any) -> Any:
-        """Callback for observable sync lag gauge."""
         if OTEL_METRICS_AVAILABLE:
             from opentelemetry.metrics import Observation
 
-            yield Observation(
-                value=self._sync_lag_value,
-                attributes=self._base_attributes(),
-            )
+            yield Observation(value=self._sync_lag_value, attributes=self._base_attributes())
 
-    def record_events_copied(
-        self,
-        count: int,
-        rate_events_per_sec: float | None = None,
-    ) -> None:
-        """Record events copied during bulk copy phase."""
+    def record_events_copied(self, count: int, rate_events_per_sec: float | None = None) -> None:
         attrs = self._base_attributes()
         self._events_copied_counter.add(count, attrs)
         if rate_events_per_sec is not None:
@@ -144,25 +123,19 @@ class MigrationMetrics:
         self._events_copied_count += count
 
     def record_sync_lag(self, lag_events: int) -> None:
-        """Update the current sync lag value."""
         self._sync_lag_value = max(0, lag_events)
 
     def record_phase_duration(self, phase: str, duration_seconds: float) -> None:
-        """Record duration for a migration phase."""
         attrs = {**self._base_attributes(), "phase": phase}
         self._phase_duration_histogram.record(duration_seconds, attrs)
-        if phase not in self._phase_durations:
-            self._phase_durations[phase] = 0.0
-        self._phase_durations[phase] += duration_seconds
+        self._phase_durations[phase] = self._phase_durations.get(phase, 0.0) + duration_seconds
 
     def record_cutover_duration(self, duration_ms: float, success: bool = True) -> None:
-        """Record cutover operation duration."""
         attrs = {**self._base_attributes(), "success": str(success).lower()}
         self._cutover_duration_histogram.record(duration_ms, attrs)
         self._cutover_durations.append(duration_ms)
 
     def record_failed_target_write(self, error_type: str | None = None) -> None:
-        """Record a failed write to the target store during dual-write."""
         attrs = self._base_attributes()
         if error_type:
             attrs["error_type"] = error_type
@@ -170,7 +143,6 @@ class MigrationMetrics:
         self._failed_writes_count += 1
 
     def record_verification_failure(self, failure_type: str | None = None) -> None:
-        """Record a consistency verification failure."""
         attrs = self._base_attributes()
         if failure_type:
             attrs["failure_type"] = failure_type
@@ -179,7 +151,6 @@ class MigrationMetrics:
 
     @contextmanager
     def time_phase(self, phase: str) -> Generator[_PhaseTimer]:
-        """Context manager for timing a migration phase."""
         timer = _PhaseTimer()
         timer.start()
         try:
@@ -190,7 +161,6 @@ class MigrationMetrics:
 
     @contextmanager
     def time_cutover(self) -> Generator[_CutoverTimer]:
-        """Context manager for timing a cutover operation."""
         timer = _CutoverTimer()
         timer.start()
         try:
@@ -200,7 +170,6 @@ class MigrationMetrics:
             self.record_cutover_duration(timer.duration_ms, timer.success)
 
     def get_snapshot(self) -> MigrationMetricSnapshot:
-        """Get a snapshot of current metric values."""
         return MigrationMetricSnapshot(
             events_copied=self._events_copied_count,
             events_copied_rate=self._events_copied_rate_value,
@@ -213,17 +182,14 @@ class MigrationMetrics:
 
     @property
     def metrics_enabled(self) -> bool:
-        """Check if metrics are currently enabled."""
         return self.enable_metrics and OTEL_METRICS_AVAILABLE
 
     @property
     def current_sync_lag(self) -> int:
-        """Get current sync lag value."""
         return self._sync_lag_value
 
     @property
     def current_copy_rate(self) -> float:
-        """Get current events copied rate."""
         return self._events_copied_rate_value
 
 
