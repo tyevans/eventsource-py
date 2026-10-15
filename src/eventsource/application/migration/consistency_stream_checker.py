@@ -20,16 +20,7 @@ class ConsistencyStreamCheckerMixin:
     async def _collect_tenant_events(
         self, store: FullEventStore, tenant_id: UUID
     ) -> list[EventEnvelope]:
-        """
-        Collect all events for a tenant from a store.
-
-        Args:
-            store: The event store to read from.
-            tenant_id: The tenant UUID.
-
-        Returns:
-            List of EventEnvelope instances.
-        """
+        """Collect all events for a tenant from a store."""
         return [
             envelope
             async for envelope in store.read_all(None, FeedReadOptions(tenant_id=tenant_id))
@@ -38,18 +29,9 @@ class ConsistencyStreamCheckerMixin:
     def _group_events_by_stream(
         self, events: list[EventEnvelope]
     ) -> dict[str, list[EventEnvelope]]:
-        """
-        Group events by their stream ID.
-
-        Args:
-            events: List of events to group.
-
-        Returns:
-            Dictionary mapping stream_id to list of events.
-        """
+        """Group events by their rendered stream ID, sorted by stream version."""
         grouped: dict[str, list[EventEnvelope]] = {}
         for envelope in events:
-            # Same wire format the legacy `stream_id` string used.
             grouped.setdefault(envelope.stream_id.render(), []).append(envelope)
 
         for stream_events in grouped.values():
@@ -64,28 +46,14 @@ class ConsistencyStreamCheckerMixin:
         level: VerificationLevel,
         sample_percentage: float,
     ) -> tuple[StreamConsistency, list[ConsistencyViolation]]:
-        """
-        Verify a single stream's consistency.
-
-        Args:
-            stream_id: The stream identifier.
-            source_events: Events from source store.
-            target_events: Events from target store.
-            level: Verification level.
-            sample_percentage: Percentage to sample.
-
-        Returns:
-            Tuple of (StreamConsistency, list of violations).
-        """
+        """Verify a single stream's consistency and return (StreamConsistency, violations)."""
         violations: list[ConsistencyViolation] = []
         mismatched_positions: list[int] = []
 
-        # Parse stream_id to get aggregate info
         parts = stream_id.rsplit(":", 1)
         if len(parts) == 2:
             aggregate_id, aggregate_type = UUID(parts[0]), parts[1]
         else:
-            # Fallback for malformed stream_id
             aggregate_id = UUID("00000000-0000-0000-0000-000000000000")
             aggregate_type = stream_id
 
@@ -136,7 +104,6 @@ class ConsistencyStreamCheckerMixin:
                 )
             )
 
-        # Hash or full verification (if requested and counts match)
         hash_match: bool | None = None
         if (
             level in (VerificationLevel.HASH, VerificationLevel.FULL)
@@ -175,7 +142,7 @@ class ConsistencyStreamCheckerMixin:
                         )
 
             if hash_match is None and level == VerificationLevel.HASH:
-                hash_match = True  # All verified events matched
+                hash_match = True
 
         return (
             StreamConsistency(
@@ -199,20 +166,7 @@ class ConsistencyStreamCheckerMixin:
         target_events: list[EventEnvelope],
         sample_percentage: float,
     ) -> list[tuple[EventEnvelope, EventEnvelope]]:
-        """
-        Sample events for verification.
-
-        When sample_percentage < 100, randomly selects a subset of events
-        to verify while ensuring statistical coverage.
-
-        Args:
-            source_events: Events from source store.
-            target_events: Events from target store.
-            sample_percentage: Percentage to sample.
-
-        Returns:
-            List of (source_event, target_event) tuples to verify.
-        """
+        """Sample event pairs for verification according to sample_percentage."""
         if len(source_events) != len(target_events):
             return []
 
@@ -224,22 +178,10 @@ class ConsistencyStreamCheckerMixin:
         if sample_size >= len(pairs):
             return pairs
 
-        # Use reservoir sampling for large datasets
         return random.sample(pairs, sample_size)  # nosec B311 - statistical sampling, not security
 
     def _compute_event_hash(self, event: EventEnvelope) -> str:
-        """
-        Compute SHA-256 hash of event content.
-
-        Hashes the core event data: event_id, event_type, aggregate_id,
-        aggregate_type, and the event's data payload.
-
-        Args:
-            event: The envelope to hash.
-
-        Returns:
-            Hex-encoded SHA-256 hash string.
-        """
+        """Compute SHA-256 hex digest of core event envelope fields and payload."""
         hasher = hashlib.sha256()
         hasher.update(str(event.event.event_id).encode())
         hasher.update(event.event.event_type.encode())
@@ -260,18 +202,7 @@ class ConsistencyStreamCheckerMixin:
     def _compare_events_full(
         self, source_event: EventEnvelope, target_event: EventEnvelope
     ) -> str | None:
-        """
-        Fully compare two events for equality.
-
-        Compares all significant fields between source and target events.
-
-        Args:
-            source_event: Event from source store.
-            target_event: Event from target store.
-
-        Returns:
-            Description of mismatch if found, None if events match.
-        """
+        """Compare all significant fields between source and target events."""
         checks = [
             ("event_id", source_event.event.event_id, target_event.event.event_id),
             ("event_type", source_event.event.event_type, target_event.event.event_type),
