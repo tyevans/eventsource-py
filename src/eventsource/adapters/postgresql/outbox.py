@@ -1,14 +1,9 @@
 """
 PostgreSQL outbox repository for transactional event publishing.
 
-The outbox pattern ensures events are reliably published even if the event bus
-is temporarily unavailable. Events are persisted transactionally with the
-aggregate changes, then published asynchronously by a background worker.
-
 This adapter reads and writes `event_outbox` rows using the schema in
-`src/eventsource/migrations/templates/outbox.sql`. The same table is written
-in-transaction by `adapters/postgresql/store.py::_write_to_outbox`; that
-pairing is the table contract this adapter and the store share.
+`src/eventsource/migrations/templates/outbox.sql`, sharing the table contract
+with `adapters/postgresql/store.py::_write_to_outbox`.
 """
 
 from datetime import UTC, datetime
@@ -36,18 +31,8 @@ class PostgreSQLOutboxRepository:
     """
     PostgreSQL implementation of outbox repository.
 
-    Stores outbox events in the `event_outbox` table.
-
-    Example:
-        >>> async with engine.begin() as conn:
-        ...     repo = PostgreSQLOutboxRepository(conn)
-        ...     outbox_id = await repo.add_event(event)
-        ...
-        >>> # Later, in the publisher worker:
-        >>> pending = await repo.get_pending_events(limit=100)
-        >>> for entry in pending:
-        ...     # Publish to event bus
-        ...     await repo.mark_published(entry.id)
+    Stores outbox events in the `event_outbox` table for transactional
+    publishing and asynchronous background worker delivery.
     """
 
     def __init__(
@@ -56,28 +41,13 @@ class PostgreSQLOutboxRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """
-        Initialize the outbox repository.
-
-        Args:
-            conn: Database connection or engine
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize the outbox repository with a connection/engine and tracer."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self.conn = conn
 
     async def add_event(self, event: DomainEvent) -> UUID:
-        """
-        Add an event to the outbox for publishing.
-
-        Args:
-            event: Domain event to publish
-
-        Returns:
-            Outbox record ID
-        """
+        """Add an event to the outbox for publishing and return its outbox record ID."""
         with self._tracer.span(
             "eventsource.outbox.add",
             {
@@ -90,7 +60,6 @@ class PostgreSQLOutboxRepository:
         ):
             outbox_id = uuid4()
             now = datetime.now(UTC)
-
             event_data = outbox_event_data(event)
 
             query = text("""
@@ -100,7 +69,6 @@ class PostgreSQLOutboxRepository:
                 VALUES (:id, :event_id, :event_type, :aggregate_id, :aggregate_type,
                         :tenant_id, :event_data, :created_at, 'pending')
             """)
-
             params = {
                 "id": outbox_id,
                 "event_id": event.event_id,
@@ -118,21 +86,10 @@ class PostgreSQLOutboxRepository:
             return outbox_id
 
     async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
-        """
-        Get pending events that need to be published.
-
-        Args:
-            limit: Maximum number of events to return
-
-        Returns:
-            List of OutboxEntry instances
-        """
+        """Get pending events that need to be published, ordered by created_at ASC."""
         with self._tracer.span(
             "eventsource.outbox.get_pending",
-            {
-                "limit": limit,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"limit": limit, ATTR_DB_SYSTEM: "postgresql"},
         ) as span:
             query = text("""
                 SELECT id, event_id, event_type, aggregate_id, aggregate_type,
@@ -167,18 +124,10 @@ class PostgreSQLOutboxRepository:
             return entries
 
     async def mark_published(self, outbox_id: UUID) -> None:
-        """
-        Mark an outbox event as successfully published.
-
-        Args:
-            outbox_id: Outbox record ID
-        """
+        """Mark an outbox event as successfully published."""
         with self._tracer.span(
             "eventsource.outbox.mark_published",
-            {
-                "outbox.id": str(outbox_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             now = datetime.now(UTC)
             query = text("""
@@ -192,13 +141,7 @@ class PostgreSQLOutboxRepository:
                 await conn.execute(query, {"id": outbox_id, "published_at": now})
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
-        """
-        Increment retry count for a failed publishing attempt.
-
-        Args:
-            outbox_id: Outbox record ID
-            error: Error message (optional)
-        """
+        """Increment retry count for a failed publishing attempt."""
         with self._tracer.span(
             "eventsource.outbox.increment_retry",
             {
@@ -218,13 +161,7 @@ class PostgreSQLOutboxRepository:
                 await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
-        """
-        Mark an outbox event as permanently failed.
-
-        Args:
-            outbox_id: Outbox record ID
-            error: Error message
-        """
+        """Mark an outbox event as permanently failed."""
         with self._tracer.span(
             "eventsource.outbox.mark_failed",
             {
@@ -244,21 +181,10 @@ class PostgreSQLOutboxRepository:
                 await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def cleanup_published(self, days: int = 7) -> int:
-        """
-        Clean up published events older than specified days.
-
-        Args:
-            days: Number of days to retain published events
-
-        Returns:
-            Number of records deleted
-        """
+        """Clean up published events older than specified days and return deleted count."""
         with self._tracer.span(
             "eventsource.outbox.cleanup",
-            {
-                "older_than_days": days,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"older_than_days": days, ATTR_DB_SYSTEM: "postgresql"},
         ) as span:
             query = text("""
                 DELETE FROM event_outbox
@@ -276,12 +202,7 @@ class PostgreSQLOutboxRepository:
             return deleted
 
     async def get_stats(self) -> OutboxStats:
-        """
-        Get outbox statistics.
-
-        Returns:
-            OutboxStats with outbox metrics
-        """
+        """Get outbox statistics."""
         with self._tracer.span(
             "eventsource.outbox.get_stats",
             {ATTR_DB_SYSTEM: "postgresql"},
@@ -300,7 +221,6 @@ class PostgreSQLOutboxRepository:
                 result = await conn.execute(query)
                 row = result.fetchone()
 
-            # Aggregate query always returns a row
             if row is None:
                 return OutboxStats(
                     pending_count=0,

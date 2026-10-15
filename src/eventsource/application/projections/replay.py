@@ -8,46 +8,26 @@ which is the other job.
 ## A poison event must not wedge the rebuild
 
 `CheckpointTrackingProjection.handle` retries, writes to the DLQ, and then
-re-raises -- the re-raise is what tells a *live subscription* to stop and not
-checkpoint past a failure. A rebuild wants the opposite: the failure is
-already recorded, and stopping means one bad event denies the projection
-every event after it. So `replay` catches, records, and continues.
-`ReplayReport.failed` is how the caller finds out, and it is a count rather
-than a bool so "some events failed" cannot be mistaken for "none did" by a
-truthiness check.
-
-**A count on its own is safe and useless in the same breath.** An operator
-told "3 events failed to replay" has no path from that message to the poison
-event if the exception was discarded inside the `except`.
-`ReplayReport.failures` carries it -- position, event id, event type, the
-rejecting projection, and the exception itself. A caller can always turn
-detail into a raise; no caller can turn a count back into detail, which is
-why the detail is the part that has to live here.
-
-`strict=True` is that raise, offered because it is the common case rather
-than because it is hard: it stops at the first rejection and raises
+re-raises so a *live subscription* stops rather than checkpointing past a
+failure. A rebuild wants the opposite: stopping means one bad event denies the
+projection every event after it. So `replay` catches, records, and continues.
+`ReplayReport.failed` is a count rather than a bool, and `ReplayReport.failures`
+carries the position, event id, event type, rejecting projection name, and
+exception itself. `strict=True` stops at the first rejection and raises
 `ReplayFailedError` carrying the same `ReplayFailure`.
 
 ## Why the failure list is bounded
 
-Each `ReplayFailure` holds a live exception, so its `__traceback__` -- and
-through it every frame's locals -- stays reachable for as long as the report
-does. An unbounded list over a rebuild that fails a million times is a memory
-hazard, not a diagnostic. `max_failures` caps what the report retains, and
-`ReplayReport.failures_truncated` counts what the cap dropped, because a
-silent truncation would reproduce the exact defect `failures` exists to fix:
-an operator told "N failed" who cannot reach the Nth. `on_failure=` fires for
-*every* failure regardless of the cap, so a caller who wants all of them can
-stream them somewhere that is not memory.
+Each `ReplayFailure` holds a live exception and its `__traceback__`.
+`max_failures` caps what the report retains, `ReplayReport.failures_truncated`
+counts what the cap dropped, and `on_failure=` fires for *every* failure
+regardless of the cap so callers can stream them outside memory.
 
 ## Scoping the read
 
-`replay` reads the whole feed by default. `tenant_id=` and `aggregate_type=`
-forward a `FeedReadOptions` to the adapter, which pushes the filter into the
-query -- so a shared store rebuilds one tenant, or one category, with an
-indexed read rather than scanning everything else and discarding it in
-Python. This is narrower than `TenantFilter` on the projection, which is
-applied *after* delivery and therefore costs the read either way.
+`tenant_id=` and `aggregate_type=` forward `FeedReadOptions` to the adapter,
+pushing the filter into the store query rather than filtering in Python after
+delivery.
 """
 
 from __future__ import annotations
@@ -76,31 +56,16 @@ __all__ = [
     "replay",
 ]
 
-#: Envelopes one feed read will pull into memory at a time.
-#:
-#: A rebuild wants the whole log, but not resident at once: the in-tree
-#: adapters materialize a feed read fully before yielding the first envelope,
-#: so the bound has to be on the *read*, not on how the events are consumed.
-#: This is the peak allocation of a replay, so it trades memory against the
-#: number of round trips rather than against correctness -- every batch is
-#: folded before the next is read, and `from_position` is exclusive, so no
-#: event is seen twice and none is skipped.
+#: Envelopes one feed read will pull into memory at a time. Bounded on the
+#: read because in-tree adapters materialize a batch before yielding.
 REPLAY_BATCH_SIZE = 1000
 
-#: Events one `replay` call will read before giving up.
-#:
-#: The feed is adapter-supplied and the loop's exit depends on it: a cursor
-#: that failed to advance would turn this into a hang, and a hang in CI reads
-#: as infrastructure trouble and gets retried rather than investigated. Ten
-#: million is far above any real rebuild and far below forever.
+#: Events one `replay` call will read before raising RuntimeError to guard
+#: against a non-advancing adapter cursor.
 MAX_EVENTS_PER_REPLAY = 10_000_000
 
-#: Failures one `ReplayReport` will retain before counting the rest.
-#:
-#: A retained failure pins an exception and its traceback, so this is a memory
-#: bound as much as a readability one. A thousand named failures is already
-#: more than anyone reads; past that the useful signal is the count, and
-#: `on_failure=` is the way to keep the rest.
+#: Failures one `ReplayReport` retains before counting the rest in
+#: `failures_truncated`.
 MAX_FAILURES_PER_REPLAY = 1000
 
 
@@ -108,20 +73,12 @@ MAX_FAILURES_PER_REPLAY = 1000
 class ReplayFailure:
     """One projection's refusal of one event.
 
-    `projection` is the rejecting projection's class name rather than the
-    object: a report is something an operator reads or logs, and holding the
-    live projection would make it a handle into the read model.
+    `projection` is the rejecting projection's class name rather than the live
+    object so the report does not hold a handle into the read model.
     """
 
-    #: `Position | None` because that is what an envelope promises. In every
-    #: adapter here it is set, and a failure without one is barely actionable
-    #: -- but narrowing it with an assert would turn an adapter's quirk into a
-    #: crash on the path whose whole job is not to crash.
     position: Position | None
     event_id: UUID
-    #: The event's own `event_type`, not `type(event).__name__` -- the same
-    #: string except where a wire name is deliberately pinned, and the report
-    #: has to name the one that was stored.
     event_type: str
     projection: str
     error: Exception
@@ -131,60 +88,26 @@ class ReplayFailure:
 class ReplayReport:
     """What one `replay` call did.
 
-    `failed` is *derived* from `failures` rather than counted alongside it.
-    Two projections can reject the same event, and the two numbers then
-    differ -- `failed` answers "how much of the log did not make it into the
-    read models", which is per event, while `failures` has one entry per
-    refusal because that is what names the projection to fix. Counting both
-    independently is how they drift apart; deriving one means they cannot.
-
-    The per-event derivation keys on `event_id`, the one identifier every
-    failure carries. `position` would be the intuitive key and is the wrong
-    one: it is optional by contract, so a feedless store would collapse an
-    entire failed rebuild into a count of one.
-
-    The derivation is only exact while nothing was dropped, so `failed` is a
-    lower bound whenever `failures_truncated` is non-zero. That is the honest
-    reading of a capped list, and the reason the cap is reported rather than
-    applied quietly.
+    `failed` is derived from `failures` by distinct `event_id` (since
+    `position` is optional on feedless stores and two projections can reject
+    the same event). It is a lower bound whenever `failures_truncated > 0`.
     """
 
     applied: int
     last_position: Position | None
     failures: tuple[ReplayFailure, ...] = field(default_factory=tuple)
-    #: Failures that occurred but are not in `failures`, because the
-    #: `max_failures` cap was reached. Non-zero means the report is a sample:
-    #: pass `on_failure=` to capture all of them.
     failures_truncated: int = 0
 
     @property
     def failed(self) -> int:
-        """Events at least one *retained* failure names.
-
-        Distinct by `event_id`, not by `position`: `position` is
-        `Position | None`, and a feedless store sets it on nothing, so
-        deduping on it would fold every failure of such a rebuild into one
-        and report `1` for any number of failed events. `event_id` is always
-        present and identifies the event at least as precisely.
-
-        A lower bound when `failures_truncated` is non-zero.
-        """
+        """Events at least one retained failure names (distinct by `event_id`)."""
         return len({failure.event_id for failure in self.failures})
 
 
 class ReplayFailedError(ProjectionError):
     """A `strict=True` replay hit an event a projection rejected.
 
-    Rooted in `ProjectionError` -- the domain-ring "a projection failed to
-    process an event" error -- rather than in a hierarchy of its own: that is
-    exactly what happened, and `except ProjectionError` should catch a strict
-    rebuild's stop for the same reason it catches a live projection's. The
-    infrastructure taxonomy in `ports/exceptions.py` is the wrong home:
-    nothing about a store, bus, or lock failed here.
-
-    Carries the `ReplayFailure` rather than a message about one: the whole
-    point of strict mode is that the caller can act on the specific event,
-    and re-deriving it by parsing `str(exc)` is not acting on it.
+    Rooted in `ProjectionError` and carries the `ReplayFailure` on `.failure`.
     """
 
     def __init__(self, *, failure: ReplayFailure) -> None:
@@ -211,51 +134,18 @@ async def replay(
 ) -> ReplayReport:
     """Read the feed from `from_position` and fold it into every projection.
 
-    `from_position` is exclusive, matching `read_all`: `None` means from the
-    very beginning, which is what a rebuild wants.
-
-    `tenant_id` and `aggregate_type` narrow the *read*, not the delivery:
-    they are pushed down into the adapter's query, so rebuilding one tenant
-    -- or one aggregate type -- out of a shared store does not pay for
-    everything else. Leaving both `None` reads the whole feed and sends no
-    `FeedReadOptions` at all, which is what `read_all` documents as
-    unfiltered.
-
-    `strict=True` raises `ReplayFailedError` on the first rejection instead
-    of carrying on. The default is the rebuild's behaviour -- one bad event
-    must not deny the projection every event after it -- and strict is for a
-    test or a first deployment, where a silent partial rebuild is most costly
-    and least visible.
-
-    `max_failures` caps how many `ReplayFailure` records the report retains;
-    the rest are counted in `ReplayReport.failures_truncated`. The cap exists
-    because a retained failure pins a live exception and its traceback, and
-    it is *reported* because truncating silently would recreate the defect
-    `failures` exists to fix -- an operator told "N failed" with no way to
-    reach the Nth. `on_failure` is called for every failure whether or not it
-    was retained, so a caller who needs all of them can write them out as
-    they happen; it is called before a `strict=True` raise, and an exception
-    raised by the hook itself is left to propagate.
-
-    An event that every projection ignores still counts as applied -- it was
-    delivered and nothing rejected it. An event that any projection rejects
-    counts as failed once, however many projections rejected it, because the
-    count answers "how much of the log did not make it into the read models";
-    `failures` carries one entry per rejection, so the projection to fix is
-    named.
+    - `from_position` is exclusive (`None` reads from the beginning).
+    - `tenant_id` and `aggregate_type` push filter options down to the store.
+    - `strict=True` raises `ReplayFailedError` on the first rejection.
+    - `max_failures` caps retained `ReplayFailure` items (`failures_truncated`
+      counts dropped ones); `on_failure` is invoked for every failure before
+      any strict raise.
     """
     applied = seen = truncated = 0
     failures: list[ReplayFailure] = []
     last_position: Position | None = None
     cursor = from_position
 
-    # Read in bounded batches rather than one open-ended pass. A rebuild does
-    # want every event, but not all of them resident at once: the in-tree
-    # adapters materialize a feed read fully before yielding the first
-    # envelope, so an unbounded read is an unbounded allocation regardless of
-    # how the events are consumed. `max_events` cannot protect against that --
-    # it is downstream of the materialization and only fires once envelopes
-    # are already in hand.
     while True:
         options = FeedReadOptions(
             tenant_id=tenant_id,
@@ -282,11 +172,6 @@ async def replay(
                 try:
                     await projection.handle(envelope.event)
                 except Exception as exc:
-                    # Re-raising here is what would wedge the rebuild, so the
-                    # exception is deliberately not narrowed: a projection may
-                    # raise anything, and "this event did not apply" is the only
-                    # distinction a rebuild can act on. It is *recorded* rather
-                    # than swallowed -- see `ReplayFailure`.
                     failure = ReplayFailure(
                         position=envelope.position,
                         event_id=envelope.event.event_id,
@@ -306,10 +191,6 @@ async def replay(
             if not rejected:
                 applied += 1
 
-        # A short batch means the feed is exhausted. A full batch that
-        # advanced no position would loop forever, so it is treated as
-        # exhausted too -- the same non-advancing-cursor condition
-        # `max_events` guards, caught one batch earlier.
         if batch_count < batch_size or (batch_count > 0 and cursor is None):
             break
 

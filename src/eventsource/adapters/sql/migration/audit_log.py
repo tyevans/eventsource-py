@@ -1,14 +1,8 @@
 """
 MigrationAuditLogRepository - Data access for migration audit logs.
 
-The MigrationAuditLogRepository provides append-only operations for
-recording migration lifecycle events for compliance and debugging purposes.
-
-Responsibilities:
-    - Record migration lifecycle events (start, phase changes, completion)
-    - Record operator actions (pause, resume, abort)
-    - Record errors and cutover events
-    - Query audit history by migration ID with event type and time range filters
+Provides append-only operations for recording and querying migration lifecycle
+events, operator actions, errors, and cutover events.
 """
 
 from __future__ import annotations
@@ -26,19 +20,15 @@ from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.migration.audit_log_helpers import row_to_audit_entry
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
-from eventsource.ports.migration.models import (
-    AuditEventType,
-    MigrationAuditEntry,
-)
+from eventsource.ports.migration.models import AuditEventType, MigrationAuditEntry
 
 
 class PostgreSQLMigrationAuditLogRepository:
     """
     PostgreSQL implementation of MigrationAuditLogRepository.
 
-    Persists audit entries to the `migration_audit_log` table.
-    Provides append-only write operations and flexible query
-    capabilities with full observability through OpenTelemetry tracing.
+    Persists audit entries to the `migration_audit_log` table with append-only
+    writes, filtered queries, and OpenTelemetry tracing.
     """
 
     def __init__(
@@ -47,31 +37,13 @@ class PostgreSQLMigrationAuditLogRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """
-        Initialize the repository.
-
-        Args:
-            conn: Database connection or engine
-            tracer: Optional custom Tracer instance.
-            enable_tracing: Whether to enable OpenTelemetry tracing
-        """
+        """Initialize the repository with a database connection/engine and tracer."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._conn = conn
 
     async def record(self, entry: MigrationAuditEntry) -> int:
-        """
-        Record an audit log entry.
-
-        Creates a new immutable audit entry in the database. The entry's
-        id field is ignored and a new ID is generated.
-
-        Args:
-            entry: The audit entry to record
-
-        Returns:
-            The generated ID for the audit entry
-        """
+        """Record an immutable audit log entry and return its generated ID."""
         with self._tracer.span(
             "eventsource.audit_log_repo.record",
             {
@@ -90,7 +62,6 @@ class PostgreSQLMigrationAuditLogRepository:
                 )
                 RETURNING id
             """)
-
             params = {
                 "migration_id": entry.migration_id,
                 "event_type": entry.event_type.value,
@@ -117,28 +88,10 @@ class PostgreSQLMigrationAuditLogRepository:
         until: datetime | None = None,
         limit: int | None = None,
     ) -> list[MigrationAuditEntry]:
-        """
-        Get audit entries for a migration.
-
-        Queries the audit log with optional filters for event types and
-        time ranges. Results are ordered by occurred_at ascending.
-
-        Args:
-            migration_id: The migration ID to query
-            event_types: Optional filter by event types
-            since: Optional filter for entries after this time
-            until: Optional filter for entries before this time
-            limit: Optional maximum number of entries to return
-
-        Returns:
-            List of audit entries, ordered by occurred_at ascending
-        """
+        """Get audit entries for a migration ordered by occurred_at ascending."""
         with self._tracer.span(
             "eventsource.audit_log_repo.get_by_migration",
-            {
-                "migration.id": str(migration_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             conditions = ["migration_id = :migration_id"]
             params: dict[str, Any] = {"migration_id": migration_id}
@@ -146,18 +99,15 @@ class PostgreSQLMigrationAuditLogRepository:
             if event_types:
                 conditions.append("event_type = ANY(:event_types)")
                 params["event_types"] = [et.value for et in event_types]
-
             if since:
                 conditions.append("occurred_at >= :since")
                 params["since"] = since
-
             if until:
                 conditions.append("occurred_at <= :until")
                 params["until"] = until
 
             where_clause = " AND ".join(conditions)
             limit_clause = f"LIMIT {limit}" if limit else ""
-
             query = text(f"""
                 SELECT
                     id, migration_id, event_type, old_phase, new_phase,
@@ -175,21 +125,10 @@ class PostgreSQLMigrationAuditLogRepository:
             return [self._row_to_entry(row) for row in rows]
 
     async def get_by_id(self, entry_id: int) -> MigrationAuditEntry | None:
-        """
-        Get an audit entry by ID.
-
-        Args:
-            entry_id: The audit entry ID
-
-        Returns:
-            The audit entry or None if not found
-        """
+        """Get an audit entry by ID, or None if not found."""
         with self._tracer.span(
             "eventsource.audit_log_repo.get_by_id",
-            {
-                "audit.entry_id": entry_id,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"audit.entry_id": entry_id, ATTR_DB_SYSTEM: "postgresql"},
         ):
             query = text("""
                 SELECT
@@ -203,32 +142,17 @@ class PostgreSQLMigrationAuditLogRepository:
                 result = await conn.execute(query, {"id": entry_id})
                 row = result.fetchone()
 
-            if row is None:
-                return None
-
-            return self._row_to_entry(row)
+            return None if row is None else self._row_to_entry(row)
 
     async def get_latest(
         self,
         migration_id: UUID,
         event_type: AuditEventType | None = None,
     ) -> MigrationAuditEntry | None:
-        """
-        Get the most recent audit entry for a migration.
-
-        Args:
-            migration_id: The migration ID to query
-            event_type: Optional filter by event type
-
-        Returns:
-            The most recent audit entry or None if none exist
-        """
+        """Get the most recent audit entry for a migration, or None if none exist."""
         with self._tracer.span(
             "eventsource.audit_log_repo.get_latest",
-            {
-                "migration.id": str(migration_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             if event_type:
                 query = text("""
@@ -261,32 +185,17 @@ class PostgreSQLMigrationAuditLogRepository:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
-            if row is None:
-                return None
-
-            return self._row_to_entry(row)
+            return None if row is None else self._row_to_entry(row)
 
     async def count_by_migration(
         self,
         migration_id: UUID,
         event_type: AuditEventType | None = None,
     ) -> int:
-        """
-        Count audit entries for a migration.
-
-        Args:
-            migration_id: The migration ID to query
-            event_type: Optional filter by event type
-
-        Returns:
-            Number of matching audit entries
-        """
+        """Count audit entries for a migration, optionally filtered by event type."""
         with self._tracer.span(
             "eventsource.audit_log_repo.count_by_migration",
-            {
-                "migration.id": str(migration_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             if event_type:
                 query = text("""
@@ -311,9 +220,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
-            if row is None:
-                return 0
-            return int(row[0])
+            return 0 if row is None else int(row[0])
 
     def _row_to_entry(self, row: Sequence[Any]) -> MigrationAuditEntry:
         """Convert database row to MigrationAuditEntry instance."""

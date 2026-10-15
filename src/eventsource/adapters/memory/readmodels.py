@@ -36,35 +36,10 @@ class InMemoryReadModelRepository[TModel: ReadModel](
     """
     In-memory implementation of ReadModelRepository for testing.
 
-    Stores read models in a Python dictionary, keyed by UUID. All
-    operations are O(1) for ID-based access and O(n) for queries.
-
-    This implementation is thread-safe via asyncio.Lock, making it
-    suitable for testing async projections.
-
-    Stored models are private to the repository. Reads hand back a copy and
-    writes take a copy, so a caller can never hold a reference into the
-    store -- matching the SQL adapters, which hydrate a fresh instance from
-    a row on every read and mutate only the row on every write. Without
-    that, a model a caller saved or fetched could be mutated underneath it
-    by a later unrelated write, on the memory backend only.
-
-    Attributes:
-        model_class: The ReadModel subclass this repository manages
-
-    Example:
-        >>> class OrderSummary(ReadModel):
-        ...     order_number: str
-        ...     status: str
-        ...
-        >>> repo = InMemoryReadModelRepository(OrderSummary)
-        >>> await repo.save(OrderSummary(id=uuid4(), order_number="ORD-001", status="pending"))
-        >>> summary = await repo.get(some_uuid)
-
-    Note:
-        - All data is lost when the repository instance is garbage collected
-        - Use `truncate()` method for test teardown
-        - Query performance is O(n) - acceptable for testing but not production
+    Stores read models in a Python dictionary keyed by UUID, protected by
+    `asyncio.Lock`. Stored models are private to the repository: reads return
+    a deep copy and writes store a deep copy, matching the SQL adapters so
+    callers never hold a mutable reference into the store.
     """
 
     def __init__(
@@ -73,14 +48,7 @@ class InMemoryReadModelRepository[TModel: ReadModel](
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the in-memory repository.
-
-        Args:
-            model_class: The ReadModel subclass this repository will manage
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize the in-memory repository for `model_class`."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._model_class = model_class
@@ -89,24 +57,11 @@ class InMemoryReadModelRepository[TModel: ReadModel](
 
     @staticmethod
     def _detach(model: TModel) -> TModel:
-        """Return an independent copy, so no reference crosses the boundary.
-
-        Used on both sides: on read so the caller cannot reach the stored
-        object, and on write so a later store-side mutation (`soft_delete`,
-        `restore`, a version bump) cannot reach the caller's object.
-        """
+        """Return an independent deep copy so no reference crosses the boundary."""
         return model.model_copy(deep=True)
 
     async def get(self, id: UUID) -> TModel | None:
-        """
-        Get a read model by ID.
-
-        Args:
-            id: Unique identifier of the read model
-
-        Returns:
-            The read model if found and not soft-deleted, None otherwise
-        """
+        """Get a read model by ID if found and not soft-deleted, else None."""
         with self._tracer.span(
             "eventsource.readmodel.get",
             {
@@ -121,15 +76,7 @@ class InMemoryReadModelRepository[TModel: ReadModel](
                 return self._detach(model)
 
     async def get_many(self, ids: list[UUID]) -> list[TModel]:
-        """
-        Get multiple read models by their IDs.
-
-        Args:
-            ids: List of unique identifiers
-
-        Returns:
-            List of found read models (soft-deleted excluded)
-        """
+        """Get multiple read models by their IDs (excluding soft-deleted)."""
         with self._tracer.span(
             "eventsource.readmodel.get_many",
             {
@@ -146,12 +93,7 @@ class InMemoryReadModelRepository[TModel: ReadModel](
                 return result
 
     async def save(self, model: TModel) -> None:
-        """
-        Save or update a read model (upsert semantics).
-
-        Args:
-            model: The read model to save
-        """
+        """Save or update a read model (upsert semantics)."""
         with self._tracer.span(
             "eventsource.readmodel.save",
             {
@@ -162,21 +104,14 @@ class InMemoryReadModelRepository[TModel: ReadModel](
             async with self._lock:
                 now = datetime.now(UTC)
                 existing = self._models.get(model.id)
-
                 stored = self._detach(model)
                 if existing is not None:
                     stored.version = existing.version + 1
                 stored.updated_at = now
-
                 self._models[model.id] = stored
 
     async def save_many(self, models: list[TModel]) -> None:
-        """
-        Save multiple read models in a batch.
-
-        Args:
-            models: List of read models to save
-        """
+        """Save multiple read models in a batch."""
         with self._tracer.span(
             "eventsource.readmodel.save_many",
             {
@@ -188,24 +123,14 @@ class InMemoryReadModelRepository[TModel: ReadModel](
                 now = datetime.now(UTC)
                 for model in models:
                     existing = self._models.get(model.id)
-
                     stored = self._detach(model)
                     if existing is not None:
                         stored.version = existing.version + 1
                     stored.updated_at = now
-
                     self._models[model.id] = stored
 
     async def delete(self, id: UUID) -> bool:
-        """
-        Delete a read model by ID (hard delete).
-
-        Args:
-            id: Unique identifier of the read model to delete
-
-        Returns:
-            True if deleted, False if not found
-        """
+        """Delete a read model by ID (hard delete). Returns True if deleted."""
         with self._tracer.span(
             "eventsource.readmodel.delete",
             {
@@ -220,15 +145,7 @@ class InMemoryReadModelRepository[TModel: ReadModel](
                 return False
 
     async def exists(self, id: UUID) -> bool:
-        """
-        Check if a read model exists (and is not soft-deleted).
-
-        Args:
-            id: Unique identifier to check
-
-        Returns:
-            True if exists and not soft-deleted, False otherwise
-        """
+        """Check if a read model exists and is not soft-deleted."""
         with self._tracer.span(
             "eventsource.readmodel.exists",
             {
@@ -241,12 +158,7 @@ class InMemoryReadModelRepository[TModel: ReadModel](
                 return model is not None and not model.is_deleted()
 
     async def truncate(self) -> int:
-        """
-        Delete all read models.
-
-        Returns:
-            Number of records deleted
-        """
+        """Delete all read models and return the number of records deleted."""
         with self._tracer.span(
             "eventsource.readmodel.truncate",
             {ATTR_READMODEL_TYPE: self._model_class.__name__},
@@ -260,25 +172,9 @@ class InMemoryReadModelRepository[TModel: ReadModel](
         """
         Save a read model with optimistic locking version check.
 
-        Verifies that the current database version matches the model's
-        version before updating. If versions don't match, raises
-        ReadModelVersionConflictError. On successful save, the version is incremented.
-
-        Args:
-            model: The read model to save
-
         Raises:
-            ReadModelVersionConflictError: If the version in storage doesn't match
-                the model's version
             ReadModelNotFoundError: If the model doesn't exist in storage
-
-        Example:
-            >>> summary = await repo.get(order_id)
-            >>> summary.status = "shipped"
-            >>> try:
-            ...     await repo.save_with_version_check(summary)
-            ... except ReadModelVersionConflictError as e:
-            ...     print(f"Conflict: expected v{e.expected_version}")
+            ReadModelVersionConflictError: If stored version != model.version
         """
         with self._tracer.span(
             "eventsource.readmodel.save_with_version_check",
@@ -290,10 +186,8 @@ class InMemoryReadModelRepository[TModel: ReadModel](
         ):
             async with self._lock:
                 existing = self._models.get(model.id)
-
                 if existing is None:
                     raise ReadModelNotFoundError(model.id)
-
                 if existing.version != model.version:
                     raise ReadModelVersionConflictError(
                         model.id,

@@ -9,7 +9,7 @@ from eventsource.application.subscriptions.health import (
     ReadinessStatus,
     SubscriptionHealth,
 )
-from eventsource.application.subscriptions.subscription import SubscriptionState
+from eventsource.application.subscriptions.subscription import Subscription, SubscriptionState
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
@@ -35,12 +35,7 @@ class HealthCheckProbesMixin:
         raise NotImplementedError
 
     async def _try_acquire_lock(self) -> bool:
-        """
-        Try to acquire the internal lock.
-
-        Returns:
-            True if lock was acquired (and released), False otherwise
-        """
+        """Try to acquire the internal lock within 1.0s; return True if acquired."""
         try:
             async with asyncio.timeout(1.0):
                 async with self._lock:
@@ -48,74 +43,63 @@ class HealthCheckProbesMixin:
         except TimeoutError:
             return False
 
+    def _build_subscription_health(
+        self,
+        name: str,
+        subscription: Subscription,
+    ) -> SubscriptionHealth:
+        """Evaluate status and construct SubscriptionHealth for a single subscription."""
+        checker = self._health_checkers.get(name)
+        if checker:
+            status = checker.check().overall_status.value
+        elif subscription.state == SubscriptionState.LIVE:
+            status = (
+                "healthy" if subscription.lag < self._config.max_lag_events_warning else "degraded"
+            )
+        elif subscription.state in (SubscriptionState.CATCHING_UP, SubscriptionState.PAUSED):
+            status = "degraded"
+        elif subscription.state == SubscriptionState.ERROR:
+            status = "unhealthy"
+        else:
+            status = "unknown"
+
+        handler = self._error_handlers.get(name)
+        error_rate = handler.stats.error_rate_per_minute if handler else 0.0
+
+        return SubscriptionHealth(
+            name=name,
+            status=status,
+            state=subscription.state.value,
+            events_processed=subscription.events_processed,
+            events_failed=subscription.events_failed,
+            lag_events=subscription.lag,
+            error_rate=error_rate,
+            last_error=str(subscription.last_error) if subscription.last_error else None,
+            uptime_seconds=self.uptime_seconds,
+        )
+
     async def health_check(self, is_running: bool) -> ManagerHealth:
         """
         Get comprehensive health status of the subscription manager.
 
-        This is the primary health check API that provides:
-        - Overall manager health status (healthy/degraded/unhealthy/critical)
-        - Running state
-        - Subscription counts by health category
-        - Aggregate metrics (events processed, failed, lag)
-        - Per-subscription health details
-
-        Args:
-            is_running: Whether the manager is running
-
-        Returns:
-            ManagerHealth with complete health information
+        Provides overall status (healthy/degraded/unhealthy/unknown), running
+        state, subscription counts by health category, aggregate metrics, and
+        per-subscription health details.
         """
         subscription_health_list: list[SubscriptionHealth] = []
         healthy = degraded = unhealthy = 0
-        total_lag = 0
-        total_processed = 0
-        total_failed = 0
+        total_lag = total_processed = total_failed = 0
 
         for name, subscription in self._registry.items():
-            checker = self._health_checkers.get(name)
-            if checker:
-                result = checker.check()
-                status = result.overall_status.value
-            else:
-                if subscription.state == SubscriptionState.LIVE:
-                    if subscription.lag < self._config.max_lag_events_warning:
-                        status = "healthy"
-                    else:
-                        status = "degraded"
-                elif subscription.state in (
-                    SubscriptionState.CATCHING_UP,
-                    SubscriptionState.PAUSED,
-                ):
-                    status = "degraded"
-                elif subscription.state == SubscriptionState.ERROR:
-                    status = "unhealthy"
-                else:
-                    status = "unknown"
+            sub_health = self._build_subscription_health(name, subscription)
+            subscription_health_list.append(sub_health)
 
-            if status == "healthy":
+            if sub_health.status == "healthy":
                 healthy += 1
-            elif status == "degraded":
+            elif sub_health.status == "degraded":
                 degraded += 1
             else:
                 unhealthy += 1
-
-            error_rate = 0.0
-            handler = self._error_handlers.get(name)
-            if handler:
-                error_rate = handler.stats.error_rate_per_minute
-
-            sub_health = SubscriptionHealth(
-                name=name,
-                status=status,
-                state=subscription.state.value,
-                events_processed=subscription.events_processed,
-                events_failed=subscription.events_failed,
-                lag_events=subscription.lag,
-                error_rate=error_rate,
-                last_error=str(subscription.last_error) if subscription.last_error else None,
-                uptime_seconds=self.uptime_seconds,
-            )
-            subscription_health_list.append(sub_health)
 
             total_lag += subscription.lag
             total_processed += subscription.events_processed
@@ -152,17 +136,8 @@ class HealthCheckProbesMixin:
         """
         Check if the manager is ready to accept work (Kubernetes-style probe).
 
-        A manager is ready when:
-        - It is running
-        - No subscriptions are in ERROR state
-        - Not currently shutting down
-
-        Args:
-            is_running: Whether the manager is running
-            is_shutting_down: Whether shutdown has been requested
-
-        Returns:
-            ReadinessStatus indicating readiness state
+        Ready when running, not shutting down, and no subscriptions are in
+        ERROR or STARTING state.
         """
         details: dict[str, Any] = {
             "running": is_running,
@@ -219,16 +194,8 @@ class HealthCheckProbesMixin:
         """
         Check if the manager is alive and responsive (Kubernetes-style probe).
 
-        A manager is live when:
-        - It has not crashed
-        - Its internal async lock is not deadlocked
-        - It can respond to health checks
-
-        Args:
-            is_running: Whether the manager is running
-
-        Returns:
-            LivenessStatus indicating liveness state
+        Live when its internal async lock is responsive and subscriptions can
+        be accessed.
         """
         details: dict[str, Any] = {
             "running": is_running,
@@ -267,55 +234,11 @@ class HealthCheckProbesMixin:
         self,
         subscription_name: str,
     ) -> SubscriptionHealth | None:
-        """
-        Get health status for a specific subscription.
-
-        Args:
-            subscription_name: Name of the subscription
-
-        Returns:
-            SubscriptionHealth for the subscription, or None if not found
-        """
+        """Get health status for a specific subscription, or None if not found."""
         subscription = self._registry.get(subscription_name)
         if subscription is None:
             return None
-
-        checker = self._health_checkers.get(subscription_name)
-        if checker:
-            result = checker.check()
-            status = result.overall_status.value
-        else:
-            if subscription.state == SubscriptionState.LIVE:
-                if subscription.lag < self._config.max_lag_events_warning:
-                    status = "healthy"
-                else:
-                    status = "degraded"
-            elif subscription.state in (
-                SubscriptionState.CATCHING_UP,
-                SubscriptionState.PAUSED,
-            ):
-                status = "degraded"
-            elif subscription.state == SubscriptionState.ERROR:
-                status = "unhealthy"
-            else:
-                status = "unknown"
-
-        error_rate = 0.0
-        handler = self._error_handlers.get(subscription_name)
-        if handler:
-            error_rate = handler.stats.error_rate_per_minute
-
-        return SubscriptionHealth(
-            name=subscription_name,
-            status=status,
-            state=subscription.state.value,
-            events_processed=subscription.events_processed,
-            events_failed=subscription.events_failed,
-            lag_events=subscription.lag,
-            error_rate=error_rate,
-            last_error=str(subscription.last_error) if subscription.last_error else None,
-            uptime_seconds=self.uptime_seconds,
-        )
+        return self._build_subscription_health(subscription_name, subscription)
 
 
 __all__ = ["HealthCheckProbesMixin"]
