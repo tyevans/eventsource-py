@@ -58,8 +58,7 @@ class TestBulkCopierRun:
     async def test_run_with_no_events(self, migration, source_store, copier) -> None:
         source_store.read_all = empty_event_generator
         updates = [p async for p in copier.run(migration)]
-        assert len(updates) >= 1
-        assert (updates[-1].is_complete, updates[-1].events_copied) == (True, 0)
+        assert len(updates) >= 1 and (updates[-1].is_complete, updates[-1].events_copied) == (True, 0)  # fmt: skip
 
     @pytest.mark.asyncio
     async def test_run_with_events_single_batch(
@@ -67,8 +66,7 @@ class TestBulkCopierRun:
     ) -> None:
         self._setup_stores(source_store, target_store, self._create_events(5, migration.tenant_id))
         updates = [p async for p in copier.run(migration)]
-        assert len(updates) >= 1
-        assert (updates[-1].is_complete, updates[-1].events_copied) == (True, 5)
+        assert len(updates) >= 1 and (updates[-1].is_complete, updates[-1].events_copied) == (True, 5)  # fmt: skip
 
     @pytest.mark.asyncio
     async def test_run_records_events_copied_metric(
@@ -89,13 +87,10 @@ class TestBulkCopierRun:
         source_store.read_all = make_event_generator(events)
         target_store.get_stream_version = AsyncMock(return_value=0)
         stream = events[0].stream_id
-        target_store.append = AsyncMock(
-            side_effect=[make_append_result(stream, v, v) for v in (10, 20, 25)]
-        )
+        target_store.append = AsyncMock(side_effect=[make_append_result(stream, v, v) for v in (10, 20, 25)])  # fmt: skip
         migration.config = MigrationConfig(batch_size=10, max_bulk_copy_rate=100000)
         updates = [p async for p in copier.run(migration)]
-        assert len(updates) >= 2
-        assert (updates[-1].is_complete, updates[-1].events_copied) == (True, 25)
+        assert len(updates) >= 2 and (updates[-1].is_complete, updates[-1].events_copied) == (True, 25)  # fmt: skip
 
     @pytest.mark.asyncio
     async def test_run_with_progress_callback(
@@ -113,9 +108,7 @@ class TestBulkCopierRun:
         events = self._create_events(100, migration.tenant_id)
         source_store.read_all = make_event_generator(events)
         target_store.get_stream_version = AsyncMock(return_value=0)
-        target_store.append = AsyncMock(
-            return_value=make_append_result(events[0].stream_id, 10, 10)
-        )
+        target_store.append = AsyncMock(return_value=make_append_result(events[0].stream_id, 10, 10))  # fmt: skip
         migration.config = MigrationConfig(batch_size=10, max_bulk_copy_rate=100000)
         updates = []
         async for progress in copier.run(migration):
@@ -136,9 +129,7 @@ class TestBulkCopierRun:
 
         source_store.read_all = event_generator
         target_store.get_stream_version = AsyncMock(return_value=10)
-        target_store.append = AsyncMock(
-            return_value=make_append_result(events[0].stream_id, 35, 35)
-        )
+        target_store.append = AsyncMock(return_value=make_append_result(events[0].stream_id, 35, 35))  # fmt: skip
         migration = create_migration(
             tenant_id=tenant_id,
             events_total=35,
@@ -148,8 +139,7 @@ class TestBulkCopierRun:
             batch_size=100,
             max_bulk_copy_rate=100000,
         )
-        updates = [p async for p in copier.run(migration)]
-        assert updates[-1].events_copied == 35
+        assert [p async for p in copier.run(migration)][-1].events_copied == 35
 
     @pytest.mark.asyncio
     async def test_run_handles_error(
@@ -170,9 +160,7 @@ class TestBulkCopierRun:
     ) -> None:
         tenant_id = uuid4()
         self._setup_stores(source_store, target_store, self._create_events(15, tenant_id))
-        migration = create_migration(
-            tenant_id=tenant_id, events_total=0, batch_size=100, max_bulk_copy_rate=100000
-        )
+        migration = create_migration(tenant_id=tenant_id, events_total=0, batch_size=100, max_bulk_copy_rate=100000)  # fmt: skip
         _ = [p async for p in copier.run(migration)]
         migration_repo.set_events_total.assert_called_once_with(migration.id, 15)
 
@@ -183,23 +171,14 @@ class TestBulkCopierRunProgress:
         tenant_id, migration_id = uuid4(), uuid4()
         agg_ids = [uuid4(), uuid4()]
         streams = [StreamId(aggregate_id=a, category="TestAggregate") for a in agg_ids]
-        events = [
-            create_test_events(1, tenant_id, agg_ids[i], start=i + 1, stream_id=streams[i])[0]
-            for i in range(2)
-        ]
+        events = [create_test_events(1, tenant_id, agg_ids[i], start=i + 1, stream_id=streams[i])[0] for i in range(2)]  # fmt: skip
         source_store = MagicMock(read_all=make_event_generator(events))
         side_effects = [
             AppendResult(stream=streams[0], new_version=1, position=_pos("target", 4)),
             DuplicateEventError("already present"),
             DuplicateEventError("already present"),
         ]
-        target_store = AsyncMock(
-            get_stream_version=AsyncMock(return_value=0),
-            append=AsyncMock(side_effect=side_effects),
-        )
-        migration = create_migration(
-            id=migration_id, tenant_id=tenant_id, events_total=2, batch_size=1
-        )
+        target_store = AsyncMock(get_stream_version=AsyncMock(return_value=0), append=AsyncMock(side_effect=side_effects))  # fmt: skip
+        migration = create_migration(id=migration_id, tenant_id=tenant_id, events_total=2, batch_size=1)  # fmt: skip
         copier = BulkCopier(source_store, target_store, AsyncMock(), enable_tracing=False)
-        progresses = [p async for p in copier.run(migration)]
-        assert progresses[-1].last_target_position == _pos("target", 4)
+        assert [p async for p in copier.run(migration)][-1].last_target_position == _pos("target", 4)  # fmt: skip

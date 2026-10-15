@@ -35,12 +35,14 @@ class TestShutdownPhaseEnum:
     def test_all_phases_exist(self):
         phases = list(ShutdownPhase)
         assert len(phases) == 6
-        assert ShutdownPhase.RUNNING in phases
-        assert ShutdownPhase.STOPPING in phases
-        assert ShutdownPhase.DRAINING in phases
-        assert ShutdownPhase.CHECKPOINTING in phases
-        assert ShutdownPhase.STOPPED in phases
-        assert ShutdownPhase.FORCED in phases
+        assert set(phases) == {
+            ShutdownPhase.RUNNING,
+            ShutdownPhase.STOPPING,
+            ShutdownPhase.DRAINING,
+            ShutdownPhase.CHECKPOINTING,
+            ShutdownPhase.STOPPED,
+            ShutdownPhase.FORCED,
+        }
 
 
 class TestShutdownReasonEnum:
@@ -55,43 +57,30 @@ class TestShutdownReasonEnum:
     def test_all_reasons_exist(self):
         reasons = list(ShutdownReason)
         assert len(reasons) == 6
-        assert ShutdownReason.SIGNAL_SIGTERM in reasons
-        assert ShutdownReason.SIGNAL_SIGINT in reasons
-        assert ShutdownReason.PROGRAMMATIC in reasons
-        assert ShutdownReason.HEALTH_CHECK in reasons
-        assert ShutdownReason.TIMEOUT in reasons
-        assert ShutdownReason.DOUBLE_SIGNAL in reasons
+        assert set(reasons) == {
+            ShutdownReason.SIGNAL_SIGTERM,
+            ShutdownReason.SIGNAL_SIGINT,
+            ShutdownReason.PROGRAMMATIC,
+            ShutdownReason.HEALTH_CHECK,
+            ShutdownReason.TIMEOUT,
+            ShutdownReason.DOUBLE_SIGNAL,
+        }
 
 
 class TestShutdownResultNewFields:
     def test_in_flight_at_start_field(self):
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-            in_flight_at_start=100,
-        )
-        assert result.in_flight_at_start == 100
-        assert result.to_dict()["in_flight_at_start"] == 100
+        result = ShutdownResult(ShutdownPhase.STOPPED, 5.0, 1, 10, in_flight_at_start=100)
+        assert result.in_flight_at_start == 100 and result.to_dict()["in_flight_at_start"] == 100
 
     def test_events_not_drained_field(self):
         result = ShutdownResult(
-            phase=ShutdownPhase.FORCED,
-            duration_seconds=30.0,
-            subscriptions_stopped=1,
-            events_drained=50,
-            in_flight_at_start=100,
-            events_not_drained=50,
+            ShutdownPhase.FORCED, 30.0, 1, 50, in_flight_at_start=100, events_not_drained=50
         )
-        assert result.events_not_drained == 50
-        assert result.to_dict()["events_not_drained"] == 50
+        assert result.events_not_drained == 50 and result.to_dict()["events_not_drained"] == 50
 
     def test_default_values(self):
         result = ShutdownResult(ShutdownPhase.STOPPED, 5.0, 1, 10)
-        assert result.reason is None
-        assert result.in_flight_at_start == 0
-        assert result.events_not_drained == 0
+        assert (result.reason, result.in_flight_at_start, result.events_not_drained) == (None, 0, 0)
 
     @pytest.mark.asyncio
     async def test_events_not_drained_calculated(self):
@@ -104,8 +93,7 @@ class TestShutdownResultNewFields:
 
         coordinator.request_shutdown()
         result = await coordinator.shutdown(stop_func=AsyncMock(), drain_func=slow_drain)
-        assert result.in_flight_at_start == 100
-        assert result.events_not_drained == 100
+        assert (result.in_flight_at_start, result.events_not_drained) == (100, 100)
 
     @pytest.mark.asyncio
     async def test_events_not_drained_partial_drain(self):
@@ -115,29 +103,21 @@ class TestShutdownResultNewFields:
         result = await coordinator.shutdown(
             stop_func=AsyncMock(), drain_func=AsyncMock(return_value=60)
         )
-        assert result.in_flight_at_start == 100
-        assert result.events_drained == 60
-        assert result.events_not_drained == 40
+        assert (result.in_flight_at_start, result.events_drained, result.events_not_drained) == (100, 60, 40)  # fmt: skip
 
 
 class TestShutdownResult:
     def test_create_result(self):
         result = ShutdownResult(ShutdownPhase.STOPPED, 5.5, 3, 100, checkpoints_saved=3)
-        assert result.phase == ShutdownPhase.STOPPED
-        assert result.duration_seconds == 5.5
-        assert result.subscriptions_stopped == 3
-        assert result.events_drained == 100
-        assert result.checkpoints_saved == 3
-        assert result.forced is False
-        assert result.error is None
+        assert (result.phase, result.duration_seconds) == (ShutdownPhase.STOPPED, 5.5)
+        assert (result.subscriptions_stopped, result.events_drained, result.checkpoints_saved) == (3, 100, 3)  # fmt: skip
+        assert (result.forced, result.error) == (False, None)
 
     def test_create_result_with_error(self):
         result = ShutdownResult(
             ShutdownPhase.FORCED, 30.0, 2, 50, 1, forced=True, error="Timeout exceeded"
         )
-        assert result.phase == ShutdownPhase.FORCED
-        assert result.forced is True
-        assert result.error == "Timeout exceeded"
+        assert (result.phase, result.forced, result.error) == (ShutdownPhase.FORCED, True, "Timeout exceeded")  # fmt: skip
 
     def test_result_is_frozen(self):
         result = ShutdownResult(ShutdownPhase.STOPPED, 5.0, 1, 10)
@@ -156,17 +136,18 @@ class TestShutdownResult:
             in_flight_at_start=150,
             events_not_drained=50,
         )
-        d = result.to_dict()
-        assert d["phase"] == "stopped"
-        assert d["duration_seconds"] == 5.5
-        assert d["subscriptions_stopped"] == 3
-        assert d["events_drained"] == 100
-        assert d["checkpoints_saved"] == 3
-        assert d["forced"] is False
-        assert d["error"] is None
-        assert d["reason"] == "programmatic"
-        assert d["in_flight_at_start"] == 150
-        assert d["events_not_drained"] == 50
+        assert result.to_dict() == {
+            "phase": "stopped",
+            "duration_seconds": 5.5,
+            "subscriptions_stopped": 3,
+            "events_drained": 100,
+            "checkpoints_saved": 3,
+            "forced": False,
+            "error": None,
+            "reason": "programmatic",
+            "in_flight_at_start": 150,
+            "events_not_drained": 50,
+        }
 
     def test_to_dict_with_error(self):
         result = ShutdownResult(
@@ -177,28 +158,20 @@ class TestShutdownResult:
 
 class TestModuleImports:
     def test_import_from_shutdown_module(self):
-        from eventsource.application.subscriptions.shutdown import (
-            ShutdownCoordinator,
-            ShutdownPhase,
-            ShutdownReason,
-            ShutdownResult,
-        )
+        from eventsource.application.subscriptions import shutdown as sm
 
-        assert ShutdownCoordinator is not None
-        assert ShutdownPhase is not None
-        assert ShutdownReason is not None
-        assert ShutdownResult is not None
+        assert all(
+            getattr(sm, n) is not None
+            for n in ("ShutdownCoordinator", "ShutdownPhase", "ShutdownReason", "ShutdownResult")
+        )
 
     def test_import_from_subscriptions_package(self):
-        from eventsource.application.subscriptions import (
-            ShutdownCoordinator,
-            ShutdownPhase,
-            ShutdownResult,
-        )
+        from eventsource.application import subscriptions as sp
 
-        assert ShutdownCoordinator is not None
-        assert ShutdownPhase is not None
-        assert ShutdownResult is not None
+        assert all(
+            getattr(sp, n) is not None
+            for n in ("ShutdownCoordinator", "ShutdownPhase", "ShutdownResult")
+        )
 
     def test_shutdown_reason_exported(self):
         from eventsource.application.subscriptions.shutdown import __all__

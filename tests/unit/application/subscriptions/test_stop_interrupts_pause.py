@@ -1,17 +1,8 @@
-"""
-Unit tests for `stop()` interrupting a drain that is blocked on `pause`.
+"""Unit tests for `stop()` interrupting a drain that is blocked on `pause` (task #25).
 
-Covers task #25, pre-existing in **both** runners. `Subscription.wait_if_paused()`
-awaits an `asyncio.Event` that only `resume()` sets, and every `_stop_requested`
-check sits *after* that await. So a paused subscription parks its drain loop
-inside `wait_if_paused()` and never reaches the check -- `stop()` flips the flag
-and returns having stopped nothing, and the runner stays parked until somebody
-resumes it. `stop()` was therefore unreliable in exactly the state an operator
-chooses deliberately, which is also the state a shutdown is most likely to find.
-
-The contract these assert: `stop()` means stop, whatever the pause state. It
-does *not* mean resume -- a stopped-while-paused subscription must still report
-as paused, because stopping is not an implicit operator resume.
+Contract: `stop()` exits a paused drain without requiring `resume()`, and a
+stopped-while-paused subscription still reports as paused (stopping is not an
+implicit operator resume).
 """
 
 import asyncio
@@ -34,10 +25,6 @@ from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion, Position
 
 _REGISTRY = EventRegistry()
-
-# Every wait in this module is bounded by this. A correct implementation
-# finishes in milliseconds; a regression hangs, and the bound turns that hang
-# into a fast, legible failure instead of a stuck suite.
 BOUND = 5.0
 
 
@@ -50,8 +37,7 @@ class StopTestEvent(DomainEvent):
 
 
 class GatedSubscriber:
-    """Blocks inside `handle()` until released, so a test can reliably catch
-    the runner mid-drain rather than racing its loop."""
+    """Blocks inside `handle()` until released so tests catch the runner mid-drain."""
 
     def __init__(self) -> None:
         self.entered = asyncio.Event()
@@ -104,8 +90,7 @@ class TestCatchUpStopWhilePaused:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """A catch-up run parked in `wait_if_paused()` exits when stopped,
-        without anyone calling `resume()`."""
+        """A catch-up run parked in `wait_if_paused()` exits when stopped."""
         subscriber = GatedSubscriber()
         config = SubscriptionConfig(
             batch_size=1,
@@ -119,8 +104,6 @@ class TestCatchUpStopWhilePaused:
         target = await current(event_store)
         run = asyncio.create_task(runner.run_until_position(target))
 
-        # Catch the runner mid-drain, then pause it so the *next* loop turn
-        # parks in wait_if_paused().
         await asyncio.wait_for(subscriber.entered.wait(), timeout=BOUND)
         await subscription.pause()
         subscriber.release.set()
@@ -128,7 +111,6 @@ class TestCatchUpStopWhilePaused:
 
         await asyncio.wait_for(runner.stop(), timeout=BOUND)
         result = await asyncio.wait_for(run, timeout=BOUND)
-
         assert not result.completed
 
     async def test_stop_while_paused_does_not_resume_the_subscription(
@@ -136,9 +118,7 @@ class TestCatchUpStopWhilePaused:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """Stopping is not an implicit resume: the subscription is still
-        paused afterwards, so an operator's deliberate pause survives a
-        restart of the runner."""
+        """Stopping is not an implicit resume; subscription remains paused."""
         subscriber = GatedSubscriber()
         config = SubscriptionConfig(
             batch_size=1,
@@ -157,7 +137,6 @@ class TestCatchUpStopWhilePaused:
 
         await asyncio.wait_for(runner.stop(), timeout=BOUND)
         await asyncio.wait_for(run, timeout=BOUND)
-
         assert subscription.is_paused
 
 
@@ -168,8 +147,7 @@ class TestLiveStopWhilePaused:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """The live runner's drain parks in the same place, and `stop()` must
-        return rather than block on a resume that may never come."""
+        """Live runner drain parked in `wait_if_paused()` exits when stopped."""
         subscriber = GatedSubscriber()
         config = SubscriptionConfig(
             batch_size=1,
@@ -186,12 +164,9 @@ class TestLiveStopWhilePaused:
         await runner.start()
         try:
             await add_events(event_store, 5)
-            # The drain runs inline inside publish(), so the wake must be a
-            # task -- awaiting it directly would block on the gated handler.
             drain = asyncio.create_task(
                 event_bus.publish([StopTestEvent(aggregate_id=uuid4(), data="__wake__")])
             )
-
             await asyncio.wait_for(subscriber.entered.wait(), timeout=BOUND)
             await subscription.pause()
             subscriber.release.set()
