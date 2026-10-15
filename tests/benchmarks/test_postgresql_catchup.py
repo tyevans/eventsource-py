@@ -1,12 +1,4 @@
-"""Benchmark and index utilization test suite for PostgreSQL catch-up queries.
-
-Verifies that PostgreSQL event store catch-up range queries utilizing
-the wraparound-safe `txid` horizon predicate efficiently use the primary
-`global_position` index (events_pkey) and composite indexes, avoiding table
-scans and heapsort degradation even under concurrent write load.
-
-Governed by: ADR-0007, ADR-0003, ADR-0002, TASK-0004.
-"""
+"""Benchmark and index utilization test suite for PostgreSQL catch-up queries."""
 
 from __future__ import annotations
 
@@ -59,7 +51,6 @@ skip_if_no_postgres_infra = pytest.mark.skipif(
     not (TESTCONTAINERS_AVAILABLE and DOCKER_AVAILABLE),
     reason="PostgreSQL test infrastructure (testcontainers + docker) not available",
 )
-
 pytestmark = [
     pytest.mark.benchmark,
     pytest.mark.postgres,
@@ -69,8 +60,6 @@ pytestmark = [
 
 
 class BenchmarkCatchupEvent(DomainEvent):
-    """Event model for PostgreSQL catch-up benchmarks."""
-
     aggregate_type: str = "BenchmarkEntity"
     data: str = "benchmark_payload_value"
 
@@ -93,7 +82,6 @@ async def pg_bench_engine() -> AsyncGenerator[AsyncEngine]:
         .replace("psycopg2", "asyncpg")
     )
     engine = create_async_engine(async_url, pool_size=20, max_overflow=10)
-
     async with engine.connect() as conn:
         raw_conn = await conn.get_raw_connection()
         await raw_conn.driver_connection.execute(get_schema("events"))
@@ -115,14 +103,12 @@ async def pg_bench_engine() -> AsyncGenerator[AsyncEngine]:
         """)
         await conn.commit()
         await raw_conn.driver_connection.execute("VACUUM ANALYZE events;")
-
     yield engine
     await engine.dispose()
     container.stop()
 
 
 async def _run_explain(engine: AsyncEngine, query_body: str, **params: Any) -> list[str]:
-    """Execute EXPLAIN (ANALYZE, BUFFERS) with the current txid horizon."""
     session_factory = async_sessionmaker(engine, class_=AsyncSession)
     async with session_factory() as session:
         horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
@@ -132,12 +118,9 @@ async def _run_explain(engine: AsyncEngine, query_body: str, **params: Any) -> l
 
 
 class TestPostgreSQLCatchupIndexUtilization:
-    """Verifies EXPLAIN execution plans use index scans and avoid seq scans."""
-
     async def test_catchup_range_query_plan_uses_primary_index(
         self, pg_bench_engine: AsyncEngine
     ) -> None:
-        """Range query must use Index Scan on events_pkey and avoid Seq Scan."""
         plan_lines = await _run_explain(
             pg_bench_engine,
             f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
@@ -153,7 +136,6 @@ class TestPostgreSQLCatchupIndexUtilization:
     async def test_catchup_from_beginning_plan_uses_index(
         self, pg_bench_engine: AsyncEngine
     ) -> None:
-        """Catch-up from the beginning (no from_position) must also use events_pkey."""
         plan_lines = await _run_explain(
             pg_bench_engine,
             f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
@@ -167,7 +149,6 @@ class TestPostgreSQLCatchupIndexUtilization:
     async def test_catchup_with_aggregate_type_filter_plan(
         self, pg_bench_engine: AsyncEngine
     ) -> None:
-        """When filtering by aggregate_type, query must use an index scan."""
         plan_lines = await _run_explain(
             pg_bench_engine,
             f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
@@ -178,7 +159,7 @@ class TestPostgreSQLCatchupIndexUtilization:
             limit=500,
         )
         plan_text = "\n".join(plan_lines)
-        has_index_scan = any(
+        assert any(
             idx in plan_text
             for idx in (
                 "Index Scan using events_pkey on events",
@@ -186,11 +167,9 @@ class TestPostgreSQLCatchupIndexUtilization:
                 "Index Scan using idx_events_aggregate_type on events",
             )
         )
-        assert has_index_scan
         assert "Seq Scan" not in plan_text
 
     async def test_current_position_backward_index_scan(self, pg_bench_engine: AsyncEngine) -> None:
-        """current_position MAX(global_position) must use Index Scan Backward on events_pkey."""
         plan_lines = await _run_explain(
             pg_bench_engine,
             f"SELECT MAX(global_position) FROM events WHERE {_HORIZON_PREDICATE}",
@@ -200,7 +179,6 @@ class TestPostgreSQLCatchupIndexUtilization:
         assert "Seq Scan" not in plan_text
 
     async def test_catchup_buffer_access_is_bounded(self, pg_bench_engine: AsyncEngine) -> None:
-        """Buffer access for 500-event batch must be proportional to limit, O(limit), not table."""
         plan_lines = await _run_explain(
             pg_bench_engine,
             f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
@@ -209,24 +187,19 @@ class TestPostgreSQLCatchupIndexUtilization:
         )
         buffer_lines = [line for line in plan_lines if "Buffers:" in line]
         assert buffer_lines, "Expected buffer statistics in EXPLAIN output"
-
         total_buffers = 0
         for line in buffer_lines:
             tokens = line.replace(",", "").split()
             for i, token in enumerate(tokens):
                 if token in ("hit=", "read=") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
                     total_buffers += int(tokens[i + 1])
-
         assert total_buffers < 100, f"Expected < 100 buffers, got {total_buffers}"
 
 
 class TestPostgreSQLCatchupScaleAndConcurrency:
-    """Evaluates throughput and latency under concurrent appends."""
-
     async def test_catchup_throughput_under_concurrent_writers(
         self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
     ) -> None:
-        """Reader catches up sequentially through feed while concurrent writers append."""
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         stop_writers = asyncio.Event()
 
@@ -235,30 +208,21 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
             count = 0
             while not stop_writers.is_set():
                 stream = StreamId(uuid4(), "BenchmarkEntity")
-                events = [
-                    BenchmarkCatchupEvent(
-                        aggregate_id=stream.aggregate_id, data=f"worker_{worker_id}_{count}"
-                    )
-                ]
-                await worker_store.append(stream, events, ExpectedVersion.no_stream())
+                ev = BenchmarkCatchupEvent(
+                    aggregate_id=stream.aggregate_id, data=f"worker_{worker_id}_{count}"
+                )
+                await worker_store.append(stream, [ev], ExpectedVersion.no_stream())
                 count += 1
                 await asyncio.sleep(0.002)
             return count
 
         writer_tasks = [asyncio.create_task(writer_worker(i)) for i in range(3)]
-        events_read = 0
+        events_read, current_pos, start_time = 0, None, time.perf_counter()
         batch_times: list[float] = []
-        current_pos = None
-        start_time = time.perf_counter()
-
         while events_read < 25000:
             t0 = time.perf_counter()
-            batch = [
-                env
-                async for env in store.read_all(
-                    from_position=current_pos, options=FeedReadOptions(limit=500)
-                )
-            ]
+            opts = FeedReadOptions(limit=500)
+            batch = [env async for env in store.read_all(from_position=current_pos, options=opts)]
             batch_times.append(time.perf_counter() - t0)
             if not batch:
                 await asyncio.sleep(0.01)
@@ -278,10 +242,8 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
     async def test_catchup_monotonic_ordering(
         self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
     ) -> None:
-        """Verifies that all envelopes returned by read_all are strictly monotonically increasing."""
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         envelopes = [env async for env in store.read_all(options=FeedReadOptions(limit=1000))]
-
         assert len(envelopes) == 1000
         positions = [env.position for env in envelopes]
         for prev, next_pos in zip(positions, positions[1:], strict=False):
@@ -291,7 +253,6 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
     async def test_catchup_safe_horizon_uncommitted_boundary(
         self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
     ) -> None:
-        """Safe horizon holds back higher positions while lower txid is in-flight."""
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         conn = await pg_bench_engine.connect()
         await conn.execute(
@@ -306,7 +267,6 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
             """),
             {"eid": uuid4(), "aid": uuid4()},
         )
-
         stream2 = StreamId(uuid4(), "BenchmarkEntity")
         ev2 = [BenchmarkCatchupEvent(aggregate_id=stream2.aggregate_id, data="after")]
         res2 = await store.append(stream2, ev2, ExpectedVersion.no_stream())
@@ -316,6 +276,5 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
 
         await conn.commit()
         await conn.close()
-
         pos_after = await store.current_position()
         assert pos_after is not None and pos_after >= res2.position
