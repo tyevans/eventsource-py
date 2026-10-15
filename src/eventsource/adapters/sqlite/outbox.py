@@ -81,22 +81,15 @@ class SQLiteOutboxRepository:
     async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """Return up to `limit` pending outbox entries ordered by creation time."""
         with self._tracer.span(
-            "eventsource.outbox.get_pending",
-            {"limit": limit, ATTR_DB_SYSTEM: "sqlite"},
+            "eventsource.outbox.get_pending", {"limit": limit, ATTR_DB_SYSTEM: "sqlite"}
         ) as span:
             cursor = await self._connection.execute(
-                """
-                SELECT id, event_id, event_type, aggregate_id, aggregate_type,
-                       tenant_id, event_data, created_at, retry_count
-                FROM event_outbox
-                WHERE status = 'pending'
-                ORDER BY created_at ASC
-                LIMIT ?
-                """,
+                "SELECT id, event_id, event_type, aggregate_id, aggregate_type, "
+                "tenant_id, event_data, created_at, retry_count FROM event_outbox "
+                "WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
                 (limit,),
             )
             rows = await cursor.fetchall()
-
             entries = [
                 OutboxEntry(
                     id=UUID(row[0]),
@@ -122,23 +115,20 @@ class SQLiteOutboxRepository:
             "eventsource.outbox.mark_published",
             {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "sqlite"},
         ):
-            now = datetime.now(UTC)
             await self._connection.execute(
                 "UPDATE event_outbox SET status = 'published', published_at = ? WHERE id = ?",
-                (now.isoformat(), str(outbox_id)),
+                (datetime.now(UTC).isoformat(), str(outbox_id)),
             )
             await self._connection.commit()
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """Increment retry count for a failed publishing attempt."""
-        with self._tracer.span(
-            "eventsource.outbox.increment_retry",
-            {
-                "outbox.id": str(outbox_id),
-                "error": error[:100] if error else None,
-                ATTR_DB_SYSTEM: "sqlite",
-            },
-        ):
+        attrs = {
+            "outbox.id": str(outbox_id),
+            "error": error[:100] if error else None,
+            ATTR_DB_SYSTEM: "sqlite",
+        }
+        with self._tracer.span("eventsource.outbox.increment_retry", attrs):
             await self._connection.execute(
                 "UPDATE event_outbox SET retry_count = retry_count + 1, last_error = ? WHERE id = ?",
                 (error, str(outbox_id)),
@@ -147,14 +137,12 @@ class SQLiteOutboxRepository:
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """Mark an outbox event as permanently failed."""
-        with self._tracer.span(
-            "eventsource.outbox.mark_failed",
-            {
-                "outbox.id": str(outbox_id),
-                "error": error[:100] if error else None,
-                ATTR_DB_SYSTEM: "sqlite",
-            },
-        ):
+        attrs = {
+            "outbox.id": str(outbox_id),
+            "error": error[:100] if error else None,
+            ATTR_DB_SYSTEM: "sqlite",
+        }
+        with self._tracer.span("eventsource.outbox.mark_failed", attrs):
             await self._connection.execute(
                 "UPDATE event_outbox SET status = 'failed', last_error = ? WHERE id = ?",
                 (error, str(outbox_id)),
@@ -163,12 +151,8 @@ class SQLiteOutboxRepository:
 
     async def cleanup_published(self, days: int = 7) -> int:
         """Delete published events older than `days` and return the deleted count."""
-        with self._tracer.span(
-            "eventsource.outbox.cleanup",
-            {"older_than_days": days, ATTR_DB_SYSTEM: "sqlite"},
-        ) as span:
-            # Compute cutoff in Python with isoformat() ('T'-separated) so TEXT comparison
-            # matches how published_at is written (unlike SQLite's space-separated datetime('now')).
+        attrs = {"older_than_days": days, ATTR_DB_SYSTEM: "sqlite"}
+        with self._tracer.span("eventsource.outbox.cleanup", attrs) as span:
             cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
             cursor = await self._connection.execute(
                 "DELETE FROM event_outbox WHERE status = 'published' AND published_at < ?",
@@ -182,39 +166,25 @@ class SQLiteOutboxRepository:
 
     async def get_stats(self) -> OutboxStats:
         """Return aggregate statistics for the outbox."""
-        with self._tracer.span(
-            "eventsource.outbox.get_stats",
-            {ATTR_DB_SYSTEM: "sqlite"},
-        ):
+        with self._tracer.span("eventsource.outbox.get_stats", {ATTR_DB_SYSTEM: "sqlite"}):
             cursor = await self._connection.execute(
-                """
-                SELECT
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
-                    SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published_count,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
-                    MIN(CASE WHEN status = 'pending' THEN created_at END) as oldest_pending,
-                    AVG(CASE WHEN status = 'pending' THEN retry_count END) as avg_retries
-                FROM event_outbox
-                """
+                "SELECT "
+                "SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), "
+                "MIN(CASE WHEN status = 'pending' THEN created_at END), "
+                "AVG(CASE WHEN status = 'pending' THEN retry_count END) "
+                "FROM event_outbox"
             )
             row = await cursor.fetchone()
-
             if row is None:
-                return OutboxStats(
-                    pending_count=0,
-                    published_count=0,
-                    failed_count=0,
-                    oldest_pending=None,
-                    avg_retries=0.0,
-                )
-
+                return OutboxStats(0, 0, 0, None, 0.0)
             oldest_pending = None
             if row[3]:
                 try:
                     oldest_pending = datetime.fromisoformat(row[3].replace("Z", "+00:00"))
                 except (ValueError, TypeError):
                     oldest_pending = None
-
             return OutboxStats(
                 pending_count=row[0] or 0,
                 published_count=row[1] or 0,

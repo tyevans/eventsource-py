@@ -1,15 +1,4 @@
-"""
-Error classification vocabulary for migration operations.
-
-The value objects that describe *what kind of error* occurred and *how to
-respond to it*: severity, recoverability, the combined classification
-record, and retry configuration.
-
-This module is the base layer of the migration error stack and imports
-nothing from its siblings — `exceptions.py` depends on this vocabulary to
-declare each error's default classification, so a dependency in the other
-direction would be a cycle (ADR 0044).
-"""
+"""Error classification vocabulary for migration operations (ADR 0044)."""
 
 from __future__ import annotations
 
@@ -30,21 +19,7 @@ __all__ = [
 
 
 class ErrorSeverity(Enum):
-    """
-    Severity level of migration errors.
-
-    Used for alerting, logging, and operator notification decisions.
-
-    Attributes:
-        CRITICAL: System-level failure requiring immediate attention.
-            Examples: Data corruption, unrecoverable consistency errors.
-        ERROR: Significant failure that may require operator intervention.
-            Examples: Cutover failure, bulk copy failure.
-        WARNING: Issue that should be monitored but may self-resolve.
-            Examples: High sync lag, transient connection errors.
-        INFO: Informational condition, not a failure.
-            Examples: Migration paused by operator, normal completion.
-    """
+    """Severity level of migration errors for alerting, logging, and notifications."""
 
     CRITICAL = "critical"
     ERROR = "error"
@@ -69,17 +44,7 @@ class ErrorSeverity(Enum):
 
 
 class ErrorRecoverability(Enum):
-    """
-    Recoverability classification for migration errors.
-
-    Determines how the system should respond to errors and whether
-    automatic retry is appropriate.
-
-    Attributes:
-        RECOVERABLE: Error can be recovered from with operator action.
-        TRANSIENT: Temporary error that may resolve on retry with backoff.
-        FATAL: Unrecoverable error requiring migration abort.
-    """
+    """Recoverability classification for migration errors (RECOVERABLE, TRANSIENT, FATAL)."""
 
     RECOVERABLE = "recoverable"
     TRANSIENT = "transient"
@@ -98,22 +63,7 @@ class ErrorRecoverability(Enum):
 
 @dataclass(frozen=True)
 class ErrorClassification:
-    """
-    Rich metadata for error classification.
-
-    Provides comprehensive information about an error for automated
-    handling, operator guidance, and observability.
-
-    Attributes:
-        severity: The severity level of the error.
-        recoverability: How the error can be recovered from.
-        error_code: Unique error code for programmatic handling.
-        category: Error category for grouping related errors.
-        suggested_action: Human-readable guidance for operators.
-        retry_config: Configuration for automatic retry (if applicable).
-        documentation_url: Link to documentation about this error.
-        metrics_labels: Labels for metrics instrumentation.
-    """
+    """Rich metadata for error classification, operator guidance, and observability."""
 
     severity: ErrorSeverity
     recoverability: ErrorRecoverability
@@ -144,16 +94,7 @@ class ErrorClassification:
 
 @dataclass(frozen=True)
 class RetryConfig:
-    """
-    Configuration for automatic error retry with exponential backoff and jitter.
-
-    Attributes:
-        max_attempts: Maximum number of retry attempts (including initial).
-        base_delay_ms: Base delay between retries in milliseconds.
-        max_delay_ms: Maximum delay between retries in milliseconds.
-        exponential_base: Base for exponential backoff (default 2.0).
-        jitter_factor: Random jitter factor (0.0 to 1.0, default 0.1).
-    """
+    """Configuration for automatic error retry with exponential backoff and jitter."""
 
     max_attempts: int = 3
     base_delay_ms: float = 100.0
@@ -198,7 +139,6 @@ class RetryConfig:
         }
 
 
-# Default retry configurations for different error categories
 TRANSIENT_RETRY_CONFIG = RetryConfig(
     max_attempts=5,
     base_delay_ms=100.0,

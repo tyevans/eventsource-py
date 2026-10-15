@@ -1,6 +1,4 @@
-"""
-Subscription migration data structures and exceptions.
-"""
+"""Subscription migration data structures and exceptions."""
 
 from __future__ import annotations
 
@@ -16,16 +14,7 @@ if TYPE_CHECKING:
 
 
 class SubscriptionMigrationError(MigrationError):
-    """
-    Raised when subscription migration fails.
-
-    This error indicates a failure during the subscription checkpoint
-    migration process, such as position translation or checkpoint update.
-
-    Attributes:
-        subscription_name: The subscription that failed to migrate.
-        reason: Detailed reason for the failure.
-    """
+    """Raised when subscription checkpoint migration or position translation fails."""
 
     def __init__(
         self,
@@ -46,22 +35,7 @@ class SubscriptionMigrationError(MigrationError):
 
 @dataclass(frozen=True)
 class SubscriptionMigrationResult:
-    """
-    Result of migrating a single subscription.
-
-    Contains details about the checkpoint translation and
-    whether the update was successful.
-
-    Attributes:
-        subscription_name: Name of the migrated subscription.
-        success: Whether the migration succeeded.
-        source_position: Original position in source store.
-        target_position: Translated position in target store.
-        is_exact_translation: Whether the position translation was exact.
-        nearest_source_position: Source position used if not exact.
-        error_message: Error message if migration failed.
-        migrated_at: When the migration was completed.
-    """
+    """Result of migrating a single subscription checkpoint."""
 
     subscription_name: str
     success: bool
@@ -90,19 +64,7 @@ class SubscriptionMigrationResult:
 
 @dataclass(frozen=True)
 class PlannedMigration:
-    """
-    A planned subscription migration (dry-run preview).
-
-    Represents what would happen if migration were executed.
-
-    Attributes:
-        subscription_name: Name of the subscription.
-        current_position: Current checkpoint position in source store.
-        planned_target_position: Position that would be set in target store.
-        is_exact_translation: Whether translation would be exact.
-        nearest_source_position: Source position that would be used if not exact.
-        warning: Any warnings about the planned migration.
-    """
+    """A planned subscription migration (dry-run preview)."""
 
     subscription_name: str
     current_position: Position
@@ -129,21 +91,7 @@ class PlannedMigration:
 
 @dataclass(frozen=True)
 class MigrationPlan:
-    """
-    Plan for subscription migrations (dry-run result).
-
-    Provides a preview of what migrations would be performed
-    without actually executing them.
-
-    Attributes:
-        migration_id: ID of the migration.
-        tenant_id: Tenant being migrated.
-        planned_migrations: List of planned migrations.
-        skipped_subscriptions: Subscriptions that would be skipped.
-        total_subscriptions: Total subscriptions found.
-        migratable_count: Number of subscriptions that can be migrated.
-        created_at: When the plan was created.
-    """
+    """Plan for subscription migrations (dry-run result)."""
 
     migration_id: UUID
     tenant_id: UUID
@@ -168,23 +116,7 @@ class MigrationPlan:
 
 @dataclass(frozen=True)
 class MigrationSummary:
-    """
-    Summary of completed subscription migrations.
-
-    Provides aggregate results and details about each
-    subscription that was migrated.
-
-    Attributes:
-        migration_id: ID of the migration.
-        tenant_id: Tenant that was migrated.
-        results: Individual results for each subscription.
-        successful_count: Number of successful migrations.
-        failed_count: Number of failed migrations.
-        skipped_count: Number of skipped subscriptions.
-        started_at: When the migration started.
-        completed_at: When the migration completed.
-        duration_ms: Duration in milliseconds.
-    """
+    """Summary of completed subscription migrations."""
 
     migration_id: UUID
     tenant_id: UUID
