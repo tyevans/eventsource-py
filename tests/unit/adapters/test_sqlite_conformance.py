@@ -14,7 +14,6 @@ from tests.conftest import skip_if_no_aiosqlite
 
 pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
 
-
 from eventsource import create_async_engine  # noqa: E402
 from eventsource.adapters.sql.checkpoints import SQLCheckpointRepository  # noqa: E402
 from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
@@ -86,9 +85,6 @@ class TestSQLiteCategoryQuery(CategoryQueryConformance):
 class TestSQLiteSnapshotStore(SnapshotStoreConformance, SnapshotDeserializationConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteSnapshotStore]:
-        # ":memory:" works because the store keeps one connection open for
-        # its lifetime; before it did, every operation opened its own
-        # connection and saw a different, empty database.
         store = SQLiteSnapshotStore(":memory:")
         yield store
         await store.close()
@@ -101,18 +97,11 @@ class TestSQLiteSnapshotStore(SnapshotStoreConformance, SnapshotDeserializationC
         aggregate_type: str,
         raw_state: str,
     ) -> None:
-        # Writes the same columns save_snapshot() does, except `state` is
-        # the literal `raw_state` string instead of `json.dumps(...)` --
-        # exercising get_snapshot()'s deserialization on genuinely
-        # malformed content, which save_snapshot() itself can never produce.
         conn = await store._conn()
         async with store._lock:
             await conn.execute(
-                """
-                INSERT INTO snapshots
-                    (aggregate_id, aggregate_type, version, schema_version, state, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                "INSERT INTO snapshots (aggregate_id, aggregate_type, version, "
+                "schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     str(aggregate_id),
                     aggregate_type,
@@ -137,13 +126,8 @@ class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):
         await engine.dispose()
 
     async def write_legacy_int_row(
-        self,
-        store: SQLCheckpointRepository,
-        subscription_id: str,
-        value: int,
+        self, store: SQLCheckpointRepository, subscription_id: str, value: int
     ) -> None:
-        # A row as written before position tokens existed: an integer
-        # global_position and no token. The adapter must read it as None.
         async with store._conn.begin() as conn:
             await conn.execute(
                 text(
@@ -189,7 +173,6 @@ class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
         await store._connection.commit()
 
         deleted = await store.cleanup_published(days=7)
-
         assert deleted == 1
 
 
@@ -201,29 +184,16 @@ class SQLiteStateMachine(StoreStateMachine):
 
 
 TestSQLiteStateful = SQLiteStateMachine.TestCase
-# derandomize=True: pytest-randomly reseeds hypothesis's global random source
-# per test, which otherwise makes this state machine's example generation
-# nondeterministic across runs (project-known gotcha). max_examples is lower
-# than the memory adapter's (25) because SQLite round-trips through real I/O
-# and JSON (de)serialization per event, making each example slower.
 TestSQLiteStateful.settings = settings(max_examples=10, deadline=None, derandomize=True)
 
 
 async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
-    """A non-`IntegrityError` failure mid-batch must still roll back.
-
-    Only `aiosqlite.IntegrityError` was rolled back previously; any other
-    exception (e.g. a serialization failure) left a dirty open transaction
-    on the shared connection, which the *next* `append()`'s `commit()`
-    would silently fold in.
-    """
+    """A non-IntegrityError failure mid-batch must still roll back."""
+    import eventsource.adapters.sqlite.store as sqlite_store_module
     from eventsource.ports import CategoryReadOptions
 
     store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
     stream = make_stream()
-
-    import eventsource.adapters.sqlite.store as sqlite_store_module
-
     original_json_dumps = sqlite_store_module.json_dumps
     call_count = 0
 
@@ -247,28 +217,20 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(sqlite_store_module, "json_dumps", original_json_dumps)
-
     envelopes = [e async for e in store.read_category(stream.category, CategoryReadOptions())]
     assert envelopes == []
 
-    # A subsequent append must succeed cleanly (no leftover dirty transaction).
     result = await store.append(
         stream,
         [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="3")],
         ExpectedVersion.any_(),
     )
     assert result.new_version == 1
-
     await store.close()
 
 
 def test_sync_facade_close_closes_underlying_store() -> None:
-    """`SyncStoreFacade.close()` must close the wrapped store, not just the loop.
-
-    Regression test: aiosqlite's connection is backed by a non-daemon
-    `threading.Thread`; leaving it open leaks a thread per facade and
-    prevents clean interpreter shutdown.
-    """
+    """SyncStoreFacade.close() must close the wrapped store, not just the loop."""
     store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
     facade = SyncStoreFacade(store)
     stream = make_stream()
@@ -279,13 +241,6 @@ def test_sync_facade_close_closes_underlying_store() -> None:
     )
     del stream
 
-    # aiosqlite.Connection *is* a Thread, so the store's own worker can be
-    # identified rather than inferred from a global count. An earlier version
-    # asserted `threading.active_count() == before - 1`, which reads as
-    # precision and is not: the count is process-wide, so any other test's
-    # connection thread exiting during this window makes the delta larger than
-    # one and fails a passing implementation. That is exactly what happened
-    # when the suite ran in a single process rather than under xdist.
     worker = store._connection
     assert worker is not None, "the append above should have opened the connection"
     assert worker.is_alive()
@@ -303,14 +258,7 @@ def test_sync_facade_close_closes_underlying_store() -> None:
 async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(
     tmp_path,
 ) -> None:
-    """Regression: a second process opening the same file must not raise on
-    the additive `position_token` column that the first process already added.
-
-    Schema is applied on every first connection (`_conn`), including to a
-    file that already carries the column -- the naive `ALTER TABLE ADD
-    COLUMN` (without the `PRAGMA table_info` guard) raises
-    `sqlite3.OperationalError: duplicate column name` here.
-    """
+    """Reopening the same file must not raise on the additive position_token column."""
     db_path = str(tmp_path / "reopen.db")
 
     store1 = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
