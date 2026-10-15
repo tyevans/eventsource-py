@@ -1,7 +1,7 @@
 ---
 id: TASK-0261
 title: "Slim readmodels projection conftest, multi_subscriber runner, event_bus_subscriptions, readmodels test_base, and status_streamer tests below 300 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

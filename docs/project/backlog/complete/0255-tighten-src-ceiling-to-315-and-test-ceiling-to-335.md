@@ -1,7 +1,7 @@
 ---
 id: TASK-0255
 title: "Tighten src/eventsource ceiling guard to < 315 lines and test/example ceiling to < 335 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

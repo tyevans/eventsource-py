@@ -1,7 +1,7 @@
 ---
 id: TASK-0260
 title: "Slim health_check_api, dual_write_failures, sqlite_conformance, decider_aggregate, and routing_repository crud tests below 300 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

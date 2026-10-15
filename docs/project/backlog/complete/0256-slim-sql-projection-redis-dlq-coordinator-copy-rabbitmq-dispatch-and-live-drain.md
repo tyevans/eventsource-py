@@ -1,7 +1,7 @@
 ---
 id: TASK-0256
 title: "Slim sql/projection.py, redis/bus_dlq.py, coordinator_copy.py, consumer_dispatch.py, and live_drain.py below 295 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

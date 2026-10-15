@@ -1,7 +1,7 @@
 ---
 id: TASK-0262
 title: "Add then_event and then_no_events fluent assertions to Scenario and DeciderScenario"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
