@@ -11,8 +11,6 @@ from tests.unit.testing.test_builder._fixtures import SampleEvent
 
 
 class TestEventBuilderInit:
-    """Tests for EventBuilder initialization."""
-
     def test_accepts_domain_event_subclass(self) -> None:
         builder = EventBuilder(SampleEvent)
         assert builder._event_class is SampleEvent
@@ -44,65 +42,49 @@ class TestEventBuilderInit:
 
 
 class TestEventBuilderWithAggregateId:
-    """Tests for with_aggregate_id method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_aggregate_id(uuid4())
-        assert result is builder
+        assert builder.with_aggregate_id(uuid4()) is builder
 
     def test_sets_aggregate_id(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        agg_id = uuid4()
+        builder, agg_id = EventBuilder(SampleEvent), uuid4()
         builder.with_aggregate_id(agg_id)
         assert builder._fields["aggregate_id"] == agg_id
 
     def test_overwrites_auto_generated_id(self) -> None:
         builder = EventBuilder(SampleEvent)
-        original_id = builder._fields["aggregate_id"]
-        new_id = uuid4()
+        original_id, new_id = builder._fields["aggregate_id"], uuid4()
         builder.with_aggregate_id(new_id)
         assert builder._fields["aggregate_id"] == new_id
         assert builder._fields["aggregate_id"] != original_id
 
 
 class TestEventBuilderWithEventId:
-    """Tests for with_event_id method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_event_id(uuid4())
-        assert result is builder
+        assert builder.with_event_id(uuid4()) is builder
 
     def test_sets_event_id(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        event_id = uuid4()
+        builder, event_id = EventBuilder(SampleEvent), uuid4()
         builder.with_event_id(event_id)
         assert builder._fields["event_id"] == event_id
 
 
 class TestEventBuilderWithTenantId:
-    """Tests for with_tenant_id method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_tenant_id(uuid4())
-        assert result is builder
+        assert builder.with_tenant_id(uuid4()) is builder
 
     def test_sets_tenant_id(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        tenant_id = uuid4()
+        builder, tenant_id = EventBuilder(SampleEvent), uuid4()
         builder.with_tenant_id(tenant_id)
         assert builder._fields["tenant_id"] == tenant_id
 
 
 class TestEventBuilderWithVersion:
-    """Tests for with_version method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_version(5)
-        assert result is builder
+        assert builder.with_version(5) is builder
 
     def test_sets_aggregate_version(self) -> None:
         builder = EventBuilder(SampleEvent)
@@ -117,12 +99,9 @@ class TestEventBuilderWithVersion:
 
 
 class TestEventBuilderWithOccurredAt:
-    """Tests for with_occurred_at method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_occurred_at(datetime.now(UTC))
-        assert result is builder
+        assert builder.with_occurred_at(datetime.now(UTC)) is builder
 
     def test_sets_occurred_at(self) -> None:
         builder = EventBuilder(SampleEvent)
@@ -132,42 +111,31 @@ class TestEventBuilderWithOccurredAt:
 
 
 class TestEventBuilderWithCorrelationId:
-    """Tests for with_correlation_id method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_correlation_id(uuid4())
-        assert result is builder
+        assert builder.with_correlation_id(uuid4()) is builder
 
     def test_sets_correlation_id(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        correlation_id = uuid4()
+        builder, correlation_id = EventBuilder(SampleEvent), uuid4()
         builder.with_correlation_id(correlation_id)
         assert builder._fields["correlation_id"] == correlation_id
 
 
 class TestEventBuilderWithCausationId:
-    """Tests for with_causation_id method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_causation_id(uuid4())
-        assert result is builder
+        assert builder.with_causation_id(uuid4()) is builder
 
     def test_sets_causation_id(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        causation_id = uuid4()
+        builder, causation_id = EventBuilder(SampleEvent), uuid4()
         builder.with_causation_id(causation_id)
         assert builder._fields["causation_id"] == causation_id
 
 
 class TestEventBuilderWithActorId:
-    """Tests for with_actor_id method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_actor_id("user-123")
-        assert result is builder
+        assert builder.with_actor_id("user-123") is builder
 
     def test_sets_actor_id(self) -> None:
         builder = EventBuilder(SampleEvent)
@@ -176,12 +144,9 @@ class TestEventBuilderWithActorId:
 
 
 class TestEventBuilderWithMetadata:
-    """Tests for with_metadata method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_metadata({"key": "value"})
-        assert result is builder
+        assert builder.with_metadata({"key": "value"}) is builder
 
     def test_sets_metadata(self) -> None:
         builder = EventBuilder(SampleEvent)
@@ -197,22 +162,17 @@ class TestEventBuilderWithMetadata:
 
 
 class TestEventBuilderWithField:
-    """Tests for with_field method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_field("customer_id", uuid4())
-        assert result is builder
+        assert builder.with_field("customer_id", uuid4()) is builder
 
     def test_sets_arbitrary_field(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        customer_id = uuid4()
+        builder, customer_id = EventBuilder(SampleEvent), uuid4()
         builder.with_field("customer_id", customer_id)
         assert builder._fields["customer_id"] == customer_id
 
     def test_sets_multiple_fields_separately(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        customer_id = uuid4()
+        builder, customer_id = EventBuilder(SampleEvent), uuid4()
         builder.with_field("customer_id", customer_id)
         builder.with_field("amount", 99.99)
         assert builder._fields["customer_id"] == customer_id
@@ -226,16 +186,12 @@ class TestEventBuilderWithField:
 
 
 class TestEventBuilderWithFields:
-    """Tests for with_fields method."""
-
     def test_returns_self(self) -> None:
         builder = EventBuilder(SampleEvent)
-        result = builder.with_fields(customer_id=uuid4(), amount=50.0)
-        assert result is builder
+        assert builder.with_fields(customer_id=uuid4(), amount=50.0) is builder
 
     def test_sets_multiple_fields(self) -> None:
-        builder = EventBuilder(SampleEvent)
-        customer_id = uuid4()
+        builder, customer_id = EventBuilder(SampleEvent), uuid4()
         builder.with_fields(customer_id=customer_id, amount=75.50)
         assert builder._fields["customer_id"] == customer_id
         assert builder._fields["amount"] == 75.50
