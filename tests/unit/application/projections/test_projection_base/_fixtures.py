@@ -47,8 +47,7 @@ class TestProjection(CheckpointTestProjection):
 
 
 class FailingCheckpointProjection(CheckpointTrackingProjection):
-    MAX_RETRIES = 3
-    RETRY_BACKOFF_BASE = 0
+    MAX_RETRIES, RETRY_BACKOFF_BASE = 3, 0
 
     def __init__(
         self,
@@ -79,8 +78,7 @@ class BrokenCheckpoints(InMemoryCheckpointRepository):
 
 
 class CountingProjection(CheckpointTrackingProjection):
-    MAX_RETRIES = 2
-    RETRY_BACKOFF_BASE = 0
+    MAX_RETRIES, RETRY_BACKOFF_BASE = 2, 0
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -101,11 +99,14 @@ class MyCustomProjection(CheckpointTrackingProjection):
         pass
 
 
-class SimpleDeclarativeProjection(DeclarativeProjection):
+class _DeclarativeEventRecorder(DeclarativeProjection):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.events_handled: list[DomainEvent] = []
+        self.conn_values: list[object] = []
 
+
+class SimpleDeclarativeProjection(_DeclarativeEventRecorder):
     @handles(OrderCreated)
     async def _handle_order_created(self, event: OrderCreated) -> None:
         self.events_handled.append(event)
@@ -126,31 +127,21 @@ class MultiHandlerDeclarativeProjection(DeclarativeProjection):
         self.shipped_events.append(event)
 
 
-class TwoParamDeclarativeProjection(DeclarativeProjection):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.events_handled: list[DomainEvent] = []
-        self.conn_values: list[object] = []
-
+class TwoParamDeclarativeProjection(_DeclarativeEventRecorder):
     @handles(OrderCreated)
     async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
         self.conn_values.append(conn)
         self.events_handled.append(event)
 
 
-class PublicHandlerDeclarativeProjection(DeclarativeProjection):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.events_handled: list[DomainEvent] = []
-
+class PublicHandlerDeclarativeProjection(_DeclarativeEventRecorder):
     @handles(OrderCreated)
     async def handle_order_created(self, event: OrderCreated) -> None:
         self.events_handled.append(event)
 
 
 class FailingDeclarativeProjection(DeclarativeProjection):
-    MAX_RETRIES = 1
-    RETRY_BACKOFF_BASE = 0
+    MAX_RETRIES, RETRY_BACKOFF_BASE = 1, 0
 
     @handles(OrderCreated)
     async def _handle_order_created(self, event: OrderCreated) -> None:
@@ -158,41 +149,37 @@ class FailingDeclarativeProjection(DeclarativeProjection):
 
 
 class FailingDatabaseProjection(DatabaseProjection):
-    MAX_RETRIES = 1
-    RETRY_BACKOFF_BASE = 0
+    MAX_RETRIES, RETRY_BACKOFF_BASE = 1, 0
 
     @handles(OrderCreated)
     async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
         raise ValueError("Handler error")
 
 
-class SimpleDatabaseProjection(DatabaseProjection):
+class _DbProjectionRecorder(DatabaseProjection):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.received_conn: list[object] = []
+        self.received_conns: list[object] = []
         self.events_handled: list[DomainEvent] = []
+        self.one_param_events: list[DomainEvent] = []
+        self.two_param_events: list[DomainEvent] = []
 
+
+class SimpleDatabaseProjection(_DbProjectionRecorder):
     @handles(OrderCreated)
     async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
         self.received_conn.append(conn)
         self.events_handled.append(event)
 
 
-class SingleParamDatabaseProjection(DatabaseProjection):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.events_handled: list[DomainEvent] = []
-
+class SingleParamDatabaseProjection(_DbProjectionRecorder):
     @handles(OrderCreated)
     async def _handle_order_created(self, event: OrderCreated) -> None:
         self.events_handled.append(event)
 
 
-class MultiHandlerDatabaseProjection(DatabaseProjection):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.received_conns: list[object] = []
-
+class MultiHandlerDatabaseProjection(_DbProjectionRecorder):
     @handles(OrderCreated)
     async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
         self.received_conns.append(conn)
@@ -202,13 +189,7 @@ class MultiHandlerDatabaseProjection(DatabaseProjection):
         self.received_conns.append(conn)
 
 
-class MixedDatabaseProjection(DatabaseProjection):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.one_param_events: list[DomainEvent] = []
-        self.two_param_events: list[DomainEvent] = []
-        self.received_conns: list[object] = []
-
+class MixedDatabaseProjection(_DbProjectionRecorder):
     @handles(OrderCreated)
     async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
         self.received_conns.append(conn)

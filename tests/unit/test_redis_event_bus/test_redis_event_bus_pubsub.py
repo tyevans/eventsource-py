@@ -10,6 +10,7 @@ from eventsource.adapters.redis.bus import RedisEventBus, RedisEventBusConfig
 from eventsource.domain.event_registry import EventRegistry
 from eventsource.domain.exceptions import HandlerDispatchError
 
+from . import _fixtures as fx
 from ._fixtures import (
     FailingHandler,
     OrderHandler,
@@ -18,21 +19,9 @@ from ._fixtures import (
     SamplePaymentReceived,
     SampleSubscriber,
     SyncHandler,
-    bus,
-    config,
-    event_registry,
-    mock_redis,
 )
 
-__all__ = [
-    "TestRedisEventBusDispatch",
-    "TestRedisEventBusIntegration",
-    "TestRedisEventBusSubscription",
-    "bus",
-    "config",
-    "event_registry",
-    "mock_redis",
-]
+bus, config, event_registry, mock_redis = fx.bus, fx.config, fx.event_registry, fx.mock_redis
 
 
 def _make_order_created(order_number: str = "ORD-001") -> SampleOrderCreated:
@@ -97,8 +86,7 @@ class TestRedisEventBusSubscription:
         bus.subscribe(SampleOrderCreated, handler)
         bus.subscribe_to_all_events(handler)
         bus.clear_subscribers()
-        assert bus.get_subscriber_count() == 0
-        assert bus.get_wildcard_subscriber_count() == 0
+        assert bus.get_subscriber_count() == 0 and bus.get_wildcard_subscriber_count() == 0
 
 
 class TestRedisEventBusDispatch:
@@ -118,26 +106,26 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_to_wildcard_handler(self, bus: RedisEventBus, event_registry) -> None:
         handler = OrderHandler()
         bus.subscribe_to_all_events(handler)
-        event = SamplePaymentReceived(aggregate_id=uuid4(), amount=100.0)
-        await bus._dispatch_event(event, "msg-123")
+        await bus._dispatch_event(
+            SamplePaymentReceived(aggregate_id=uuid4(), amount=100.0), "msg-123"
+        )
         assert len(handler.handled_events) == 1
 
     async def test_dispatch_to_multiple_handlers(self, bus: RedisEventBus, event_registry) -> None:
-        handler1, handler2, wildcard_handler = OrderHandler(), OrderHandler(), OrderHandler()
-        bus.subscribe(SampleOrderCreated, handler1)
-        bus.subscribe(SampleOrderCreated, handler2)
-        bus.subscribe_to_all_events(wildcard_handler)
+        h1, h2, wh = OrderHandler(), OrderHandler(), OrderHandler()
+        bus.subscribe(SampleOrderCreated, h1)
+        bus.subscribe(SampleOrderCreated, h2)
+        bus.subscribe_to_all_events(wh)
         await bus._dispatch_event(_make_order_created(), "msg-123")
-        assert len(handler1.handled_events) == 1
-        assert len(handler2.handled_events) == 1
-        assert len(wildcard_handler.handled_events) == 1
+        assert len(h1.handled_events) == 1 and len(h2.handled_events) == 1
+        assert len(wh.handled_events) == 1
 
     async def test_dispatch_handler_failure(self, bus: RedisEventBus, event_registry) -> None:
         bus.subscribe(SampleOrderCreated, FailingHandler())
         with pytest.raises(HandlerDispatchError) as exc_info:
             await bus._dispatch_event(_make_order_created(), "msg-123")
         assert len(exc_info.value.failures) == 1
-        _failed_name, failed_exc = exc_info.value.failures[0]
+        _, failed_exc = exc_info.value.failures[0]
         assert isinstance(failed_exc, ValueError)
         assert "Handler failed intentionally" in str(failed_exc)
 
@@ -153,15 +141,13 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_isolates_handler_errors(
         self, bus: RedisEventBus, event_registry
     ) -> None:
-        handler1, failing_handler, handler3 = OrderHandler(), FailingHandler(), OrderHandler()
-        bus.subscribe(SampleOrderCreated, handler1)
-        bus.subscribe(SampleOrderCreated, failing_handler)
-        bus.subscribe(SampleOrderCreated, handler3)
+        h1, failing, h3 = OrderHandler(), FailingHandler(), OrderHandler()
+        for h in (h1, failing, h3):
+            bus.subscribe(SampleOrderCreated, h)
         initial_errors = bus.stats.handler_errors
         with pytest.raises(HandlerDispatchError) as exc_info:
             await bus._dispatch_event(_make_order_created(), "msg-123")
-        assert len(handler1.handled_events) == 1
-        assert len(handler3.handled_events) == 1
+        assert len(h1.handled_events) == 1 and len(h3.handled_events) == 1
         assert len(exc_info.value.failures) == 1
         assert bus.stats.handler_errors == initial_errors + 1
 
@@ -176,19 +162,17 @@ class TestRedisEventBusIntegration:
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-            bus_instance = RedisEventBus(config=config, event_registry=event_registry)
-            await bus_instance.connect()
-            bus_instance.subscribe(SampleOrderCreated, handler)
+            b = RedisEventBus(config=config, event_registry=event_registry)
+            await b.connect()
+            b.subscribe(SampleOrderCreated, handler)
 
             event = _make_order_created()
-            await bus_instance.publish([event])
-            await bus_instance._process_message("msg-123", _msg_data(event), "test_consumer")
+            await b.publish([event])
+            await b._process_message("msg-123", _msg_data(event), "test_consumer")
 
-            assert len(handler.handled_events) == 1
-            assert handler.handled_events[0].order_number == "ORD-001"
-            assert bus_instance.stats.events_published == 1
-            assert bus_instance.stats.events_consumed == 1
-            await bus_instance.disconnect()
+            assert [e.order_number for e in handler.handled_events] == ["ORD-001"]
+            assert b.stats.events_published == 1 and b.stats.events_consumed == 1
+            await b.disconnect()
 
     async def test_subscriber_receives_events(
         self, config: RedisEventBusConfig, event_registry: EventRegistry, mock_redis: AsyncMock
@@ -199,20 +183,18 @@ class TestRedisEventBusIntegration:
             patch("eventsource.adapters.redis.bus.aioredis") as mock_aioredis,
         ):
             mock_aioredis.from_url = AsyncMock(return_value=mock_redis)
-            bus_instance = RedisEventBus(config=config, event_registry=event_registry)
-            await bus_instance.connect()
-            bus_instance.subscribe_all(subscriber)
+            b = RedisEventBus(config=config, event_registry=event_registry)
+            await b.connect()
+            b.subscribe_all(subscriber)
 
-            events = [
+            for event in [
                 _make_order_created(),
                 SampleOrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"),
-            ]
-            for event in events:
-                await bus_instance._process_message(
-                    f"msg-{event.event_id}", _msg_data(event), "test_consumer"
-                )
+            ]:
+                await b._process_message(f"msg-{event.event_id}", _msg_data(event), "test_consumer")
 
-            assert len(subscriber.handled_events) == 2
-            assert subscriber.handled_events[0].event_type == "SampleOrderCreated"
-            assert subscriber.handled_events[1].event_type == "SampleOrderShipped"
-            await bus_instance.disconnect()
+            assert [e.event_type for e in subscriber.handled_events] == [
+                "SampleOrderCreated",
+                "SampleOrderShipped",
+            ]
+            await b.disconnect()
