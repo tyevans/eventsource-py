@@ -88,7 +88,6 @@ class KafkaConsumerMessageMixin:
 
         self._stats.events_consumed += 1
         self._stats.last_consume_at = datetime.now(UTC)
-
         event_type_name = self._get_header_value(message.headers, "event_type")
 
         if self._metrics and event_type_name:
@@ -125,9 +124,7 @@ class KafkaConsumerMessageMixin:
         )
 
         if self._enable_tracing and PROPAGATION_AVAILABLE and extract is not None:
-            carrier = self._extract_trace_context(message.headers)
-            context = extract(carrier)
-
+            context = extract(self._extract_trace_context(message.headers))
             with self._tracer.span_with_kind(
                 name=f"eventsource.event_bus.consume {event_type_name}",
                 kind=SpanKindEnum.CONSUMER,
@@ -152,22 +149,27 @@ class KafkaConsumerMessageMixin:
         headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
     ) -> dict[str, str]:
         """Extract OpenTelemetry trace context from message headers."""
-        carrier: dict[str, str] = {}
-        if headers:
-            for key, value in headers:
-                if key in ("traceparent", "tracestate", "baggage"):
-                    carrier[key] = value.decode("utf-8")
-        return carrier
+        if not headers:
+            return {}
+        return {
+            key: value.decode("utf-8")
+            for key, value in headers
+            if key in ("traceparent", "tracestate", "baggage")
+        }
 
     async def _process_message_with_span(
-        self,
-        message: Any,
-        event_type_name: str,
-        span: Any,
+        self, message: Any, event_type_name: str, span: Any
     ) -> None:
         """Process message with optional span updates."""
         start_time = time.perf_counter()
         retry_count = self._get_retry_count(message.headers)
+
+        def _record_duration() -> None:
+            if self._metrics:
+                self._metrics.consume_duration.record(
+                    (time.perf_counter() - start_time) * 1000,
+                    attributes={"messaging.destination": message.topic},
+                )
 
         try:
             try:
@@ -175,10 +177,7 @@ class KafkaConsumerMessageMixin:
             except DeserializationError as e:
                 logger.error(
                     "Deserialization error, sending directly to DLQ",
-                    extra={
-                        "event_type": event_type_name,
-                        "error": str(e),
-                    },
+                    extra={"event_type": event_type_name, "error": str(e)},
                 )
                 retained = await self._send_to_dlq(
                     message, e, retry_count, reason="deserialization_error"
@@ -191,13 +190,7 @@ class KafkaConsumerMessageMixin:
                 if span is not None and Status is not None and StatusCode is not None:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     span.record_exception(e)
-
-                if self._metrics:
-                    duration_ms = (time.perf_counter() - start_time) * 1000
-                    self._metrics.consume_duration.record(
-                        duration_ms,
-                        attributes={"messaging.destination": message.topic},
-                    )
+                _record_duration()
                 return
 
             if span is not None:
@@ -206,12 +199,8 @@ class KafkaConsumerMessageMixin:
                 span.set_attribute(ATTR_AGGREGATE_TYPE, event.aggregate_type)
 
             handlers = self._handlers_for(type(event))
-
             if not handlers:
-                logger.debug(
-                    "No handlers for event type",
-                    extra={"event_type": event_type_name},
-                )
+                logger.debug("No handlers for event type", extra={"event_type": event_type_name})
             else:
                 await self._dispatch_to_handlers(event, handlers)
 
@@ -221,47 +210,29 @@ class KafkaConsumerMessageMixin:
 
             if span is not None and Status is not None and StatusCode is not None:
                 span.set_status(Status(StatusCode.OK))
-
-            if self._metrics:
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                self._metrics.consume_duration.record(
-                    duration_ms,
-                    attributes={
-                        "messaging.destination": message.topic,
-                    },
-                )
+            _record_duration()
 
         except Exception as e:
-            if self._metrics:
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                self._metrics.consume_duration.record(
-                    duration_ms,
-                    attributes={
-                        "messaging.destination": message.topic,
-                    },
-                )
-
+            _record_duration()
             if span is not None and Status is not None and StatusCode is not None:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
 
-            dlq_error: Exception = e
-            if isinstance(e, HandlerDispatchError) and len(e.failures) == 1:
-                dlq_error = e.failures[0][1]
+            dlq_error = (
+                e.failures[0][1]
+                if isinstance(e, HandlerDispatchError) and len(e.failures) == 1
+                else e
+            )
             await self._handle_processing_error(message, dlq_error, retry_count)
 
     def _deserialize_message(self, message: Any) -> DomainEvent:
         """Deserialize a Kafka message to a DomainEvent using the configured serializer."""
         event_type_name = self._get_header_value(message.headers, "event_type")
-
         if not event_type_name:
             raise DeserializationError("Message missing event_type header")
-
         event_class = self._resolve_event_class(event_type_name)
-
         if not event_class:
             raise DeserializationError(f"Unknown event type: {event_type_name}")
-
         return self._serializer.deserialize(message.value, event_type_name, event_class)
 
     def _get_header_value(
