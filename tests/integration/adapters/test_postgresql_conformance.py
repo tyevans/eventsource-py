@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,7 @@ from ..conftest import skip_if_no_postgres_infra
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, skip_if_no_postgres_infra]
 
+import eventsource.testing.conformance_ports as cp  # noqa: E402
 from eventsource.adapters.postgresql import (  # noqa: E402
     PostgreSQLEventStore,
     PostgreSQLSnapshotStore,
@@ -21,16 +23,6 @@ from eventsource.adapters.sql.dlq import SQLDLQRepository  # noqa: E402
 from eventsource.adapters.sql.schemas import get_schema  # noqa: E402
 from eventsource.domain.exceptions import OptimisticLockError  # noqa: E402
 from eventsource.ports import ExpectedVersion, collect  # noqa: E402
-from eventsource.testing.conformance_ports import (  # noqa: E402
-    AppenderConformance,
-    CategoryQueryConformance,
-    CheckpointRepositoryConformance,
-    DLQRepositoryConformance,
-    EventLookupConformance,
-    GlobalFeedConformance,
-    SnapshotStoreConformance,
-    StreamReaderConformance,
-)
 from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
     make_conformance_registry,
     make_event,
@@ -38,19 +30,23 @@ from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
 )
 
 
-async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
-    engine = create_async_engine(connection_url)
+@asynccontextmanager
+async def _pg_engine(
+    url: str, drop: str, ddl: str = "", raw: str = ""
+) -> AsyncIterator[AsyncEngine]:
+    engine = create_async_engine(url)
     async with engine.begin() as conn:
-        await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
-    return PostgreSQLEventStore(
-        engine, event_registry=make_conformance_registry(), create_schema=True, owns_engine=True
-    )
-
-
-async def _exec_raw_schema(conn: object, schema_name: str) -> None:
-    raw = await conn.get_raw_connection()  # type: ignore[attr-defined]
-    assert raw.driver_connection is not None
-    await raw.driver_connection.execute(get_schema(schema_name, "postgresql"))
+        await conn.execute(text(f"DROP TABLE IF EXISTS {drop} CASCADE"))
+        if ddl:
+            await conn.execute(text(ddl))
+        if raw:
+            raw_conn = await conn.get_raw_connection()
+            assert raw_conn.driver_connection is not None
+            await raw_conn.driver_connection.execute(get_schema(raw, "postgresql"))
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
 
 
 class _PGStoreFixture:
@@ -58,24 +54,28 @@ class _PGStoreFixture:
     async def store(
         self, ports_postgres_connection_url: str
     ) -> AsyncIterator[PostgreSQLEventStore]:
-        store = await _fresh_store(ports_postgres_connection_url)
-        yield store
-        await store.close()
+        engine = create_async_engine(ports_postgres_connection_url)
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
+        reg = make_conformance_registry()
+        s = PostgreSQLEventStore(engine, event_registry=reg, create_schema=True, owns_engine=True)
+        yield s
+        await s.close()
 
 
-class TestPostgreSQLAppender(_PGStoreFixture, AppenderConformance):
+class TestPostgreSQLAppender(_PGStoreFixture, cp.AppenderConformance):
     pass
 
 
-class TestPostgreSQLStreamReader(_PGStoreFixture, StreamReaderConformance):
+class TestPostgreSQLStreamReader(_PGStoreFixture, cp.StreamReaderConformance):
     pass
 
 
-class TestPostgreSQLEventLookup(_PGStoreFixture, EventLookupConformance):
+class TestPostgreSQLEventLookup(_PGStoreFixture, cp.EventLookupConformance):
     pass
 
 
-class TestPostgreSQLGlobalFeed(_PGStoreFixture, GlobalFeedConformance):
+class TestPostgreSQLGlobalFeed(_PGStoreFixture, cp.GlobalFeedConformance):
     @pytest.mark.postgres
     async def test_rows_with_null_txid_are_returned_by_read_all(
         self, store: PostgreSQLEventStore
@@ -87,50 +87,40 @@ class TestPostgreSQLGlobalFeed(_PGStoreFixture, GlobalFeedConformance):
         assert len(await collect(store.read_all())) == 1
 
 
-class TestPostgreSQLCategoryQuery(_PGStoreFixture, CategoryQueryConformance):
+class TestPostgreSQLCategoryQuery(_PGStoreFixture, cp.CategoryQueryConformance):
     pass
 
 
-class TestPostgreSQLSnapshotStore(SnapshotStoreConformance):
+class TestPostgreSQLSnapshotStore(cp.SnapshotStoreConformance):
     @pytest.fixture
     async def store(
         self, ports_postgres_connection_url: str
     ) -> AsyncIterator[PostgreSQLSnapshotStore]:
-        engine = create_async_engine(ports_postgres_connection_url)
-        async with engine.begin() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS snapshots CASCADE"))
-            await _exec_raw_schema(conn, "snapshots")
-        yield PostgreSQLSnapshotStore(async_sessionmaker(engine, expire_on_commit=False))
-        await engine.dispose()
+        async with _pg_engine(ports_postgres_connection_url, "snapshots", raw="snapshots") as eng:
+            yield PostgreSQLSnapshotStore(async_sessionmaker(eng, expire_on_commit=False))
 
 
 _CHECKPOINTS_DDL = """CREATE TABLE IF NOT EXISTS projection_checkpoints (
-    projection_name VARCHAR(255) PRIMARY KEY, last_event_id UUID, last_event_type VARCHAR(255),
-    last_processed_at TIMESTAMPTZ, events_processed BIGINT NOT NULL DEFAULT 0,
-    global_position BIGINT, position_token TEXT,
+    projection_name VARCHAR(255) PRIMARY KEY, last_event_id UUID, last_event_type VARCHAR(255), last_processed_at TIMESTAMPTZ,
+    events_processed BIGINT NOT NULL DEFAULT 0, global_position BIGINT, position_token TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"""
 _DLQ_DDL = """CREATE TABLE IF NOT EXISTS dead_letter_queue (
-    id BIGSERIAL PRIMARY KEY, event_id UUID NOT NULL, projection_name VARCHAR(255) NOT NULL,
-    event_type VARCHAR(255) NOT NULL, event_data JSONB NOT NULL, error_message TEXT NOT NULL,
-    error_stacktrace TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+    id BIGSERIAL PRIMARY KEY, event_id UUID NOT NULL, projection_name VARCHAR(255) NOT NULL, event_type VARCHAR(255) NOT NULL,
+    event_data JSONB NOT NULL, error_message TEXT NOT NULL, error_stacktrace TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
     first_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'failed', resolved_at TIMESTAMPTZ, resolved_by VARCHAR(255),
     CONSTRAINT chk_dlq_status_ports CHECK (status IN ('failed', 'retrying', 'resolved')),
     CONSTRAINT uq_dlq_event_projection_ports UNIQUE (event_id, projection_name))"""
 
 
-class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
+class TestPostgreSQLCheckpointRepository(cp.CheckpointRepositoryConformance):
     @pytest.fixture
     async def store(
         self, ports_postgres_connection_url: str
     ) -> AsyncIterator[SQLCheckpointRepository]:
-        engine = create_async_engine(ports_postgres_connection_url)
-        async with engine.begin() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS projection_checkpoints, events CASCADE"))
-            await conn.execute(text(_CHECKPOINTS_DDL))
-            await _exec_raw_schema(conn, "events")
-        yield SQLCheckpointRepository(engine)
-        await engine.dispose()
+        drop = "projection_checkpoints, events"
+        async with _pg_engine(ports_postgres_connection_url, drop, _CHECKPOINTS_DDL, "events") as e:
+            yield SQLCheckpointRepository(e)
 
     async def write_legacy_int_row(
         self, store: SQLCheckpointRepository, sub_id: str, val: int
@@ -140,15 +130,11 @@ class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
             await conn.execute(text(sql), {"n": sub_id, "v": val})
 
 
-class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
+class TestPostgreSQLDLQRepository(cp.DLQRepositoryConformance):
     @pytest.fixture
     async def store(self, ports_postgres_connection_url: str) -> AsyncIterator[SQLDLQRepository]:
-        engine = create_async_engine(ports_postgres_connection_url)
-        async with engine.begin() as conn:
-            await conn.execute(text("DROP TABLE IF EXISTS dead_letter_queue CASCADE"))
-            await conn.execute(text(_DLQ_DDL))
-        yield SQLDLQRepository(engine)
-        await engine.dispose()
+        async with _pg_engine(ports_postgres_connection_url, "dead_letter_queue", _DLQ_DDL) as eng:
+            yield SQLDLQRepository(eng)
 
     async def test_postgres_delete_resolved_events_removes_past_cutoff_entries(
         self, store: SQLDLQRepository
@@ -164,26 +150,19 @@ class TestPostgreSQLConcurrency(_PGStoreFixture):
     async def test_concurrent_appends_to_different_streams_all_succeed(
         self, store: PostgreSQLEventStore
     ) -> None:
-        streams = [make_stream() for _ in range(5)]
-        await asyncio.gather(
-            *[
-                store.append(s, [make_event(s.aggregate_id)], ExpectedVersion.no_stream())
-                for s in streams
-            ]
-        )
+        streams, ver = [make_stream() for _ in range(5)], ExpectedVersion.no_stream()
+        await asyncio.gather(*[store.append(s, [make_event(s.aggregate_id)], ver) for s in streams])
         for s in streams:
             assert await store.get_stream_version(s) == 1
 
     async def test_concurrent_appends_to_same_stream_only_one_succeeds(
         self, store: PostgreSQLEventStore
     ) -> None:
-        stream = make_stream()
+        stream, ver = make_stream(), ExpectedVersion.exact(0)
 
         async def append_at_zero() -> bool:
             try:
-                await store.append(
-                    stream, [make_event(stream.aggregate_id)], ExpectedVersion.exact(0)
-                )
+                await store.append(stream, [make_event(stream.aggregate_id)], ver)
                 return True
             except OptimisticLockError:
                 return False
@@ -202,13 +181,12 @@ class TestPostgreSQLLargePayloads(_PGStoreFixture):
 
 
 async def test_store_id_stable_across_restarts(ports_postgres_connection_url: str) -> None:
-    eng_a: AsyncEngine = create_async_engine(ports_postgres_connection_url)
-    eng_b: AsyncEngine = create_async_engine(ports_postgres_connection_url)
+    eng_a = create_async_engine(ports_postgres_connection_url)
+    eng_b = create_async_engine(ports_postgres_connection_url)
     try:
         reg = make_conformance_registry()
         s_a = PostgreSQLEventStore(eng_a, event_registry=reg)
         s_b = PostgreSQLEventStore(eng_b, event_registry=reg)
         assert s_a.store_id == s_b.store_id == f"pg:{eng_a.url.database}"
     finally:
-        await eng_a.dispose()
-        await eng_b.dispose()
+        await asyncio.gather(eng_a.dispose(), eng_b.dispose())

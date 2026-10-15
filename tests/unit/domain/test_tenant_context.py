@@ -29,18 +29,22 @@ def _clean_tenant_context() -> Iterator[None]:
     clear_tenant_context()
 
 
+async def _scoped_tenant(tid: object, delay: float) -> object:
+    async with tenant_scope(tid):  # type: ignore[arg-type]
+        await asyncio.sleep(delay)
+        return get_current_tenant()
+
+
 class TestBasicContextFunctions:
     def test_get_current_tenant_returns_none_by_default(self) -> None:
         assert get_current_tenant() is None
 
     def test_set_and_get_tenant(self) -> None:
-        tid = uuid4()
-        set_current_tenant(tid)
+        set_current_tenant(tid := uuid4())
         assert get_current_tenant() == tid
 
     def test_set_returns_token(self) -> None:
-        token = set_current_tenant(uuid4())
-        assert token is not None
+        assert (token := set_current_tenant(uuid4())) is not None
         reset_tenant_context(token)
         assert get_current_tenant() is None
 
@@ -62,8 +66,7 @@ class TestGetRequiredTenant:
         assert "set_current_tenant" in str(exc_info.value) and "tenant_scope" in str(exc_info.value)
 
     def test_get_required_tenant_returns_when_set(self) -> None:
-        tid = uuid4()
-        set_current_tenant(tid)
+        set_current_tenant(tid := uuid4())
         assert get_required_tenant() == tid
 
     def test_get_required_tenant_after_clear_raises(self) -> None:
@@ -75,13 +78,11 @@ class TestGetRequiredTenant:
 
 class TestAsyncTenantScope:
     async def test_scope_sets_context(self) -> None:
-        tid = uuid4()
-        async with tenant_scope(tid):
+        async with tenant_scope(tid := uuid4()):
             assert get_current_tenant() == tid
 
     async def test_scope_yields_tenant_id(self) -> None:
-        tid = uuid4()
-        async with tenant_scope(tid) as yielded:
+        async with tenant_scope(tid := uuid4()) as yielded:
             assert yielded == tid
 
     async def test_scope_clears_on_exit(self) -> None:
@@ -123,13 +124,11 @@ class TestAsyncTenantScope:
 
 class TestSyncTenantScope:
     def test_sync_scope_sets_context(self) -> None:
-        tid = uuid4()
-        with tenant_scope_sync(tid):
+        with tenant_scope_sync(tid := uuid4()):
             assert get_current_tenant() == tid
 
     def test_sync_scope_yields_tenant_id(self) -> None:
-        tid = uuid4()
-        with tenant_scope_sync(tid) as yielded:
+        with tenant_scope_sync(tid := uuid4()) as yielded:
             assert yielded == tid
 
     def test_sync_scope_clears_on_exit(self) -> None:
@@ -153,35 +152,19 @@ class TestSyncTenantScope:
 
 class TestContextIsolation:
     async def test_concurrent_tasks_have_isolated_context(self) -> None:
-        results: dict[str, uuid4] = {}
-
-        async def run(name: str, tid: uuid4) -> None:
-            async with tenant_scope(tid):
-                await asyncio.sleep(0.01)
-                results[name] = get_current_tenant()
-
         t1, t2 = uuid4(), uuid4()
-        await asyncio.gather(run("t1", t1), run("t2", t2))
-        assert results == {"t1": t1, "t2": t2}
+        assert await asyncio.gather(_scoped_tenant(t1, 0.01), _scoped_tenant(t2, 0.01)) == [t1, t2]
 
     async def test_many_concurrent_tasks_isolated(self) -> None:
-        results, tids = {}, [uuid4() for _ in range(20)]
-
-        async def run(idx: int, tid: uuid4) -> None:
-            async with tenant_scope(tid):
-                await asyncio.sleep(0.001 * (idx % 5))
-                results[idx] = get_current_tenant()
-
-        await asyncio.gather(*[run(i, tids[i]) for i in range(20)])
-        assert [results[i] for i in range(20)] == tids
+        tids = [uuid4() for _ in range(20)]
+        tasks = [_scoped_tenant(tids[i], 0.001 * (i % 5)) for i in range(20)]
+        assert await asyncio.gather(*tasks) == tids
 
     async def test_spawned_task_inherits_context(self) -> None:
-        tid = uuid4()
-
         async def inner() -> object:
             return get_current_tenant()
 
-        async with tenant_scope(tid):
+        async with tenant_scope(tid := uuid4()):
             assert await asyncio.create_task(inner()) == tid
 
     async def test_context_not_leaked_after_task(self) -> None:

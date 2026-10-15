@@ -1,21 +1,4 @@
-"""
-Unit tests for `BatchSubscriber`-only subscribers on the live path.
-
-Covers task #38. `BatchSubscriber` requires only `subscribed_to()` and
-`handle_batch()` -- not `handle()`. Catch-up honors that, but the live runner
-called `subscriber.handle(event)` unconditionally, so a subscriber that
-implements exactly the published Protocol raised `AttributeError` **per event**
-the moment its subscription went live. Each one was recorded as a handler
-failure, counted toward the circuit breaker, and (with `continue_on_error`)
-could fill the DLQ with events whose handler was never actually reached. The
-docs said such a subscriber "will not receive live events", which reads like a
-silent no-op rather than a per-event exception.
-
-The original fix delivered a one-event batch. Task #34 (ADR 0063) then made the
-live path group the envelopes a single bounded feed read already returned, so
-these subscribers now receive real batches -- and `handle_batch()` takes
-precedence over `handle()` on the live path, matching `CatchUpRunner`.
-"""
+"""Unit tests for `BatchSubscriber`-only subscribers on the live path (task #38, ADR 0063)."""
 
 import asyncio
 from uuid import uuid4
@@ -37,7 +20,6 @@ from eventsource.domain.event_registry import EventRegistry, register_event
 from eventsource.ports.positions import ExpectedVersion
 
 _REGISTRY = EventRegistry()
-
 BOUND = 5.0
 
 
@@ -50,12 +32,7 @@ class LiveBatchEvent(DomainEvent):
 
 
 class BatchOnlySubscriber:
-    """Implements exactly `BatchSubscriber` -- no `handle()` at all.
-
-    Deliberately does not define `handle`, because defining it (even to
-    raise) would not reproduce the defect: the bug was an `AttributeError`
-    from the attribute being absent.
-    """
+    """Implements `BatchSubscriber` only (no `handle()` method)."""
 
     def __init__(self) -> None:
         self.batch_calls: list[list[DomainEvent]] = []
@@ -70,8 +47,7 @@ class BatchOnlySubscriber:
 
 
 class BothSubscriber:
-    """Implements both handlers -- the control. `handle()` must still win on
-    the live path, so this fix changes nothing for existing subscribers."""
+    """Implements both `handle()` and `handle_batch()` (`handle_batch()` takes precedence)."""
 
     def __init__(self) -> None:
         self.single_calls: list[DomainEvent] = []
@@ -128,8 +104,7 @@ class TestBatchOnlySubscriberOnLivePath:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """A subscriber implementing exactly `BatchSubscriber` is delivered to
-        on the live path, rather than raising AttributeError per event."""
+        """A subscriber implementing `BatchSubscriber` is delivered to on the live path."""
         subscriber = BatchOnlySubscriber()
         subscription = Subscription(
             name="batch-only-live", config=make_config(), subscriber=subscriber
@@ -158,10 +133,7 @@ class TestBatchOnlySubscriberOnLivePath:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """The delivery is a success, not a swallowed handler failure. This is
-        the assertion that separates a real fix from one that merely stops the
-        exception escaping: `events_failed` stayed at zero only if the handler
-        was actually reached."""
+        """Delivery is recorded as a success with zero `events_failed`."""
         subscriber = BatchOnlySubscriber()
         subscription = Subscription(
             name="batch-only-stats", config=make_config(), subscriber=subscriber
@@ -189,10 +161,7 @@ class TestBatchOnlySubscriberOnLivePath:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """A batch-capable subscriber is delivered to through `handle_batch()`
-        even when it also implements `handle()` -- the same precedence
-        `CatchUpRunner` has always used (`supports_batch_handling()`). Before
-        ADR 0063 the two runners disagreed about the same subscriber."""
+        """A batch-capable subscriber is delivered to through `handle_batch()`."""
         subscriber = BothSubscriber()
         subscription = Subscription(name="both-live", config=make_config(), subscriber=subscriber)
         runner = LiveRunner(
