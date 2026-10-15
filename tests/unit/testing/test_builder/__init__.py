@@ -8,6 +8,7 @@ from tests.unit.testing.test_builder.test_builder_build import (
     TestEventBuilderBuild,
 )
 from tests.unit.testing.test_builder.test_builder_chaining import (
+    TestEventBuilderClone,
     TestEventBuilderMethodChaining,
     TestEventBuilderRepr,
     TestEventBuilderTypeSafety,
@@ -35,6 +36,7 @@ __all__ = [  # pragma: allowlist secret
     "MinimalEvent",
     "SampleEvent",
     "TestEventBuilderBuild",
+    "TestEventBuilderClone",
     "TestEventBuilderEdgeCases",
     "TestEventBuilderInit",
     "TestEventBuilderIntegrationScenarios",

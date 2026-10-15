@@ -28,13 +28,6 @@ class EventBuilder[TEvent: DomainEvent]:
     aggregate_id, event_id, aggregate_version, and occurred_at, allowing tests
     to focus only on the fields relevant to the test scenario.
 
-    Example:
-        >>> event = (
-        ...     EventBuilder(OrderCreated, customer_id=customer_id, total=99.99)
-        ...     .with_aggregate_id(order_id)
-        ...     .build()
-        ... )
-
     Auto-generated defaults:
         - aggregate_id: Random UUID
         - event_id: Random UUID
@@ -117,6 +110,10 @@ class EventBuilder[TEvent: DomainEvent]:
         """Set multiple fields at once and return self for chaining."""
         self._fields.update(kwargs)
         return self
+
+    def clone(self, **overrides: Any) -> "EventBuilder[TEvent]":
+        """Return a new EventBuilder copying existing fields with optional overrides."""
+        return EventBuilder(self._event_class, **{**self._fields, **overrides})
 
     def build(self) -> TEvent:
         """
