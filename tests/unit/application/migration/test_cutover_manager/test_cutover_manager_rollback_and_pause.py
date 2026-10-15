@@ -13,10 +13,19 @@ from tests.unit.application.migration.test_cutover_manager._fixtures import (
 )
 
 
+def _lag(events: int = 100, src: int = 200, tgt: int = 100) -> SyncLag:
+    return SyncLag(
+        events=events,
+        source_position=Position(store_id="source", key=(src,)),
+        target_position=Position(store_id="target", key=(tgt,)),
+        timestamp=datetime.now(UTC),
+    )
+
+
+@pytest.mark.asyncio
 class TestAutomaticRollback:
     """Tests for automatic rollback on failure."""
 
-    @pytest.mark.asyncio
     async def test_rollback_on_lag_failure(
         self,
         cutover_manager,
@@ -27,12 +36,7 @@ class TestAutomaticRollback:
         mock_routing_repo,
         strict_config,
     ):
-        mock_lag_tracker.current_lag = SyncLag(
-            events=100,
-            source_position=Position(store_id="source", key=(200,)),
-            target_position=Position(store_id="target", key=(100,)),
-            timestamp=datetime.now(UTC),
-        )
+        mock_lag_tracker.current_lag = _lag(100, 200, 100)
         result = await cutover_manager.execute_cutover(
             migration_id, tenant_id, mock_lag_tracker, target_store_id, config=strict_config
         )
@@ -41,7 +45,6 @@ class TestAutomaticRollback:
             tenant_id, TenantMigrationState.DUAL_WRITE, migration_id=migration_id
         )
 
-    @pytest.mark.asyncio
     async def test_rollback_on_target_health_failure(
         self,
         cutover_manager,
@@ -61,7 +64,6 @@ class TestAutomaticRollback:
         assert result.success is False and result.rolled_back is True
         assert "health check failed" in result.error_message.lower()
 
-    @pytest.mark.asyncio
     async def test_rollback_on_routing_update_failure(
         self,
         cutover_manager,
@@ -77,7 +79,6 @@ class TestAutomaticRollback:
         )
         assert result.success is False and result.rolled_back is True
 
-    @pytest.mark.asyncio
     async def test_rollback_failure_handled_gracefully(
         self,
         mock_lock_manager,
@@ -89,12 +90,7 @@ class TestAutomaticRollback:
         mock_lag_tracker,
     ):
         create_lock_context_manager(mock_lock_manager)
-        mock_lag_tracker.current_lag = SyncLag(
-            events=0,
-            source_position=Position(store_id="source", key=(100,)),
-            target_position=Position(store_id="target", key=(100,)),
-            timestamp=datetime.now(UTC),
-        )
+        mock_lag_tracker.current_lag = _lag(0, 100, 100)
         mock_store = MagicMock()
         mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
@@ -108,10 +104,7 @@ class TestAutomaticRollback:
 
         mock_routing_repo.set_migration_state.side_effect = failing_set_state
         manager = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
+            mock_lock_manager, mock_router, mock_routing_repo, enable_tracing=False
         )
         result = await manager.execute_cutover(
             migration_id, tenant_id, mock_lag_tracker, target_store_id
@@ -120,10 +113,10 @@ class TestAutomaticRollback:
         mock_router.resume_writes.assert_called_once()
 
 
+@pytest.mark.asyncio
 class TestWritePauseResume:
     """Tests for write pause/resume coordination."""
 
-    @pytest.mark.asyncio
     async def test_writes_paused_before_cutover(
         self,
         cutover_manager,
@@ -138,7 +131,6 @@ class TestWritePauseResume:
         )
         mock_router.pause_writes.assert_called_once_with(tenant_id)
 
-    @pytest.mark.asyncio
     async def test_writes_resumed_after_success(
         self,
         cutover_manager,
@@ -154,7 +146,6 @@ class TestWritePauseResume:
         assert result.success is True
         mock_router.resume_writes.assert_called_once_with(tenant_id)
 
-    @pytest.mark.asyncio
     async def test_writes_resumed_after_failure(
         self,
         cutover_manager,
@@ -165,12 +156,7 @@ class TestWritePauseResume:
         mock_router,
         strict_config,
     ):
-        mock_lag_tracker.current_lag = SyncLag(
-            events=100,
-            source_position=Position(store_id="source", key=(200,)),
-            target_position=Position(store_id="target", key=(100,)),
-            timestamp=datetime.now(UTC),
-        )
+        mock_lag_tracker.current_lag = _lag(100, 200, 100)
         result = await cutover_manager.execute_cutover(
             migration_id, tenant_id, mock_lag_tracker, target_store_id, config=strict_config
         )
@@ -178,10 +164,10 @@ class TestWritePauseResume:
         mock_router.resume_writes.assert_called_once_with(tenant_id)
 
 
+@pytest.mark.asyncio
 class TestTargetStoreVerification:
     """Tests for target store health verification."""
 
-    @pytest.mark.asyncio
     async def test_target_store_verified(
         self,
         cutover_manager,
@@ -197,7 +183,6 @@ class TestTargetStoreVerification:
         assert result.success is True
         mock_router.get_store.assert_called_with(target_store_id)
 
-    @pytest.mark.asyncio
     async def test_cutover_handles_missing_target_store(
         self, cutover_manager, tenant_id, migration_id, mock_lag_tracker, mock_router
     ):

@@ -1,6 +1,7 @@
 """Tests for WorkRedistributionCoordinator lifecycle, heartbeats, and message handling."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -27,17 +28,22 @@ def _make_shutdown(
     )
 
 
+def _collector() -> tuple[list[Any], Any]:
+    items: list[Any] = []
+
+    async def cb(item: Any) -> None:
+        items.append(item)
+
+    return items, cb
+
+
 @pytest.mark.asyncio
 class TestWorkRedistributionCoordinator:
-    """Tests for WorkRedistributionCoordinator."""
-
     async def test_create_coordinator(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         assert coordinator.instance_id == "worker-1"
-        assert coordinator.is_shutting_down is False
-        assert coordinator.shutdown_notification is None
-        assert coordinator.known_peers == {}
-        assert coordinator.healthy_peer_count == 0
+        assert coordinator.is_shutting_down is False and coordinator.shutdown_notification is None
+        assert coordinator.known_peers == {} and coordinator.healthy_peer_count == 0
         assert coordinator.draining_peers == []
 
     async def test_create_shutdown_notification(self) -> None:
@@ -62,10 +68,8 @@ class TestWorkRedistributionCoordinator:
         heartbeat = coordinator.create_heartbeat(
             subscriptions=["sub-1"], in_flight_count=5, load_factor=0.5
         )
-        assert heartbeat.instance_id == "worker-1"
-        assert heartbeat.subscriptions == ("sub-1",)
-        assert heartbeat.in_flight_count == 5
-        assert heartbeat.is_leader is False
+        assert heartbeat.instance_id == "worker-1" and heartbeat.subscriptions == ("sub-1",)
+        assert heartbeat.in_flight_count == 5 and heartbeat.is_leader is False
         assert heartbeat.load_factor == 0.5
 
     async def test_create_heartbeat_with_leader(self) -> None:
@@ -79,37 +83,23 @@ class TestWorkRedistributionCoordinator:
 
     async def test_handle_peer_shutdown(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        received_notifications: list[ShutdownNotification] = []
-
-        async def callback(notification: ShutdownNotification) -> None:
-            received_notifications.append(notification)
-
+        received_notifications, callback = _collector()
         coordinator.on_peer_shutdown(callback)
         notification = _make_shutdown("worker-2")
         await coordinator.handle_peer_shutdown(notification)
         assert received_notifications == [notification]
-        assert "worker-2" in coordinator.known_peers
         assert coordinator.known_peers["worker-2"].status == "draining"
 
     async def test_handle_peer_shutdown_ignores_self(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        received_notifications: list[ShutdownNotification] = []
-
-        async def callback(notification: ShutdownNotification) -> None:
-            received_notifications.append(notification)
-
+        received_notifications, callback = _collector()
         coordinator.on_peer_shutdown(callback)
         await coordinator.handle_peer_shutdown(_make_shutdown("worker-1"))
-        assert len(received_notifications) == 0
-        assert "worker-1" not in coordinator.known_peers
+        assert len(received_notifications) == 0 and "worker-1" not in coordinator.known_peers
 
     async def test_handle_heartbeat(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        received_heartbeats: list[HeartbeatMessage] = []
-
-        async def callback(heartbeat: HeartbeatMessage) -> None:
-            received_heartbeats.append(heartbeat)
-
+        received_heartbeats, callback = _collector()
         coordinator.on_heartbeat(callback)
         heartbeat = HeartbeatMessage(
             instance_id="worker-2",
@@ -124,25 +114,16 @@ class TestWorkRedistributionCoordinator:
 
     async def test_handle_heartbeat_ignores_self(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        received_heartbeats: list[HeartbeatMessage] = []
-
-        async def callback(heartbeat: HeartbeatMessage) -> None:
-            received_heartbeats.append(heartbeat)
-
+        received_heartbeats, callback = _collector()
         coordinator.on_heartbeat(callback)
         await coordinator.handle_heartbeat(
             HeartbeatMessage(instance_id="worker-1", timestamp=datetime.now(UTC))
         )
-        assert len(received_heartbeats) == 0
-        assert "worker-1" not in coordinator.known_peers
+        assert len(received_heartbeats) == 0 and "worker-1" not in coordinator.known_peers
 
     async def test_handle_work_assignment(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-2")
-        received_assignments: list[WorkAssignment] = []
-
-        async def callback(assignment: WorkAssignment) -> None:
-            received_assignments.append(assignment)
-
+        received_assignments, callback = _collector()
         coordinator.on_work_assignment(callback)
         assignment = WorkAssignment(
             target_instance_id="worker-2",
@@ -155,19 +136,16 @@ class TestWorkRedistributionCoordinator:
 
     async def test_handle_work_assignment_ignores_other_target(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-        received_assignments: list[WorkAssignment] = []
-
-        async def callback(assignment: WorkAssignment) -> None:
-            received_assignments.append(assignment)
-
+        received_assignments, callback = _collector()
         coordinator.on_work_assignment(callback)
-        assignment = WorkAssignment(
-            target_instance_id="worker-2",
-            subscriptions=("sub-1",),
-            source_instance_id="worker-3",
-            assigned_at=datetime.now(UTC),
+        await coordinator.handle_work_assignment(
+            WorkAssignment(
+                target_instance_id="worker-2",
+                subscriptions=("sub-1",),
+                source_instance_id="worker-3",
+                assigned_at=datetime.now(UTC),
+            )
         )
-        await coordinator.handle_work_assignment(assignment)
         assert len(received_assignments) == 0
 
     async def test_callback_error_handling(self) -> None:
@@ -188,21 +166,18 @@ class TestWorkRedistributionCoordinator:
     async def test_remove_callbacks(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
 
-        async def shutdown_cb(n: ShutdownNotification) -> None: ...
-        async def heartbeat_cb(h: HeartbeatMessage) -> None: ...
-        async def timeout_cb(p: str) -> None: ...
-        async def assignment_cb(a: WorkAssignment) -> None: ...
+        async def cb(*_args: object) -> None: ...
 
-        coordinator.on_peer_shutdown(shutdown_cb)
-        coordinator.on_heartbeat(heartbeat_cb)
-        coordinator.on_peer_timeout(timeout_cb)
-        coordinator.on_work_assignment(assignment_cb)
+        coordinator.on_peer_shutdown(cb)
+        coordinator.on_heartbeat(cb)
+        coordinator.on_peer_timeout(cb)
+        coordinator.on_work_assignment(cb)
 
-        assert coordinator.remove_peer_shutdown_callback(shutdown_cb) is True
-        assert coordinator.remove_peer_shutdown_callback(shutdown_cb) is False
-        assert coordinator.remove_heartbeat_callback(heartbeat_cb) is True
-        assert coordinator.remove_heartbeat_callback(heartbeat_cb) is False
-        assert coordinator.remove_peer_timeout_callback(timeout_cb) is True
-        assert coordinator.remove_peer_timeout_callback(timeout_cb) is False
-        assert coordinator.remove_work_assignment_callback(assignment_cb) is True
-        assert coordinator.remove_work_assignment_callback(assignment_cb) is False
+        assert coordinator.remove_peer_shutdown_callback(cb) is True
+        assert coordinator.remove_peer_shutdown_callback(cb) is False
+        assert coordinator.remove_heartbeat_callback(cb) is True
+        assert coordinator.remove_heartbeat_callback(cb) is False
+        assert coordinator.remove_peer_timeout_callback(cb) is True
+        assert coordinator.remove_peer_timeout_callback(cb) is False
+        assert coordinator.remove_work_assignment_callback(cb) is True
+        assert coordinator.remove_work_assignment_callback(cb) is False
