@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aio_pika import DeliveryMode, Message
@@ -37,11 +37,21 @@ class RabbitMQConsumerRetryMixin:
         """Calculate the delay in seconds before the next retry via shared RetryPolicy."""
         return self._retry_policy.delay_for(retry_count)
 
+    def _build_persistent_message(
+        self, source: AbstractIncomingMessage, headers: dict[str, Any]
+    ) -> Message:
+        """Clone an incoming message with updated headers and persistent delivery mode."""
+        return Message(
+            body=source.body,
+            content_type=source.content_type,
+            content_encoding=source.content_encoding,
+            delivery_mode=DeliveryMode.PERSISTENT,
+            message_id=source.message_id,
+            headers=headers,
+        )
+
     async def _handle_failed_message(
-        self,
-        message: AbstractIncomingMessage,
-        error: Exception,
-        retry_count: int,
+        self, message: AbstractIncomingMessage, error: Exception, retry_count: int
     ) -> None:
         """Handle a failed message: retry with exponential backoff or route to DLQ."""
         headers = message.headers or {}
@@ -50,7 +60,6 @@ class RabbitMQConsumerRetryMixin:
         if retry_count >= self._config.max_retries:
             await self._send_to_dlq(message, error, retry_count)
             await message.ack()
-
             self._logger.warning(
                 f"Message sent to DLQ after {retry_count} retries: {event_type_name}",
                 extra={
@@ -61,48 +70,43 @@ class RabbitMQConsumerRetryMixin:
                     "dlq_queue": self._config.dlq_queue_name,
                 },
             )
-        else:
-            delay = self._calculate_retry_delay(retry_count)
+            return
 
+        delay = self._calculate_retry_delay(retry_count)
+        self._logger.info(
+            f"Scheduling retry {retry_count + 1}/{self._config.max_retries} "
+            f"for {event_type_name} after {delay:.2f}s delay",
+            extra={
+                "message_id": message.message_id,
+                "event_type": event_type_name,
+                "retry_count": retry_count,
+                "next_retry": retry_count + 1,
+                "max_retries": self._config.max_retries,
+                "delay_seconds": delay,
+            },
+        )
+
+        async def _do_retry() -> None:
+            await self._republish_for_retry(message, retry_count + 1)
+            await message.ack()
             self._logger.info(
-                f"Scheduling retry {retry_count + 1}/{self._config.max_retries} "
-                f"for {event_type_name} after {delay:.2f}s delay",
+                f"Republished message for retry {retry_count + 1}",
                 extra={
                     "message_id": message.message_id,
                     "event_type": event_type_name,
-                    "retry_count": retry_count,
-                    "next_retry": retry_count + 1,
-                    "max_retries": self._config.max_retries,
-                    "delay_seconds": delay,
+                    "retry_count": retry_count + 1,
                 },
             )
 
-            async def _do_retry() -> None:
-                await self._republish_for_retry(message, retry_count + 1)
-                await message.ack()
-
-                self._logger.info(
-                    f"Republished message for retry {retry_count + 1}",
-                    extra={
-                        "message_id": message.message_id,
-                        "event_type": event_type_name,
-                        "retry_count": retry_count + 1,
-                    },
-                )
-
-            if delay > 0:
-                self._retry_scheduler.schedule(
-                    delay,
-                    _do_retry,
-                    name=f"rabbitmq-retry-{message.message_id}",
-                )
-            else:
-                await _do_retry()
+        if delay > 0:
+            self._retry_scheduler.schedule(
+                delay, _do_retry, name=f"rabbitmq-retry-{message.message_id}"
+            )
+        else:
+            await _do_retry()
 
     async def _republish_for_retry(
-        self,
-        original_message: AbstractIncomingMessage,
-        new_retry_count: int,
+        self, original_message: AbstractIncomingMessage, new_retry_count: int
     ) -> None:
         """Republish a message with incremented retry count and retry timestamp."""
         if not self._topology.exchange:
@@ -111,24 +115,13 @@ class RabbitMQConsumerRetryMixin:
         headers = dict(original_message.headers or {})
         headers["x-retry-count"] = new_retry_count
         headers["x-last-retry-at"] = datetime.now(UTC).isoformat()
-
-        retry_message = Message(
-            body=original_message.body,
-            content_type=original_message.content_type,
-            content_encoding=original_message.content_encoding,
-            delivery_mode=DeliveryMode.PERSISTENT,
-            message_id=original_message.message_id,
-            headers=headers,
+        retry_message = self._build_persistent_message(original_message, headers)
+        await self._topology.exchange.publish(
+            retry_message, routing_key=original_message.routing_key or ""
         )
 
-        routing_key = original_message.routing_key or ""
-        await self._topology.exchange.publish(retry_message, routing_key=routing_key)
-
     async def _send_to_dlq(
-        self,
-        message: AbstractIncomingMessage,
-        error: Exception,
-        retry_count: int,
+        self, message: AbstractIncomingMessage, error: Exception, retry_count: int
     ) -> None:
         """Send a failed message to the dead letter queue with failure metadata headers."""
         if not self._config.enable_dlq or not self._topology.dlq_exchange:
@@ -140,29 +133,15 @@ class RabbitMQConsumerRetryMixin:
 
         headers = dict(message.headers or {})
         event_type_name = str(headers.get("event_type", "unknown"))
-
         headers["x-dlq-reason"] = str(error)
         headers["x-dlq-error-type"] = type(error).__name__
         headers["x-dlq-retry-count"] = retry_count
         headers["x-dlq-timestamp"] = datetime.now(UTC).isoformat()
         headers["x-original-routing-key"] = message.routing_key or ""
 
-        dlq_message = Message(
-            body=message.body,
-            content_type=message.content_type,
-            content_encoding=message.content_encoding,
-            delivery_mode=DeliveryMode.PERSISTENT,
-            message_id=message.message_id,
-            headers=headers,
-        )
-
-        await self._topology.dlq_exchange.publish(
-            dlq_message,
-            routing_key=self._config.queue_name,
-        )
-
+        dlq_message = self._build_persistent_message(message, headers)
+        await self._topology.dlq_exchange.publish(dlq_message, routing_key=self._config.queue_name)
         self._stats.messages_sent_to_dlq += 1
-
         self._logger.warning(
             f"Sent message to DLQ after {retry_count} retries: {event_type_name}",
             extra={

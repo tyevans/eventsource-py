@@ -1,9 +1,4 @@
-"""Publishing mixin for Redis event bus.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Publishing mixin for Redis event bus."""
 
 from __future__ import annotations
 
@@ -41,33 +36,12 @@ class RedisBusPublishMixin:
         async def connect(self) -> None: ...
         async def _track_background(self, coro: Coroutine[Any, Any, Any]) -> None: ...
 
-    async def publish(
-        self,
-        events: list[DomainEvent],
-        background: bool = False,
-    ) -> None:
-        """Publish events to Redis stream.
-
-        Events are serialized to JSON and added to the stream.
-        Consumer workers will pick them up for processing.
-
-        Uses pipeline for batch operations (10-100x faster for multiple events).
-
-        Args:
-            events: Events to publish
-            background: If True, return without waiting for the Redis
-                       round-trip to complete. The write is tracked and
-                       drained by shutdown().
-
-        Raises:
-            RedisConnectionError: If Redis connection fails
-        """
+    async def publish(self, events: list[DomainEvent], background: bool = False) -> None:
+        """Publish events to Redis stream (using pipeline for batches or background tracking)."""
         if not events:
             return
-
         if not self._connected:
             await self.connect()
-
         if not self._redis:
             raise RuntimeError("Redis client not initialized")
 
@@ -89,7 +63,6 @@ class RedisBusPublishMixin:
 
                 if span:
                     span.set_attribute("publish.success", True)
-
             except Exception as e:
                 if span:
                     span.set_attribute("publish.success", False)
@@ -102,14 +75,11 @@ class RedisBusPublishMixin:
             raise RuntimeError("Redis client not initialized")
 
         event_data = self._serialize_event(event)
-
         message_id = await self._redis.xadd(
             name=self._config.stream_name,
             fields=event_data,  # type: ignore[arg-type]
         )
-
         self._stats.events_published += 1
-
         logger.debug(
             f"Published {event.event_type} to Redis stream",
             extra={
@@ -119,7 +89,6 @@ class RedisBusPublishMixin:
                 "stream": self._config.stream_name,
             },
         )
-
         return str(message_id)
 
     async def _publish_batch(self, events: list[DomainEvent]) -> list[str]:
@@ -131,11 +100,8 @@ class RedisBusPublishMixin:
             for event in events:
                 event_data = self._serialize_event(event)
                 pipe.xadd(name=self._config.stream_name, fields=event_data)  # type: ignore[arg-type]
-
-            # Execute all XADDs in a single network round-trip
             message_ids = await pipe.execute()
 
-        # Record metrics and log for all events
         for i, event in enumerate(events):
             self._stats.events_published += 1
             logger.debug(
@@ -148,7 +114,6 @@ class RedisBusPublishMixin:
                     "batch_size": len(events),
                 },
             )
-
         return [str(mid) for mid in message_ids]
 
     async def _publish_all(self, events: list[DomainEvent]) -> None:

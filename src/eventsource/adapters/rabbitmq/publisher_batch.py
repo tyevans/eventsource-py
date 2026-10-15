@@ -32,18 +32,34 @@ class RabbitMQPublisherBatchMixin:
         """Publish a chunk of events concurrently. Implemented by RabbitMQPublisherManyMixin."""
         raise NotImplementedError
 
+    def _finalize_batch_stats(
+        self, total_events: int, published_count: int, num_chunks: int
+    ) -> dict[str, int]:
+        """Update batch statistics and build result summary dictionary."""
+        self._stats.events_published += published_count
+        self._stats.batch_events_published += published_count
+        self._stats.last_publish_at = datetime.now(UTC)
+        self._stats.publish_confirms += published_count
+        failed_count = total_events - published_count
+        if failed_count > 0:
+            self._stats.batch_partial_failures += 1
+        return {
+            "total": total_events,
+            "published": published_count,
+            "failed": failed_count,
+            "chunks": num_chunks,
+        }
+
     async def _publish_batch_concurrent(self, events: list[DomainEvent]) -> dict[str, int]:
         """Publish events concurrently in chunks with detailed result tracking."""
         total_events = len(events)
         chunk_size = self._config.publish_chunk_size
-        max_concurrent = self._config.max_concurrent_publishes
-
         self._logger.debug(
             f"Batch publishing {total_events} events (concurrent)",
             extra={
                 "batch_size": total_events,
                 "chunk_size": chunk_size,
-                "max_concurrent": max_concurrent,
+                "max_concurrent": self._config.max_concurrent_publishes,
             },
         )
 
@@ -53,13 +69,10 @@ class RabbitMQPublisherBatchMixin:
         num_chunks = 0
 
         for chunk_start in range(0, total_events, chunk_size):
-            chunk_end = min(chunk_start + chunk_size, total_events)
-            chunk = events[chunk_start:chunk_end]
+            chunk = events[chunk_start : min(chunk_start + chunk_size, total_events)]
             num_chunks += 1
-
             chunk_published = await self._publish_chunk_concurrent(chunk, errors)
             published_count += chunk_published
-
             self._logger.debug(
                 f"Published chunk {num_chunks} ({chunk_published}/{len(chunk)} events)",
                 extra={
@@ -70,40 +83,19 @@ class RabbitMQPublisherBatchMixin:
                 },
             )
 
-        self._stats.events_published += published_count
-        self._stats.batch_events_published += published_count
-        self._stats.last_publish_at = datetime.now(UTC)
-        self._stats.publish_confirms += published_count
-
-        failed_count = total_events - published_count
-        if failed_count > 0:
-            self._stats.batch_partial_failures += 1
-
-        result = {
-            "total": total_events,
-            "published": published_count,
-            "failed": failed_count,
-            "chunks": num_chunks,
-        }
-
+        result = self._finalize_batch_stats(total_events, published_count, num_chunks)
         self._logger.info(
-            f"Batch publish completed: {published_count}/{total_events} events",
-            extra=result,
+            f"Batch publish completed: {published_count}/{total_events} events", extra=result
         )
-
         if errors:
             raise BatchPublishError(
-                f"Batch publish had {len(errors)} failures",
-                results=result,
-                errors=errors,
+                f"Batch publish had {len(errors)} failures", results=result, errors=errors
             )
-
         return result
 
     async def _publish_batch_sequential(self, events: list[DomainEvent]) -> dict[str, int]:
         """Publish events sequentially to preserve order."""
         total_events = len(events)
-
         self._logger.debug(
             f"Batch publishing {total_events} events (sequential/ordered)",
             extra={"batch_size": total_events},
@@ -128,45 +120,25 @@ class RabbitMQPublisherBatchMixin:
                     },
                 )
 
-        self._stats.events_published += published_count
-        self._stats.batch_events_published += published_count
-        self._stats.last_publish_at = datetime.now(UTC)
-        self._stats.publish_confirms += published_count
-
-        failed_count = total_events - published_count
-        if failed_count > 0:
-            self._stats.batch_partial_failures += 1
-
-        result = {
-            "total": total_events,
-            "published": published_count,
-            "failed": failed_count,
-            "chunks": 1,
-        }
-
+        result = self._finalize_batch_stats(total_events, published_count, 1)
         self._logger.info(
             f"Ordered batch publish completed: {published_count}/{total_events} events",
             extra=result,
         )
-
         if errors:
             raise BatchPublishError(
                 f"Ordered batch publish had {len(errors)} failures",
                 results=result,
                 errors=errors,
             )
-
         return result
 
     async def publish_batch(
-        self,
-        events: list[DomainEvent],
-        preserve_order: bool = False,
+        self, events: list[DomainEvent], preserve_order: bool = False
     ) -> dict[str, int]:
         """Publish multiple events concurrently in chunks or sequentially if preserve_order=True."""
         if not self._topology.exchange:
             raise RuntimeError("Exchange not initialized")
-
         if preserve_order:
             return await self._publish_batch_sequential(events)
         return await self._publish_batch_concurrent(events)

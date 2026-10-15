@@ -1,11 +1,6 @@
 """Boundary ports (Clean Architecture output ports). Depends on domain only."""
 
-from eventsource.ports.bus import (
-    EventBus,
-    EventHandlerFunc,
-    EventPublisher,
-    SubscribableEventBus,
-)
+from eventsource.ports.bus import EventBus, EventHandlerFunc, EventPublisher, SubscribableEventBus
 from eventsource.ports.checkpoints import (
     CheckpointData,
     CheckpointRepository,
@@ -13,16 +8,8 @@ from eventsource.ports.checkpoints import (
     ProjectionCheckpoints,
     SubscriptionPositions,
 )
-from eventsource.ports.coordination import (
-    LeaderChangeCallback,
-    LeaderElector,
-)
-from eventsource.ports.dlq import (
-    DLQEntry,
-    DLQRepository,
-    DLQStats,
-    ProjectionFailureCount,
-)
+from eventsource.ports.coordination import LeaderChangeCallback, LeaderElector
+from eventsource.ports.dlq import DLQEntry, DLQRepository, DLQStats, ProjectionFailureCount
 from eventsource.ports.envelopes import (
     AppendResult,
     CategoryReadOptions,
@@ -62,12 +49,7 @@ from eventsource.ports.locks import (
     LockRegistry,
     migration_lock_key,
 )
-from eventsource.ports.outbox import (
-    OutboxEntry,
-    OutboxRepository,
-    OutboxStats,
-    outbox_event_data,
-)
+from eventsource.ports.outbox import OutboxEntry, OutboxRepository, OutboxStats, outbox_event_data
 from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
 from eventsource.ports.store import (
@@ -89,17 +71,14 @@ from eventsource.ports.subscribers import (
 )
 
 __all__ = [
-    # Positions and versions
     "ExpectedVersion",
     "Position",
-    # Envelopes and read options
     "EventEnvelope",
     "AppendResult",
     "ReadDirection",
     "StreamReadOptions",
     "FeedReadOptions",
     "CategoryReadOptions",
-    # Store ports
     "AggregateStore",
     "EventAppender",
     "StreamReader",
@@ -108,21 +87,17 @@ __all__ = [
     "CategoryQuery",
     "FullEventStore",
     "collect",
-    # Snapshot port (TRANSITION re-home)
     "Snapshot",
     "SnapshotStore",
     "SnapshotTypeInvalidation",
-    # Bus port
     "EventPublisher",
     "SubscribableEventBus",
     "EventBus",
     "EventHandlerFunc",
-    # Outbox port
     "OutboxEntry",
     "OutboxRepository",
     "OutboxStats",
     "outbox_event_data",
-    # Checkpoint / DLQ ports
     "CheckpointData",
     "CheckpointRepository",
     "LagMetrics",
@@ -132,31 +107,25 @@ __all__ = [
     "DLQRepository",
     "DLQStats",
     "ProjectionFailureCount",
-    # Lifecycle port
     "SupportsClose",
-    # Lock port
     "DistributedLock",
     "LockInfo",
     "LockManager",
     "LockRegistry",
     "migration_lock_key",
-    # Handler protocols / ABCs
     "EventHandler",
     "SyncEventHandler",
     "FlexibleEventHandler",
     "EventSubscriber",
     "FlexibleEventSubscriber",
     "AsyncEventHandler",
-    # Subscriber protocols / utilities
     "Subscriber",
     "SyncSubscriber",
     "BatchSubscriber",
     "supports_batch_handling",
     "get_subscribed_event_types",
-    # Leader election port
     "LeaderElector",
     "LeaderChangeCallback",
-    # Infrastructure exception taxonomy (ADR 0041)
     "CheckpointError",
     "CheckpointNotFoundError",
     "EventBusConnectionError",
