@@ -310,6 +310,11 @@ published domain events:
   seeds one or more pre-existing events (or sequences of events) into
   `harness.event_store`, automatically grouped by `(aggregate_id, aggregate_type)`
   stream and using `ExpectedVersion.any_()` when `expected_version` is omitted.
+- **`await harness.replay(projections, **kwargs)`**:
+  replays all events stored in `harness.event_store` into a single projection or
+  a sequence of projections and returns a `ReplayReport` (accepting all optional
+  keyword arguments supported by `replay()`, such as `strict=True` or
+  `tenant_id=...`).
 - **`harness.snapshot_store`**: provides a pre-configured `InMemorySnapshotStore`
   that is reset alongside all other components when `harness.reset()` is called.
 - **`harness.assertions`**: returns an `EventAssertions` wrapper over
@@ -359,21 +364,23 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     assert snapshot.version == 2
 ```
 
-### Seeding pre-existing events with `harness.append_events`
+### Seeding pre-existing events and replaying projections with `harness.append_events` and `harness.replay`
 
 When testing repositories, projections, or read models against historical state,
 use `await harness.append_events(*events, expected_version=None)` to seed
-pre-existing events directly into `harness.event_store` without manually
-constructing `StreamId` or `ExpectedVersion`:
+pre-existing events directly into `harness.event_store` and
+`await harness.replay(projection)` to rebuild projections from those stored
+events:
 
 ```python
 from uuid import uuid4
 from eventsource.testing import EventBuilder, InMemoryTestHarness
 
 
-async def test_seed_events_with_harness_append_events() -> None:
+async def test_seed_events_and_replay_projection() -> None:
     harness = InMemoryTestHarness()
     repo = harness.create_repository(OrderAggregate)
+    projection = OrderSummaryProjection()
 
     order_id = uuid4()
     customer_id = uuid4()
@@ -393,6 +400,10 @@ async def test_seed_events_with_harness_append_events() -> None:
 
     order = await repo.load(order_id)
     assert order.version == 3
+
+    report = await harness.replay(projection)
+    report.raise_for_failures()
+    assert report.applied == 3
 ```
 
 ## Asserting recorded events with `RecordingEventBus.assertions`

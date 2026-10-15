@@ -129,6 +129,7 @@ async def rebuild_multiple_projections(
 | `last_position` | `Position \| None` | Final global position reached during the read (`None` when the feed is empty). |
 | `failures` | `tuple[ReplayFailure, ...]` | Retained `ReplayFailure` entries (capped at `max_failures`, default `1000`). |
 | `failures_truncated` | `int` | Number of additional failures that occurred beyond `max_failures`. |
+| `raise_for_failures()` | `() -> None` | Raises `ReplayFailedError` with the first failure if `not succeeded`, or `RuntimeError` when all failures were truncated (`max_failures=0`). |
 
 By default, a projection raising an exception on a poison event does not halt
 the rebuild: `replay()` records a `ReplayFailure(position, event_id, event_type, projection, error)`,
@@ -156,6 +157,8 @@ async def inspect_replay_failures(
                 f"{failure.projection} rejected {failure.event_type} "
                 f"({failure.event_id}) at {failure.position}: {failure.error}"
             )
+        # Or raise ReplayFailedError after inspecting all collected failures:
+        report.raise_for_failures()
 ```
 
 To fail fast on the first rejected event (for example in tests or initial
@@ -168,7 +171,7 @@ async def strict_rebuild(
 ) -> None:
     try:
         report = await replay(store, projection, strict=True)
-        assert report.succeeded is True
+        report.raise_for_failures()
     except ReplayFailedError as err:
         print(f"Rebuild stopped at {err.failure.event_id}: {err.failure.error}")
         raise
