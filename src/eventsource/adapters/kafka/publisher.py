@@ -23,21 +23,24 @@ from eventsource.observability.attributes import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from opentelemetry.propagate import inject
+    from opentelemetry.trace import Status, StatusCode
+
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.connection import KafkaConnectionManager
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
 
-try:
-    from opentelemetry.propagate import inject
-    from opentelemetry.trace import Status, StatusCode
-
     PROPAGATION_AVAILABLE = OTEL_AVAILABLE
-except ImportError:
-    inject = None  # type: ignore[assignment]
-    Status = None  # type: ignore[assignment, misc]
-    StatusCode = None  # type: ignore[assignment, misc]
-    PROPAGATION_AVAILABLE = False
+else:
+    try:
+        from opentelemetry.propagate import inject
+        from opentelemetry.trace import Status, StatusCode
+
+        PROPAGATION_AVAILABLE = OTEL_AVAILABLE
+    except ImportError:
+        inject = Status = StatusCode = None
+        PROPAGATION_AVAILABLE = False
 
 logger = logging.getLogger("eventsource.bus.kafka")
 
@@ -55,13 +58,9 @@ class KafkaPublisher:
         tracer: Tracer,
         enable_tracing: bool,
     ) -> None:
-        self._config = config
-        self._connection = connection
-        self._serializer = serializer
-        self._stats = stats
-        self._metrics = metrics
-        self._tracer = tracer
-        self._enable_tracing = enable_tracing
+        self._config, self._connection, self._serializer = config, connection, serializer
+        self._stats, self._metrics = stats, metrics
+        self._tracer, self._enable_tracing = tracer, enable_tracing
 
     async def publish_all(self, events: Sequence[DomainEvent], background: bool) -> None:
         """Hand every event to the producer sequentially, then resolve delivery."""
@@ -74,17 +73,16 @@ class KafkaPublisher:
         else:
             await asyncio.gather(*(self._await_publish_ack(handle) for handle in pending))
 
+    def _metric_attrs(self, event_type: str, **extra: str) -> dict[str, str]:
+        base = {"messaging.system": "kafka", "messaging.destination": self._config.topic_name}
+        return {**base, "event.type": event_type, **extra}
+
     def _record_publish_error(self, event: DomainEvent, span: Any, error: Exception) -> None:
         if span:
             span.set_status(Status(StatusCode.ERROR, str(error)))
             span.record_exception(error)
         if self._metrics:
-            attrs = {
-                "messaging.system": "kafka",
-                "messaging.destination": self._config.topic_name,
-                "event.type": event.event_type,
-                "error.type": type(error).__name__,
-            }
+            attrs = self._metric_attrs(event.event_type, **{"error.type": type(error).__name__})
             self._metrics.publish_errors.add(1, attributes=attrs)
         logger.error("Failed to publish event", extra={"error": str(error)}, exc_info=True)
         self._stats.last_error_at = datetime.now(UTC)
@@ -130,26 +128,19 @@ class KafkaPublisher:
     async def _await_publish_ack(self, handle: tuple[Any, DomainEvent, Any]) -> None:
         future, event, span = handle
         try:
-            record_metadata = await future
+            meta = await future
             if span:
-                if record_metadata is not None:
-                    span.set_attribute("messaging.kafka.partition", record_metadata.partition)
-                    span.set_attribute("messaging.kafka.offset", record_metadata.offset)
+                if meta is not None:
+                    span.set_attribute("messaging.kafka.partition", meta.partition)
+                    span.set_attribute("messaging.kafka.offset", meta.offset)
                 span.set_status(Status(StatusCode.OK))
-            if record_metadata is not None:
-                meta = {
-                    "topic": record_metadata.topic,
-                    "partition": record_metadata.partition,
-                    "offset": record_metadata.offset,
-                }
-                logger.debug("Event published", extra=meta)
+            if meta is not None:
+                extra = {"topic": meta.topic, "partition": meta.partition, "offset": meta.offset}
+                logger.debug("Event published", extra=extra)
             if self._metrics:
-                attrs = {
-                    "messaging.system": "kafka",
-                    "messaging.destination": self._config.topic_name,
-                    "event.type": event.event_type,
-                }
-                self._metrics.messages_published.add(1, attributes=attrs)
+                self._metrics.messages_published.add(
+                    1, attributes=self._metric_attrs(event.event_type)
+                )
         except Exception as e:
             self._record_publish_error(event, span, e)
             raise
@@ -159,22 +150,13 @@ class KafkaPublisher:
 
     def _track_background_publish(self, future: Any, event: DomainEvent, span: Any) -> None:
         event_type, event_id = event.event_type, str(event.event_id)
-        base_attrs = {
-            "messaging.system": "kafka",
-            "messaging.destination": self._config.topic_name,
-            "event.type": event_type,
-        }
+        base_attrs = self._metric_attrs(event_type)
 
-        def on_send_success(record_metadata: Any) -> None:
+        def on_send_success(meta: Any) -> None:
+            extra = {"topic": meta.topic, "partition": meta.partition, "offset": meta.offset}
             logger.debug(
                 "Background event published successfully",
-                extra={
-                    "topic": record_metadata.topic,
-                    "partition": record_metadata.partition,
-                    "offset": record_metadata.offset,
-                    "event_type": event_type,
-                    "event_id": event_id,
-                },
+                extra={**extra, "event_type": event_type, "event_id": event_id},
             )
             if self._metrics:
                 self._metrics.messages_published.add(1, attributes=dict(base_attrs))
@@ -195,13 +177,9 @@ class KafkaPublisher:
                 span.record_exception(exc)
 
         def on_done(fut: asyncio.Future[Any]) -> None:
-            if fut.cancelled():
-                return
-            exc = fut.exception()
-            if isinstance(exc, Exception):
-                on_send_error(exc)
-            else:
-                on_send_success(fut.result())
+            if not fut.cancelled():
+                exc = fut.exception()
+                on_send_error(exc) if isinstance(exc, Exception) else on_send_success(fut.result())
 
         future.add_done_callback(on_done)
 
@@ -222,7 +200,6 @@ class KafkaPublisher:
             ("correlation_id", str(event.correlation_id).encode("utf-8")),
         ]
         for attr in ("tenant_id", "causation_id", "actor_id"):
-            val = getattr(event, attr)
-            if val:
+            if val := getattr(event, attr):
                 headers.append((attr, str(val).encode("utf-8")))
         return headers
