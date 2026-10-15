@@ -1,12 +1,7 @@
-"""Snapshotting collaborators for the aggregate repository.
+"""Snapshotting collaborators for the aggregate repository (ADR 0021).
 
-Snapshots are disposable optimizations, never the source of truth (ADR 0021,
-superseding ADR 0017): every automatic-path failure degrades to full event
-replay instead of raising. Collaborators:
-- SnapshotPolicy (EveryNEvents / Never): pure predicate for *when* to snapshot.
-- SnapshotScheduler (ImmediateScheduler / BackgroundScheduler): *how* the write executes.
-- take_snapshot(): snapshot construction (errors propagate for strict manual path).
-- read_valid_snapshot(): load-path fetch + schema validation (failures collapse to None).
+Snapshots are disposable optimizations, never the source of truth: every
+automatic-path failure degrades to full event replay instead of raising.
 """
 
 import logging
@@ -35,12 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class SnapshotMissReason(StrEnum):
-    """Why a snapshot read did not yield a usable snapshot.
-
-    Distinguishes transient store errors (`STORE_ERROR`) from permanent per-row
-    corrupt payloads (`DESERIALIZATION_ERROR`, `STATE_RESTORE_FAILED`) and routine
-    misses (`MISSING`, `SCHEMA_MISMATCH`).
-    """
+    """Why a snapshot read did not yield a usable snapshot."""
 
     MISSING = "missing"
     SCHEMA_MISMATCH = "schema_mismatch"
@@ -50,7 +40,6 @@ class SnapshotMissReason(StrEnum):
 
 
 _MISS_COUNTER_NAME = "eventsource.snapshot.miss"
-
 _meter: Any = None
 _miss_counter: Any = None
 _miss_tally: Counter[str] = Counter()
@@ -73,8 +62,7 @@ def _get_miss_counter() -> Any:
 def record_snapshot_miss(reason: SnapshotMissReason, aggregate_type: str) -> None:
     """Count one snapshot read that fell back to full event replay."""
     _miss_tally[reason.value] += 1
-    counter = _get_miss_counter()
-    if counter is not None:
+    if (counter := _get_miss_counter()) is not None:
         counter.add(1, {"reason": reason.value, "aggregate_type": aggregate_type})
 
 
@@ -247,8 +235,7 @@ class ImmediateScheduler:
 
 
 class BackgroundScheduler:
-    """Fire-and-forget via BackgroundTaskManager; await_pending() is the
-    join point for tests and graceful shutdown."""
+    """Fire-and-forget via BackgroundTaskManager; await_pending() joins pending tasks."""
 
     def __init__(self) -> None:
         self._tasks = BackgroundTaskManager()
