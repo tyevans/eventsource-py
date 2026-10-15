@@ -1,7 +1,7 @@
 ---
 id: TASK-0312
 title: "Add raise_for_failures() helper to ReplayReport"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
