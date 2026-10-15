@@ -47,9 +47,7 @@ class TestGivenWhenThen:
                 rejected.then_event_types(MoneyDeposited)
 
     def test_then_no_events(self) -> None:
-        noop = DeciderScenario(
-            decide=lambda cmd, st: [], evolve=Account.evolve, initial_state=Account.initial_state
-        )
+        noop = DeciderScenario(decide=lambda cmd, st: [], evolve=Account.evolve, initial_state=Account.initial_state)  # fmt: skip
         with pytest.raises(AssertionError, match="when"):
             noop.then_no_events()
         assert noop.when(object()).then_no_events() is noop
@@ -85,9 +83,7 @@ class TestGivenWhenThen:
             produced.then_rejected()
 
     def test_events_assertions_len_and_bool(self) -> None:
-        s = DeciderScenario(
-            decide=Account.decide, evolve=Account.evolve, initial_state=Account.initial_state
-        )
+        s = DeciderScenario(decide=Account.decide, evolve=Account.evolve, initial_state=Account.initial_state)  # fmt: skip
         assert len(s) == 0 and bool(s) is True
         agg_id = uuid4()
         scenario = s.when(OpenAccount(account_id=agg_id, owner="alice")).then_events(AccountOpened)
@@ -108,12 +104,11 @@ class TestGivenWhenThen:
 class TestMultiAggregateDeciderScenario:
     def test_multi_aggregate_state_isolation(self) -> None:
         id_1, id_2 = uuid4(), uuid4()
-        scenario = DeciderScenario(Account).given(
-            AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"),
-            AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"),
-            MoneyDeposited(aggregate_id=id_1, aggregate_version=2, amount=100.0),
-            MoneyDeposited(aggregate_id=id_2, aggregate_version=2, amount=50.0),
-        )
+        e1 = AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice")
+        e2 = AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob")
+        d1 = MoneyDeposited(aggregate_id=id_1, aggregate_version=2, amount=100.0)
+        d2 = MoneyDeposited(aggregate_id=id_2, aggregate_version=2, amount=50.0)
+        scenario = DeciderScenario(Account).given(e1, e2, d1, d2)
         s1, s2 = scenario.get_state(id_1), scenario.get_state(id_2)
         assert (s1.owner, s1.balance, s2.owner, s2.balance) == ("alice", 100.0, "bob", 50.0)
         scenario.when(DepositMoney(account_id=id_1, amount=25.0)).then_events(MoneyDeposited)
@@ -123,10 +118,9 @@ class TestMultiAggregateDeciderScenario:
 
     def test_multi_aggregate_routing_and_explicit_id(self) -> None:
         id_1, id_2, id_3 = uuid4(), uuid4(), uuid4()
-        scenario = DeciderScenario(Account).given(
-            AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice"),
-            AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob"),
-        )
+        e1 = AccountOpened(aggregate_id=id_1, aggregate_version=1, owner="alice")
+        e2 = AccountOpened(aggregate_id=id_2, aggregate_version=1, owner="bob")
+        scenario = DeciderScenario(Account).given(e1, e2)
         cmd = DepositMoney(account_id=id_1, amount=15.0)
         scenario.when(cmd, aggregate_id=id_1).then_events(MoneyDeposited)
         assert scenario.events[0].aggregate_id == id_1
@@ -156,10 +150,10 @@ class TestMultiAggregateDeciderScenario:
 
 class TestWhenAllAndThenState:
     def test_when_all_and_then_state(self) -> None:
-        agg_id = uuid4()
-        c1 = OpenAccount(account_id=agg_id, owner="alice")
-        c2 = DepositMoney(account_id=agg_id, amount=40.0)
-        c3 = DepositMoney(account_id=agg_id, amount=15.0)
+        aid = uuid4()
+        c1 = OpenAccount(account_id=aid, owner="alice")
+        c2 = DepositMoney(account_id=aid, amount=40.0)
+        c3 = DepositMoney(account_id=aid, amount=15.0)
         scenario = DeciderScenario(Account).when_all(c1, c2, c3)
         scenario.then_events(AccountOpened, MoneyDeposited, MoneyDeposited)
         scenario.then_state(lambda s: s.is_open and s.owner == "alice" and s.balance == 55.0)
@@ -188,11 +182,7 @@ class TestGivenCommands:
         a1, a2 = uuid4(), uuid4()
         ev1 = AccountOpened(aggregate_id=a1, aggregate_version=1, owner="alice")
         c1, c2 = DepositMoney(account_id=a1, amount=5.0), DepositMoney(account_id=a1, amount=25.0)
-        s1 = (
-            DeciderScenario(Account)
-            .given(ev1)
-            .given_commands(DepositMoney(account_id=a1, amount=10.0))
-        )
+        s1 = DeciderScenario(Account).given(ev1).given_commands(DepositMoney(account_id=a1, amount=10.0))  # fmt: skip
         s1.when_all(c1, c2).then_events(MoneyDeposited, MoneyDeposited)
         s1.then_state(AccountState(owner="alice", balance=40.0, is_open=True))
         ev2 = MoneyDeposited(aggregate_id=a2, aggregate_version=2, amount=30.0)
@@ -200,22 +190,13 @@ class TestGivenCommands:
         s2.given(ev2).when(DepositMoney(account_id=a2, amount=12.0)).then_events(MoneyDeposited)
         s2.then_state(AccountState(owner="bob", balance=42.0, is_open=True))
 
-    @given(
-        owner=st.text(min_size=1, max_size=20),
-        deposits=st.lists(_FINITE_POS, max_size=10),
-        final_deposit=_FINITE_POS,
-    )
+    @given(owner=st.text(min_size=1, max_size=20), deposits=st.lists(_FINITE_POS, max_size=10), final_deposit=_FINITE_POS)  # fmt: skip
     def test_given_commands_equivalent_to_given_emitted_events(
         self, owner: str, deposits: list[float], final_deposit: float
     ) -> None:
         aid = uuid4()
-        cmds = [OpenAccount(account_id=aid, owner=owner)]
-        cmds += [DepositMoney(account_id=aid, amount=amt) for amt in deposits]
-        evs = [AccountOpened(aggregate_id=aid, aggregate_version=1, owner=owner)]
-        evs += [
-            MoneyDeposited(aggregate_id=aid, aggregate_version=i + 2, amount=a)
-            for i, a in enumerate(deposits)
-        ]
+        cmds = [OpenAccount(account_id=aid, owner=owner), *[DepositMoney(account_id=aid, amount=a) for a in deposits]]  # fmt: skip
+        evs = [AccountOpened(aggregate_id=aid, aggregate_version=1, owner=owner), *[MoneyDeposited(aggregate_id=aid, aggregate_version=i + 2, amount=a) for i, a in enumerate(deposits)]]  # fmt: skip
         when_cmd = DepositMoney(account_id=aid, amount=final_deposit)
         by_commands = DeciderScenario(Account).given_commands(*cmds).when(when_cmd)
         by_events = DeciderScenario(Account).given(*evs).when(when_cmd)

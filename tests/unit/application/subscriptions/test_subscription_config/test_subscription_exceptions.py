@@ -28,10 +28,11 @@ class TestCheckpointStrategy:
 
     def test_enum_members(self):
         members = list(CheckpointStrategy)
-        assert len(members) == 3
-        assert CheckpointStrategy.EVERY_EVENT in members
-        assert CheckpointStrategy.EVERY_BATCH in members
-        assert CheckpointStrategy.PERIODIC in members
+        assert members == [
+            CheckpointStrategy.EVERY_EVENT,
+            CheckpointStrategy.EVERY_BATCH,
+            CheckpointStrategy.PERIODIC,
+        ]
 
 
 class TestSubscriptionExceptions:
@@ -64,8 +65,7 @@ class TestSubscriptionExceptions:
             raise SubscriptionAlreadyExistsError("order-projection")
         error = exc_info.value
         assert error.name == "order-projection"
-        assert "order-projection" in str(error)
-        assert "already exists" in str(error)
+        assert "order-projection" in str(error) and "already exists" in str(error)
 
     def test_subscription_already_exists_error_is_subscription_error(self):
         assert issubclass(SubscriptionAlreadyExistsError, SubscriptionError)
@@ -75,8 +75,7 @@ class TestSubscriptionExceptions:
             raise CheckpointNotFoundError("my-projection")
         error = exc_info.value
         assert error.projection_name == "my-projection"
-        assert "my-projection" in str(error)
-        assert "No checkpoint found" in str(error)
+        assert "my-projection" in str(error) and "No checkpoint found" in str(error)
         assert "start_from='beginning'" in str(error)
 
     def test_checkpoint_not_found_error_is_subscription_error(self):
@@ -88,7 +87,6 @@ class TestSubscriptionExceptions:
         assert "Connection refused" in str(exc_info.value)
 
     def test_event_store_connection_error_is_an_event_store_error(self):
-        """EventStoreConnectionError belongs to the store taxonomy."""
         assert issubclass(EventStoreConnectionError, EventStoreError)
         assert not issubclass(EventStoreConnectionError, SubscriptionError)
 
@@ -132,93 +130,69 @@ class TestExceptionHierarchy:
             raise EventStoreConnectionError("connection error")
 
     def test_each_exception_is_distinct(self):
-        with pytest.raises(SubscriptionConfigError):
-            raise SubscriptionConfigError("test")
-        with pytest.raises(SubscriptionStateError):
-            raise SubscriptionStateError("test")
-        with pytest.raises(SubscriptionAlreadyExistsError):
-            raise SubscriptionAlreadyExistsError("name")
-        with pytest.raises(CheckpointNotFoundError):
-            raise CheckpointNotFoundError("projection")
-        with pytest.raises(EventStoreConnectionError):
-            raise EventStoreConnectionError("test")
-        with pytest.raises(EventBusConnectionError):
-            raise EventBusConnectionError("test")
-        with pytest.raises(TransitionError):
-            raise TransitionError("test")
+        for exc in (
+            SubscriptionConfigError("test"),
+            SubscriptionStateError("test"),
+            SubscriptionAlreadyExistsError("name"),
+            CheckpointNotFoundError("projection"),
+            EventStoreConnectionError("test"),
+            EventBusConnectionError("test"),
+            TransitionError("test"),
+        ):
+            with pytest.raises(type(exc)):
+                raise exc
 
 
 class TestModuleImports:
     def test_import_from_subscriptions_module(self):
-        from eventsource.application.subscriptions import (
-            CheckpointNotFoundError,
-            CheckpointStrategy,
-            EventBusConnectionError,
-            EventStoreConnectionError,
-            StartPosition,
-            SubscriptionAlreadyExistsError,
-            SubscriptionConfig,
-            SubscriptionConfigError,
-            SubscriptionError,
-            SubscriptionStateError,
-            TransitionError,
-            create_catch_up_config,
-            create_live_only_config,
-        )
+        import eventsource.application.subscriptions as subs
 
-        assert SubscriptionConfig is not None
-        assert CheckpointStrategy is not None
-        assert StartPosition is not None
-        assert create_catch_up_config is not None
-        assert create_live_only_config is not None
-        assert SubscriptionError is not None
-        assert SubscriptionConfigError is not None
-        assert SubscriptionStateError is not None
-        assert SubscriptionAlreadyExistsError is not None
-        assert CheckpointNotFoundError is not None
-        assert EventStoreConnectionError is not None
-        assert EventBusConnectionError is not None
-        assert TransitionError is not None
+        for name in (
+            "SubscriptionConfig",
+            "CheckpointStrategy",
+            "StartPosition",
+            "create_catch_up_config",
+            "create_live_only_config",
+            "SubscriptionError",
+            "SubscriptionConfigError",
+            "SubscriptionStateError",
+            "SubscriptionAlreadyExistsError",
+            "CheckpointNotFoundError",
+            "EventStoreConnectionError",
+            "EventBusConnectionError",
+            "TransitionError",
+        ):
+            assert getattr(subs, name) is not None
 
     def test_import_from_config_submodule(self):
-        from eventsource.application.subscriptions.config import (
-            CheckpointStrategy,
-            StartPosition,
-            SubscriptionConfig,
-            create_catch_up_config,
-            create_live_only_config,
-        )
+        from eventsource.application.subscriptions import config as cfg
 
-        assert SubscriptionConfig is not None
-        assert CheckpointStrategy is not None
-        assert StartPosition is not None
-        assert create_catch_up_config is not None
-        assert create_live_only_config is not None
+        for name in (
+            "SubscriptionConfig",
+            "CheckpointStrategy",
+            "StartPosition",
+            "create_catch_up_config",
+            "create_live_only_config",
+        ):
+            assert getattr(cfg, name) is not None
 
     def test_import_from_exceptions_submodule(self):
-        from eventsource.ports.exceptions import (
-            CheckpointNotFoundError,
-            EventBusConnectionError,
-            EventStoreConnectionError,
-            SubscriptionAlreadyExistsError,
-            SubscriptionConfigError,
-            SubscriptionError,
-            SubscriptionStateError,
-            TransitionError,
-        )
+        from eventsource.ports import exceptions as exc_mod
 
-        assert SubscriptionError is not None
-        assert SubscriptionConfigError is not None
-        assert SubscriptionStateError is not None
-        assert SubscriptionAlreadyExistsError is not None
-        assert CheckpointNotFoundError is not None
-        assert EventStoreConnectionError is not None
-        assert EventBusConnectionError is not None
-        assert TransitionError is not None
+        for name in (
+            "SubscriptionError",
+            "SubscriptionConfigError",
+            "SubscriptionStateError",
+            "SubscriptionAlreadyExistsError",
+            "CheckpointNotFoundError",
+            "EventStoreConnectionError",
+            "EventBusConnectionError",
+            "TransitionError",
+        ):
+            assert getattr(exc_mod, name) is not None
 
     def test_runners_submodule_exists(self):
         from eventsource.application.subscriptions import runners
 
         assert runners is not None
-        assert "CatchUpRunner" in runners.__all__
-        assert "CatchUpResult" in runners.__all__
+        assert "CatchUpRunner" in runners.__all__ and "CatchUpResult" in runners.__all__

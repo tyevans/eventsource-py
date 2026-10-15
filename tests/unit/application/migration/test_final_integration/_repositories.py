@@ -26,14 +26,12 @@ class InMemoryMigrationRepository:
         self._by_tenant: dict[UUID, UUID] = {}
 
     async def _require(self, migration_id: UUID) -> Migration:
-        migration = await self.get(migration_id)
-        if migration is None:
+        if (migration := await self.get(migration_id)) is None:
             raise MigrationNotFoundError(migration_id)
         return migration
 
     async def create(self, migration: Migration) -> UUID:
-        existing = await self.get_by_tenant(migration.tenant_id)
-        if existing is not None:
+        if (existing := await self.get_by_tenant(migration.tenant_id)) is not None:
             raise MigrationAlreadyExistsError(migration.tenant_id, existing.id)
         migration.created_at = migration.updated_at = datetime.now(UTC)
         self._migrations[migration.id] = migration
@@ -71,10 +69,8 @@ class InMemoryMigrationRepository:
         last_target_position: int | None = None,
     ) -> None:
         migration = await self._require(migration_id)
-        migration.events_copied, migration.last_source_position = (
-            events_copied,
-            last_source_position,
-        )
+        migration.events_copied = events_copied
+        migration.last_source_position = last_source_position
         if last_target_position is not None:
             migration.last_target_position = last_target_position
         migration.updated_at = datetime.now(UTC)
@@ -85,10 +81,9 @@ class InMemoryMigrationRepository:
 
     async def record_error(self, migration_id: UUID, error: str) -> None:
         migration = await self._require(migration_id)
-        now = datetime.now(UTC)
         migration.error_count += 1
         migration.last_error = error[:1000]
-        migration.last_error_at = migration.updated_at = now
+        migration.last_error_at = migration.updated_at = datetime.now(UTC)
 
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
         migration = await self._require(migration_id)
@@ -133,24 +128,18 @@ class InMemoryRoutingRepository:
         return existing if existing is not None else self._new_routing(tenant_id, default_store_id)
 
     async def set_routing(self, tenant_id: UUID, store_id: str) -> None:
-        existing = self._routing.get(tenant_id)
-        if existing:
+        if existing := self._routing.get(tenant_id):
             existing.store_id, existing.updated_at = store_id, datetime.now(UTC)
         else:
             self._new_routing(tenant_id, store_id)
 
     async def set_migration_state(
-        self,
-        tenant_id: UUID,
-        state: TenantMigrationState,
-        migration_id: UUID | None = None,
+        self, tenant_id: UUID, state: TenantMigrationState, migration_id: UUID | None = None
     ) -> None:
-        routing = self._routing.get(tenant_id)
-        if routing is None:
+        if (routing := self._routing.get(tenant_id)) is None:
             self._new_routing(tenant_id, "default", state=state, migration_id=migration_id)
         else:
-            routing.migration_state = state
-            routing.active_migration_id = migration_id
+            routing.migration_state, routing.active_migration_id = state, migration_id
             routing.updated_at = datetime.now(UTC)
 
     async def switch_routing(
@@ -211,13 +200,9 @@ class InMemoryCheckpointRepository:
                 d["position"],
                 d.get("last_event_id"),
                 d.get("last_event_type"),
-            )
+            )  # fmt: skip
             for d in self._checkpoints.values()
         ]
 
 
-__all__ = [  # pragma: allowlist secret
-    "InMemoryCheckpointRepository",
-    "InMemoryMigrationRepository",
-    "InMemoryRoutingRepository",
-]
+__all__ = ["InMemoryCheckpointRepository", "InMemoryMigrationRepository", "InMemoryRoutingRepository"]  # pragma: allowlist secret  # fmt: skip

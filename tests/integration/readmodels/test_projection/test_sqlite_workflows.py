@@ -17,8 +17,6 @@ pytestmark = [pytest.mark.integration]
 
 
 class TestSQLiteReadModelProjectionEventRouting:
-    """Test event routing to correct handlers with SQLite."""
-
     @pytest.mark.asyncio
     async def test_multiple_events_routed_correctly(
         self, sqlite_projection: OrderProjection
@@ -59,13 +57,10 @@ class TestSQLiteReadModelProjectionEventRouting:
     async def test_unhandled_event_is_ignored(self, sqlite_projection: OrderProjection) -> None:
         event = OrderCompleted(aggregate_id=uuid4())
         await sqlite_projection.handle(event)
-        checkpoint = await sqlite_projection.get_checkpoint()
-        assert checkpoint == str(event.event_id)
+        assert await sqlite_projection.get_checkpoint() == str(event.event_id)
 
 
 class TestSQLiteMixedHandlerProjection:
-    """Test projections with mixed handler signatures (1-param and 2-param)."""
-
     @pytest.mark.asyncio
     async def test_two_param_handler_with_repo_access(
         self, sqlite_mixed_projection: MixedHandlerProjection
@@ -103,13 +98,10 @@ class TestSQLiteMixedHandlerProjection:
         ship_event = OrderShipped(aggregate_id=order_id, tracking_number="TRK-22222")
         await sqlite_mixed_projection.handle(ship_event)
 
-        assert len(sqlite_mixed_projection.events_without_repo) == 1
-        assert sqlite_mixed_projection.events_without_repo[0] == ship_event
+        assert sqlite_mixed_projection.events_without_repo == [ship_event]
 
 
 class TestSQLiteReadModelProjectionErrorHandling:
-    """Test error handling and transaction rollback with SQLite."""
-
     @pytest.mark.asyncio
     async def test_handler_failure_sends_to_dlq(
         self, sqlite_failing_projection: FailingProjection
@@ -146,8 +138,6 @@ class TestSQLiteReadModelProjectionErrorHandling:
 
 
 class TestSQLiteReadModelProjectionWorkflow:
-    """Test full end-to-end workflows with SQLite."""
-
     @pytest.mark.asyncio
     async def test_full_order_lifecycle(self, sqlite_projection: OrderProjection) -> None:
         order_id = uuid4()
@@ -163,8 +153,7 @@ class TestSQLiteReadModelProjectionWorkflow:
             conn = await session.connection()
             repo = await sqlite_projection._create_repository(conn)
             summary = await repo.get(order_id)
-        assert summary is not None
-        assert summary.status == "pending"
+        assert summary is not None and summary.status == "pending"
 
         ship_event = OrderShipped(aggregate_id=order_id, tracking_number="TRK-LIFECYCLE")
         await sqlite_projection.handle(ship_event)
@@ -211,15 +200,9 @@ class TestSQLiteReadModelProjectionWorkflow:
         async with sqlite_projection._session_factory() as session, session.begin():
             conn = await session.connection()
             repo = await sqlite_projection._create_repository(conn)
-
             order0 = await repo.get(order_ids[0])
             assert order0 is not None
-            assert order0.status == "shipped"
-            assert order0.tracking_number == "TRK-FIRST"
-
+            assert order0.status == "shipped" and order0.tracking_number == "TRK-FIRST"
             order1 = await repo.get(order_ids[1])
-            assert order1 is not None
-            assert order1.status == "pending"
-
-            order2 = await repo.get(order_ids[2])
-            assert order2 is None
+            assert order1 is not None and order1.status == "pending"
+            assert await repo.get(order_ids[2]) is None

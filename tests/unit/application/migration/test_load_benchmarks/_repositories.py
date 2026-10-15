@@ -13,6 +13,8 @@ from eventsource.ports.migration.models import Migration, MigrationPhase, Positi
 from eventsource.ports.positions import Position
 from tests.unit.application.migration.test_load_benchmarks._fixtures import _REGISTRY
 
+_TERMINAL_PHASES = (MigrationPhase.COMPLETED, MigrationPhase.ABORTED, MigrationPhase.FAILED)
+
 
 class RaisingTargetStore:
     """FullEventStore-shaped wrapper around InMemoryEventStore whose append always raises."""
@@ -23,10 +25,7 @@ class RaisingTargetStore:
         self._inner = inner or InMemoryEventStore(event_registry=_REGISTRY)
 
     async def append(
-        self,
-        stream: StreamId,
-        events: list[DomainEvent],
-        expected: ExpectedVersion,
+        self, stream: StreamId, events: list[DomainEvent], expected: ExpectedVersion
     ) -> AppendResult:
         raise Exception("Simulated target failure")
 
@@ -65,29 +64,15 @@ class InMemoryMigrationRepository:
 
     async def get_by_tenant(self, tenant_id: UUID) -> Migration | None:
         for m in self._migrations.values():
-            if m.tenant_id == tenant_id and m.phase not in (
-                MigrationPhase.COMPLETED,
-                MigrationPhase.ABORTED,
-                MigrationPhase.FAILED,
-            ):
+            if m.tenant_id == tenant_id and m.phase not in _TERMINAL_PHASES:
                 return m
         return None
 
     async def list_active(self) -> list[Migration]:
-        return [
-            m
-            for m in self._migrations.values()
-            if m.phase
-            not in (
-                MigrationPhase.COMPLETED,
-                MigrationPhase.ABORTED,
-                MigrationPhase.FAILED,
-            )
-        ]
+        return [m for m in self._migrations.values() if m.phase not in _TERMINAL_PHASES]
 
     async def set_events_total(self, migration_id: UUID, total: int) -> None:
-        migration = self._migrations.get(migration_id)
-        if migration:
+        if migration := self._migrations.get(migration_id):
             migration.events_total = total
 
     async def update_progress(
@@ -97,27 +82,23 @@ class InMemoryMigrationRepository:
         last_source_position: Position | None,
         last_target_position: Position | None = None,
     ) -> None:
-        migration = self._migrations.get(migration_id)
-        if migration:
+        if migration := self._migrations.get(migration_id):
             migration.events_copied = events_copied
             migration.last_source_position = last_source_position
             migration.last_target_position = last_target_position
 
     async def update_phase(self, migration_id: UUID, phase: MigrationPhase) -> None:
-        migration = self._migrations.get(migration_id)
-        if migration:
+        if migration := self._migrations.get(migration_id):
             migration.phase = phase
 
     async def record_error(self, migration_id: UUID, error: str) -> None:
-        migration = self._migrations.get(migration_id)
-        if migration:
+        if migration := self._migrations.get(migration_id):
             migration.error_count += 1
             migration.last_error = error
             migration.last_error_at = datetime.now(UTC)
 
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
-        migration = self._migrations.get(migration_id)
-        if migration:
+        if migration := self._migrations.get(migration_id):
             migration.is_paused = paused
 
 
@@ -150,11 +131,9 @@ class InMemoryPositionMappingRepository:
         return self._id_counter
 
     async def create_batch(self, mappings: list[PositionMapping]) -> int:
-        count = 0
         for mapping in mappings:
             await self.create(mapping)
-            count += 1
-        return count
+        return len(mappings)
 
     async def get(self, mapping_id: int) -> PositionMapping | None:
         return None
@@ -209,8 +188,7 @@ class InMemoryPositionMappingRepository:
         return len(self._mappings.get(migration_id, []))
 
     async def get_position_bounds(self, migration_id: UUID) -> tuple[Position, Position] | None:
-        source_map = self._by_source.get(migration_id, {})
-        if not source_map:
+        if not (source_map := self._by_source.get(migration_id, {})):
             return None
         positions = list(source_map.keys())
         return (min(positions), max(positions))

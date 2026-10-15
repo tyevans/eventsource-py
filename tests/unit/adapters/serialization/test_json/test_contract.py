@@ -83,23 +83,19 @@ class TestJsonEncoderContract:
 
     def test_latin1_accented_characters_not_escaped(self) -> None:
         result = json_dumps({"name": "Sébastien Müller Peña"})
-        assert "Sébastien Müller Peña" in result
-        assert "\\u" not in result
+        assert "Sébastien Müller Peña" in result and "\\u" not in result
 
     def test_non_latin_script_cjk_not_escaped(self) -> None:
         result = json_dumps({"text": "日本語のテキスト"})
-        assert "日本語のテキスト" in result
-        assert "\\u" not in result
+        assert "日本語のテキスト" in result and "\\u" not in result
 
     def test_non_latin_script_cyrillic_not_escaped(self) -> None:
         result = json_dumps({"text": "Привет, мир"})
-        assert "Привет, мир" in result
-        assert "\\u" not in result
+        assert "Привет, мир" in result and "\\u" not in result
 
     def test_emoji_outside_bmp_not_escaped(self) -> None:
         result = json_dumps({"reaction": "\U0001f600"})
-        assert "\U0001f600" in result
-        assert "\\u" not in result
+        assert "\U0001f600" in result and "\\u" not in result
 
     def test_mixed_ascii_and_non_ascii(self) -> None:
         text = "Hello, Sébastien! 日本語 \U0001f600 mixed with ASCII."
@@ -114,21 +110,11 @@ class TestJsonEncoderContract:
         assert json_loads(json_dumps(data)) == data
 
     def test_finite_floats_including_extremes(self) -> None:
-        data = {
-            "zero": 0.0,
-            "neg_zero": -0.0,
-            "tiny": 5e-300,
-            "huge": 1.7e300,
-            "precise": 1.123456789012345,
-            "negative": -42.5,
-        }
-        parsed = json_loads(json_dumps(data))
-        for key, value in data.items():
-            assert parsed[key] == value
+        data = {"zero": 0.0, "neg_zero": -0.0, "tiny": 5e-300, "huge": 1.7e300, "precise": 1.123456789012345, "negative": -42.5}  # fmt: skip
+        assert json_loads(json_dumps(data)) == data
 
     def test_large_integer_within_supported_range(self) -> None:
-        data = {"n": 12345678901234567890}
-        assert json_loads(json_dumps(data)) == data
+        assert json_loads(json_dumps({"n": 12345678901234567890})) == {"n": 12345678901234567890}
 
     def test_bool_serializes_as_boolean_not_integer(self) -> None:
         assert json_dumps({"flags": [True, False]}) == '{"flags":[true,false]}'
@@ -156,8 +142,7 @@ class TestJsonEncoderContract:
             json_dumps({"a": _MyTuple([1, "finite", 2.5])})
 
     def test_int_min_boundary_ok(self) -> None:
-        value = -(2**63)
-        assert json_loads(json_dumps({"n": value})) == {"n": value}
+        assert json_loads(json_dumps({"n": -(2**63)})) == {"n": -(2**63)}
 
     def test_int_below_min_boundary_raises(self) -> None:
         with pytest.raises(ValueError, match="Integer out of range"):
@@ -166,14 +151,11 @@ class TestJsonEncoderContract:
     def test_out_of_range_int_error_message_matches_documented_text(self) -> None:
         with pytest.raises(ValueError) as exc_info:
             json_dumps({"n": 2**64})
-        assert (
-            str(exc_info.value)
-            == "Integer out of range for JSON serialization (must be within [-2**63, 2**64-1])"
-        )
+        expected = "Integer out of range for JSON serialization (must be within [-2**63, 2**64-1])"
+        assert str(exc_info.value) == expected
 
     def test_int_max_boundary_ok(self) -> None:
-        value = 2**64 - 1
-        assert json_loads(json_dumps({"n": value})) == {"n": value}
+        assert json_loads(json_dumps({"n": 2**64 - 1})) == {"n": 2**64 - 1}
 
     def test_int_above_max_boundary_raises(self) -> None:
         with pytest.raises(ValueError, match="Integer out of range"):

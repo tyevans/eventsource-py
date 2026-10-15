@@ -30,8 +30,6 @@ def _make_item(name: str, quantity: int = 1) -> TestItemCreated:
 
 
 class TestRabbitMQEventBusStats:
-    """Tests for statistics tracking accuracy."""
-
     async def test_stats_tracking_publish(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         assert rabbitmq_event_bus.stats.events_published == 0
         for i in range(5):
@@ -108,8 +106,6 @@ class TestRabbitMQEventBusStats:
 
 
 class TestRabbitMQReliabilityStats:
-    """Tests for statistics tracking accuracy."""
-
     async def test_stats_accurately_track_operations(
         self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
@@ -155,19 +151,14 @@ class TestRabbitMQReliabilityStats:
         assert rabbitmq_event_bus.stats.publish_confirms >= 3
         rabbitmq_event_bus.reset_stats()
 
-        stats = rabbitmq_event_bus.stats
-        assert (
-            stats.events_published
-            == stats.events_consumed
-            == stats.events_processed_success
-            == stats.events_processed_failed
-            == stats.messages_sent_to_dlq
-            == stats.handler_errors
-            == stats.publish_confirms
-            == 0
-        )
+        s = rabbitmq_event_bus.stats
+        counters = (
+            s.events_published, s.events_consumed, s.events_processed_success,
+            s.events_processed_failed, s.messages_sent_to_dlq, s.handler_errors, s.publish_confirms,
+        )  # fmt: skip
+        assert all(c == 0 for c in counters)
         if rabbitmq_event_bus.is_connected:
-            assert stats.connected_at is not None
+            assert s.connected_at is not None
 
     async def test_stats_dict_returns_serializable_format(
         self, rabbitmq_event_bus: RabbitMQEventBus
@@ -176,21 +167,12 @@ class TestRabbitMQReliabilityStats:
         stats_dict = rabbitmq_event_bus.get_stats_dict()
         assert json.dumps(stats_dict) is not None
         expected_keys = {
-            "events_published",
-            "events_consumed",
-            "events_processed_success",
-            "events_processed_failed",
-            "messages_sent_to_dlq",
-            "handler_errors",
-            "reconnections",
-            "publish_confirms",
-            "is_connected",
-            "is_consuming",
-            "uptime_seconds",
-        }
+            "events_published", "events_consumed", "events_processed_success",
+            "events_processed_failed", "messages_sent_to_dlq", "handler_errors",
+            "reconnections", "publish_confirms", "is_connected", "is_consuming", "uptime_seconds",
+        }  # fmt: skip
         assert expected_keys.issubset(stats_dict.keys())
-        assert stats_dict["events_published"] >= 1
-        assert stats_dict["is_connected"] is True
+        assert stats_dict["events_published"] >= 1 and stats_dict["is_connected"] is True
 
     @pytest.mark.slow
     async def test_handler_errors_tracked_separately(self, rabbitmq_event_bus_factory: Any) -> None:
@@ -217,7 +199,6 @@ class TestRabbitMQReliabilityStats:
             await asyncio.sleep(5.0)
             await _stop_consumer(bus, consume_task)
 
-            assert bus.stats.handler_errors >= 1
-            assert bus.stats.events_processed_failed >= 1
+            assert bus.stats.handler_errors >= 1 and bus.stats.events_processed_failed >= 1
         finally:
             await bus.disconnect()
