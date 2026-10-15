@@ -8,19 +8,12 @@ from uuid import uuid4
 
 import pytest
 
-from .conftest import (
-    OrderCancelled,
-    OrderCompleted,
-    OrderCreated,
-    OrderShipped,
-)
+from .conftest import OrderCancelled, OrderCompleted, OrderCreated, OrderShipped
 
 if TYPE_CHECKING:
     from .conftest import FailingProjection, MixedHandlerProjection, OrderProjection
 
-pytestmark = [
-    pytest.mark.integration,
-]
+pytestmark = [pytest.mark.integration]
 
 
 class TestSQLiteReadModelProjectionEventRouting:
@@ -30,9 +23,7 @@ class TestSQLiteReadModelProjectionEventRouting:
     async def test_multiple_events_routed_correctly(
         self, sqlite_projection: OrderProjection
     ) -> None:
-        """Test that different events route to correct handlers."""
         order_id = uuid4()
-
         events = [
             OrderCreated(
                 aggregate_id=order_id,
@@ -40,16 +31,11 @@ class TestSQLiteReadModelProjectionEventRouting:
                 customer_name="Grace",
                 total_amount=Decimal("300.00"),
             ),
-            OrderShipped(
-                aggregate_id=order_id,
-                tracking_number="TRK-99999",
-            ),
+            OrderShipped(aggregate_id=order_id, tracking_number="TRK-99999"),
         ]
-
         for event in events:
             await sqlite_projection.handle(event)
 
-        # Verify final state
         async with sqlite_projection._session_factory() as session, session.begin():
             conn = await session.connection()
             repo = await sqlite_projection._create_repository(conn)
@@ -63,9 +49,7 @@ class TestSQLiteReadModelProjectionEventRouting:
     async def test_subscribed_to_returns_all_event_types(
         self, sqlite_projection: OrderProjection
     ) -> None:
-        """Test that subscribed_to returns all handled event types."""
         subscribed = sqlite_projection.subscribed_to()
-
         assert OrderCreated in subscribed
         assert OrderShipped in subscribed
         assert OrderCancelled in subscribed
@@ -73,13 +57,8 @@ class TestSQLiteReadModelProjectionEventRouting:
 
     @pytest.mark.asyncio
     async def test_unhandled_event_is_ignored(self, sqlite_projection: OrderProjection) -> None:
-        """Test that unhandled events are silently ignored."""
-        event = OrderCompleted(
-            aggregate_id=uuid4(),
-        )
-
+        event = OrderCompleted(aggregate_id=uuid4())
         await sqlite_projection.handle(event)
-
         checkpoint = await sqlite_projection.get_checkpoint()
         assert checkpoint == str(event.event_id)
 
@@ -91,7 +70,6 @@ class TestSQLiteMixedHandlerProjection:
     async def test_two_param_handler_with_repo_access(
         self, sqlite_mixed_projection: MixedHandlerProjection
     ) -> None:
-        """Test that 2-param handlers receive repository and work correctly."""
         order_id = uuid4()
         event = OrderCreated(
             aggregate_id=order_id,
@@ -99,7 +77,6 @@ class TestSQLiteMixedHandlerProjection:
             customer_name="Henry",
             total_amount=Decimal("400.00"),
         )
-
         await sqlite_mixed_projection.handle(event)
 
         async with sqlite_mixed_projection._session_factory() as session, session.begin():
@@ -114,9 +91,7 @@ class TestSQLiteMixedHandlerProjection:
     async def test_single_param_handler_without_repo_access(
         self, sqlite_mixed_projection: MixedHandlerProjection
     ) -> None:
-        """Test that 1-param handlers work without repository."""
         order_id = uuid4()
-
         create_event = OrderCreated(
             aggregate_id=order_id,
             order_number="ORD-009",
@@ -125,10 +100,7 @@ class TestSQLiteMixedHandlerProjection:
         )
         await sqlite_mixed_projection.handle(create_event)
 
-        ship_event = OrderShipped(
-            aggregate_id=order_id,
-            tracking_number="TRK-22222",
-        )
+        ship_event = OrderShipped(aggregate_id=order_id, tracking_number="TRK-22222")
         await sqlite_mixed_projection.handle(ship_event)
 
         assert len(sqlite_mixed_projection.events_without_repo) == 1
@@ -142,14 +114,12 @@ class TestSQLiteReadModelProjectionErrorHandling:
     async def test_handler_failure_sends_to_dlq(
         self, sqlite_failing_projection: FailingProjection
     ) -> None:
-        """Test that failed events are sent to DLQ after retries exhausted."""
         event = OrderCreated(
             aggregate_id=uuid4(),
             order_number="ORD-010",
             customer_name="Jack",
             total_amount=Decimal("600.00"),
         )
-
         with pytest.raises(ValueError, match="Simulated handler failure"):
             await sqlite_failing_projection.handle(event)
 
@@ -163,19 +133,16 @@ class TestSQLiteReadModelProjectionErrorHandling:
     async def test_checkpoint_not_updated_on_failure(
         self, sqlite_failing_projection: FailingProjection
     ) -> None:
-        """Test that checkpoint is NOT updated when handler fails."""
         event = OrderCreated(
             aggregate_id=uuid4(),
             order_number="ORD-011",
             customer_name="Kate",
             total_amount=Decimal("700.00"),
         )
-
         with pytest.raises(ValueError):
             await sqlite_failing_projection.handle(event)
 
-        checkpoint = await sqlite_failing_projection.get_checkpoint()
-        assert checkpoint is None
+        assert await sqlite_failing_projection.get_checkpoint() is None
 
 
 class TestSQLiteReadModelProjectionWorkflow:
@@ -183,9 +150,7 @@ class TestSQLiteReadModelProjectionWorkflow:
 
     @pytest.mark.asyncio
     async def test_full_order_lifecycle(self, sqlite_projection: OrderProjection) -> None:
-        """Test complete order lifecycle: create -> ship -> cancel."""
         order_id = uuid4()
-
         create_event = OrderCreated(
             aggregate_id=order_id,
             order_number="ORD-LIFECYCLE",
@@ -201,10 +166,7 @@ class TestSQLiteReadModelProjectionWorkflow:
         assert summary is not None
         assert summary.status == "pending"
 
-        ship_event = OrderShipped(
-            aggregate_id=order_id,
-            tracking_number="TRK-LIFECYCLE",
-        )
+        ship_event = OrderShipped(aggregate_id=order_id, tracking_number="TRK-LIFECYCLE")
         await sqlite_projection.handle(ship_event)
 
         async with sqlite_projection._session_factory() as session, session.begin():
@@ -216,10 +178,7 @@ class TestSQLiteReadModelProjectionWorkflow:
         assert summary.tracking_number == "TRK-LIFECYCLE"
         assert summary.version == 2
 
-        cancel_event = OrderCancelled(
-            aggregate_id=order_id,
-            reason="Test cancellation",
-        )
+        cancel_event = OrderCancelled(aggregate_id=order_id, reason="Test cancellation")
         await sqlite_projection.handle(cancel_event)
 
         async with sqlite_projection._session_factory() as session, session.begin():
@@ -232,9 +191,7 @@ class TestSQLiteReadModelProjectionWorkflow:
     async def test_multiple_orders_processed_independently(
         self, sqlite_projection: OrderProjection
     ) -> None:
-        """Test processing multiple orders independently."""
         order_ids = [uuid4() for _ in range(3)]
-
         for i, order_id in enumerate(order_ids):
             event = OrderCreated(
                 aggregate_id=order_id,
@@ -244,17 +201,12 @@ class TestSQLiteReadModelProjectionWorkflow:
             )
             await sqlite_projection.handle(event)
 
-        ship_event = OrderShipped(
-            aggregate_id=order_ids[0],
-            tracking_number="TRK-FIRST",
+        await sqlite_projection.handle(
+            OrderShipped(aggregate_id=order_ids[0], tracking_number="TRK-FIRST")
         )
-        await sqlite_projection.handle(ship_event)
-
-        cancel_event = OrderCancelled(
-            aggregate_id=order_ids[2],
-            reason="Cancel last",
+        await sqlite_projection.handle(
+            OrderCancelled(aggregate_id=order_ids[2], reason="Cancel last")
         )
-        await sqlite_projection.handle(cancel_event)
 
         async with sqlite_projection._session_factory() as session, session.begin():
             conn = await session.connection()
