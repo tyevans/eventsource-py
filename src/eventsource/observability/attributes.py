@@ -1,40 +1,13 @@
-"""
-Standard span and metric attributes for eventsource.
+"""Standard span and metric attributes for eventsource."""
 
-This module defines attribute constants used across all eventsource components
-for consistent span naming and metrics labeling. These follow OpenTelemetry
-semantic conventions where applicable.
-
-Example:
-    >>> from eventsource.observability.attributes import (
-    ...     ATTR_AGGREGATE_ID,
-    ...     ATTR_EVENT_TYPE,
-    ... )
-    >>>
-    >>> with tracer.start_as_current_span(
-    ...     "eventsource.snapshot.save",
-    ...     attributes={
-    ...         ATTR_AGGREGATE_ID: str(aggregate_id),
-    ...         ATTR_EVENT_TYPE: event.__class__.__name__,
-    ...     },
-    ... ):
-    ...     pass
-"""
-
-# =============================================================================
 # Aggregate Attributes
-# =============================================================================
-
 ATTR_AGGREGATE_ID = "eventsource.aggregate.id"
 """Unique identifier for the aggregate instance (UUID string)."""
 
 ATTR_AGGREGATE_TYPE = "eventsource.aggregate.type"
 """Type name of the aggregate (e.g., 'Order', 'User')."""
 
-# =============================================================================
 # Event Attributes
-# =============================================================================
-
 ATTR_EVENT_ID = "eventsource.event.id"
 """Unique identifier for the event (UUID string)."""
 
@@ -44,27 +17,18 @@ ATTR_EVENT_TYPE = "eventsource.event.type"
 ATTR_EVENT_COUNT = "eventsource.event.count"
 """Number of events in an operation (integer)."""
 
-# =============================================================================
 # Version Attributes
-# =============================================================================
-
 ATTR_VERSION = "eventsource.version"
 """Current version of an aggregate or stream (integer)."""
 
 ATTR_EXPECTED_VERSION = "eventsource.expected_version"
 """Expected version for optimistic concurrency (integer)."""
 
-# =============================================================================
 # Tenant Attributes
-# =============================================================================
-
 ATTR_TENANT_ID = "eventsource.tenant.id"
 """Tenant identifier for multi-tenant systems (string)."""
 
-# =============================================================================
 # Component-Specific Attributes
-# =============================================================================
-
 ATTR_PROJECTION_NAME = "eventsource.projection.name"
 """Name of the projection processing events (string)."""
 
@@ -80,20 +44,14 @@ ATTR_HANDLER_SUCCESS = "eventsource.handler.success"
 ATTR_POSITION = "eventsource.position"
 """Position in the event stream (integer)."""
 
-# =============================================================================
 # Database Attributes (OpenTelemetry Semantic Conventions)
-# =============================================================================
-
 ATTR_DB_SYSTEM = "db.system"
 """Database system identifier (e.g., 'sqlite', 'postgresql')."""
 
 ATTR_DB_OPERATION = "db.operation"
 """Database operation type (e.g., 'INSERT', 'SELECT')."""
 
-# =============================================================================
 # Messaging Attributes (OpenTelemetry Semantic Conventions)
-# =============================================================================
-
 ATTR_MESSAGING_SYSTEM = "messaging.system"
 """Messaging system identifier (e.g., 'rabbitmq', 'redis')."""
 
@@ -103,10 +61,7 @@ ATTR_MESSAGING_DESTINATION = "messaging.destination"
 ATTR_MESSAGING_OPERATION = "messaging.operation"
 """Messaging operation type (e.g., 'publish', 'receive')."""
 
-# =============================================================================
 # Subscription Attributes
-# =============================================================================
-
 ATTR_SUBSCRIPTION_NAME = "eventsource.subscription.name"
 """Name of the subscription being processed (string)."""
 
@@ -131,20 +86,14 @@ ATTR_EVENTS_PROCESSED = "eventsource.events.processed"
 ATTR_WATERMARK = "eventsource.watermark"
 """Watermark position for catch-up to live transition (integer)."""
 
-# =============================================================================
 # Error and Retry Attributes
-# =============================================================================
-
 ATTR_RETRY_COUNT = "eventsource.retry.count"
 """Number of retry attempts for an operation (integer)."""
 
 ATTR_ERROR_TYPE = "eventsource.error.type"
 """Type of error encountered (exception class name)."""
 
-# =============================================================================
 # ReadModel Attributes
-# =============================================================================
-
 ATTR_READMODEL_TYPE = "eventsource.readmodel.type"
 """Type name of the read model class (e.g., 'OrderSummary')."""
 
@@ -157,10 +106,7 @@ ATTR_QUERY_FILTER_COUNT = "eventsource.query.filter_count"
 ATTR_QUERY_LIMIT = "eventsource.query.limit"
 """Limit value for a query (-1 if no limit) (integer)."""
 
-# =============================================================================
 # Migration Attributes
-# =============================================================================
-
 ATTR_MIGRATION_ID = "eventsource.migration.id"
 """Unique identifier for the migration (UUID string)."""
 
@@ -179,10 +125,7 @@ ATTR_MIGRATION_TARGET_STORE = "eventsource.migration.target_store"
 ATTR_MIGRATION_SYNC_LAG_EVENTS = "eventsource.migration.sync_lag_events"
 """Current sync lag in number of events (integer)."""
 
-# =============================================================================
 # Lock Attributes
-# =============================================================================
-
 ATTR_LOCK_KEY = "eventsource.lock.key"
 """Lock key identifier (string)."""
 
@@ -194,10 +137,6 @@ ATTR_LOCK_TIMEOUT = "eventsource.lock.timeout"
 
 ATTR_LOCK_ACQUIRED = "eventsource.lock.acquired"
 """Whether lock was acquired (boolean)."""
-
-# =============================================================================
-# Module Exports
-# =============================================================================
 
 __all__ = [
     # Aggregate

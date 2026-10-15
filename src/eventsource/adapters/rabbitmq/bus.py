@@ -1,31 +1,4 @@
-"""RabbitMQ event bus implementation using aio-pika.
-
-This module provides a distributed event bus implementation using RabbitMQ
-for durable event distribution across multiple processes and servers.
-
-Features:
-- Durable event storage (events survive restarts)
-- Consumer groups via queue bindings
-- At-least-once delivery guarantees
-- Topic-based routing with exchange types
-- Horizontal scaling support
-- Dead letter queue for unrecoverable failures
-- Configurable retry policies
-- Optional OpenTelemetry tracing
-
-Example:
-    >>> from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
-    >>>
-    >>> config = RabbitMQEventBusConfig(
-    ...     rabbitmq_url="amqp://guest:guest@localhost:5672/",
-    ...     exchange_name="events",
-    ...     consumer_group="projections",
-    ... )
-    >>> bus = RabbitMQEventBus(config=config, event_registry=my_registry)
-    >>> await bus.connect()
-    >>> await bus.publish([MyEvent(...)])
-    >>> await bus.start_consuming()
-"""
+"""RabbitMQ event bus implementation using aio-pika."""
 
 from __future__ import annotations
 
@@ -61,7 +34,6 @@ from eventsource.observability import OTEL_AVAILABLE, Tracer, create_tracer
 if TYPE_CHECKING:
     from eventsource.domain.event_registry import EventRegistry
 
-# Optional aio-pika import - fail gracefully if not installed
 try:
     import aio_pika
     from aio_pika import DeliveryMode, Message
@@ -89,10 +61,6 @@ except ImportError:
     AbstractRobustChannel = None  # type: ignore[assignment, misc]
     AbstractRobustConnection = None  # type: ignore[assignment, misc]
 
-
-# Named explicitly (not via __name__) so the logger name is stable across the
-# rabbitmq.py -> rabbitmq/bus.py package move -- callers that configure
-# logging by name ("eventsource.adapters.rabbitmq") keep working unchanged.
 logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
 
@@ -106,32 +74,7 @@ class RabbitMQEventBus(
     RabbitMQEventBusShutdownMixin,
     BaseEventBus,
 ):
-    """Event bus implementation using RabbitMQ.
-
-    This implementation provides distributed event delivery with:
-    - At-least-once delivery guarantees via message acknowledgments
-    - Horizontal scaling via consumer groups
-    - Automatic reconnection via aio-pika's RobustConnection
-    - Dead letter queue for failed messages
-    - Topic-based routing with configurable exchange types
-
-    Thread Safety:
-        - Subscription methods are thread-safe
-        - Publishing and consuming should only be called from async context
-
-    Example:
-        >>> from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
-        >>> from eventsource.domain.event_registry import EventRegistry
-        >>>
-        >>> config = RabbitMQEventBusConfig(rabbitmq_url="amqp://localhost:5672")
-        >>> registry = EventRegistry()
-        >>> bus = RabbitMQEventBus(config=config, event_registry=registry)
-        >>>
-        >>> async with bus:
-        ...     bus.subscribe(OrderCreated, order_handler)
-        ...     await bus.publish([OrderCreated(...)])
-        ...     await bus.start_consuming()
-    """
+    """Distributed event bus implementation using RabbitMQ and aio-pika."""
 
     def __init__(
         self,
@@ -140,37 +83,18 @@ class RabbitMQEventBus(
         *,
         tracer: Tracer | None = None,
     ) -> None:
-        """Initialize the RabbitMQ event bus.
-
-        Args:
-            config: Configuration for the RabbitMQ event bus.
-                   Defaults to RabbitMQEventBusConfig() with default values.
-            event_registry: Event registry for deserializing events.
-                          If None, uses the default registry.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on config.enable_tracing setting.
-
-        Raises:
-            RabbitMQNotAvailableError: If aio-pika package is not installed
-        """
+        """Initialize the RabbitMQ event bus."""
         if not RABBITMQ_AVAILABLE:
             raise RabbitMQNotAvailableError()
 
         super().__init__(event_registry=event_registry)
 
         self._config = config or RabbitMQEventBusConfig()
-
-        # Statistics
         self._stats = RabbitMQEventBusStats()
 
-        # Connection lifecycle (connection/channel/connect-lock/reconnect
-        # and close callbacks) is owned by RabbitMQConnectionManager.
         self._connection_manager = RabbitMQConnectionManager(config=self._config, stats=self._stats)
         self._connection_manager._is_consuming = lambda: self._consumer._consuming
 
-        # Exchange/queue declaration and bindings are owned by
-        # RabbitMQTopology. Re-declaration after a reconnect is wired
-        # through the connection manager's reconnect hook.
         self._topology = RabbitMQTopology(config=self._config, connection=self._connection_manager)
         self._connection_manager.on_reconnect(self._topology.redeclare)
 
@@ -181,17 +105,11 @@ class RabbitMQEventBus(
             max_retries=self._config.max_retries,
         )
 
-        # Shutdown state tracking
         self._shutdown_initiated: bool = False
-
-        # Logger (named explicitly -- see module-level `logger` for rationale)
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
-        # Initialize tracing via composition (replaces TracingMixin)
         tracer_instance = tracer or create_tracer(__name__, self._config.enable_tracing)
 
-        # Publish-path (single/batch, sequential/concurrent strategies) is
-        # owned by RabbitMQPublisher.
         self._publisher = RabbitMQPublisher(
             config=self._config,
             connection=self._connection_manager,
@@ -201,10 +119,6 @@ class RabbitMQEventBus(
             enable_tracing=tracer_instance.enabled,
         )
 
-        # Consume path (consume loop, dispatch, retry/DLQ write path,
-        # graceful stop/drain) is owned by RabbitMQConsumer. It receives
-        # handler lookup / event resolution as callables so it never touches
-        # the subscription registry directly.
         self._consumer = RabbitMQConsumer(
             config=self._config,
             connection=self._connection_manager,
@@ -217,7 +131,6 @@ class RabbitMQEventBus(
             enable_tracing=tracer_instance.enabled,
         )
 
-        # DLQ inspection/replay/purge is owned by RabbitMQDLQAdmin.
         self._dlq_admin = RabbitMQDLQAdmin(
             config=self._config,
             connection=self._connection_manager,
@@ -232,10 +145,7 @@ class RabbitMQEventBus(
 
     @property
     def is_connected(self) -> bool:
-        """Check if connected to RabbitMQ.
-
-        Returns True only if the connection is established and not closed.
-        """
+        """Check if connected to RabbitMQ."""
         return self._connection_manager.is_connected
 
     @property
