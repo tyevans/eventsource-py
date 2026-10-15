@@ -27,8 +27,7 @@ class TestThreadSafety:
 
     def test_concurrent_access_from_multiple_threads(self) -> None:
         """Multiple threads can use adapter concurrently."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=10.0)
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=10.0)
         errors: list[tuple[int, Exception]] = []
         success_count = [0]
         lock = threading.Lock()
@@ -40,40 +39,32 @@ class TestThreadSafety:
                     stream = StreamId(aggregate_id=agg_id, category="Sample")
                     event = SampleEvent(
                         aggregate_id=agg_id,
-                        aggregate_type="Sample",
                         aggregate_version=1,
                         data=f"thread_{thread_id}_event_{i}",
                     )
-                    # Append event
                     result = sync_store.append(stream, [event], ExpectedVersion.no_stream())
                     assert result.new_version == 1
-                    # Read it back
                     envelopes = sync_store.read_stream(stream)
                     assert len(envelopes) == 1
                     assert envelopes[0].event.aggregate_id == agg_id
-                    # Check version
-                    version = sync_store.get_stream_version(stream)
-                    assert version == 1
+                    assert sync_store.get_stream_version(stream) == 1
                     with lock:
                         success_count[0] += 1
             except Exception as e:
                 with lock:
                     errors.append((thread_id, e))
 
-        # Run 5 threads concurrently
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-
         assert not errors, f"Errors occurred: {errors}"
         assert success_count[0] == 50
 
     def test_concurrent_appends_to_different_aggregates(self) -> None:
         """Concurrent appends to different aggregates work correctly."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=10.0)
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=10.0)
         streams: list[StreamId] = []
         errors: list[Exception] = []
         lock = threading.Lock()
@@ -84,13 +75,9 @@ class TestThreadSafety:
                 stream = StreamId(aggregate_id=agg_id, category="Sample")
                 with lock:
                     streams.append(stream)
-                # Append multiple events
                 for i in range(5):
                     event = SampleEvent(
-                        aggregate_id=agg_id,
-                        aggregate_type="Sample",
-                        aggregate_version=i + 1,
-                        data=f"event_{i}",
+                        aggregate_id=agg_id, aggregate_version=i + 1, data=f"event_{i}"
                     )
                     sync_store.append(stream, [event], ExpectedVersion.exact(i))
             except Exception as e:
@@ -102,23 +89,16 @@ class TestThreadSafety:
             t.start()
         for t in threads:
             t.join()
-
         assert not errors, f"Errors occurred: {errors}"
-        # Verify all aggregates have correct versions
         for stream in streams:
-            version = sync_store.get_stream_version(stream)
-            assert version == 5
+            assert sync_store.get_stream_version(stream) == 5
 
     def test_concurrent_reads_and_writes(self) -> None:
         """Concurrent reads and writes work correctly."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=10.0)
-        # Create some initial data
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=10.0)
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Sample")
-        initial_event = SampleEvent(
-            aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1
-        )
+        initial_event = SampleEvent(aggregate_id=agg_id, aggregate_version=1)
         sync_store.append(stream, [initial_event], ExpectedVersion.no_stream())
         errors: list[Exception] = []
         read_results: list[int] = []
@@ -139,15 +119,12 @@ class TestThreadSafety:
                 for _ in range(5):
                     new_agg_id = uuid4()
                     new_stream = StreamId(aggregate_id=new_agg_id, category="Sample")
-                    event = SampleEvent(
-                        aggregate_id=new_agg_id, aggregate_type="Sample", aggregate_version=1
-                    )
+                    event = SampleEvent(aggregate_id=new_agg_id, aggregate_version=1)
                     sync_store.append(new_stream, [event], ExpectedVersion.no_stream())
             except Exception as e:
                 with lock:
                     errors.append(e)
 
-        # Mix readers and writers
         threads = []
         for i in range(5):
             threads.append(threading.Thread(target=reader, args=(i,)))
@@ -156,9 +133,7 @@ class TestThreadSafety:
             t.start()
         for t in threads:
             t.join()
-
         assert not errors, f"Errors occurred: {errors}"
-        # All reads should see at least 1 event (the initial one)
         assert all(count >= 1 for count in read_results)
 
 
@@ -172,13 +147,10 @@ class TestEventLoopScenarios:
 
         def run_in_thread() -> None:
             try:
-                store = InMemoryEventStore()
-                sync_store = SyncEventStoreAdapter(store, timeout=5.0)
+                sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=5.0)
                 agg_id = uuid4()
                 stream = StreamId(aggregate_id=agg_id, category="Sample")
-                event = SampleEvent(
-                    aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1
-                )
+                event = SampleEvent(aggregate_id=agg_id, aggregate_version=1)
                 append_result = sync_store.append(stream, [event], ExpectedVersion.no_stream())
                 assert append_result.new_version == 1
                 envelopes = sync_store.read_stream(stream)
@@ -190,14 +162,12 @@ class TestEventLoopScenarios:
         thread = threading.Thread(target=run_in_thread)
         thread.start()
         thread.join()
-
         assert not errors, f"Errors occurred: {errors}"
         assert result == ["success"]
 
     def test_multiple_threads_without_event_loops(self) -> None:
         """Multiple threads without event loops work correctly."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=10.0)
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=10.0)
         results: list[str] = []
         errors: list[Exception] = []
         lock = threading.Lock()
@@ -206,9 +176,7 @@ class TestEventLoopScenarios:
             try:
                 agg_id = uuid4()
                 stream = StreamId(aggregate_id=agg_id, category="Sample")
-                event = SampleEvent(
-                    aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1
-                )
+                event = SampleEvent(aggregate_id=agg_id, aggregate_version=1)
                 result = sync_store.append(stream, [event], ExpectedVersion.no_stream())
                 assert result.new_version == 1
                 with lock:
@@ -222,7 +190,6 @@ class TestEventLoopScenarios:
             t.start()
         for t in threads:
             t.join()
-
         assert not errors, f"Errors occurred: {errors}"
         assert len(results) == 10
 
@@ -232,22 +199,17 @@ class TestExceptionPropagation:
 
     def test_exceptions_propagate_from_threads(self) -> None:
         """Exceptions from the store propagate correctly."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=5.0)
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Sample")
-        event = SampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
-        # First append succeeds
+        event = SampleEvent(aggregate_id=agg_id, aggregate_version=1)
         sync_store.append(stream, [event], ExpectedVersion.no_stream())
         errors: list[Exception] = []
         lock = threading.Lock()
 
         def attempt_conflicting_append() -> None:
             try:
-                # This should fail due to version conflict
-                event2 = SampleEvent(
-                    aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2
-                )
+                event2 = SampleEvent(aggregate_id=agg_id, aggregate_version=2)
                 sync_store.append(stream, [event2], ExpectedVersion.no_stream())
             except Exception as e:
                 with lock:
@@ -258,8 +220,6 @@ class TestExceptionPropagation:
             t.start()
         for t in threads:
             t.join()
-
-        # All attempts should have raised OptimisticLockError
         assert len(errors) == 5
         assert all(isinstance(e, OptimisticLockError) for e in errors)
 
@@ -270,8 +230,7 @@ class TestStressTest:
     @pytest.mark.slow
     def test_high_concurrency_stress(self) -> None:
         """High concurrency stress test."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=30.0)
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=30.0)
         total_operations = [0]
         errors: list[Exception] = []
         lock = threading.Lock()
@@ -281,9 +240,7 @@ class TestStressTest:
                 for _ in range(50):
                     agg_id = uuid4()
                     stream = StreamId(aggregate_id=agg_id, category="Sample")
-                    event = SampleEvent(
-                        aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1
-                    )
+                    event = SampleEvent(aggregate_id=agg_id, aggregate_version=1)
                     sync_store.append(stream, [event], ExpectedVersion.no_stream())
                     sync_store.read_stream(stream)
                     sync_store.event_exists(event.event_id)
@@ -293,13 +250,10 @@ class TestStressTest:
                 with lock:
                     errors.append(e)
 
-        # Run 20 threads with 50 iterations each
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-
         assert not errors, f"Errors occurred: {errors}"
-        # 20 threads * 50 iterations * 3 operations
         assert total_operations[0] == 3000

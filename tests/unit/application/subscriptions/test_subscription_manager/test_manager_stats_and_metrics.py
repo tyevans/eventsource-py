@@ -23,15 +23,11 @@ class TestHealthStatus:
 
     @pytest.mark.asyncio
     async def test_health_when_stopped(
-        self,
-        manager: SubscriptionManager,
-        subscriber: MockSubscriber,
+        self, manager: SubscriptionManager, subscriber: MockSubscriber
     ):
         """Test health status when stopped."""
         await manager.subscribe(subscriber)
-
         health = manager.get_health()
-
         assert health["status"] == "stopped"
         assert health["running"] is False
         assert health["subscription_count"] == 1
@@ -48,38 +44,27 @@ class TestHealthStatus:
         await add_events_to_store(event_store, 5)
         await manager.subscribe(subscriber)
         await manager.start()
-
         health = manager.get_health()
-
         assert health["status"] == "healthy"
         assert health["running"] is True
         assert health["subscription_count"] == 1
         assert len(health["subscriptions"]) == 1
         assert health["subscriptions"][0]["state"] == "live"
-
         await manager.stop()
 
     @pytest.mark.asyncio
     async def test_health_with_error_subscription(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         """Test health status with errored subscription."""
         await add_events_to_store(event_store, 5)
-
-        # Create subscriber that fails
         subscriber = MockSubscriber()
         subscriber.fail_on_event_types.add("ManagerTestEvent")
-
         config = SubscriptionConfig(continue_on_error=False)
         await manager.subscribe(subscriber, config=config)
-
         with contextlib.suppress(Exception):
             await manager.start()
-
         health = manager.get_health()
-
         assert health["status"] == "unhealthy"
         assert health["subscriptions"][0]["state"] == "error"
 
@@ -94,15 +79,12 @@ class TestHealthStatus:
         await add_events_to_store(event_store, 5)
         await manager.subscribe(subscriber)
         await manager.start()
-
         health = manager.get_health()
-
         sub_status = health["subscriptions"][0]
         assert "name" in sub_status
         assert "state" in sub_status
         assert "position" in sub_status
         assert "events_processed" in sub_status
-
         await manager.stop()
 
 
@@ -111,85 +93,52 @@ class TestMultipleSubscriptionsHealth:
 
     @pytest.mark.asyncio
     async def test_health_status_all_healthy(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         """Test health shows healthy when all subscriptions are live."""
         await add_events_to_store(event_store, 5)
-
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
-
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         await manager.start()
-
         health = manager.get_health()
-
         assert health["status"] == "healthy"
         assert health["subscription_count"] == 2
         assert len(health["subscriptions"]) == 2
-
         await manager.stop()
 
     @pytest.mark.asyncio
     async def test_health_status_with_mixed_states(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         """Test health shows appropriate status with mixed subscription states."""
         await add_events_to_store(event_store, 5)
-
-        # Working subscriber
         working = OrderProjection()
-
-        # Failing subscriber
         failing = MockSubscriber()
         failing.fail_on_event_types.add("ManagerTestEvent")
-
         await manager.subscribe(working)
         await manager.subscribe(
             failing,
             config=SubscriptionConfig(continue_on_error=False),
             name="FailingSubscriber",
         )
-
         await manager.start()
-
         health = manager.get_health()
-
-        # Health should show unhealthy due to one subscription in error state
         assert health["status"] == "unhealthy"
-
-        # Check individual subscription statuses
         sub_states = {s["name"]: s["state"] for s in health["subscriptions"]}
         assert sub_states["OrderProjection"] == "live"
         assert sub_states["FailingSubscriber"] == "error"
-
         await manager.stop()
 
     @pytest.mark.asyncio
     async def test_is_healthy_property_with_multiple_subscriptions(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         """Test is_healthy property with multiple subscriptions."""
         await add_events_to_store(event_store, 5)
-
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
-
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         await manager.start()
-
         assert manager.is_healthy is True
-
         await manager.stop()
 
 
@@ -197,34 +146,22 @@ class TestGetAllStatuses:
     """Tests for get_all_statuses method."""
 
     @pytest.mark.asyncio
-    async def test_get_all_statuses_returns_dict(
-        self,
-        manager: SubscriptionManager,
-    ):
+    async def test_get_all_statuses_returns_dict(self, manager: SubscriptionManager):
         """Test get_all_statuses returns dictionary of statuses."""
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
-
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         statuses = manager.get_all_statuses()
-
         assert isinstance(statuses, dict)
         assert "OrderProjection" in statuses
         assert "CustomerProjection" in statuses
 
     @pytest.mark.asyncio
     async def test_get_all_statuses_returns_subscription_status_objects(
-        self,
-        manager: SubscriptionManager,
+        self, manager: SubscriptionManager
     ):
         """Test get_all_statuses returns SubscriptionStatus objects."""
-        subscriber = MockSubscriber()
-        await manager.subscribe(subscriber)
-
+        await manager.subscribe(MockSubscriber())
         statuses = manager.get_all_statuses()
-
         assert "MockSubscriber" in statuses
         status = statuses["MockSubscriber"]
         assert isinstance(status, SubscriptionStatus)
@@ -233,59 +170,37 @@ class TestGetAllStatuses:
 
     @pytest.mark.asyncio
     async def test_get_all_statuses_shows_different_states(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         """Test get_all_statuses shows different subscription states."""
         await add_events_to_store(event_store, 5)
-
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
-
-        # Start only one subscription
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         await manager.start(subscription_names=["OrderProjection"])
-
         statuses = manager.get_all_statuses()
-
         assert statuses["OrderProjection"].state == "live"
         assert statuses["CustomerProjection"].state == "starting"
-
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_get_all_statuses_empty_manager(
-        self,
-        manager: SubscriptionManager,
-    ):
+    async def test_get_all_statuses_empty_manager(self, manager: SubscriptionManager):
         """Test get_all_statuses with no subscriptions."""
         statuses = manager.get_all_statuses()
-
         assert statuses == {}
 
     @pytest.mark.asyncio
     async def test_get_all_statuses_includes_statistics(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         """Test get_all_statuses includes event processing statistics."""
         await add_events_to_store(event_store, 10)
-
-        subscriber = MockSubscriber()
-        await manager.subscribe(subscriber)
+        await manager.subscribe(MockSubscriber())
         await manager.start()
-
         statuses = manager.get_all_statuses()
         status = statuses["MockSubscriber"]
-
         assert status.events_processed == 10
         assert status.position is not None
         assert status.uptime_seconds >= 0
-
         await manager.stop()
 
 

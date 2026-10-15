@@ -64,8 +64,8 @@ class TestCalculateLag:
         clear_metrics_registry()
         migration_id = uuid4()
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
+            source_store,
+            target_store,
             config=config,
             migration_id=migration_id,
             enable_tracing=False,
@@ -94,12 +94,7 @@ class TestCalculateLag:
         config: MigrationConfig,
     ) -> None:
         """Target has copied everything: `since` is the source's current head."""
-        tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            enable_tracing=False,
-        )
+        tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         last_position = await seed_events(source_store, 25)
         lag = await tracker.calculate_lag(since=last_position)
         assert lag.events == 0
@@ -113,12 +108,7 @@ class TestCalculateLag:
         config: MigrationConfig,
     ) -> None:
         """An empty source feed reports zero lag regardless of `since`."""
-        tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            enable_tracing=False,
-        )
+        tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         lag = await tracker.calculate_lag()
         assert lag.events == 0
         assert lag.count_is_bounded is False
@@ -132,10 +122,7 @@ class TestCalculateLag:
     ) -> None:
         """With `threshold + 1` events behind, tracker caps count and marks bounded."""
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=strict_config,
-            enable_tracing=False,
+            source_store, target_store, config=strict_config, enable_tracing=False
         )
         await seed_events(source_store, 15)
         lag = await tracker.calculate_lag()
@@ -150,12 +137,7 @@ class TestCalculateLag:
         config: MigrationConfig,
     ) -> None:
         """Test multiple lag calculations as the source feed grows."""
-        tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            enable_tracing=False,
-        )
+        tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         await seed_events(source_store, 50)
         await tracker.calculate_lag()
         await seed_events(source_store, 20)
@@ -180,12 +162,7 @@ class TestConvergenceDetection:
         config: MigrationConfig,
     ) -> None:
         """Test is_converged returns True when within threshold."""
-        tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            enable_tracing=False,
-        )
+        tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         await seed_events(source_store, 50)
         await tracker.calculate_lag()
         assert tracker.is_converged() is True
@@ -199,10 +176,7 @@ class TestConvergenceDetection:
     ) -> None:
         """Test is_converged returns False when exceeding threshold."""
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=strict_config,
-            enable_tracing=False,
+            source_store, target_store, config=strict_config, enable_tracing=False
         )
         await seed_events(source_store, 50)
         await tracker.calculate_lag()
@@ -243,12 +217,7 @@ class TestConvergenceDetection:
         config: MigrationConfig,
     ) -> None:
         """Test is_sync_ready returns True when within threshold."""
-        tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            enable_tracing=False,
-        )
+        tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         await seed_events(source_store, 50)
         await tracker.calculate_lag()
         assert tracker.is_sync_ready() is True
@@ -262,10 +231,7 @@ class TestConvergenceDetection:
     ) -> None:
         """Test is_sync_ready returns False when exceeding threshold."""
         tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=strict_config,
-            enable_tracing=False,
+            source_store, target_store, config=strict_config, enable_tracing=False
         )
         await seed_events(source_store, 50)
         await tracker.calculate_lag()
@@ -293,12 +259,7 @@ class TestConvergenceDetection:
         config: MigrationConfig,
     ) -> None:
         """Test is_fully_converged returns True when target has copied everything."""
-        tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            config=config,
-            enable_tracing=False,
-        )
+        tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         last_position = await seed_events(source_store, 25)
         await tracker.calculate_lag(since=last_position)
         assert tracker.is_fully_converged() is True
