@@ -43,7 +43,7 @@ logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
 
 class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin):
-    """Owns the RabbitMQ consume loop and the retry/DLQ write path."""
+    """Owns the RabbitMQ consume loop (eventsource.event_bus.consume / eventsource.event_bus.handle)."""
 
     def __init__(
         self,
