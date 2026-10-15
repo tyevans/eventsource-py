@@ -43,10 +43,7 @@ class AccountState(BaseModel):
 
 class Account(DeciderAggregate[AccountState]):
     aggregate_type = "Account"
-
-    @staticmethod
-    def initial_state() -> AccountState:
-        return AccountState()
+    initial_state = staticmethod(lambda: AccountState())
 
     @staticmethod
     def decide(command: object, state: AccountState) -> list[DomainEvent]:
@@ -95,10 +92,8 @@ class TestExecuteStamping:
         assert acct.uncommitted_events == events
 
     def test_provenance_from_domain_command(self) -> None:
-        acct = Account(uuid4())
-        cmd = OpenAccount(
-            account_id=acct.aggregate_id, owner="alice", actor_id="user-1", tenant_id=uuid4()
-        )
+        acct = Account(aid := uuid4())
+        cmd = OpenAccount(account_id=aid, owner="alice", actor_id="user-1", tenant_id=uuid4())
         (event,) = acct.execute(cmd)
         assert event.causation_id == cmd.command_id
         assert event.correlation_id == cmd.correlation_id
@@ -111,50 +106,35 @@ class TestExecuteStamping:
             account_id: UUID
             owner: str
 
-        class PlainAccount(Account):
-            @staticmethod
-            def decide(command: object, state: AccountState) -> list[DomainEvent]:
-                if isinstance(command, PlainOpen):
-                    return [AccountOpened(aggregate_id=command.account_id, owner=command.owner)]
-                return Account.decide(command, state)
+        ev = AccountOpened(aggregate_id=(aid := uuid4()), owner="alice")
 
-        acct = PlainAccount(uuid4())
-        (event,) = acct.execute(PlainOpen(account_id=acct.aggregate_id, owner="alice"))
+        class PlainAccount(Account):
+            decide = staticmethod(lambda c, s: [ev])
+
+        (event,) = PlainAccount(aid).execute(PlainOpen(account_id=aid, owner="alice"))
         assert event.aggregate_version == 1
         assert event.causation_id is None
 
     def test_explicit_fields_win_over_stamping(self) -> None:
-        explicit_correlation = uuid4()
+        aid, corr = uuid4(), uuid4()
+        ev = AccountOpened(aggregate_id=aid, owner="alice", correlation_id=corr)
 
         class ExplicitAccount(Account):
-            @staticmethod
-            def decide(command: object, state: AccountState) -> list[DomainEvent]:
-                assert isinstance(command, OpenAccount)
-                return [
-                    AccountOpened(
-                        aggregate_id=command.account_id,
-                        owner="alice",
-                        correlation_id=explicit_correlation,
-                    )
-                ]
+            decide = staticmethod(lambda c, s: [ev])
 
-        acct = ExplicitAccount(uuid4())
-        (event,) = acct.execute(OpenAccount(account_id=acct.aggregate_id, owner="alice"))
-        assert event.correlation_id == explicit_correlation
-        assert event.causation_id is not None  # not explicit -> still stamped
+        (event,) = ExplicitAccount(aid).execute(OpenAccount(account_id=aid, owner="alice"))
+        assert event.correlation_id == corr
+        assert event.causation_id is not None
 
     def test_multi_event_versions_sequential(self) -> None:
-        class DoubleAccount(Account):
-            @staticmethod
-            def decide(command: object, state: AccountState) -> list[DomainEvent]:
-                assert isinstance(command, OpenAccount)
-                return [
-                    AccountOpened(aggregate_id=command.account_id, owner="a"),
-                    MoneyDeposited(aggregate_id=command.account_id, amount=1.0),
-                ]
+        e1 = AccountOpened(aggregate_id=(aid := uuid4()), owner="a")
+        e2 = MoneyDeposited(aggregate_id=aid, amount=1.0)
 
-        acct = DoubleAccount(uuid4())
-        events = acct.execute(OpenAccount(account_id=acct.aggregate_id, owner="a"))
+        class DoubleAccount(Account):
+            decide = staticmethod(lambda c, s: [e1, e2])
+
+        acct = DoubleAccount(aid)
+        events = acct.execute(OpenAccount(account_id=aid, owner="a"))
         assert [e.aggregate_version for e in events] == [1, 2]
         assert acct.version == 2
 
@@ -198,11 +178,9 @@ class TestSnapshotRoundTrip:
 
 class TestStateInvariant:
     def test_none_state_raises_even_without_assertions(self) -> None:
-        """Accessing state when initial_state returns None raises RuntimeError."""
-
         class BrokenDecider(DeciderAggregate[dict]):
             aggregate_type = "Broken"
-            initial_state = staticmethod(lambda: None)  # type: ignore[assignment]  # deliberate contract violation
+            initial_state = staticmethod(lambda: None)  # type: ignore[assignment]
             decide = staticmethod(lambda command, state: [])
             evolve = staticmethod(lambda state, event: state)
 
@@ -213,9 +191,7 @@ class TestStateInvariant:
 
 class _ImperativeAccount(AggregateRoot[AccountState]):
     aggregate_type = "Account"
-
-    def _get_initial_state(self) -> AccountState:
-        return AccountState()
+    _get_initial_state = staticmethod(AccountState)
 
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, AccountOpened):
@@ -236,13 +212,11 @@ class TestCreateEventCommandProvenance:
         assert event.actor_id == "user-1"
 
     def test_explicit_kwargs_beat_command_fields(self) -> None:
-        explicit = uuid4()
+        corr = uuid4()
         acct = _ImperativeAccount(uuid4())
         cmd = OpenAccount(account_id=acct.aggregate_id, owner="alice")
-        event = acct.create_event(
-            AccountOpened, command=cmd, owner="alice", correlation_id=explicit
-        )
-        assert event.correlation_id == explicit
+        event = acct.create_event(AccountOpened, command=cmd, owner="alice", correlation_id=corr)
+        assert event.correlation_id == corr
         assert event.causation_id == cmd.command_id
 
 
@@ -251,7 +225,7 @@ class TestAmbientTenantStamping:
         tenant = uuid4()
 
         @dataclass
-        class PlainShip:  # deliberately NOT a DomainCommand
+        class PlainShip:
             order_id: UUID
 
         class Shipped(DomainEvent):
@@ -261,11 +235,7 @@ class TestAmbientTenantStamping:
             aggregate_type = "Order"
             initial_state = staticmethod(dict)
             evolve = staticmethod(lambda state, event: state)
-
-            @staticmethod
-            def decide(command: object, state: dict) -> list[DomainEvent]:
-                assert isinstance(command, PlainShip)
-                return [Shipped(aggregate_id=command.order_id)]
+            decide = staticmethod(lambda cmd, st: [Shipped(aggregate_id=cmd.order_id)])
 
         agg = ShipDecider(uuid4())
         with tenant_scope_sync(tenant):
@@ -304,14 +274,11 @@ class TestTypedDecider:
         assert LegacyDecider(uuid4()).execute(object()) == []
 
     def test_decider_aggregate_accepts_one_and_two_parameter_subscripts(self) -> None:
-        """The PEP 696 default on TCommand keeps the single-parameter form valid."""
         assert DeciderAggregate[AccountState] is not None
         assert DeciderAggregate[AccountState, OpenAccount] is not None
 
 
 class TestInitialStateIsNullary:
-    """ADR-0056: initial_state() is a value, not a function of the aggregate id."""
-
     def test_initial_state_takes_no_parameters(self) -> None:
         assert list(inspect.signature(Account.initial_state).parameters) == []
 
@@ -320,7 +287,6 @@ class TestInitialStateIsNullary:
 
     def test_decide_takes_the_aggregate_id_from_the_command(self) -> None:
         target = uuid4()
-        (event,) = Account.decide(
-            OpenAccount(account_id=target, owner="alice"), Account.initial_state()
-        )
+        cmd = OpenAccount(account_id=target, owner="alice")
+        (event,) = Account.decide(cmd, Account.initial_state())
         assert event.aggregate_id == target

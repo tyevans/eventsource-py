@@ -8,9 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.sql.migration.routing import (
-    PostgreSQLTenantRoutingRepository,
-)
+from eventsource.adapters.sql.migration.routing import PostgreSQLTenantRoutingRepository
 from eventsource.ports.migration.models import TenantMigrationState
 from eventsource.ports.migration.repositories import TenantRoutingRepository
 
@@ -20,15 +18,11 @@ class TestTenantRoutingRepositoryProtocol:
 
     def test_postgresql_repository_implements_protocol(self) -> None:
         """Test PostgreSQLTenantRoutingRepository implements the protocol."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLTenantRoutingRepository(mock_conn)
-
-        # The protocol is runtime checkable
+        repo = PostgreSQLTenantRoutingRepository(MagicMock())
         assert isinstance(repo, TenantRoutingRepository)
 
     def test_protocol_has_required_methods(self) -> None:
         """Test protocol defines all required methods."""
-        # Verify protocol methods exist
         assert hasattr(TenantRoutingRepository, "get_routing")
         assert hasattr(TenantRoutingRepository, "get_or_default")
         assert hasattr(TenantRoutingRepository, "set_routing")
@@ -61,21 +55,18 @@ class TestPostgreSQLTenantRoutingRepositoryInit:
 
     def test_init_with_cache_enabled(self) -> None:
         """Test initialization with cache enabled (default)."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLTenantRoutingRepository(mock_conn)
+        repo = PostgreSQLTenantRoutingRepository(MagicMock())
         assert repo._enable_cache is True
         assert repo._cache_ttl == 5.0
 
     def test_init_with_cache_disabled(self) -> None:
         """Test initialization with cache disabled."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLTenantRoutingRepository(mock_conn, enable_cache=False)
+        repo = PostgreSQLTenantRoutingRepository(MagicMock(), enable_cache=False)
         assert repo._enable_cache is False
 
     def test_init_with_custom_cache_ttl(self) -> None:
         """Test initialization with custom cache TTL."""
-        mock_conn = MagicMock()
-        repo = PostgreSQLTenantRoutingRepository(mock_conn, cache_ttl_seconds=10.0)
+        repo = PostgreSQLTenantRoutingRepository(MagicMock(), cache_ttl_seconds=10.0)
         assert repo._cache_ttl == 10.0
 
 
@@ -84,20 +75,17 @@ class TestPostgreSQLTenantRoutingRepositoryGetRouting:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLTenantRoutingRepository:
-        """Create a repository with mock connection and cache disabled."""
         return PostgreSQLTenantRoutingRepository(
             mock_conn, enable_tracing=False, enable_cache=False
         )
 
     @pytest.mark.asyncio
     async def test_get_routing_returns_none_when_not_found(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test get_routing returns None when tenant not found."""
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
@@ -108,28 +96,17 @@ class TestPostgreSQLTenantRoutingRepositoryGetRouting:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.get_routing(uuid4())
-
             assert result is None
 
     @pytest.mark.asyncio
     async def test_get_routing_returns_routing_when_found(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test get_routing returns routing when found."""
         tenant_id = uuid4()
         migration_id = uuid4()
         now = datetime.now(UTC)
-
-        # Create a row tuple matching the SELECT query
-        row = (
-            tenant_id,  # tenant_id
-            "shared",  # store_id
-            "dual_write",  # migration_state
-            migration_id,  # active_migration_id
-            now,  # created_at
-            now,  # updated_at
-        )
+        row = (tenant_id, "shared", "dual_write", migration_id, now, now)
 
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
@@ -139,7 +116,6 @@ class TestPostgreSQLTenantRoutingRepositoryGetRouting:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.get_routing(tenant_id)
-
             assert result is not None
             assert result.tenant_id == tenant_id
             assert result.store_id == "shared"
@@ -152,33 +128,22 @@ class TestPostgreSQLTenantRoutingRepositoryGetOrDefault:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLTenantRoutingRepository:
-        """Create a repository with mock connection and cache disabled."""
         return PostgreSQLTenantRoutingRepository(
             mock_conn, enable_tracing=False, enable_cache=False
         )
 
     @pytest.mark.asyncio
     async def test_get_or_default_returns_existing(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test get_or_default returns existing routing."""
         tenant_id = uuid4()
         now = datetime.now(UTC)
-
-        row = (
-            tenant_id,
-            "shared",
-            "normal",
-            None,
-            now,
-            now,
-        )
+        row = (tenant_id, "shared", "normal", None, now, now)
 
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
@@ -188,37 +153,22 @@ class TestPostgreSQLTenantRoutingRepositoryGetOrDefault:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.get_or_default(tenant_id, "default")
-
-            # Should return existing routing, not create with default
             assert result.store_id == "shared"
 
     @pytest.mark.asyncio
     async def test_get_or_default_creates_new(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test get_or_default creates new routing when not exists."""
         tenant_id = uuid4()
         now = datetime.now(UTC)
-
-        # First call returns None (not found), second returns the inserted row
-        inserted_row = (
-            tenant_id,
-            "default",
-            "normal",
-            None,
-            now,
-            now,
-        )
-
+        inserted_row = (tenant_id, "default", "normal", None, now, now)
         call_count = 0
 
         def mock_fetchone():
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
-                return None  # get_routing returns None
-            return inserted_row  # INSERT RETURNING returns the row
+            return None if call_count == 1 else inserted_row
 
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
@@ -228,7 +178,6 @@ class TestPostgreSQLTenantRoutingRepositoryGetOrDefault:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.get_or_default(tenant_id, "default")
-
             assert result.tenant_id == tenant_id
             assert result.store_id == "default"
             assert result.migration_state == TenantMigrationState.NORMAL
@@ -239,33 +188,27 @@ class TestPostgreSQLTenantRoutingRepositorySetRouting:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLTenantRoutingRepository:
-        """Create a repository with mock connection and cache disabled."""
         return PostgreSQLTenantRoutingRepository(
             mock_conn, enable_tracing=False, enable_cache=False
         )
 
     @pytest.mark.asyncio
     async def test_set_routing_executes_upsert(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test set_routing executes UPSERT query."""
         tenant_id = uuid4()
-
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             await repo.set_routing(tenant_id, "dedicated")
-
             mock_conn.execute.assert_called_once()
-            call_args = mock_conn.execute.call_args
-            params = call_args[0][1]
+            params = mock_conn.execute.call_args[0][1]
             assert params["tenant_id"] == tenant_id
             assert params["store_id"] == "dedicated"
             assert params["state"] == "normal"
@@ -276,24 +219,20 @@ class TestPostgreSQLTenantRoutingRepositoryDeleteRouting:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLTenantRoutingRepository:
-        """Create a repository with mock connection and cache disabled."""
         return PostgreSQLTenantRoutingRepository(
             mock_conn, enable_tracing=False, enable_cache=False
         )
 
     @pytest.mark.asyncio
     async def test_delete_routing_returns_true_when_deleted(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test delete_routing returns True when a row is deleted."""
         tenant_id = uuid4()
-
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -302,17 +241,14 @@ class TestPostgreSQLTenantRoutingRepositoryDeleteRouting:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.delete_routing(tenant_id)
-
             assert result is True
 
     @pytest.mark.asyncio
     async def test_delete_routing_returns_false_when_not_found(
-        self,
-        repo: PostgreSQLTenantRoutingRepository,
+        self, repo: PostgreSQLTenantRoutingRepository
     ) -> None:
         """Test delete_routing returns False when no row exists."""
         tenant_id = uuid4()
-
         with patch("eventsource.adapters.sql.migration.routing.sql_connection") as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
@@ -321,5 +257,4 @@ class TestPostgreSQLTenantRoutingRepositoryDeleteRouting:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.delete_routing(tenant_id)
-
             assert result is False
