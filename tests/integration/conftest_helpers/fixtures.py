@@ -43,11 +43,7 @@ def _build_test_registry() -> Any:
 
 @pytest.fixture(scope="session")
 async def postgres_engine(postgres_connection_url: str) -> AsyncGenerator[AsyncEngine]:
-    """
-    Provide SQLAlchemy async engine connected to PostgreSQL container.
-
-    Creates all required tables on startup.
-    """
+    """Provide SQLAlchemy async engine connected to PostgreSQL container."""
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -73,7 +69,6 @@ async def postgres_engine(postgres_connection_url: str) -> AsyncGenerator[AsyncE
 async def postgres_session_factory(
     postgres_engine: AsyncEngine,
 ) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
-    """Provide SQLAlchemy async session factory."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     yield async_sessionmaker(postgres_engine, class_=AsyncSession, expire_on_commit=False)
@@ -81,15 +76,12 @@ async def postgres_session_factory(
 
 @pytest.fixture
 async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[None]:
-    """Clean all test tables before and after each test."""
     from sqlalchemy import text
 
     async def truncate_tables() -> None:
         async with postgres_engine.begin() as conn:
-            await conn.execute(text("TRUNCATE TABLE events CASCADE"))
-            await conn.execute(text("TRUNCATE TABLE projection_checkpoints CASCADE"))
-            await conn.execute(text("TRUNCATE TABLE dead_letter_queue CASCADE"))
-            await conn.execute(text("TRUNCATE TABLE event_outbox CASCADE"))
+            for tbl in ("events", "projection_checkpoints", "dead_letter_queue", "event_outbox"):
+                await conn.execute(text(f"TRUNCATE TABLE {tbl} CASCADE"))
 
     await truncate_tables()
     yield
@@ -98,11 +90,6 @@ async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any]:
-    """
-    Provide async Redis client connected to container.
-
-    Flushes database before and after each test for isolation.
-    """
     try:
         import redis.asyncio as redis
     except ImportError:
@@ -119,7 +106,6 @@ async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any]:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None]:
-    """Clean Redis state before and after each test."""
     try:
         import redis.asyncio as redis
     except ImportError:
@@ -139,7 +125,6 @@ async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None]:
 async def postgres_event_store(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    """Provide PostgreSQL event store for integration tests."""
     from eventsource.adapters.postgresql import PostgreSQLEventStore
 
     yield PostgreSQLEventStore(
@@ -151,7 +136,6 @@ async def postgres_event_store(
 async def postgres_event_store_with_outbox(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    """Provide PostgreSQL event store with outbox enabled."""
     from eventsource.adapters.postgresql import PostgreSQLEventStore
 
     yield PostgreSQLEventStore(
@@ -161,12 +145,6 @@ async def postgres_event_store_with_outbox(
 
 @pytest.fixture
 def redis_event_bus_factory(redis_connection_url: str) -> Any:
-    """
-    Factory fixture for creating Redis event bus instances.
-
-    Returns a factory function that creates a new, unconnected RedisEventBus.
-    Each test is responsible for calling connect() and shutdown().
-    """
     from eventsource import REDIS_AVAILABLE, RedisEventBus, RedisEventBusConfig
 
     if not REDIS_AVAILABLE:
@@ -188,12 +166,6 @@ def redis_event_bus_factory(redis_connection_url: str) -> Any:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def redis_event_bus(redis_event_bus_factory: Any, clean_redis: None) -> AsyncGenerator[Any]:
-    """
-    Provide Redis event bus for integration tests.
-
-    Creates a fresh bus instance, connects it within the test's event loop,
-    and ensures proper cleanup after the test.
-    """
     bus = redis_event_bus_factory()
     await bus.connect()
     yield bus
@@ -205,7 +177,6 @@ async def redis_event_bus(redis_event_bus_factory: Any, clean_redis: None) -> As
 async def postgres_checkpoint_repo(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    """Provide PostgreSQL checkpoint repository for integration tests."""
     from eventsource import SQLCheckpointRepository
 
     yield SQLCheckpointRepository(postgres_engine)
@@ -215,7 +186,6 @@ async def postgres_checkpoint_repo(
 async def postgres_dlq_repo(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    """Provide PostgreSQL DLQ repository for integration tests."""
     from eventsource import SQLDLQRepository
 
     yield SQLDLQRepository(postgres_engine)
@@ -225,7 +195,6 @@ async def postgres_dlq_repo(
 async def postgres_outbox_repo(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    """Provide PostgreSQL outbox repository for integration tests."""
     from eventsource import PostgreSQLOutboxRepository
 
     yield PostgreSQLOutboxRepository(postgres_engine)
@@ -233,25 +202,21 @@ async def postgres_outbox_repo(
 
 @pytest.fixture
 def sample_aggregate_id() -> UUID:
-    """Provide a sample aggregate ID."""
     return uuid4()
 
 
 @pytest.fixture
 def sample_tenant_id() -> UUID:
-    """Provide a sample tenant ID."""
     return uuid4()
 
 
 @pytest.fixture
 def sample_customer_id() -> UUID:
-    """Provide a sample customer ID."""
     return uuid4()
 
 
 @pytest.fixture
 def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> TestItemCreated:
-    """Provide a sample test item created event."""
     return TestItemCreated(
         aggregate_id=sample_aggregate_id,
         tenant_id=sample_tenant_id,
@@ -265,7 +230,6 @@ def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> Test
 def sample_order_event(
     sample_aggregate_id: UUID, sample_customer_id: UUID, sample_tenant_id: UUID
 ) -> TestOrderCreated:
-    """Provide a sample test order created event."""
     return TestOrderCreated(
         aggregate_id=sample_aggregate_id,
         tenant_id=sample_tenant_id,

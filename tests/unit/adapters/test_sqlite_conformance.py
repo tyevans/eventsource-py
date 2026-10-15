@@ -102,14 +102,7 @@ class TestSQLiteSnapshotStore(SnapshotStoreConformance, SnapshotDeserializationC
             await conn.execute(
                 "INSERT INTO snapshots (aggregate_id, aggregate_type, version, "
                 "schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    str(aggregate_id),
-                    aggregate_type,
-                    1,
-                    1,
-                    raw_state,
-                    datetime.now(UTC).isoformat(),
-                ),
+                (str(aggregate_id), aggregate_type, 1, 1, raw_state, datetime.now(UTC).isoformat()),
             )
             await conn.commit()
 
@@ -171,9 +164,7 @@ class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
             (str(outbox_id),),
         )
         await store._connection.commit()
-
-        deleted = await store.cleanup_published(days=7)
-        assert deleted == 1
+        assert await store.cleanup_published(days=7) == 1
 
 
 class SQLiteStateMachine(StoreStateMachine):
@@ -188,7 +179,6 @@ TestSQLiteStateful.settings = settings(max_examples=10, deadline=None, derandomi
 
 
 async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
-    """A non-IntegrityError failure mid-batch must still roll back."""
     import eventsource.adapters.sqlite.store as sqlite_store_module
     from eventsource.ports import CategoryReadOptions
 
@@ -205,7 +195,6 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
         return original_json_dumps(obj)
 
     monkeypatch.setattr(sqlite_store_module, "json_dumps", flaky_json_dumps)
-
     with pytest.raises(RuntimeError, match="boom"):
         await store.append(
             stream,
@@ -217,9 +206,7 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(sqlite_store_module, "json_dumps", original_json_dumps)
-    envelopes = [e async for e in store.read_category(stream.category, CategoryReadOptions())]
-    assert envelopes == []
-
+    assert [e async for e in store.read_category(stream.category, CategoryReadOptions())] == []
     result = await store.append(
         stream,
         [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="3")],
@@ -230,47 +217,28 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
 
 
 def test_sync_facade_close_closes_underlying_store() -> None:
-    """SyncStoreFacade.close() must close the wrapped store, not just the loop."""
     store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
     facade = SyncStoreFacade(store)
     stream = make_stream()
     facade.append(
-        stream,
-        [ConformanceEvent(aggregate_id=stream.aggregate_id)],
-        ExpectedVersion.any_(),
+        stream, [ConformanceEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
     )
     del stream
-
     worker = store._connection
-    assert worker is not None, "the append above should have opened the connection"
-    assert worker.is_alive()
-
+    assert worker is not None and worker.is_alive()
     facade.close()
-
     deadline = time.monotonic() + 2.0
     while worker.is_alive() and time.monotonic() < deadline:
         time.sleep(0.01)
-
-    assert not worker.is_alive(), "closing the facade must release the store's aiosqlite thread"
-    assert store._connection is None
+    assert not worker.is_alive() and store._connection is None
 
 
-async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(
-    tmp_path,
-) -> None:
-    """Reopening the same file must not raise on the additive position_token column."""
+async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(tmp_path) -> None:
     db_path = str(tmp_path / "reopen.db")
-
-    store1 = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
-    conn1 = await store1._conn()
-    async with conn1.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
-        columns1 = {row[1] for row in await cursor.fetchall()}
-    assert "position_token" in columns1
-    await store1.close()
-
-    store2 = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
-    conn2 = await store2._conn()
-    async with conn2.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
-        columns2 = {row[1] for row in await cursor.fetchall()}
-    assert "position_token" in columns2
-    await store2.close()
+    for _ in range(2):
+        store = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
+        conn = await store._conn()
+        async with conn.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        assert "position_token" in columns
+        await store.close()
