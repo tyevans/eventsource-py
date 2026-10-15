@@ -1,4 +1,4 @@
-"""Tests for EventBuilder build() method."""
+"""Tests for EventBuilder build() and __call__() methods."""
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -11,7 +11,7 @@ from tests.unit.testing.test_builder._fixtures import MinimalEvent, SampleEvent
 
 
 class TestEventBuilderBuild:
-    """Tests for build() method."""
+    """Tests for build() and __call__() methods."""
 
     def test_build_creates_event_instance(self) -> None:
         customer_id = uuid4()
@@ -78,6 +78,22 @@ class TestEventBuilderBuild:
         event1, event2 = builder.build(), builder.build()
         assert event1 is not event2 and event1.aggregate_id == event2.aggregate_id
 
+    def test_build_with_overrides_does_not_mutate_builder(self) -> None:
+        c1, c2 = uuid4(), uuid4()
+        builder = EventBuilder(SampleEvent, customer_id=c1, amount=10.0)
+        overridden = builder.build(customer_id=c2, amount=25.0, aggregate_version=3)
+        subsequent = builder.build()
+        assert (overridden.customer_id, overridden.amount, overridden.aggregate_version) == (c2, 25.0, 3)  # fmt: skip
+        assert (subsequent.customer_id, subsequent.amount, subsequent.aggregate_version) == (c1, 10.0, 1)  # fmt: skip
+
+    def test_call_delegates_to_build_with_and_without_overrides(self) -> None:
+        c1, c2 = uuid4(), uuid4()
+        builder = EventBuilder(SampleEvent, customer_id=c1, amount=10.0)
+        ev1, ev2, ev3 = builder(), builder(customer_id=c2, amount=42.0), builder()
+        assert (ev1.customer_id, ev1.amount) == (c1, 10.0)
+        assert (ev2.customer_id, ev2.amount) == (c2, 42.0)
+        assert (ev3.customer_id, ev3.amount) == (c1, 10.0)
+
     def test_build_applies_all_fields(self) -> None:
         agg_id, event_id, tenant_id = uuid4(), uuid4(), uuid4()
         correlation_id, causation_id, customer_id = uuid4(), uuid4(), uuid4()
@@ -100,11 +116,7 @@ class TestEventBuilderBuild:
             .build()
         )
 
-        assert (event.aggregate_id, event.event_id, event.tenant_id) == (
-            agg_id,
-            event_id,
-            tenant_id,
-        )
+        assert (event.aggregate_id, event.event_id, event.tenant_id) == (agg_id, event_id, tenant_id)  # fmt: skip
         assert event.aggregate_version == 7 and event.occurred_at == timestamp
         assert (event.correlation_id, event.causation_id) == (correlation_id, causation_id)
         assert event.actor_id == "test-user" and event.metadata == metadata
@@ -112,22 +124,14 @@ class TestEventBuilderBuild:
 
     def test_init_with_initial_fields(self) -> None:
         customer_id = uuid4()
-        event = EventBuilder(
-            SampleEvent, customer_id=customer_id, amount=99.99, actor_id="user-1"
-        ).build()
+        event = EventBuilder(SampleEvent, customer_id=customer_id, amount=99.99, actor_id="user-1").build()  # fmt: skip
         assert isinstance(event, SampleEvent)
         assert event.customer_id == customer_id and event.amount == 99.99
         assert event.actor_id == "user-1" and event.aggregate_version == 1
 
     def test_init_initial_fields_override_defaults(self) -> None:
         agg_id, customer_id = uuid4(), uuid4()
-        event = EventBuilder(
-            SampleEvent,
-            aggregate_id=agg_id,
-            aggregate_version=5,
-            customer_id=customer_id,
-            amount=10.0,
-        ).build()
+        event = EventBuilder(SampleEvent, aggregate_id=agg_id, aggregate_version=5, customer_id=customer_id, amount=10.0).build()  # fmt: skip
         assert event.aggregate_id == agg_id and event.aggregate_version == 5
 
 
@@ -136,10 +140,8 @@ class TestEventBuilderBuildMany:
 
     def test_build_many_creates_sequential_versions_from_default(self) -> None:
         events = EventBuilder(SampleEvent, customer_id=uuid4(), amount=25.0).build_many(3)
-        assert len(events) == 3
-        assert [e.aggregate_version for e in events] == [1, 2, 3]
-        assert len({e.aggregate_id for e in events}) == 1
-        assert len({e.event_id for e in events}) == 3
+        assert len(events) == 3 and [e.aggregate_version for e in events] == [1, 2, 3]
+        assert len({e.aggregate_id for e in events}) == 1 and len({e.event_id for e in events}) == 3
 
     def test_build_many_uses_builder_version_as_base(self) -> None:
         events = EventBuilder(MinimalEvent).with_version(10).build_many(3)
@@ -163,7 +165,4 @@ class TestEventBuilderBuildMany:
         assert len({e.event_id for e in builder.build_many(3)}) == 3
 
 
-__all__ = [  # pragma: allowlist secret
-    "TestEventBuilderBuild",
-    "TestEventBuilderBuildMany",
-]
+__all__ = ["TestEventBuilderBuild", "TestEventBuilderBuildMany"]  # pragma: allowlist secret

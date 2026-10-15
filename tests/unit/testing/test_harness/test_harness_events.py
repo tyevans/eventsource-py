@@ -1,4 +1,4 @@
-"""Tests for test harness published events tracking, clearing, and filtering."""
+"""Tests for test harness published events tracking, clearing, filtering, and container dunders."""
 
 from __future__ import annotations
 
@@ -73,6 +73,23 @@ class TestHarnessPublishedEvents:
         events.clear()
         assert len(harness.published_events) == 1
 
+    @pytest.mark.asyncio
+    async def test_harness_iter_and_contains(self, harness: InMemoryTestHarness) -> None:
+        assert list(iter(harness)) == []
+        assert HarnessSampleEvent not in harness
+        ev1, ev2 = _sample_event(), _other_event()
+        unpub = _sample_event()
+        await harness.publish_events(ev1)
+        assert list(iter(harness)) == [ev1]
+        assert HarnessSampleEvent in harness
+        assert HarnessOtherEvent not in harness
+        assert ev1 in harness
+        assert unpub not in harness
+        assert "invalid" not in harness
+        await harness.publish_events(ev2)
+        assert list(harness) == [ev1, ev2]
+        assert HarnessOtherEvent in harness
+
 
 class TestHarnessClearPublishedEvents:
     @pytest.fixture
@@ -127,17 +144,10 @@ class TestHarnessGetEventsOfType:
 
     @pytest.mark.asyncio
     async def test_get_events_of_type_filters_correctly(self, harness: InMemoryTestHarness) -> None:
-        sample_event = _sample_event()
-        other_event = _other_event()
+        sample_event, other_event = _sample_event(), _other_event()
         await harness.event_bus.publish([sample_event, other_event])
-
-        sample_events = harness.get_events_of_type(HarnessSampleEvent)
-        other_events = harness.get_events_of_type(HarnessOtherEvent)
-
-        assert len(sample_events) == 1
-        assert sample_events[0] == sample_event
-        assert len(other_events) == 1
-        assert other_events[0] == other_event
+        assert harness.get_events_of_type(HarnessSampleEvent) == [sample_event]
+        assert harness.get_events_of_type(HarnessOtherEvent) == [other_event]
 
     @pytest.mark.asyncio
     async def test_get_events_of_type_returns_all_matching(
@@ -145,11 +155,7 @@ class TestHarnessGetEventsOfType:
     ) -> None:
         event1, event2, event3 = _sample_event(), _sample_event(), _other_event()
         await harness.event_bus.publish([event1, event2, event3])
-
-        sample_events = harness.get_events_of_type(HarnessSampleEvent)
-        assert len(sample_events) == 2
-        assert sample_events[0] == event1
-        assert sample_events[1] == event2
+        assert harness.get_events_of_type(HarnessSampleEvent) == [event1, event2]
 
     @pytest.mark.asyncio
     async def test_get_events_of_type_with_no_matches(self, harness: InMemoryTestHarness) -> None:
@@ -158,10 +164,8 @@ class TestHarnessGetEventsOfType:
 
     @pytest.mark.asyncio
     async def test_published_of_type_delegates_to_bus(self, harness: InMemoryTestHarness) -> None:
-        sample_event = _sample_event()
-        other_event = _other_event()
+        sample_event, other_event = _sample_event(), _other_event()
         await harness.event_bus.publish([sample_event, other_event])
-
         assert harness.published_of_type(HarnessSampleEvent) == [sample_event]
         assert harness.published_of_type(HarnessOtherEvent) == [other_event]
         assert harness.published_of_type(HarnessSampleEvent) == harness.get_events_of_type(
