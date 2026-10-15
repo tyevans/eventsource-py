@@ -38,6 +38,10 @@ class InMemoryOutboxRepository:
         self._entries: dict[UUID, OutboxEntry] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
 
+    def __len__(self) -> int:
+        """Return total number of outbox entries currently stored."""
+        return len(self._entries)
+
     async def add_event(self, event: DomainEvent) -> UUID:
         """Add an event to the outbox for publishing and return its outbox record ID."""
         with self._tracer.span(

@@ -191,6 +191,10 @@ class InMemorySnapshotStore:
         """Get the number of snapshots currently stored."""
         return len(self._snapshots)
 
+    def __len__(self) -> int:
+        """Return total number of snapshots currently stored."""
+        return len(self._snapshots)
+
     async def close(self) -> None:
         """No-op resource release for lifecycle parity."""
         return None

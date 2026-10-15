@@ -79,3 +79,55 @@ class TestDLQEntryTypedReturns:
         assert entry.event_type == "TestEvent"
         assert entry.status == "failed"
         assert "Test error" in entry.error_message
+
+    @pytest.mark.asyncio
+    async def test_memory_repositories_support_len_and_o1_dlq_id_index(
+        self, repo: InMemoryDLQRepository
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+        from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
+        from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
+        from eventsource.domain.event import DomainEvent
+        from eventsource.ports.snapshots import Snapshot
+
+        class SampleEvent(DomainEvent):
+            aggregate_type: str = "Sample"
+
+        assert len(repo) == 0
+        await repo.add_failed_event(uuid4(), "Proj", "SampleEvent", {}, Exception("boom"))
+        assert len(repo) == 1
+        entry = (await repo.get_failed_events())[0]
+        await repo.mark_retrying(entry.id)
+        retrying = await repo.get_failed_event_by_id(entry.id)
+        assert retrying is not None and retrying.status == "retrying"
+        await repo.mark_resolved(entry.id, "tester")
+        resolved = await repo.get_failed_event_by_id(entry.id)
+        assert resolved is not None and resolved.status == "resolved"
+        await repo.clear()
+        assert len(repo) == 0
+        assert await repo.get_failed_event_by_id(entry.id) is None
+
+        cp_repo = InMemoryCheckpointRepository(enable_tracing=False)
+        assert len(cp_repo) == 0
+        await cp_repo.update_checkpoint("Proj", uuid4(), "SampleEvent")
+        assert len(cp_repo) == 1
+
+        outbox = InMemoryOutboxRepository(enable_tracing=False)
+        assert len(outbox) == 0
+        await outbox.add_event(SampleEvent(aggregate_id=uuid4()))
+        assert len(outbox) == 1
+
+        snaps = InMemorySnapshotStore(enable_tracing=False)
+        assert len(snaps) == 0
+        await snaps.save_snapshot(
+            Snapshot(
+                aggregate_id=uuid4(),
+                aggregate_type="Sample",
+                version=1,
+                state={"ok": True},
+                created_at=datetime.now(UTC),
+            )
+        )
+        assert len(snaps) == 1

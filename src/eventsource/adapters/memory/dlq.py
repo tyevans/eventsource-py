@@ -27,8 +27,13 @@ class InMemoryDLQRepository:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._entries: dict[str, DLQEntry] = {}
+        self._by_id: dict[int | str, DLQEntry] = {}
         self._id_counter: int = 0
         self._lock: asyncio.Lock = asyncio.Lock()
+
+    def __len__(self) -> int:
+        """Return total number of DLQ entries currently stored."""
+        return len(self._entries)
 
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
         return f"{event_id}:{projection_name}"
@@ -64,7 +69,7 @@ class InMemoryDLQRepository:
                     existing.status = "failed"
                 else:
                     self._id_counter += 1
-                    self._entries[key] = DLQEntry(
+                    entry = DLQEntry(
                         id=self._id_counter,
                         event_id=event_id,
                         projection_name=projection_name,
@@ -77,6 +82,8 @@ class InMemoryDLQRepository:
                         last_failed_at=now,
                         status="failed",
                     )
+                    self._entries[key] = entry
+                    self._by_id[self._id_counter] = entry
 
     async def get_failed_events(
         self,
@@ -104,15 +111,15 @@ class InMemoryDLQRepository:
                 return entries[:limit]
 
     async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
-        """Get a specific failed event by its DLQ ID."""
+        """Get a specific failed event by its DLQ ID via O(1) index lookup."""
         with self._tracer.span(
             "eventsource.dlq.get_by_id", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
         ):
             async with self._lock:
-                return next((e for e in self._entries.values() if e.id == dlq_id), None)
+                return self._by_id.get(dlq_id)
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
-        """Mark a DLQ entry as resolved."""
+        """Mark a DLQ entry as resolved via O(1) index lookup."""
         attrs = {
             "dlq.id": str(dlq_id),
             "resolved_by": str(resolved_by) if resolved_by else None,
@@ -121,23 +128,21 @@ class InMemoryDLQRepository:
         with self._tracer.span("eventsource.dlq.resolve", attrs):
             now = datetime.now(UTC)
             async with self._lock:
-                for entry in self._entries.values():
-                    if entry.id == dlq_id:
-                        entry.status = "resolved"
-                        entry.resolved_at = now
-                        entry.resolved_by = str(resolved_by) if resolved_by else None
-                        break
+                entry = self._by_id.get(dlq_id)
+                if entry is not None:
+                    entry.status = "resolved"
+                    entry.resolved_at = now
+                    entry.resolved_by = str(resolved_by) if resolved_by else None
 
     async def mark_retrying(self, dlq_id: int | str) -> None:
-        """Mark a DLQ entry as being retried."""
+        """Mark a DLQ entry as being retried via O(1) index lookup."""
         with self._tracer.span(
             "eventsource.dlq.retry", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
         ):
             async with self._lock:
-                for entry in self._entries.values():
-                    if entry.id == dlq_id:
-                        entry.status = "retrying"
-                        break
+                entry = self._by_id.get(dlq_id)
+                if entry is not None:
+                    entry.status = "retrying"
 
     async def get_failure_stats(self) -> DLQStats:
         """Get aggregate statistics about DLQ health."""
@@ -189,7 +194,8 @@ class InMemoryDLQRepository:
                     if e.status == "resolved" and e.resolved_at and e.resolved_at < cutoff
                 ]
                 for key in keys_to_delete:
-                    del self._entries[key]
+                    removed = self._entries.pop(key)
+                    self._by_id.pop(removed.id, None)
                 return len(keys_to_delete)
 
     async def clear(self) -> None:
@@ -197,6 +203,7 @@ class InMemoryDLQRepository:
         with self._tracer.span("eventsource.dlq.clear", {ATTR_DB_SYSTEM: "memory"}):
             async with self._lock:
                 self._entries.clear()
+                self._by_id.clear()
                 self._id_counter = 0
 
 
