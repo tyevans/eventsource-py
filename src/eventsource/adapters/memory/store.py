@@ -36,19 +36,14 @@ class InMemoryEventStore:
     """
 
     def __init__(
-        self,
-        store_id: str = "memory",
-        *,
-        event_registry: EventRegistry | None = None,
+        self, store_id: str = "memory", *, event_registry: EventRegistry | None = None
     ) -> None:
         self._store_id = store_id
         self._event_registry = event_registry or default_registry
         self._events: list[EventEnvelope] = []
         self._streams: dict[str, list[int]] = {}
         self._categories: dict[str, list[int]] = {}
-        self._by_category: dict[str, list[int]] = self._categories
         self._event_ids: set[UUID] = set()
-        # Plain threading.Lock is safe across fresh loops from SyncEventStoreAdapter.
         self._lock = threading.Lock()
 
     @property
@@ -84,14 +79,11 @@ class InMemoryEventStore:
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
-
-        # Validate event registration for parity with SQLite/PostgreSQL stores.
         check_registered(events, self._event_registry)
 
         with self._lock:
             key = stream.render()
-            indexes = self._streams.get(key, [])
-            current_version = len(indexes)
+            current_version = len(self._streams.get(key, ()))
             check_expected(current_version, expected, stream)
 
             seen_in_batch: set[UUID] = set()
@@ -125,62 +117,41 @@ class InMemoryEventStore:
                 if first_position is None:
                     first_position = envelope.position
 
-            self._streams[key] = indexes + new_indexes
-            self._categories[stream.category] = (
-                self._categories.get(stream.category, []) + new_indexes
-            )
+            self._streams.setdefault(key, []).extend(new_indexes)
+            self._categories.setdefault(stream.category, []).extend(new_indexes)
             return AppendResult(stream=stream, new_version=version, position=first_position)
 
     def read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions | None = None,
+        self, stream: StreamId, options: StreamReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         return self._do_read_stream(stream, options or StreamReadOptions())
 
     async def _do_read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions,
+        self, stream: StreamId, options: StreamReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         if options.limit is not None and options.limit <= 0:
             return
 
         events_snapshot = self._events
-        indexes = self._streams.get(stream.render(), ())
-        if not indexes:
+        stream_list = self._streams.get(stream.render(), ())
+        total = len(stream_list)
+        if not total:
             return
 
-        start = (
-            bisect.bisect_left(
-                indexes,
-                options.from_version,
-                key=lambda i: events_snapshot[i].stream_version,
-            )
-            if options.from_version is not None
-            else 0
-        )
-        end = (
-            bisect.bisect_right(
-                indexes,
-                options.to_version,
-                key=lambda i: events_snapshot[i].stream_version,
-            )
-            if options.to_version is not None
-            else len(indexes)
-        )
+        start = max(0, options.from_version - 1) if options.from_version is not None else 0
+        end = min(total, max(0, options.to_version)) if options.to_version is not None else total
         if start >= end:
             return
 
         if options.direction == ReadDirection.BACKWARD:
             if options.limit is not None:
                 start = max(start, end - options.limit)
-            for i in reversed(indexes[start:end]):
+            for i in reversed(stream_list[start:end]):
                 yield events_snapshot[i]
         else:
             if options.limit is not None:
                 end = min(end, start + options.limit)
-            for i in indexes[start:end]:
+            for i in stream_list[start:end]:
                 yield events_snapshot[i]
 
     async def get_stream_version(self, stream: StreamId) -> int:
@@ -190,41 +161,40 @@ class InMemoryEventStore:
         return event_id in self._event_ids
 
     def read_all(
-        self,
-        from_position: Position | None = None,
-        options: FeedReadOptions | None = None,
+        self, from_position: Position | None = None, options: FeedReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         return self._do_read_all(from_position, options or FeedReadOptions())
 
     async def _do_read_all(
-        self,
-        from_position: Position | None,
-        options: FeedReadOptions,
+        self, from_position: Position | None, options: FeedReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         if options.limit is not None and options.limit <= 0:
             return
 
         events_snapshot = self._events
+        total = len(events_snapshot)
         if from_position is not None:
             self._validate_position(from_position)
 
         # Filtered on stream category for parity with SQL adapters.
         if options.aggregate_type is not None:
             cat_indices: Sequence[int] = self._categories.get(options.aggregate_type, ())
+            cat_total = len(cat_indices)
             start = (
-                bisect.bisect_right(cat_indices, from_position.key, key=lambda i: (i + 1,))
+                bisect.bisect_right(
+                    cat_indices, from_position.key, hi=cat_total, key=lambda i: (i + 1,)
+                )
                 if from_position is not None
                 else 0
             )
-            candidate_indices: Sequence[int] = cat_indices[start:]
+            candidate_indices: Sequence[int] = cat_indices[start:cat_total]
         else:
-            all_indices = range(len(events_snapshot))
             start = (
-                bisect.bisect_right(all_indices, from_position.key, key=lambda i: (i + 1,))
+                bisect.bisect_right(range(total), from_position.key, key=lambda i: (i + 1,))
                 if from_position is not None
                 else 0
             )
-            candidate_indices = range(start, len(events_snapshot))
+            candidate_indices = range(start, total)
 
         yielded = 0
         for i in candidate_indices:
@@ -243,29 +213,27 @@ class InMemoryEventStore:
         return self._events[-1].position if self._events else None
 
     def read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions | None = None,
+        self, category: str, options: CategoryReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         return self._do_read_category(category, options or CategoryReadOptions())
 
     async def _do_read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions,
+        self, category: str, options: CategoryReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         if options.limit is not None and options.limit <= 0:
             return
 
         events_snapshot = self._events
         indices: Sequence[int] = self._categories.get(category, ())
-        if not indices:
+        total = len(indices)
+        if not total:
             return
 
         start = (
             bisect.bisect_left(
                 indices,
                 options.from_timestamp,
+                hi=total,
                 key=lambda i: events_snapshot[i].stored_at,
             )
             if options.from_timestamp is not None
@@ -273,7 +241,7 @@ class InMemoryEventStore:
         )
 
         yielded = 0
-        for i in indices[start:]:
+        for i in indices[start:total]:
             if options.limit is not None and yielded >= options.limit:
                 break
             envelope = events_snapshot[i]
