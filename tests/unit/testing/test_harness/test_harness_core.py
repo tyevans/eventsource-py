@@ -9,10 +9,18 @@ import pytest
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.dlq import InMemoryDLQRepository
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
 from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.ports.readmodels.model import ReadModel
 from eventsource.testing import EventAssertions, InMemoryTestHarness
 from tests.unit.testing.test_harness._fixtures import HarnessSampleEvent
+
+
+class SampleReadModel(ReadModel):
+    """Sample read model for testing create_read_model_repository."""
+
+    name: str
 
 
 class TestHarnessInstantiation:
@@ -123,6 +131,23 @@ class TestHarnessTracingDisabled:
         """Snapshot store is created with tracing disabled."""
         harness = InMemoryTestHarness()
         assert harness.snapshot_store._enable_tracing is False
+
+    @pytest.mark.asyncio
+    async def test_create_read_model_repository_creates_repo_with_tracing_disabled(
+        self,
+    ) -> None:
+        """create_read_model_repository returns an InMemoryReadModelRepository with tracing disabled."""
+        harness = InMemoryTestHarness()
+        repo = harness.create_read_model_repository(SampleReadModel)
+
+        assert isinstance(repo, InMemoryReadModelRepository)
+        assert repo._enable_tracing is False
+
+        model_id = uuid4()
+        await repo.save(SampleReadModel(id=model_id, name="Alice"))
+        loaded = await repo.get(model_id)
+        assert loaded is not None
+        assert loaded.name == "Alice"
 
 
 class TestHarnessRepr:
