@@ -201,3 +201,26 @@ class TestHarnessRepr:
         await harness.publish_events(ev2, persist=True)
         assert len(harness) == 2
         assert len([e async for e in harness.event_store.read_all()]) == 1
+
+    @pytest.mark.asyncio
+    async def test_event_store_len_get_event_count_and_clear(self) -> None:
+        """len(event_store), get_event_count(), and clear() track and reset stored events."""
+        harness = InMemoryTestHarness()
+        assert len(harness.event_store) == 0
+        assert await harness.event_store.get_event_count() == 0
+
+        agg_id = uuid4()
+        ev1 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
+        ev2 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2)
+        await harness.append_events(ev1, ev2)
+
+        assert len(harness.event_store) == 2
+        assert await harness.event_store.get_event_count() == 2
+
+        harness.event_store.clear()
+        assert len(harness.event_store) == 0
+        assert await harness.event_store.get_event_count() == 0
+        assert [e async for e in harness.event_store.read_all()] == []
+        assert not await harness.event_store.event_exists(ev1.event_id)
+        await harness.append_events(ev1)
+        assert len(harness.event_store) == 1
