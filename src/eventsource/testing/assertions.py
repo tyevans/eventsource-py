@@ -61,8 +61,7 @@ class EventAssertions:
         if actual_count != count:
             event_types = [type(e).__name__ for e in self._events]
             raise AssertionError(
-                f"Event count mismatch: expected {count} events, "
-                f"got {actual_count}.\n"
+                f"Event count mismatch: expected {count} events, got {actual_count}.\n"
                 f"Published: {event_types}"
             )
 
@@ -92,8 +91,7 @@ class EventAssertions:
             if actual != expected:
                 raise AssertionError(
                     f"Event type mismatch at position {i}: "
-                    f"expected {expected.__name__}, got {actual.__name__}.\n"
-                    f"Full sequence:\n"
+                    f"expected {expected.__name__}, got {actual.__name__}.\nFull sequence:\n"
                     f"Expected: {[t.__name__ for t in event_types]}\n"
                     f"Actual:   {[t.__name__ for t in actual_types]}"
                 )
@@ -110,7 +108,6 @@ class EventAssertions:
 
         if not expected_fields:
             return matching_events[0]
-
         for event in matching_events:
             if all(
                 (actual := getattr(event, attr, _MISSING)) is not _MISSING
@@ -124,7 +121,6 @@ class EventAssertions:
             f"{type(e).__name__}({ {k: getattr(e, k, None) for k in expected_fields} })"
             for e in matching_events
         ]
-
         raise AssertionError(
             f"Expected {event_type.__name__}({attr_desc}) to be published.\n"
             f"Found {len(matching_events)} {event_type.__name__} event(s) but "
@@ -140,11 +136,7 @@ class EventAssertions:
                 f"Expected no events to be published, but found {len(self._events)}: {found_types}"
             )
 
-    def assert_event_for_aggregate(
-        self,
-        event_type: type[TEvent],
-        aggregate_id: UUID,
-    ) -> TEvent:
+    def assert_event_for_aggregate(self, event_type: type[TEvent], aggregate_id: UUID) -> TEvent:
         """Assert an event was published for a specific aggregate and return the match."""
         matching = [
             e for e in self._events if isinstance(e, event_type) and e.aggregate_id == aggregate_id
@@ -165,9 +157,33 @@ class EventAssertions:
             )
         return matching[0]
 
+    def for_aggregate(self, aggregate_id: UUID) -> EventAssertions:
+        """Return a new EventAssertions scoped to events for the given aggregate."""
+        return EventAssertions([e for e in self._events if e.aggregate_id == aggregate_id])
+
+    def assert_events_for_aggregate(
+        self, aggregate_id: UUID, expected_count: int | None = None
+    ) -> list[DomainEvent]:
+        """Assert events were published for an aggregate and return matching events."""
+        matching = [e for e in self._events if e.aggregate_id == aggregate_id]
+        if expected_count is not None:
+            if len(matching) != expected_count:
+                raise AssertionError(
+                    f"Expected {expected_count} event(s) for aggregate {aggregate_id}, got {len(matching)}."
+                )
+        elif not matching:
+            raise AssertionError(
+                f"Expected events for aggregate {aggregate_id}, but none were found."
+            )
+        return matching
+
     def get_events_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
         """Get all events of a specific type."""
         return [e for e in self._events if isinstance(e, event_type)]
+
+    def __bool__(self) -> bool:
+        """Return True so EventAssertions instances are always truthy."""
+        return True
 
     def __len__(self) -> int:
         """Return total number of events."""
@@ -175,8 +191,7 @@ class EventAssertions:
 
     def __repr__(self) -> str:
         """Return string representation for debugging."""
-        event_types = [type(e).__name__ for e in self._events]
-        return f"EventAssertions(events={event_types})"
+        return f"EventAssertions(events={[type(e).__name__ for e in self._events]})"
 
 
 __all__ = ["EventAssertions"]
