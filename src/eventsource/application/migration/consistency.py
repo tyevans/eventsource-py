@@ -170,7 +170,6 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
             },
         ):
             start_time = time.monotonic()
-
             logger.info(
                 "Starting consistency verification for tenant %s, level=%s, sample=%.1f%%",
                 tenant_id,
@@ -182,14 +181,10 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
             stream_results: list[StreamConsistency] = []
 
             try:
-                # Get all events from source and target
                 source_events = await self._collect_tenant_events(self._source, tenant_id)
                 target_events = await self._collect_tenant_events(self._target, tenant_id)
+                source_count, target_count = len(source_events), len(target_events)
 
-                source_count = len(source_events)
-                target_count = len(target_events)
-
-                # Check total counts
                 if source_count != target_count:
                     violations.append(
                         ConsistencyViolation(
@@ -200,32 +195,23 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                         )
                     )
 
-                # Group events by stream
                 source_by_stream = self._group_events_by_stream(source_events)
                 target_by_stream = self._group_events_by_stream(target_events)
-
-                # Find all streams
                 all_streams = set(source_by_stream.keys()) | set(target_by_stream.keys())
 
-                # Verify each stream
                 for stream_id in all_streams:
-                    source_stream_events = source_by_stream.get(stream_id, [])
-                    target_stream_events = target_by_stream.get(stream_id, [])
-
                     stream_result, stream_violations = await self._verify_stream(
                         stream_id,
-                        source_stream_events,
-                        target_stream_events,
+                        source_by_stream.get(stream_id, []),
+                        target_by_stream.get(stream_id, []),
                         level,
                         sample_percentage,
                     )
-
                     stream_results.append(stream_result)
                     violations.extend(stream_violations)
 
                 duration = time.monotonic() - start_time
                 streams_consistent = sum(1 for s in stream_results if s.is_consistent)
-
                 is_consistent = len(violations) == 0
 
                 report = VerificationReport(
@@ -246,8 +232,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
 
                 if is_consistent:
                     logger.info(
-                        "Consistency verification passed for tenant %s: "
-                        "%d events, %d streams in %.2fs",
+                        "Consistency verification passed for tenant %s: %d events, %d streams in %.2fs",
                         tenant_id,
                         source_count,
                         len(stream_results),
@@ -255,8 +240,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                     )
                 else:
                     logger.warning(
-                        "Consistency verification FAILED for tenant %s: "
-                        "%d violations found in %.2fs",
+                        "Consistency verification FAILED for tenant %s: %d violations found in %.2fs",
                         tenant_id,
                         len(violations),
                         duration,
@@ -295,18 +279,13 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
             {"tenant_id": str(tenant_id), "sample_percentage": sample_percentage},
         ):
             report = await self.verify_tenant_consistency(
-                tenant_id,
-                level=VerificationLevel.HASH,
-                sample_percentage=sample_percentage,
+                tenant_id, level=VerificationLevel.HASH, sample_percentage=sample_percentage
             )
-
-            # Filter to only hash-related violations
             hash_violations = [
                 v
                 for v in report.violations
                 if v.violation_type in ("hash_mismatch", "event_missing")
             ]
-
             return len(hash_violations) == 0, hash_violations
 
     async def verify_aggregate_versions(
@@ -330,18 +309,13 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
             {"tenant_id": str(tenant_id)},
         ):
             report = await self.verify_tenant_consistency(
-                tenant_id,
-                level=VerificationLevel.COUNT,
-                sample_percentage=100.0,
+                tenant_id, level=VerificationLevel.COUNT, sample_percentage=100.0
             )
-
-            # Filter to only version-related violations
             version_violations = [
                 v
                 for v in report.violations
                 if v.violation_type in ("version_mismatch", "count_mismatch", "stream_missing")
             ]
-
             return len(version_violations) == 0, version_violations
 
 
