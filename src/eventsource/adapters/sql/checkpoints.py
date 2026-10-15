@@ -48,15 +48,12 @@ class SQLCheckpointRepository:
             "eventsource.checkpoint.get_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
-            query = text("""
-                SELECT last_event_id
-                FROM projection_checkpoints
-                WHERE projection_name = :projection_name
-            """)
-            params = {"projection_name": projection_name}
-
+            query = text(
+                "SELECT last_event_id FROM projection_checkpoints "
+                "WHERE projection_name = :projection_name"
+            )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, params)
+                result = await conn.execute(query, {"projection_name": projection_name})
                 row = result.fetchone()
                 return uuid_result(row[0]) if row else None
 
@@ -75,7 +72,6 @@ class SQLCheckpointRepository:
             },
         ):
             now = datetime.now(UTC)
-
             async with sql_connection(self._conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 query = text("""
@@ -108,9 +104,7 @@ class SQLCheckpointRepository:
             "eventsource.checkpoint.get_lag_metrics",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
-            if event_types is None:
-                event_types = []
-
+            event_types = event_types or []
             async with sql_connection(self._conn, write=False) as conn:
                 dialect = dialect_of(conn)
                 params: dict[str, object] = {"projection_name": projection_name}
@@ -125,29 +119,20 @@ class SQLCheckpointRepository:
                 else:
                     event_filter = ""
 
-                # event_filter contains only fixed literals or generated :etN bind placeholders
                 query = text(
                     f"""
                     WITH latest_relevant_event AS (
                         SELECT event_id as max_id, timestamp as max_time
-                        FROM events
-                        {event_filter}
-                        ORDER BY timestamp DESC
-                        LIMIT 1
+                        FROM events {event_filter}
+                        ORDER BY timestamp DESC LIMIT 1
                     )
-                    SELECT
-                        pc.projection_name,
-                        pc.last_event_id,
-                        le.max_id as latest_event_id,
-                        le.max_time as latest_event_time,
-                        pc.events_processed,
-                        pc.last_processed_at
+                    SELECT pc.projection_name, pc.last_event_id, le.max_id as latest_event_id,
+                           le.max_time as latest_event_time, pc.events_processed, pc.last_processed_at
                     FROM projection_checkpoints pc
                     LEFT JOIN latest_relevant_event le ON 1 = 1
                     WHERE pc.projection_name = :projection_name
                 """  # nosec B608 -- only generated placeholders are interpolated
                 )
-
                 result = await conn.execute(query, params)
                 row = result.fetchone()
 
@@ -159,16 +144,12 @@ class SQLCheckpointRepository:
             last_processed_at = ts_result(row[5])
             latest_event_time = ts_result(row[3])
 
-            raw_lag = 0.0
-            if last_processed_at is not None and latest_event_time is not None:
-                raw_lag = (latest_event_time - last_processed_at).total_seconds()
-
-            if (
-                last_event_id
-                and latest_event_id
-                and last_event_id == latest_event_id
-                or raw_lag < 0
-            ):
+            raw_lag = (
+                (latest_event_time - last_processed_at).total_seconds()
+                if last_processed_at is not None and latest_event_time is not None
+                else 0.0
+            )
+            if (last_event_id and last_event_id == latest_event_id) or raw_lag < 0:
                 lag_seconds = 0.0
             else:
                 lag_seconds = round(raw_lag, 1)
@@ -188,14 +169,11 @@ class SQLCheckpointRepository:
             "eventsource.checkpoint.reset_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
-            query = text("""
-                DELETE FROM projection_checkpoints
-                WHERE projection_name = :projection_name
-            """)
-            params = {"projection_name": projection_name}
-
+            query = text(
+                "DELETE FROM projection_checkpoints WHERE projection_name = :projection_name"
+            )
             async with sql_connection(self._conn, write=True) as conn:
-                await conn.execute(query, params)
+                await conn.execute(query, {"projection_name": projection_name})
 
     async def get_position(self, subscription_id: str) -> Position | None:
         """Get last processed global-feed position for a subscription, or None if unset."""
@@ -203,15 +181,12 @@ class SQLCheckpointRepository:
             "eventsource.checkpoint.get_position",
             {ATTR_PROJECTION_NAME: subscription_id},
         ):
-            query = text("""
-                SELECT position_token
-                FROM projection_checkpoints
-                WHERE projection_name = :subscription_id
-            """)
-            params = {"subscription_id": subscription_id}
-
+            query = text(
+                "SELECT position_token FROM projection_checkpoints "
+                "WHERE projection_name = :subscription_id"
+            )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, params)
+                result = await conn.execute(query, {"subscription_id": subscription_id})
                 row = result.fetchone()
                 return Position.from_str(row[0]) if row and row[0] is not None else None
 
@@ -232,7 +207,6 @@ class SQLCheckpointRepository:
             },
         ):
             now = datetime.now(UTC)
-
             async with sql_connection(self._conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 query = text("""
@@ -262,17 +236,13 @@ class SQLCheckpointRepository:
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """Get all projection checkpoints ordered by projection_name."""
-        with self._tracer.span(
-            "eventsource.checkpoint.get_all_checkpoints",
-            {},
-        ):
+        with self._tracer.span("eventsource.checkpoint.get_all_checkpoints", {}):
             query = text("""
                 SELECT projection_name, last_event_id, last_event_type,
                        last_processed_at, events_processed, position_token
                 FROM projection_checkpoints
                 ORDER BY projection_name
             """)
-
             async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query)
                 rows = result.fetchall()

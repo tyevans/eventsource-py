@@ -52,30 +52,14 @@ class RedisBusConsumeMixin:
         ) -> DomainEvent | None: ...
         async def _dispatch_event(self, event: DomainEvent, message_id: str) -> None: ...
 
-    async def start_consuming(
-        self,
-        consumer_name: str | None = None,
-    ) -> None:
-        """Start consuming events from Redis stream.
-
-        This method runs continuously, reading events from the stream
-        and dispatching them to registered handlers.
-
-        Args:
-            consumer_name: Optional override for consumer name from config
-
-        Raises:
-            RedisConnectionError: If connection is lost and cannot be recovered
-        """
+    async def start_consuming(self, consumer_name: str | None = None) -> None:
+        """Start consuming events from Redis stream continuously."""
         if not self._connected:
             await self.connect()
-
         if not self._redis:
             raise RuntimeError("Redis client not initialized")
 
-        # Ensure consumer group exists
         await self._ensure_consumer_group_exists()
-
         actual_consumer_name = consumer_name or self._config.consumer_name
         if actual_consumer_name is None:
             raise ValueError("Consumer name must be set")
@@ -92,8 +76,6 @@ class RedisBusConsumeMixin:
 
         while self._consuming:
             try:
-                # Read from stream as part of consumer group
-                # '>' means read only new messages not delivered to other consumers
                 messages = cast(
                     DecodedStreams,
                     await self._redis.xreadgroup(
@@ -104,26 +86,17 @@ class RedisBusConsumeMixin:
                         block=self._config.block_ms,
                     ),
                 )
-
                 if not messages:
-                    # No new messages, continue loop
                     continue
-
-                # Process messages
                 for _stream_name, stream_messages in messages:
                     for message_id, message_data in stream_messages:
                         await self._process_message(message_id, message_data, actual_consumer_name)
-
             except asyncio.CancelledError:
                 logger.info("Consumer loop cancelled")
                 break
             except RedisConnectionError as e:
                 self._stats.reconnections += 1
-                logger.error(
-                    f"Redis connection error in consumer loop: {e}",
-                    exc_info=True,
-                )
-                # Try to reconnect
+                logger.error(f"Redis connection error in consumer loop: {e}", exc_info=True)
                 await asyncio.sleep(1)
                 try:
                     await self.connect()
@@ -141,25 +114,9 @@ class RedisBusConsumeMixin:
         self,
         consumer_name: str | None = None,
     ) -> asyncio.Task[None]:
-        """Start consuming in a background task.
-
-        `start_consuming()` blocks for the lifetime of the consumer, so it
-        cannot be called from a coroutine that also needs to do anything else.
-        This schedules it as a task instead, matching the Kafka and RabbitMQ
-        buses. The task is retained on the bus, so `disconnect()` cancels it.
-
-        Args:
-            consumer_name: Optional override for consumer name from config
-
-        Returns:
-            The background task running the consumer.
-
-        Raises:
-            RuntimeError: If a background consumer is already running.
-        """
+        """Start consuming in a background task and retain the task reference."""
         if self._consumer_task is not None and not self._consumer_task.done():
             raise RuntimeError("Consumer is already running in the background")
-
         self._consumer_task = asyncio.create_task(self.start_consuming(consumer_name))
         return self._consumer_task
 
@@ -174,21 +131,12 @@ class RedisBusConsumeMixin:
         message_data: dict[str, str],
         consumer_name: str,
     ) -> None:
-        """Process a single message from the stream.
-
-        Deserializes the event and dispatches to registered handlers.
-
-        Args:
-            message_id: Redis stream message ID
-            message_data: Event data from stream
-            consumer_name: Name of this consumer
-        """
+        """Process a single message from the stream."""
         if not self._redis:
             return
 
         event_type_name = message_data.get("event_type", "unknown")
         event_id = message_data.get("event_id", "unknown")
-
         processing_start = datetime.now(UTC)
 
         with self._tracer.span(
@@ -211,7 +159,6 @@ class RedisBusConsumeMixin:
                     },
                 )
 
-                # Calculate processing lag
                 occurred_at_str = message_data.get("occurred_at")
                 if occurred_at_str:
                     try:
@@ -227,14 +174,12 @@ class RedisBusConsumeMixin:
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Failed to calculate processing lag: {e}")
 
-                # Deserialize event
                 event = self._deserialize_event(event_type_name, message_data)
                 if event is None:
                     logger.warning(
                         f"Unknown event type: {event_type_name}, skipping",
                         extra={"event_type": event_type_name, "message_id": message_id},
                     )
-                    # Acknowledge to prevent blocking
                     await self._redis.xack(
                         self._config.stream_name,
                         self._config.consumer_group,
@@ -242,10 +187,7 @@ class RedisBusConsumeMixin:
                     )
                     return
 
-                # Dispatch to registered handlers
                 await self._dispatch_event(event, message_id)
-
-                # Acknowledge message after successful processing
                 await self._redis.xack(
                     self._config.stream_name,
                     self._config.consumer_group,
@@ -254,7 +196,6 @@ class RedisBusConsumeMixin:
 
                 self._stats.events_consumed += 1
                 self._stats.events_processed_success += 1
-
                 processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
 
                 if span:
@@ -270,10 +211,8 @@ class RedisBusConsumeMixin:
                         "duration_ms": processing_duration * 1000,
                     },
                 )
-
             except Exception as e:
                 self._stats.events_processed_failed += 1
-
                 processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
 
                 if span:
@@ -291,7 +230,6 @@ class RedisBusConsumeMixin:
                         "duration_ms": processing_duration * 1000,
                     },
                 )
-                # Don't ack - message will be redelivered or recovered later
 
 
 __all__ = ["RedisBusConsumeMixin"]
