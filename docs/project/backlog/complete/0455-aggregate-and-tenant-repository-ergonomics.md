@@ -1,7 +1,7 @@
 ---
 id: TASK-0455
 title: "Add variadic execute(*commands) and TenantAwareRepository get_version/get_or_raise parity"
-status: Refined
+status: Complete
 target_bc: application
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md

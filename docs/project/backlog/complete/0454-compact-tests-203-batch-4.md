@@ -1,7 +1,7 @@
 ---
-id: TASK-0453
-title: "Compact 14 test modules (203-204 lines) below 190 lines (Batch 3)"
-status: Refined
+id: TASK-0454
+title: "Compact 14 test modules (203 lines) below 190 lines (Batch 4)"
+status: Complete
 target_bc: testing
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md
@@ -13,7 +13,7 @@ depends_on:
   - TASK-0447
 ---
 
-# TASK-0453: Compact 14 test modules (203-204 lines) below 190 lines (Batch 3)
+# TASK-0454: Compact 14 test modules (203 lines) below 190 lines (Batch 4)
 
 ## Summary
-Execute TASK-0453 (Compact 14 test modules (203-204 lines) below 190 lines (Batch 3)) in an isolated worktree while maintaining 100% test pass rate and strict file ceiling compliance.
+Execute TASK-0454 (Compact 14 test modules (203 lines) below 190 lines (Batch 4)) in an isolated worktree while maintaining 100% test pass rate and strict file ceiling compliance.

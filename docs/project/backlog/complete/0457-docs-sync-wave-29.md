@@ -1,7 +1,7 @@
 ---
 id: TASK-0457
 title: "Sync Diataxis documentation for Wave 29 repository and in-memory event store ergonomics"
-status: Refined
+status: Complete
 target_bc: documentation
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md

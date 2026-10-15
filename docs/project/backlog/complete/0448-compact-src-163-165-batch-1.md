@@ -1,7 +1,7 @@
 ---
-id: TASK-0449
-title: "Compact 14 src/ modules (162-163 lines) below 150 lines (Batch 2)"
-status: Refined
+id: TASK-0448
+title: "Compact 14 src/ modules (163-165 lines) below 150 lines (Batch 1)"
+status: Complete
 target_bc: architecture
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md
@@ -13,7 +13,7 @@ depends_on:
   - TASK-0447
 ---
 
-# TASK-0449: Compact 14 src/ modules (162-163 lines) below 150 lines (Batch 2)
+# TASK-0448: Compact 14 src/ modules (163-165 lines) below 150 lines (Batch 1)
 
 ## Summary
-Execute TASK-0449 (Compact 14 src/ modules (162-163 lines) below 150 lines (Batch 2)) in an isolated worktree while maintaining 100% test pass rate and strict file ceiling compliance.
+Execute TASK-0448 (Compact 14 src/ modules (163-165 lines) below 150 lines (Batch 1)) in an isolated worktree while maintaining 100% test pass rate and strict file ceiling compliance.

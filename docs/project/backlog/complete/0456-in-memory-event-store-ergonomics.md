@@ -1,7 +1,7 @@
 ---
 id: TASK-0456
 title: "Add O(1) __contains__, stream_exists, and single-event/default-expected append to InMemoryEventStore"
-status: Refined
+status: Complete
 target_bc: adapters
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md
