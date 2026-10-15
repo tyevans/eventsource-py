@@ -177,10 +177,7 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
             # Count total events if not already set
             if migration.events_total == 0:
                 events_total = await self._count_tenant_events(tenant_id)
-                await self._migration_repo.set_events_total(
-                    migration.id,
-                    events_total,
-                )
+                await self._migration_repo.set_events_total(migration.id, events_total)
             else:
                 events_total = migration.events_total
 
@@ -191,54 +188,38 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                 from_position.to_str() if from_position else "start",
             )
 
-            # Rate limiting setup
             rate_limiter = RateLimiter(config.max_bulk_copy_rate)
-
-            # Process batches
             batch: list[EventEnvelope] = []
             batch_start_position = from_position
 
+            async def _flush_batch(current_batch: list[EventEnvelope]) -> float:
+                nonlocal events_copied, last_source_position, last_target_position
+                # An all-duplicate batch appends nothing and returns None; keep the
+                # last real position rather than nulling progress genuinely made.
+                last_target_position = (
+                    await self._write_batch(migration.id, tenant_id, current_batch)
+                    or last_target_position
+                )
+                events_copied += len(current_batch)
+                last_source_position = current_batch[-1].position
+                await self._migration_repo.update_progress(
+                    migration.id, events_copied, last_source_position, last_target_position
+                )
+                elapsed_s = time.monotonic() - start_time
+                copy_rate = events_copied / elapsed_s if elapsed_s > 0 else 0
+                metrics.record_events_copied(len(current_batch), copy_rate)
+                return copy_rate
+
             try:
-                async for event in self._stream_tenant_events(
-                    tenant_id,
-                    from_position,
-                ):
-                    # Check for pause/cancel
+                async for event in self._stream_tenant_events(tenant_id, from_position):
                     await self._wait_if_paused()
                     if self._is_cancelled:
                         break
 
                     batch.append(event)
-
-                    # Process batch when full
                     if len(batch) >= config.batch_size:
-                        # An all-duplicate batch appends nothing and
-                        # returns None; keep the last real position rather
-                        # than nulling progress that was genuinely made.
-                        last_target_position = (
-                            await self._write_batch(migration.id, tenant_id, batch)
-                            or last_target_position
-                        )
-
-                        events_copied += len(batch)
-                        last_source_position = batch[-1].position
-
-                        # Update checkpoint
-                        await self._migration_repo.update_progress(
-                            migration.id,
-                            events_copied,
-                            last_source_position,
-                            last_target_position,
-                        )
-
-                        # Rate limiting
+                        rate = await _flush_batch(batch)
                         await rate_limiter.wait(len(batch))
-
-                        # Report progress
-                        elapsed = time.monotonic() - start_time
-                        rate = events_copied / elapsed if elapsed > 0 else 0
-                        metrics.record_events_copied(len(batch), rate)
-
                         progress = BulkCopyProgress(
                             migration_id=migration.id,
                             events_copied=events_copied,
@@ -251,38 +232,17 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                             ),
                             is_complete=False,
                         )
-
                         if progress_callback:
                             progress_callback(progress)
                         yield progress
-
                         batch = []
                         batch_start_position = last_source_position
 
-                # Process remaining events
                 if batch and not self._is_cancelled:
-                    last_target_position = (
-                        await self._write_batch(migration.id, tenant_id, batch)
-                        or last_target_position
-                    )
+                    await _flush_batch(batch)
 
-                    events_copied += len(batch)
-                    last_source_position = batch[-1].position
-
-                    await self._migration_repo.update_progress(
-                        migration.id,
-                        events_copied,
-                        last_source_position,
-                        last_target_position,
-                    )
-                    elapsed = time.monotonic() - start_time
-                    rate = events_copied / elapsed if elapsed > 0 else 0
-                    metrics.record_events_copied(len(batch), rate)
-
-                # Final progress
                 elapsed = time.monotonic() - start_time
                 rate = events_copied / elapsed if elapsed > 0 else 0
-
                 final_progress = BulkCopyProgress(
                     migration_id=migration.id,
                     events_copied=events_copied,
@@ -293,28 +253,16 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                     estimated_remaining_seconds=0.0,
                     is_complete=not self._is_cancelled,
                 )
-
                 if progress_callback:
                     progress_callback(final_progress)
                 yield final_progress
 
-                logger.info(
-                    "Bulk copy completed: %d events in %.1fs",
-                    events_copied,
-                    elapsed,
-                )
+                logger.info("Bulk copy completed: %d events in %.1fs", events_copied, elapsed)
 
             except Exception as e:
                 logger.error("Bulk copy failed: %s", e)
-                await self._migration_repo.record_error(
-                    migration.id,
-                    str(e),
-                )
-                raise BulkCopyError(
-                    migration.id,
-                    batch_start_position,
-                    str(e),
-                ) from e
+                await self._migration_repo.record_error(migration.id, str(e))
+                raise BulkCopyError(migration.id, batch_start_position, str(e)) from e
 
     def cancel(self) -> None:
         """
@@ -338,9 +286,7 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
         logger.info("Bulk copy paused")
 
     def resume(self) -> None:
-        """
-        Resume a paused bulk copy operation.
-        """
+        """Resume a paused bulk copy operation."""
         self._is_paused = False
         self._pause_event.set()
         logger.info("Bulk copy resumed")
@@ -361,9 +307,4 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
             await self._pause_event.wait()
 
 
-__all__ = [
-    "BulkCopier",
-    "BulkCopyProgress",
-    "BulkCopyResult",
-    "RateLimiter",
-]
+__all__ = ["BulkCopier", "BulkCopyProgress", "BulkCopyResult", "RateLimiter"]
