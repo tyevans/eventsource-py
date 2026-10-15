@@ -288,19 +288,68 @@ async def check_and_load_account(repo: AggregateRepository[Account]) -> None:
     assert account.state.owner == "alice"
 ```
 
+### Batch saving and loading with `save_all` and `load_many`
+
+When a workflow mutates or inspects multiple aggregates of the same type, use
+`await repo.save_all(*aggregates)` and
+`await repo.load_many(aggregate_ids, *, ignore_missing=False) -> dict[UUID, TAggregate]`:
+
+- **`await repo.save_all(*aggregates)`**: accepts either variadic aggregate
+  arguments (`await repo.save_all(order1, order2)`) or a single iterable of
+  aggregates (`await repo.save_all([order1, order2])`), persisting each aggregate
+  in sequence via `save()`.
+- **`await repo.load_many(aggregate_ids, *, ignore_missing=False) -> dict[UUID, TAggregate]`**:
+  loads multiple aggregates by ID and returns a dictionary mapping each
+  `aggregate_id` (`UUID`) to its reconstructed `TAggregate` instance. By default
+  (`ignore_missing=False`), raises `AggregateNotFoundError` if any requested
+  aggregate stream does not exist; pass `ignore_missing=True` to omit missing
+  aggregates from the returned mapping.
+
+```python
+async def batch_save_and_load_orders(
+    repo: AggregateRepository[OrderAggregate],
+) -> None:
+    order1_id, order2_id, missing_id = uuid4(), uuid4(), uuid4()
+    customer_id = uuid4()
+
+    order1 = repo.create_new(order1_id)
+    order1.create(customer_id=customer_id)
+
+    order2 = repo.create_new(order2_id)
+    order2.create(customer_id=customer_id)
+    order2.ship("TRACK-200")
+
+    # Pass variadic arguments or an iterable: await repo.save_all([order1, order2])
+    await repo.save_all(order1, order2)
+
+    # Load multiple aggregates by ID -> dict[UUID, OrderAggregate]
+    loaded = await repo.load_many([order1_id, order2_id])
+    assert loaded[order1_id].version == 1
+    assert loaded[order2_id].state.tracking_number == "TRACK-200"
+
+    # Skip non-existent aggregate IDs with ignore_missing=True
+    partial = await repo.load_many(
+        [order1_id, missing_id],
+        ignore_missing=True,
+    )
+    assert list(partial.keys()) == [order1_id]
+```
+
 ## Multi-tenant command execution with `TenantAwareRepository.execute`
 
 `TenantAwareRepository` exposes the same `execute(aggregate_id, command, *, create_if_missing=True)`
 (accepting both `DeciderAggregate` command objects and `lambda agg: ...` callables),
-`get_or_none(aggregate_id)`, and `exists(aggregate_id)` methods while enforcing
-your configured tenant policies:
+`get_or_none(aggregate_id)`, `exists(aggregate_id)`, `save_all(*aggregates)`, and
+`load_many(aggregate_ids, *, ignore_missing=False) -> dict[UUID, TAggregate]`
+methods while enforcing your configured tenant policies:
 
-- When `require_tenant_context=True`, `execute()`, `get_or_none()`, and `exists()`
-  verify that an active `tenant_scope` is set before accessing the underlying
-  repository.
-- When `validate_on_save=True` (the default), `execute()` validates that every
-  uncommitted event produced by the command matches the active tenant context
-  before delegating to `save()`, raising `TenantMismatchError` on a mismatch.
+- When `require_tenant_context=True`, `execute()`, `get_or_none()`, `exists()`,
+  `save_all()`, and `load_many()` verify that an active `tenant_scope` is set
+  before accessing the underlying repository.
+- When `validate_on_save=True` (the default), `execute()` and `save_all()`
+  validate that every uncommitted event on each aggregate matches the active
+  tenant context before delegating to `save()`, raising `TenantMismatchError` on
+  a mismatch.
 
 ```python
 from uuid import UUID, uuid4
@@ -359,6 +408,7 @@ async def run_tenant_command() -> None:
 
         tenant_id = uuid4()
         account_id = uuid4()
+        second_id = uuid4()
 
         async with tenant_scope(tenant_id):
             assert await tenant_repo.exists(account_id) is False
@@ -371,9 +421,16 @@ async def run_tenant_command() -> None:
             assert account.version == 1
             assert await tenant_repo.exists(account_id) is True
 
-            loaded = await tenant_repo.get_or_none(account_id)
-            assert loaded is not None
-            assert loaded.state.owner == "alice"
+            second = TenantAccount(second_id)
+            second.execute(OpenTenantAccount(account_id=second_id, owner="bob"))
+            await tenant_repo.save_all(second)
+
+            accounts = await tenant_repo.load_many(
+                [account_id, second_id],
+                ignore_missing=False,
+            )
+            assert accounts[account_id].state.owner == "alice"
+            assert accounts[second_id].state.owner == "bob"
 ```
 
 See [Multi-Tenancy](multi-tenant.md) for full details on `tenant_scope`,

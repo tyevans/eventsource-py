@@ -10,8 +10,11 @@ domain behavior through public frontdoors without database or broker setup:
 - **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
   `harness.snapshot_store`, and `harness.assertions` (`EventAssertions` wrapper
   over `harness.published_events`) for pre-wired repository and bus testing.
-- **`published_of_type(EventType)`** on `InMemoryTestHarness`, `InMemoryEventBus`,
-  and `RecordingEventBus` for type-safe inspection of published domain events.
+- **`RecordingEventBus.assertions`** (`bus.assertions.assert_event_published(...)`,
+  `bus.assertions.assert_event_with_fields(...)`, `bus.assertions.assert_event_count(...)`)
+  and **`published_of_type(EventType)`** on `InMemoryTestHarness`, `InMemoryEventBus`,
+  and `RecordingEventBus` for expressive assertions and type-safe inspection of
+  published domain events.
 
 For an introductory walkthrough of testing in `eventsource-py`, see
 [Tutorial 8: Testing](../tutorials/08-testing.md) and the
@@ -281,6 +284,53 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     snapshot = await harness.snapshot_store.get_snapshot(order_id, "Order")
     assert snapshot is not None
     assert snapshot.version == 2
+```
+
+## Asserting recorded events with `RecordingEventBus.assertions`
+
+When wrapping any `EventBus` in a `RecordingEventBus` outside `InMemoryTestHarness`,
+use `bus.assertions` to access an `EventAssertions` helper over `bus.published_events`
+directly—including `bus.assertions.assert_event_published(...)`,
+`bus.assertions.assert_event_with_fields(...)`, and
+`bus.assertions.assert_event_count(...)`—without manually constructing
+`EventAssertions(bus.published_events)`:
+
+```python
+from uuid import uuid4
+from eventsource import AggregateRepository, InMemoryEventBus, InMemoryEventStore
+from eventsource.testing import RecordingEventBus
+
+
+async def test_recording_event_bus_assertions() -> None:
+    bus = RecordingEventBus(InMemoryEventBus())
+
+    async with InMemoryEventStore() as store:
+        repo = AggregateRepository(
+            event_store=store,
+            aggregate_factory=Account,
+            event_publisher=bus,
+        )
+        account_id = uuid4()
+
+        await repo.execute(
+            account_id,
+            OpenAccount(account_id=account_id, owner="alice"),
+        )
+        await repo.execute(
+            account_id,
+            DepositMoney(account_id=account_id, amount=50.0),
+        )
+
+    bus.assertions.assert_event_count(2)
+    opened = bus.assertions.assert_event_published(AccountOpened)
+    assert opened.owner == "alice"
+
+    deposited = bus.assertions.assert_event_with_fields(
+        MoneyDeposited,
+        aggregate_id=account_id,
+        amount=50.0,
+    )
+    assert deposited.amount == 50.0
 ```
 
 ## Inspecting published events with `published_of_type`
