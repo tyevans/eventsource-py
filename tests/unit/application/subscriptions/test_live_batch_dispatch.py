@@ -130,11 +130,10 @@ def event_bus() -> InMemoryEventBus:
 
 async def add_events(store: InMemoryEventStore, count: int) -> None:
     for i in range(count):
-        aggregate_id = uuid4()
+        agg_id = uuid4()
+        stream = StreamId(aggregate_id=agg_id, category="LiveGroupAggregate")
         await store.append(
-            StreamId(aggregate_id=aggregate_id, category="LiveGroupAggregate"),
-            [LiveGroupEvent(aggregate_id=aggregate_id, data=f"e{i}")],
-            ExpectedVersion.no_stream(),
+            stream, [LiveGroupEvent(aggregate_id=agg_id, data=f"e{i}")], ExpectedVersion.no_stream()
         )
 
 
@@ -142,8 +141,8 @@ def make_config(**overrides: object) -> SubscriptionConfig:
     kwargs: dict[str, object] = {
         "checkpoint_strategy": CheckpointStrategy.EVERY_EVENT,
         "continue_on_error": True,
+        **overrides,
     }
-    kwargs.update(overrides)
     return SubscriptionConfig(**kwargs)  # type: ignore[arg-type]
 
 
@@ -155,25 +154,18 @@ def make_runner(
     name: str,
     config: SubscriptionConfig | None = None,
 ) -> LiveRunner:
-    subscription = Subscription(
-        name=name,
-        config=config or make_config(),
-        subscriber=subscriber,
-    )
+    sub = Subscription(name=name, config=config or make_config(), subscriber=subscriber)
     return LiveRunner(
         event_bus=event_bus,
         checkpoint_repo=checkpoint_repo,
         event_feed=event_store,
-        subscription=subscription,
+        subscription=sub,
     )
 
 
 class TestLiveGroupedDispatch:
     async def test_available_events_are_delivered_as_one_batch(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """The load-bearing assertion: three events already on the feed reach
         the subscriber in **one** `handle_batch()` call. Before ADR 0063 the
@@ -187,17 +179,13 @@ class TestLiveGroupedDispatch:
             await asyncio.wait_for(subscriber.saw_batch.wait(), timeout=BOUND)
         finally:
             await runner.stop()
-
         assert len(subscriber.batch_calls) == 1
         assert [e.data for e in subscriber.batch_calls[0]] == ["e0", "e1", "e2"]
         assert runner.stats.events_processed == 3
         assert runner.stats.events_failed == 0
 
     async def test_batch_is_a_page_not_an_accumulator(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """A lone event is dispatched immediately rather than waiting for
         company. This is the property that makes ADR 0063 latency-neutral, and
@@ -211,15 +199,11 @@ class TestLiveGroupedDispatch:
             await asyncio.wait_for(subscriber.saw_batch.wait(), timeout=BOUND)
         finally:
             await runner.stop()
-
         assert len(subscriber.batch_calls) == 1
         assert len(subscriber.batch_calls[0]) == 1
 
     async def test_stop_before_dispatch_delivers_nothing(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """Stop is still checked per envelope during the scan, so a drain
         entered after `stop()` dispatches no batch at all."""
@@ -228,15 +212,11 @@ class TestLiveGroupedDispatch:
         await runner.start()
         await add_events(event_store, 3)
         await runner.stop()
-
         assert await runner._drain_feed() == 0
         assert subscriber.batch_calls == []
 
     async def test_stop_interrupts_a_paused_grouped_drain(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """The PR #139 guarantee, on the grouped path: a drain parked in
         `wait_if_paused()` mid-scan is released by `stop()`, not only by
@@ -247,35 +227,25 @@ class TestLiveGroupedDispatch:
         await runner.start()
         await add_events(event_store, 3)
         await runner.subscription.pause()
-
         drain = asyncio.create_task(runner._drain_feed())
         await asyncio.sleep(0)  # let the drain park in wait_if_paused
         assert not drain.done()
-
         await runner.stop()
         await asyncio.wait_for(drain, timeout=BOUND)
-
         assert subscriber.batch_calls == []
         # Stopping is not an implicit resume.
         assert runner.subscription.is_paused
 
     async def test_processing_timeout_bounds_the_batch_call(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """The PR #137 guarantee, on the grouped path: `processing_timeout`
         bounds one `handle_batch()` exactly as it bounds one `handle()`. A
         hung batch handler must not wedge the subscription."""
         subscriber = HangingBatchSubscriber()
+        cfg = make_config(processing_timeout=0.05)
         runner = make_runner(
-            event_bus,
-            event_store,
-            checkpoint_repo,
-            subscriber,
-            "live-timeout",
-            config=make_config(processing_timeout=0.05),
+            event_bus, event_store, checkpoint_repo, subscriber, "live-timeout", cfg
         )
         await runner.start()
         try:
@@ -283,17 +253,13 @@ class TestLiveGroupedDispatch:
             await asyncio.wait_for(runner._drain_feed(), timeout=BOUND)
         finally:
             await runner.stop()
-
         assert subscriber.entered.is_set()
         # The timeout surfaced as an ordinary handler failure per event, via
         # the per-event fallback -- not as a hang.
         assert runner.stats.events_failed == 3
 
     async def test_raising_batch_handler_falls_back_to_per_event(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """ADR 0059's documented contract, matched by the live runner: a
         `handle_batch()` that raises falls back to per-event delivery rather
@@ -306,42 +272,30 @@ class TestLiveGroupedDispatch:
             await asyncio.wait_for(runner._drain_feed(), timeout=BOUND)
         finally:
             await runner.stop()
-
         assert subscriber.batch_attempts == [3]
         assert [e.data for e in subscriber.single_calls] == ["e0", "e1", "e2"]
         assert runner.stats.events_processed == 3
 
     async def test_grouped_drain_checkpoints_the_page(
-        self,
-        event_bus: InMemoryEventBus,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_bus, event_store, checkpoint_repo
     ) -> None:
         """`EVERY_BATCH` now has a batch to attach to on the live path, and
         the checkpoint lands at the last envelope of the page -- progress
         never outruns the completed batch."""
         subscriber = GatedBatchSubscriber()
+        cfg = make_config(checkpoint_strategy=CheckpointStrategy.EVERY_BATCH)
         runner = make_runner(
-            event_bus,
-            event_store,
-            checkpoint_repo,
-            subscriber,
-            "live-checkpoint",
-            config=make_config(checkpoint_strategy=CheckpointStrategy.EVERY_BATCH),
+            event_bus, event_store, checkpoint_repo, subscriber, "live-checkpoint", cfg
         )
         await runner.start()
         await add_events(event_store, 3)
-
         drain = asyncio.create_task(runner._drain_feed())
         await asyncio.wait_for(subscriber.entered.wait(), timeout=BOUND)
-
         # Mid-batch: nothing is checkpointed yet, because the batch has not
         # settled. Progress never outruns completed work (ADR 0059).
         assert await checkpoint_repo.get_position("live-checkpoint") is None
-
         subscriber.release.set()
         await asyncio.wait_for(drain, timeout=BOUND)
         await runner.stop()
-
         assert len(subscriber.batch_calls) == 1
         assert await checkpoint_repo.get_position("live-checkpoint") is not None
