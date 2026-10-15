@@ -1,7 +1,7 @@
 ---
 id: TASK-0276
 title: "Slim coordinator_cutover, manager_lifecycle, health_subscription_indicators, retry, coordinator_lifecycle, and snapshotting below 265 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

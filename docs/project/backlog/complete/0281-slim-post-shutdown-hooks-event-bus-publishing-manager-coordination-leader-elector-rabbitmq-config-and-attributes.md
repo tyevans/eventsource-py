@@ -1,7 +1,7 @@
 ---
 id: TASK-0281
 title: "Slim post_shutdown_hooks, event_bus_publishing, manager_coordination, in_memory_leader_elector, rabbitmq_config, and test_attributes below 285 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

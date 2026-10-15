@@ -1,7 +1,7 @@
 ---
 id: TASK-0279
 title: "Slim redis_tracing_core, redis_event_bus_core, test_processing_timeout, test_postgresql_conformance, and conftest_event below 285 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

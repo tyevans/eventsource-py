@@ -1,7 +1,7 @@
 ---
 id: TASK-0284
 title: "Slim test_tenant_repository_save, rabbitmq/test_stats, and test_version_validation below 280 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
