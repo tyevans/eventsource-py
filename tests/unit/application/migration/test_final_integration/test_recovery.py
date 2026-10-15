@@ -20,9 +20,7 @@ from eventsource.ports.migration.models import (
     TenantMigrationState,
 )
 from eventsource.ports.positions import ExpectedVersion
-from tests.unit.application.migration.test_final_integration._events import (
-    SampleTestEvent,
-)
+from tests.unit.application.migration.test_final_integration._events import SampleTestEvent
 from tests.unit.application.migration.test_final_integration._helpers import (
     copy_events_between_stores,
     create_test_events,
@@ -57,9 +55,7 @@ class TestRecoveryAfterSimulatedFailures:
         tenant_id: UUID,
     ) -> None:
         """Test recovery after bulk copy failure."""
-        # Create events in source
         await create_test_events(source_store, tenant_id, count=10)
-
         coordinator = MigrationCoordinator(
             source_store=source_store,
             migration_repo=migration_repo,
@@ -69,23 +65,12 @@ class TestRecoveryAfterSimulatedFailures:
             source_store_id="default",
             enable_tracing=False,
         )
-
         router.register_store("dedicated", target_store)
-
-        # Start migration
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
 
-        # Simulate recording an error (as if bulk copy failed)
-        await migration_repo.record_error(
-            migration.id,
-            error="Simulated bulk copy failure",
-        )
-
-        # Record error in audit log
+        await migration_repo.record_error(migration.id, error="Simulated bulk copy failure")
         await audit_log_repo.record(
             MigrationAuditEntry.error_occurred(
                 migration_id=migration.id,
@@ -95,19 +80,14 @@ class TestRecoveryAfterSimulatedFailures:
             )
         )
 
-        # Verify error was recorded
         migration = await migration_repo.get(migration.id)
         assert migration is not None
         assert migration.error_count == 1
         assert "bulk copy" in migration.last_error.lower()
-
-        # Migration should still be in progress (recoverable)
         assert not migration.phase.is_terminal
 
-        # Verify audit log has error
         errors = await audit_log_repo.get_by_migration(
-            migration.id,
-            event_types=[AuditEventType.ERROR_OCCURRED],
+            migration.id, event_types=[AuditEventType.ERROR_OCCURRED]
         )
         assert len(errors) == 1
 
@@ -124,17 +104,13 @@ class TestRecoveryAfterSimulatedFailures:
         migration_id: UUID,
     ) -> None:
         """Test recovery after cutover rollback."""
-        # Setup: Create events in both stores (simulating completed bulk copy)
         await create_test_events(source_store, tenant_id, count=5)
         await copy_events_between_stores(source_store, target_store, tenant_id)
 
-        # Add extra events to source to create lag (simulating new writes)
         for i in range(200):
             aggregate_id = uuid4()
             event = SampleTestEvent(
-                aggregate_id=aggregate_id,
-                tenant_id=tenant_id,
-                value=f"extra-{i}",
+                aggregate_id=aggregate_id, tenant_id=tenant_id, value=f"extra-{i}"
             )
             await source_store.append(
                 StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
@@ -142,16 +118,11 @@ class TestRecoveryAfterSimulatedFailures:
                 ExpectedVersion.no_stream(),
             )
 
-        # Setup routing state for dual-write
         await routing_repo.set_migration_state(
-            tenant_id,
-            TenantMigrationState.DUAL_WRITE,
-            migration_id,
+            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
         )
-
         router.register_store("dedicated", target_store)
 
-        # Create lag tracker with strict threshold
         lag_tracker = SyncLagTracker(
             source_store=source_store,
             target_store=target_store,
@@ -159,8 +130,6 @@ class TestRecoveryAfterSimulatedFailures:
             config=MigrationConfig(cutover_max_lag_events=50),
             enable_tracing=False,
         )
-
-        # Create cutover manager
         cutover_manager = CutoverManager(
             lock_manager=lock_manager,
             router=router,
@@ -168,7 +137,6 @@ class TestRecoveryAfterSimulatedFailures:
             enable_tracing=False,
         )
 
-        # Attempt cutover (should fail due to high lag)
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -177,12 +145,9 @@ class TestRecoveryAfterSimulatedFailures:
             config=MigrationConfig(cutover_max_lag_events=50),
             timeout_ms=500.0,
         )
-
-        # Verify cutover failed and rolled back
         assert result.success is False
         assert result.rolled_back is True
 
-        # Record rollback in audit log
         await audit_log_repo.record(
             MigrationAuditEntry(
                 id=None,
@@ -196,15 +161,12 @@ class TestRecoveryAfterSimulatedFailures:
             )
         )
 
-        # Verify routing was rolled back
         routing = await routing_repo.get_routing(tenant_id)
         assert routing is not None
         assert routing.migration_state == TenantMigrationState.DUAL_WRITE
 
-        # Verify audit log has rollback event
         rollback_entries = await audit_log_repo.get_by_migration(
-            migration_id,
-            event_types=[AuditEventType.CUTOVER_ROLLED_BACK],
+            migration_id, event_types=[AuditEventType.CUTOVER_ROLLED_BACK]
         )
         assert len(rollback_entries) == 1
 
@@ -230,19 +192,12 @@ class TestRecoveryAfterSimulatedFailures:
             source_store_id="default",
             enable_tracing=False,
         )
-
         router.register_store("dedicated", target_store)
-
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
 
-        # Pause migration
         await coordinator.pause_migration(migration.id)
-
-        # Record pause in audit log
         await audit_log_repo.record(
             MigrationAuditEntry(
                 id=None,
@@ -255,16 +210,11 @@ class TestRecoveryAfterSimulatedFailures:
                 occurred_at=datetime.now(UTC),
             )
         )
-
-        # Verify paused
         migration = await coordinator.get_migration(migration.id)
         assert migration is not None
         assert migration.is_paused
 
-        # Resume migration
         await coordinator.resume_migration(migration.id)
-
-        # Record resume in audit log
         await audit_log_repo.record(
             MigrationAuditEntry(
                 id=None,
@@ -277,19 +227,13 @@ class TestRecoveryAfterSimulatedFailures:
                 occurred_at=datetime.now(UTC),
             )
         )
-
-        # Verify resumed
         migration = await coordinator.get_migration(migration.id)
         assert migration is not None
         assert not migration.is_paused
 
-        # Verify audit log has both events
         entries = await audit_log_repo.get_by_migration(
             migration.id,
-            event_types=[
-                AuditEventType.MIGRATION_PAUSED,
-                AuditEventType.MIGRATION_RESUMED,
-            ],
+            event_types=[AuditEventType.MIGRATION_PAUSED, AuditEventType.MIGRATION_RESUMED],
         )
         assert len(entries) == 2
 
@@ -315,22 +259,12 @@ class TestRecoveryAfterSimulatedFailures:
             source_store_id="default",
             enable_tracing=False,
         )
-
         router.register_store("dedicated", target_store)
-
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
 
-        # Abort migration
-        result = await coordinator.abort_migration(
-            migration.id,
-            reason="Test abort for recovery",
-        )
-
-        # Record abort in audit log
+        result = await coordinator.abort_migration(migration.id, reason="Test abort for recovery")
         await audit_log_repo.record(
             MigrationAuditEntry(
                 id=None,
@@ -344,30 +278,22 @@ class TestRecoveryAfterSimulatedFailures:
             )
         )
 
-        # Verify abort
-        assert result.success is False  # Abort is not a "success"
+        assert result.success is False
         assert result.final_phase == MigrationPhase.ABORTED
 
-        # Verify migration state
         migration = await coordinator.get_migration(result.migration_id)
         assert migration is not None
         assert migration.phase == MigrationPhase.ABORTED
 
-        # Verify routing state was reset
         routing = await routing_repo.get_routing(tenant_id)
         assert routing is not None
         assert routing.migration_state == TenantMigrationState.NORMAL
 
-        # Verify can start new migration for same tenant
         new_migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
         assert new_migration is not None
         assert new_migration.id != migration.id
 
 
-__all__ = [  # pragma: allowlist secret
-    "TestRecoveryAfterSimulatedFailures",
-]
+__all__ = ["TestRecoveryAfterSimulatedFailures"]  # pragma: allowlist secret
