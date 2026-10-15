@@ -1,7 +1,7 @@
 ---
 id: TASK-0398
 title: "Compact 232-234 line test and example modules below 215 lines (batch 3)"
-status: Refined
+status: Complete
 target_bc: testing
 dependencies: [TASK-0392]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0398: Compact 232-234 line test and example modules below 215 lines (batch 3)
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `testing`
 
 ## Objective
