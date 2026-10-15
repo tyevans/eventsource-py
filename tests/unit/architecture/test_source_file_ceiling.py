@@ -14,8 +14,8 @@ import pytest
 
 import eventsource
 
-MAX_SRC_LINES = 213
-MAX_TEST_EXAMPLE_LINES = 251
+MAX_SRC_LINES = 205
+MAX_TEST_EXAMPLE_LINES = 244
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_EVENTSOURCE_DIR = Path(eventsource.__file__).resolve().parent
