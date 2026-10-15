@@ -1,21 +1,12 @@
 """Conformance suite for the `ReadModelRepository` port.
 
 Subclass and provide a `store` fixture yielding a repository already bound
-to `ConformanceReadModel` with its table provisioned -- bindings own
-provisioning so this module stays adapter-free and dialect-free.
+to `ConformanceReadModel` with its table provisioned.
 
-**Not pinned here**, deliberately: the ordering of `get_many` results (the
-Protocol does not guarantee one), the resolution of `updated_at`, and any
-dialect-specific type coercion. Those stay in the per-backend test modules.
-
-**Pinned here:** the repository owns its stored models. A read returns an
-object the caller may mutate freely without reaching storage, and a write
-takes a copy rather than adopting -- or mutating -- the caller's object.
-This was an in-memory-versus-SQL divergence before it was a contract: the
-SQL adapters hydrate a fresh instance per read and bump `version` in the
-row, while the in-memory adapter handed out its live dict entry and bumped
-`version` on the caller's object. The two cases below pin both directions
-for every backend.
+**Not pinned here:** ordering of `get_many` results, `updated_at` resolution,
+and dialect-specific type coercion (covered in per-backend test modules).
+**Pinned here:** the repository owns its stored models -- reads return
+unaliased copies and writes do not adopt or mutate the caller's object.
 """
 
 import asyncio
@@ -148,24 +139,22 @@ class ReadModelRepositoryConformance(ABC):
         assert await counts(Filter.not_in("count", [1, 3])) == [2]
 
     async def test_a_null_field_is_distinct_from_every_value(self, store: Repo) -> None:
-        """NULL means "no value": it equals nothing, and differs from everything.
-
-        The judgment call, pinned: `ne` and `not_in` MATCH a row whose field
-        is NULL (Python semantics), rather than dropping it the way SQL's
-        three-valued logic would. Ordering comparisons and `eq`/`in` do not
-        match it, because "no value" is neither greater nor less than one.
-        """
+        """NULL means 'no value': `ne`/`not_in` match NULL; ordering and `eq`/`in` do not."""
         await store.save_many([_model(name="present", note="set"), _model(name="absent")])
 
         async def names(filter_: Filter) -> list[str]:
             return sorted(m.name for m in await store.find(Query(filters=[filter_])))
 
-        assert await names(Filter.eq("note", "set")) == ["present"]
-        assert await names(Filter.in_("note", ["set"])) == ["present"]
-        assert await names(Filter.gt("note", "a")) == ["present"]
-        assert await names(Filter.gte("note", "a")) == ["present"]
-        assert await names(Filter.lt("note", "zzz")) == ["present"]
-        assert await names(Filter.lte("note", "zzz")) == ["present"]
+        present_filters = (
+            Filter.eq("note", "set"),
+            Filter.in_("note", ["set"]),
+            Filter.gt("note", "a"),
+            Filter.gte("note", "a"),
+            Filter.lt("note", "zzz"),
+            Filter.lte("note", "zzz"),
+        )
+        for f in present_filters:
+            assert await names(f) == ["present"]
         assert await names(Filter.ne("note", "set")) == ["absent"]
         assert await names(Filter.not_in("note", ["set"])) == ["absent"]
 
@@ -179,7 +168,6 @@ class ReadModelRepositoryConformance(ABC):
         assert await store.count(Query(filters=[Filter.not_in("name", [])])) == 2
 
     async def test_filtering_on_an_unknown_field_raises(self, store: Repo) -> None:
-        """A typo'd field name is a bug, not an empty result set."""
         bogus = Query(filters=[Filter.eq("no_such_field", "x")])
         await store.save(_model())
         for op in (store.find, store.count, store.find_deleted):
@@ -187,7 +175,6 @@ class ReadModelRepositoryConformance(ABC):
                 await op(bogus)
 
     async def test_an_unknown_operator_raises(self, store: Repo) -> None:
-        """Never silently drop every row -- an unknown operator is a bug."""
         bogus = Query(filters=[_bad_filter("name", "like", "x")])
         await store.save(_model())
         for op in (store.find, store.count, store.find_deleted):
@@ -242,8 +229,7 @@ class ReadModelRepositoryConformance(ABC):
         await store.save_many([live, gone])
         await store.soft_delete(gone.id)
         assert await store.truncate() == 2
-        assert await store.count() == 0
-        assert await store.get_deleted(gone.id) is None
+        assert await store.count() == 0 and await store.get_deleted(gone.id) is None
 
     async def test_save_with_version_check_increments_version(self, store: Repo) -> None:
         model = _model()
@@ -259,16 +245,10 @@ class ReadModelRepositoryConformance(ABC):
     async def test_save_with_version_check_rejects_a_stale_version(self, store: Repo) -> None:
         model = _model()
         await store.save(model)
-        first = await store.get(model.id)
-        assert first is not None
-        # Two independent readers of the same version, both from get() --
-        # which is only a valid way to build this scenario because reads
-        # are pinned below to return unaliased objects.
-        second = await store.get(model.id)
-        assert second is not None
-        first.name = "winner"
+        first, second = await store.get(model.id), await store.get(model.id)
+        assert first is not None and second is not None
+        first.name, second.name = "winner", "loser"
         await store.save_with_version_check(first)
-        second.name = "loser"
         with pytest.raises(ReadModelVersionConflictError):
             await store.save_with_version_check(second)
 
@@ -277,7 +257,6 @@ class ReadModelRepositoryConformance(ABC):
             await store.save_with_version_check(_model())
 
     async def test_reads_do_not_alias_stored_state(self, store: Repo) -> None:
-        """Mutating a read result must not reach storage."""
         model = _model(name="stored")
         await store.save(model)
         loaded = await store.get(model.id)
@@ -286,21 +265,17 @@ class ReadModelRepositoryConformance(ABC):
         again = await store.get(model.id)
         assert again is not None and again.name == "stored"
         [from_many] = await store.get_many([model.id])
-        assert from_many.name == "stored"
         [from_find] = await store.find()
-        assert from_find.name == "stored"
+        assert (from_many.name, from_find.name) == ("stored", "stored")
 
     async def test_writes_do_not_mutate_the_callers_model(self, store: Repo) -> None:
-        """A saved object stays the caller's, unchanged by later writes."""
         model = _model(name="first")
         await store.save(model)
         version_after_save = model.version
-        # A second, unrelated write against the same id.
         update = await store.get(model.id)
         assert update is not None
         update.name = "second"
         await store.save(update)
-        # The caller's original object is untouched by both writes.
         assert (model.name, model.version) == ("first", version_after_save)
 
 

@@ -48,26 +48,6 @@ class ErrorHandler:
     - Circuit breaker to prevent cascading failures
     - Structured logging with error classification
     - Alert hooks for critical/error severity
-
-    Usage:
-        >>> handler = ErrorHandler()
-        >>>
-        >>> # Execute with automatic retry
-        >>> result = await handler.execute_with_retry(
-        ...     async_operation,
-        ...     operation_name="bulk_copy",
-        ...     migration_id=migration_id,
-        ... )
-        >>>
-        >>> # Use as decorator
-        >>> @handler.with_retry(operation_name="sync_events")
-        ... async def sync_events():
-        ...     ...
-
-    Attributes:
-        circuit_breaker: Optional circuit breaker for the handler.
-        alert_callback: Callback for alerting on errors.
-        metrics_callback: Callback for recording error metrics.
     """
 
     def __init__(
@@ -76,14 +56,7 @@ class ErrorHandler:
         alert_callback: Callable[[MigrationError], None] | None = None,
         metrics_callback: Callable[[MigrationError, bool], None] | None = None,
     ) -> None:
-        """
-        Initialize the error handler.
-
-        Args:
-            circuit_breaker: Optional circuit breaker for protecting operations.
-            alert_callback: Callback invoked when errors with alerting severity occur.
-            metrics_callback: Callback for recording error metrics (error, retried).
-        """
+        """Initialize the error handler."""
         self.circuit_breaker = circuit_breaker
         self.alert_callback = alert_callback
         self.metrics_callback = metrics_callback
@@ -100,25 +73,15 @@ class ErrorHandler:
         """
         Execute an operation with automatic retry for transient errors.
 
-        Args:
-            operation: Async callable to execute.
-            operation_name: Name for logging and metrics.
-            migration_id: Optional migration ID for error context.
-            retry_config: Override retry configuration.
-            on_retry: Callback invoked on each retry (attempt, exception, delay_ms).
-
-        Returns:
-            The result of the operation.
-
         Raises:
             MigrationError: If all retries are exhausted or error is non-transient.
             CircuitBreakerOpenError: If circuit breaker is open.
         """
-        # Check circuit breaker if configured
-        if self.circuit_breaker:
-            ctx = await self.circuit_breaker.protect(operation_name, migration_id)
-        else:
-            ctx = None
+        ctx = (
+            await self.circuit_breaker.protect(operation_name, migration_id)
+            if self.circuit_breaker
+            else None
+        )
 
         last_exception: Exception | None = None
         attempt = 0
