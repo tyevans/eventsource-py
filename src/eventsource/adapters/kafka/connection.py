@@ -39,7 +39,10 @@ class KafkaConnectionManager:
 
     producer: Any = property(lambda self: self._producer)
     consumer: Any = property(lambda self: self._consumer)
-    is_connected: Any = property(lambda self: self._connected)
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
 
     @property
     def metrics(self) -> KafkaEventBusMetrics | None:
@@ -67,8 +70,10 @@ class KafkaConnectionManager:
             await self._consumer.start()
             self._rebalance_listener = KafkaRebalanceListener(self)
             self._connected, self._stats.connected_at = True, datetime.now(UTC)
-            extra = {"topic": cfg.topic_name, "consumer_group": cfg.consumer_group}
-            logger.info("Connected to Kafka", extra=extra)
+            logger.info(
+                "Connected to Kafka",
+                extra={"topic": cfg.topic_name, "consumer_group": cfg.consumer_group},
+            )
         except Exception as e:
             if self._metrics:
                 self._metrics.connection_errors.add(1, attributes={"error.type": type(e).__name__})
@@ -101,8 +106,9 @@ class KafkaConnectionManager:
                 await self._consumer.stop()
             except Exception as e:
                 logger.warning(f"Error stopping consumer during reconnect: {e}")
-        cfg = self._config
-        self._consumer = AIOKafkaConsumer(cfg.topic_name, **cfg.get_consumer_config())
+        self._consumer = AIOKafkaConsumer(
+            self._config.topic_name, **self._config.get_consumer_config()
+        )
         await self._consumer.start()
         logger.info("Consumer reconnected successfully")
 
