@@ -23,16 +23,12 @@ def _lag(events: int, src: int, tgt: int) -> SyncLag:
 
 
 class TestCutoverManagerInit:
-    """Tests for CutoverManager initialization."""
-
     def test_init_with_defaults(self, mock_lock_manager, mock_router, mock_routing_repo):
-        """Test initialization with default parameters."""
         manager = CutoverManager(
             lock_manager=mock_lock_manager,
             router=mock_router,
             routing_repo=mock_routing_repo,
         )
-
         assert manager._lock_manager is mock_lock_manager
         assert manager._router is mock_router
         assert manager._routing_repo is mock_routing_repo
@@ -40,7 +36,6 @@ class TestCutoverManagerInit:
         assert manager._enable_tracing is True
 
     def test_init_with_custom_timeout(self, mock_lock_manager, mock_router, mock_routing_repo):
-        """Test initialization with custom lock timeout."""
         manager = CutoverManager(
             lock_manager=mock_lock_manager,
             router=mock_router,
@@ -50,7 +45,6 @@ class TestCutoverManagerInit:
         assert manager._lock_acquisition_timeout == 1.0
 
     def test_init_with_tracing_disabled(self, mock_lock_manager, mock_router, mock_routing_repo):
-        """Test initialization with tracing disabled."""
         manager = CutoverManager(
             lock_manager=mock_lock_manager,
             router=mock_router,
@@ -61,8 +55,6 @@ class TestCutoverManagerInit:
 
 
 class TestSuccessfulCutover:
-    """Tests for successful cutover scenarios."""
-
     @pytest.mark.asyncio
     async def test_successful_cutover(
         self,
@@ -74,14 +66,12 @@ class TestSuccessfulCutover:
         mock_router,
         mock_routing_repo,
     ):
-        """Test successful cutover execution."""
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is True
         assert result.duration_ms > 0
         assert result.rolled_back is False
@@ -110,7 +100,6 @@ class TestSuccessfulCutover:
         target_store_id,
         mock_lag_tracker,
     ):
-        """execute_cutover() reports through the real MigrationMetrics instance."""
         from eventsource.application.migration.metrics import (
             clear_metrics_registry,
             get_migration_metrics,
@@ -123,7 +112,6 @@ class TestSuccessfulCutover:
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is True
         snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
         assert snapshot.cutover_durations == [result.duration_ms]
@@ -139,7 +127,6 @@ class TestSuccessfulCutover:
         mock_lag_tracker,
         config,
     ):
-        """Test successful cutover with small but acceptable lag."""
         mock_lag_tracker.current_lag = _lag(50, 100, 50)
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
@@ -159,7 +146,6 @@ class TestSuccessfulCutover:
         target_store_id,
         mock_lag_tracker,
     ):
-        """Test cutover with custom timeout."""
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -179,7 +165,6 @@ class TestSuccessfulCutover:
         mock_lag_tracker,
         config,
     ):
-        """Test that cutover tracks events synced during pause."""
         initial_lag = _lag(10, 100, 90)
         final_lag = _lag(2, 100, 98)
         call_count = 0
@@ -199,14 +184,11 @@ class TestSuccessfulCutover:
             target_store_id=target_store_id,
             config=config,
         )
-
         assert result.success is True
         assert result.events_synced == 8
 
 
 class TestStrictZeroLagDefault:
-    """`cutover_max_lag_events` defaults to 0: no cutover over missing data."""
-
     @pytest.mark.asyncio
     async def test_default_config_refuses_cutover_on_a_single_missing_event(
         self,
@@ -219,14 +201,12 @@ class TestStrictZeroLagDefault:
         mock_routing_repo,
     ):
         mock_lag_tracker.current_lag = _lag(1, 101, 100)
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is False
         assert result.rolled_back is True
         mock_routing_repo.set_routing.assert_not_called()
@@ -242,8 +222,6 @@ class TestStrictZeroLagDefault:
         mock_lag_tracker,
         mock_routing_repo,
     ):
-        """Rollback restores both routing store_id and migration state."""
-
         async def current_routing(_tenant_id):
             writes = mock_routing_repo.set_routing.call_args_list
             store_id = writes[-1].args[1] if writes else "source-store"
@@ -259,14 +237,12 @@ class TestStrictZeroLagDefault:
             Exception("state write failed"),
             None,
         ]
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is False
         assert result.rolled_back is True
         restored_to = [call.args[1] for call in mock_routing_repo.set_routing.call_args_list]
@@ -282,9 +258,7 @@ class TestStrictZeroLagDefault:
         mock_lag_tracker,
         config,
     ):
-        """The knob survives -- it just stops being the default."""
         mock_lag_tracker.current_lag = _lag(1, 101, 100)
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -292,5 +266,4 @@ class TestStrictZeroLagDefault:
             target_store_id=target_store_id,
             config=config,
         )
-
         assert result.success is True
