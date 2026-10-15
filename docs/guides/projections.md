@@ -203,3 +203,28 @@ async def scoped_rebuild(
     )
     assert report.succeeded is True
 ```
+
+## Coordinating batches of events with `ProjectionCoordinator` and `ProjectionRegistry`
+
+When you already have a batch of `DomainEvent` instances in memory and want to
+dispatch or rebuild multiple projections and event handlers concurrently, pass
+your projections or handlers directly to `ProjectionCoordinator([proj1, proj2])`
+or register them fluently with `ProjectionRegistry(projections=[...]).register(...)`:
+
+```python
+from eventsource import ProjectionCoordinator, ProjectionRegistry
+
+
+async def coordinate_projections(
+    balance_projection: AccountBalanceProjection,
+    events: list[DomainEvent],
+) -> None:
+    # Pass a sequence of projections/handlers directly:
+    coordinator = ProjectionCoordinator([balance_projection])
+    await coordinator.dispatch_events(events)
+
+    # Or configure a ProjectionRegistry with max_concurrency and fluent .register():
+    registry = ProjectionRegistry(max_concurrency=4).register(balance_projection)
+    bounded_coordinator = ProjectionCoordinator(registry)
+    await bounded_coordinator.rebuild_all(events)
+```
