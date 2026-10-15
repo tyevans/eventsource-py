@@ -72,6 +72,12 @@ class TestHarnessReset:
         harness.reset()
         assert harness.dlq_repo is not old_repo
 
+    def test_reset_creates_new_snapshot_store(self, harness: InMemoryTestHarness) -> None:
+        """reset() creates a new snapshot store."""
+        old_store = harness.snapshot_store
+        harness.reset()
+        assert harness.snapshot_store is not old_store
+
     @pytest.mark.asyncio
     async def test_reset_clears_checkpoint_data(self, harness: InMemoryTestHarness) -> None:
         """reset() clears checkpoint repository data."""

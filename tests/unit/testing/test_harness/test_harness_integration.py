@@ -10,7 +10,10 @@ from eventsource.domain import StreamId
 from eventsource.ports import ExpectedVersion
 from eventsource.ports.positions import Position
 from eventsource.testing import InMemoryTestHarness
-from tests.unit.testing.test_harness._fixtures import HarnessSampleEvent
+from tests.unit.testing.test_harness._fixtures import (
+    HarnessSampleEvent,
+    SampleOrderAggregate,
+)
 
 
 class TestHarnessIntegration:
@@ -131,3 +134,60 @@ class TestHarnessIntegration:
         assert len(envelopes2) == 1
         assert envelopes1[0].event.aggregate_id == agg1_id
         assert envelopes2[0].event.aggregate_id == agg2_id
+
+    @pytest.mark.asyncio
+    async def test_create_repository_without_snapshots(self, harness: InMemoryTestHarness) -> None:
+        """create_repository wires event_store and event_bus without snapshot_store by default."""
+        repo = harness.create_repository(SampleOrderAggregate)
+
+        assert repo.snapshot_store is None
+        assert repo._enable_tracing is False
+
+        order = SampleOrderAggregate(uuid4())
+        order.record_step()
+        await repo.save(order)
+
+        harness.assertions.assert_event_count(1)
+        harness.assertions.assert_event_published(HarnessSampleEvent)
+        loaded = await repo.load(order.aggregate_id)
+        assert loaded.version == 1
+        assert loaded.state.step_count == 1
+
+    @pytest.mark.asyncio
+    async def test_create_repository_with_snapshots_flag(
+        self, harness: InMemoryTestHarness
+    ) -> None:
+        """create_repository(with_snapshots=True) attaches harness.snapshot_store."""
+        repo = harness.create_repository(SampleOrderAggregate, with_snapshots=True)
+
+        assert repo.snapshot_store is harness.snapshot_store
+
+        order = SampleOrderAggregate(uuid4())
+        order.record_step()
+        await repo.save(order)
+        await repo.create_snapshot(order)
+
+        snapshot = await harness.snapshot_store.get_snapshot(order.aggregate_id, "Sample")
+        assert snapshot is not None
+        assert snapshot.version == 1
+
+    @pytest.mark.asyncio
+    async def test_create_repository_with_snapshot_threshold(
+        self, harness: InMemoryTestHarness
+    ) -> None:
+        """create_repository(snapshot_threshold=2) attaches snapshot_store and auto-snapshots."""
+        repo = harness.create_repository(SampleOrderAggregate, snapshot_threshold=2)
+
+        assert repo.snapshot_store is harness.snapshot_store
+
+        order = SampleOrderAggregate(uuid4())
+        order.record_step()
+        order.record_step()
+        await repo.save(order)
+
+        snapshot = await harness.snapshot_store.get_snapshot(order.aggregate_id, "Sample")
+        assert snapshot is not None
+        assert snapshot.version == 2
+        loaded = await repo.load(order.aggregate_id)
+        assert loaded.version == 2
+        assert loaded.state.step_count == 2

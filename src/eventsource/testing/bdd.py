@@ -15,20 +15,9 @@ from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
 from eventsource.ports import ExpectedVersion
+from eventsource.testing.assertions import EventAssertions
 from eventsource.testing.harness import InMemoryTestHarness
 from eventsource.testing.scenario import DeciderScenario
-
-
-class _Missing:
-    """Sentinel class for detecting missing attributes."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "<MISSING>"
-
-
-_MISSING = _Missing()
 
 
 async def given_events(
@@ -104,38 +93,8 @@ def then_event_published[TEvent: DomainEvent](
     Raises:
         AssertionError: If no matching event was published
     """
-    published = harness.published_events
-    matching_events: list[DomainEvent] = [
-        event for event in published if isinstance(event, event_type)
-    ]
-
-    if not matching_events:
-        found_types = [type(e).__name__ for e in published]
-        raise AssertionError(
-            f"Expected {event_type.__name__} to be published, but no events "
-            f"of that type were found. Published event types: {found_types or 'none'}"
-        )
-
-    if not expected_fields:
-        return matching_events[0]  # type: ignore[return-value]
-
-    for event in matching_events:
-        if all(
-            (actual := getattr(event, attr, _MISSING)) is not _MISSING and actual == expected_value
-            for attr, expected_value in expected_fields.items()
-        ):
-            return event  # type: ignore[return-value]
-
-    attr_desc = ", ".join(f"{k}={v!r}" for k, v in expected_fields.items())
-    found_desc = [
-        f"{type(e).__name__}({ {k: getattr(e, k, None) for k in expected_fields} })"
-        for e in matching_events
-    ]
-
-    raise AssertionError(
-        f"Expected {event_type.__name__}({attr_desc}) to be published.\n"
-        f"Found {len(matching_events)} {event_type.__name__} event(s) but "
-        f"none matched the expected attributes:\n" + "\n".join(f"  - {desc}" for desc in found_desc)
+    return EventAssertions(harness.published_events).assert_event_with_fields(
+        event_type, **expected_fields
     )
 
 
@@ -153,20 +112,11 @@ def then_no_events_published(
     Raises:
         AssertionError: If events were found
     """
-    published = harness.published_events
+    assertions = EventAssertions(harness.published_events)
     if event_type is None:
-        if published:
-            found_types = [type(e).__name__ for e in published]
-            raise AssertionError(
-                f"Expected no events to be published, but found {len(published)}: {found_types}"
-            )
+        assertions.assert_no_events_published()
     else:
-        matching = [e for e in published if isinstance(e, event_type)]
-        if matching:
-            raise AssertionError(
-                f"Expected no {event_type.__name__} events to be published, "
-                f"but found {len(matching)}"
-            )
+        assertions.assert_no_event_published(event_type)
 
 
 def then_event_sequence(
@@ -186,28 +136,9 @@ def then_event_sequence(
     Raises:
         AssertionError: If the sequence doesn't match (wrong count, types, or order)
     """
-    published = harness.published_events
-    actual_types = [type(e) for e in published]
-
-    if len(actual_types) != len(event_types):
-        raise AssertionError(
-            f"Event count mismatch: expected {len(event_types)} events, "
-            f"got {len(actual_types)}.\n"
-            f"Expected: {[t.__name__ for t in event_types]}\n"
-            f"Actual:   {[t.__name__ for t in actual_types]}"
-        )
-
-    for i, (actual, expected) in enumerate(zip(actual_types, event_types, strict=True)):
-        if actual != expected:
-            raise AssertionError(
-                f"Event type mismatch at position {i}: "
-                f"expected {expected.__name__}, got {actual.__name__}.\n"
-                f"Full sequence:\n"
-                f"Expected: {[t.__name__ for t in event_types]}\n"
-                f"Actual:   {[t.__name__ for t in actual_types]}"
-            )
-
-    return list(published)
+    assertions = EventAssertions(harness.published_events)
+    assertions.assert_event_sequence(event_types)
+    return assertions.events
 
 
 def then_event_count(
@@ -224,14 +155,7 @@ def then_event_count(
     Raises:
         AssertionError: If the count doesn't match
     """
-    actual_count = len(harness.published_events)
-    if actual_count != count:
-        event_types = [type(e).__name__ for e in harness.published_events]
-        raise AssertionError(
-            f"Event count mismatch: expected {count} events, "
-            f"got {actual_count}.\n"
-            f"Published: {event_types}"
-        )
+    EventAssertions(harness.published_events).assert_event_count(count)
 
 
 __all__ = [
