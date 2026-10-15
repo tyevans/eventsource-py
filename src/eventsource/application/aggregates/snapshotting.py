@@ -1,8 +1,4 @@
-"""Snapshotting collaborators for the aggregate repository (ADR 0021).
-
-Snapshots are disposable optimizations, never the source of truth: every
-automatic-path failure degrades to full event replay instead of raising.
-"""
+"""Snapshotting collaborators for the aggregate repository (ADR 0021)."""
 
 import logging
 from collections import Counter
@@ -30,8 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 class SnapshotMissReason(StrEnum):
-    """Why a snapshot read did not yield a usable snapshot."""
-
     MISSING = "missing"
     SCHEMA_MISMATCH = "schema_mismatch"
     STORE_ERROR = "store_error"
@@ -46,7 +40,6 @@ _miss_tally: Counter[str] = Counter()
 
 
 def _get_miss_counter() -> Any:
-    """Lazily build the OTel counter, or return None when OTel is absent."""
     global _meter, _miss_counter
     if _miss_counter is None and OTEL_METRICS_AVAILABLE and _otel_metrics is not None:
         if _meter is None:
@@ -60,26 +53,21 @@ def _get_miss_counter() -> Any:
 
 
 def record_snapshot_miss(reason: SnapshotMissReason, aggregate_type: str) -> None:
-    """Count one snapshot read that fell back to full event replay."""
     _miss_tally[reason.value] += 1
     if (counter := _get_miss_counter()) is not None:
         counter.add(1, {"reason": reason.value, "aggregate_type": aggregate_type})
 
 
 def snapshot_miss_counts() -> dict[str, int]:
-    """In-process tally of snapshot misses by reason, since last reset."""
     return dict(_miss_tally)
 
 
 def reset_snapshot_miss_counts() -> None:
-    """Clear the in-process tally. For tests; does not affect OTel."""
     _miss_tally.clear()
 
 
 @runtime_checkable
 class SnapshotPolicy(Protocol):
-    """Decides *when* a snapshot should be taken. Pure and synchronous."""
-
     def should_snapshot(
         self, aggregate: AggregateRoot[Any], events_since_snapshot: int
     ) -> bool: ...
@@ -87,8 +75,6 @@ class SnapshotPolicy(Protocol):
 
 @dataclass(frozen=True)
 class EveryNEvents:
-    """Snapshot when a save carries the aggregate past a multiple of n."""
-
     n: int
 
     def __post_init__(self) -> None:
@@ -104,8 +90,6 @@ class EveryNEvents:
 
 @dataclass(frozen=True)
 class Never:
-    """Manual mode: automatic snapshotting disabled."""
-
     def should_snapshot(self, aggregate: AggregateRoot[Any], events_since_snapshot: int) -> bool:
         return False
 
@@ -113,7 +97,6 @@ class Never:
 async def take_snapshot(
     aggregate: AggregateRoot[Any], aggregate_type: str, store: SnapshotStore
 ) -> Snapshot:
-    """Build and persist a snapshot of the aggregate. Errors propagate to caller."""
     schema_version = getattr(type(aggregate), "schema_version", 1)
     snapshot = Snapshot(
         aggregate.aggregate_id,
@@ -136,20 +119,15 @@ async def read_valid_snapshot(
     aggregate_type: str,
     aggregate_factory: type[AggregateRoot[Any]],
 ) -> Snapshot | None:
-    """Fetch and validate a snapshot for the load path; failures record a miss and return None."""
     try:
         snapshot = await store.get_snapshot(aggregate_id, aggregate_type)
     except SnapshotDeserializationError as e:
         record_snapshot_miss(SnapshotMissReason.DESERIALIZATION_ERROR, aggregate_type)
-        logger.warning(
-            f"Corrupt snapshot for {aggregate_type}/{aggregate_id}: {e}. Falling back to event replay."
-        )
+        logger.warning(f"Corrupt snapshot for {aggregate_type}/{aggregate_id}: {e}.")
         return None
     except Exception as e:
         record_snapshot_miss(SnapshotMissReason.STORE_ERROR, aggregate_type)
-        logger.warning(
-            f"Error loading snapshot for {aggregate_type}/{aggregate_id}: {e}. Falling back to event replay."
-        )
+        logger.warning(f"Error loading snapshot for {aggregate_type}/{aggregate_id}: {e}.")
         return None
     if snapshot is None:
         record_snapshot_miss(SnapshotMissReason.MISSING, aggregate_type)
@@ -158,7 +136,7 @@ async def read_valid_snapshot(
     if snapshot.schema_version != expected:
         record_snapshot_miss(SnapshotMissReason.SCHEMA_MISMATCH, aggregate_type)
         logger.info(
-            f"Snapshot schema version mismatch for {aggregate_type}/{aggregate_id}: snapshot has v{snapshot.schema_version}, aggregate expects v{expected}. Falling back to full event replay."
+            f"Snapshot schema version mismatch for {aggregate_type}/{aggregate_id}: v{snapshot.schema_version} != v{expected}."
         )
         return None
     logger.debug(
@@ -169,21 +147,15 @@ async def read_valid_snapshot(
 
 @runtime_checkable
 class SnapshotScheduler(Protocol):
-    """Decides *how* a snapshot write executes: inline or in background."""
-
     async def schedule(
         self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None: ...
-
     @property
     def pending_count(self) -> int: ...
-
     async def await_pending(self) -> int: ...
 
 
 class ImmediateScheduler:
-    """Awaits the write inline; failures are logged and swallowed."""
-
     async def schedule(
         self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None:
@@ -191,8 +163,7 @@ class ImmediateScheduler:
             return await write
         except Exception as e:
             logger.warning(
-                f"Failed to create snapshot for {aggregate_type}/{aggregate_id}: {e}",
-                exc_info=True,
+                f"Failed to create snapshot for {aggregate_type}/{aggregate_id}: {e}", exc_info=True
             )
             return None
 
@@ -205,8 +176,6 @@ class ImmediateScheduler:
 
 
 class BackgroundScheduler:
-    """Fire-and-forget via BackgroundTaskManager; await_pending() joins pending tasks."""
-
     def __init__(self) -> None:
         self._tasks = BackgroundTaskManager()
 

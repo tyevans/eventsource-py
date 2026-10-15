@@ -1,6 +1,4 @@
-"""
-Subscription error handler coordinating classification, DLQ, callbacks, and health tracking.
-"""
+"""Subscription error handler coordinating classification, DLQ, callbacks, and health tracking."""
 
 from __future__ import annotations
 
@@ -35,25 +33,7 @@ if TYPE_CHECKING:
 
 
 class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
-    """
-    Unified error handler for subscription event processing.
-
-    Integrates error classification, tracking, callbacks, and DLQ handling
-    into a cohesive error handling strategy.
-
-    This class is the main entry point for error handling in subscriptions.
-
-    Example:
-        >>> handler = SubscriptionErrorHandler(
-        ...     subscription_name="OrderProjection",
-        ...     dlq_repo=dlq_repo,
-        ... )
-        >>> handler.on_error(async_callback)
-        >>> try:
-        ...     await process_event(event)
-        ... except Exception as e:
-        ...     await handler.handle_error(e, envelope)
-    """
+    """Unified error handler for subscription event processing."""
 
     def __init__(
         self,
@@ -62,15 +42,7 @@ class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
         dlq_repo: DLQRepository | None = None,
         classifier: ErrorClassifier | None = None,
     ) -> None:
-        """
-        Initialize the subscription error handler.
-
-        Args:
-            subscription_name: Name of the subscription this handler is for
-            config: Error handling configuration
-            dlq_repo: Optional DLQ repository for dead letter handling
-            classifier: Optional custom error classifier
-        """
+        """Initialize the subscription error handler."""
         self.subscription_name = subscription_name
         self.config = config or ErrorHandlingConfig()
         self._dlq_repo = dlq_repo
@@ -88,19 +60,11 @@ class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
         """Register a synchronous callback for error notifications."""
         self._callback_registry.register_sync(callback)
 
-    def on_category(
-        self,
-        category: ErrorCategory,
-        callback: ErrorCallback,
-    ) -> None:
+    def on_category(self, category: ErrorCategory, callback: ErrorCallback) -> None:
         """Register a callback for errors of a specific category."""
         self._callback_registry.register_for_category(category, callback)
 
-    def on_severity(
-        self,
-        severity: ErrorSeverity,
-        callback: ErrorCallback,
-    ) -> None:
+    def on_severity(self, severity: ErrorSeverity, callback: ErrorCallback) -> None:
         """Register a callback for errors of a specific severity."""
         self._callback_registry.register_for_severity(severity, callback)
 
@@ -111,28 +75,8 @@ class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
         event: DomainEvent | None = None,
         retry_count: int = 0,
     ) -> ErrorInfo:
-        """
-        Handle a processing error.
-
-        This method:
-        1. Classifies the error
-        2. Creates ErrorInfo with full context
-        3. Logs the error
-        4. Records statistics
-        5. Optionally sends to DLQ
-        6. Notifies callbacks
-
-        Args:
-            error: The exception that occurred
-            envelope: The event envelope being processed (if available)
-            event: The domain event being processed (if available)
-            retry_count: Number of retry attempts made
-
-        Returns:
-            ErrorInfo with classification and tracking data
-        """
+        """Handle a processing error (classify, log, record stats, DLQ, notify callbacks)."""
         classification = self._classifier.classify(error)
-
         error_info = ErrorInfo(
             event_id=self._get_event_id(envelope, event),
             event_type=self._get_event_type(envelope, event),
@@ -144,7 +88,6 @@ class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
             subscription_name=self.subscription_name,
             retry_count=retry_count,
         )
-
         self._log_error(error_info)
 
         async with self._lock:
@@ -192,12 +135,7 @@ class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
         return self._stats.total_errors
 
     def get_health_status(self) -> dict[str, Any]:
-        """
-        Get health status based on error state.
-
-        Returns:
-            Dictionary with health indicators
-        """
+        """Get health status based on error state."""
         is_healthy = True
         warnings: list[str] = []
         errors: list[str] = []

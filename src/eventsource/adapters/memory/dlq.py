@@ -20,26 +20,17 @@ from eventsource.ports.dlq import DLQEntry, DLQStats, ProjectionFailureCount
 
 
 class InMemoryDLQRepository:
-    """
-    In-memory implementation of DLQ repository for testing.
+    """In-memory implementation of DLQ repository for testing."""
 
-    Stores failed events in memory. All data is lost when process terminates.
-    """
-
-    def __init__(
-        self,
-        tracer: Tracer | None = None,
-        enable_tracing: bool = True,
-    ) -> None:
+    def __init__(self, tracer: Tracer | None = None, enable_tracing: bool = True) -> None:
         """Initialize an empty in-memory DLQ repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._entries: dict[str, DLQEntry] = {}  # key: "{event_id}:{projection_name}"
+        self._entries: dict[str, DLQEntry] = {}
         self._id_counter: int = 0
         self._lock: asyncio.Lock = asyncio.Lock()
 
     def _make_key(self, event_id: UUID, projection_name: str) -> str:
-        """Create a unique key for event_id + projection_name combination."""
         return f"{event_id}:{projection_name}"
 
     async def add_failed_event(
@@ -52,20 +43,17 @@ class InMemoryDLQRepository:
         retry_count: int = 0,
     ) -> None:
         """Add or update a failed event in the DLQ."""
-        with self._tracer.span(
-            "eventsource.dlq.add",
-            {
-                ATTR_EVENT_ID: str(event_id),
-                ATTR_EVENT_TYPE: event_type,
-                ATTR_PROJECTION_NAME: projection_name,
-                ATTR_ERROR_TYPE: str(error)[:100],
-                ATTR_RETRY_COUNT: retry_count,
-                ATTR_DB_SYSTEM: "memory",
-            },
-        ):
+        attrs = {
+            ATTR_EVENT_ID: str(event_id),
+            ATTR_EVENT_TYPE: event_type,
+            ATTR_PROJECTION_NAME: projection_name,
+            ATTR_ERROR_TYPE: str(error)[:100],
+            ATTR_RETRY_COUNT: retry_count,
+            ATTR_DB_SYSTEM: "memory",
+        }
+        with self._tracer.span("eventsource.dlq.add", attrs):
             now = datetime.now(UTC)
             key = self._make_key(event_id, projection_name)
-
             async with self._lock:
                 existing = self._entries.get(key)
                 if existing:
@@ -104,7 +92,6 @@ class InMemoryDLQRepository:
         }
         if projection_name:
             span_attributes[ATTR_PROJECTION_NAME] = projection_name
-
         with self._tracer.span("eventsource.dlq.get", span_attributes):
             async with self._lock:
                 entries = [
@@ -119,22 +106,19 @@ class InMemoryDLQRepository:
     async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """Get a specific failed event by its DLQ ID."""
         with self._tracer.span(
-            "eventsource.dlq.get_by_id",
-            {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"},
+            "eventsource.dlq.get_by_id", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
         ):
             async with self._lock:
                 return next((e for e in self._entries.values() if e.id == dlq_id), None)
 
     async def mark_resolved(self, dlq_id: int | str, resolved_by: str | UUID) -> None:
         """Mark a DLQ entry as resolved."""
-        with self._tracer.span(
-            "eventsource.dlq.resolve",
-            {
-                "dlq.id": str(dlq_id),
-                "resolved_by": str(resolved_by) if resolved_by else None,
-                ATTR_DB_SYSTEM: "memory",
-            },
-        ):
+        attrs = {
+            "dlq.id": str(dlq_id),
+            "resolved_by": str(resolved_by) if resolved_by else None,
+            ATTR_DB_SYSTEM: "memory",
+        }
+        with self._tracer.span("eventsource.dlq.resolve", attrs):
             now = datetime.now(UTC)
             async with self._lock:
                 for entry in self._entries.values():
@@ -147,8 +131,7 @@ class InMemoryDLQRepository:
     async def mark_retrying(self, dlq_id: int | str) -> None:
         """Mark a DLQ entry as being retried."""
         with self._tracer.span(
-            "eventsource.dlq.retry",
-            {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"},
+            "eventsource.dlq.retry", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
         ):
             async with self._lock:
                 for entry in self._entries.values():
@@ -160,61 +143,35 @@ class InMemoryDLQRepository:
         """Get aggregate statistics about DLQ health."""
         with self._tracer.span("eventsource.dlq.get_stats", {ATTR_DB_SYSTEM: "memory"}):
             async with self._lock:
-                active_entries = [
-                    e for e in self._entries.values() if e.status in ("failed", "retrying")
-                ]
-                total_failed = sum(1 for e in active_entries if e.status == "failed")
-                total_retrying = sum(1 for e in active_entries if e.status == "retrying")
-                affected_projections = len({e.projection_name for e in active_entries})
-
-                failures_with_dates = [
-                    e.first_failed_at for e in active_entries if e.first_failed_at
-                ]
-                oldest_failure = (
-                    min(failures_with_dates).isoformat() if failures_with_dates else None
-                )
-
+                active = [e for e in self._entries.values() if e.status in ("failed", "retrying")]
+                dates = [e.first_failed_at for e in active if e.first_failed_at]
                 return DLQStats(
-                    total_failed=total_failed,
-                    total_retrying=total_retrying,
-                    affected_projections=affected_projections,
-                    oldest_failure=oldest_failure,
+                    total_failed=sum(1 for e in active if e.status == "failed"),
+                    total_retrying=sum(1 for e in active if e.status == "retrying"),
+                    affected_projections=len({e.projection_name for e in active}),
+                    oldest_failure=min(dates).isoformat() if dates else None,
                 )
 
     async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """Get failure counts grouped by projection."""
-        with self._tracer.span(
-            "eventsource.dlq.get_projection_counts",
-            {ATTR_DB_SYSTEM: "memory"},
-        ):
+        with self._tracer.span("eventsource.dlq.get_projection_counts", {ATTR_DB_SYSTEM: "memory"}):
             async with self._lock:
-                active_entries = [
-                    e for e in self._entries.values() if e.status in ("failed", "retrying")
-                ]
                 projection_stats: dict[str, list[DLQEntry]] = {}
-                for entry in active_entries:
-                    projection_stats.setdefault(entry.projection_name, []).append(entry)
-
+                for entry in self._entries.values():
+                    if entry.status in ("failed", "retrying"):
+                        projection_stats.setdefault(entry.projection_name, []).append(entry)
                 result = []
                 for projection_name, entries in projection_stats.items():
-                    failures_with_first = [e.first_failed_at for e in entries if e.first_failed_at]
-                    failures_with_last = [e.last_failed_at for e in entries if e.last_failed_at]
-
+                    firsts = [e.first_failed_at for e in entries if e.first_failed_at]
+                    lasts = [e.last_failed_at for e in entries if e.last_failed_at]
                     result.append(
                         ProjectionFailureCount(
                             projection_name=projection_name,
                             failure_count=len(entries),
-                            oldest_failure=(
-                                min(failures_with_first).isoformat()
-                                if failures_with_first
-                                else None
-                            ),
-                            most_recent_failure=(
-                                max(failures_with_last).isoformat() if failures_with_last else None
-                            ),
+                            oldest_failure=min(firsts).isoformat() if firsts else None,
+                            most_recent_failure=max(lasts).isoformat() if lasts else None,
                         )
                     )
-
                 result.sort(key=lambda x: x.failure_count, reverse=True)
                 return result
 
@@ -227,11 +184,9 @@ class InMemoryDLQRepository:
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
             async with self._lock:
                 keys_to_delete = [
-                    key
-                    for key, entry in self._entries.items()
-                    if entry.status == "resolved"
-                    and entry.resolved_at
-                    and entry.resolved_at < cutoff
+                    k
+                    for k, e in self._entries.items()
+                    if e.status == "resolved" and e.resolved_at and e.resolved_at < cutoff
                 ]
                 for key in keys_to_delete:
                     del self._entries[key]

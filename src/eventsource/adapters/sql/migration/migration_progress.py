@@ -1,9 +1,4 @@
-"""Progress and operational state updates for PostgreSQL migration repository.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Progress and operational state updates for PostgreSQL migration repository."""
 
 from __future__ import annotations
 
@@ -47,18 +42,7 @@ class PostgreSQLMigrationProgressMixin:
         last_source_position: Position | None,
         last_target_position: Position | None = None,
     ) -> None:
-        """Update bulk copy progress.
-
-        Updates the progress tracking fields for the migration, including
-        the number of events copied and the last processed positions.
-
-        Args:
-            migration_id: UUID of the migration
-            events_copied: Total events copied so far
-            last_source_position: Last source position processed (opaque
-                token; None when nothing has been copied yet)
-            last_target_position: Last target position written (optional)
-        """
+        """Update bulk copy progress."""
         with self._tracer.span(
             "eventsource.migration_repo.update_progress",
             {
@@ -68,7 +52,6 @@ class PostgreSQLMigrationProgressMixin:
             },
         ):
             now = datetime.now(UTC)
-
             if last_target_position is not None:
                 query = text("""
                     UPDATE tenant_migrations
@@ -108,15 +91,7 @@ class PostgreSQLMigrationProgressMixin:
         migration_id: UUID,
         events_total: int,
     ) -> None:
-        """Set the total events count.
-
-        Sets the total number of events to be migrated. This is typically
-        determined at the start of the bulk copy phase.
-
-        Args:
-            migration_id: UUID of the migration
-            events_total: Total events to migrate
-        """
+        """Set the total events count."""
         with self._tracer.span(
             "eventsource.migration_repo.set_events_total",
             {
@@ -131,7 +106,6 @@ class PostgreSQLMigrationProgressMixin:
                     updated_at = :updated_at
                 WHERE id = :id
             """)
-
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(
                     query,
@@ -147,24 +121,12 @@ class PostgreSQLMigrationProgressMixin:
         migration_id: UUID,
         error: str,
     ) -> None:
-        """Record an error occurrence.
-
-        Increments the error count and stores the error message.
-        Error messages are truncated to 1000 characters.
-
-        Args:
-            migration_id: UUID of the migration
-            error: Error message
-        """
+        """Record an error occurrence (truncated to 1000 characters)."""
         with self._tracer.span(
             "eventsource.migration_repo.record_error",
-            {
-                "migration.id": str(migration_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             now = datetime.now(UTC)
-
             query = text("""
                 UPDATE tenant_migrations
                 SET error_count = error_count + 1,
@@ -173,7 +135,6 @@ class PostgreSQLMigrationProgressMixin:
                     updated_at = :updated_at
                 WHERE id = :id
             """)
-
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(
                     query,
@@ -191,16 +152,7 @@ class PostgreSQLMigrationProgressMixin:
         paused: bool,
         reason: str | None = None,
     ) -> None:
-        """Set migration pause state.
-
-        Pauses or resumes a migration. When pausing, stores the reason
-        and timestamp. When resuming, clears the pause-related fields.
-
-        Args:
-            migration_id: UUID of the migration
-            paused: Whether to pause or resume
-            reason: Reason for pausing (if paused=True)
-        """
+        """Set migration pause state."""
         with self._tracer.span(
             "eventsource.migration_repo.set_paused",
             {
@@ -210,7 +162,6 @@ class PostgreSQLMigrationProgressMixin:
             },
         ):
             now = datetime.now(UTC)
-
             if paused:
                 query = text("""
                     UPDATE tenant_migrations
@@ -235,10 +186,7 @@ class PostgreSQLMigrationProgressMixin:
                         updated_at = :updated_at
                     WHERE id = :id
                 """)
-                params = {
-                    "id": migration_id,
-                    "updated_at": now,
-                }
+                params = {"id": migration_id, "updated_at": now}
 
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
