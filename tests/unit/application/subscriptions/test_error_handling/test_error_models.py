@@ -18,24 +18,47 @@ from eventsource.application.subscriptions.error_handling import (
 from tests.unit.application.subscriptions.test_error_handling._fixtures import pos
 
 
+def _make_error_info(
+    *,
+    position: int = 1,
+    error_type: str = "ValueError",
+    error_message: str = "Test error",
+    error_stacktrace: str = "...",
+    category: ErrorCategory = ErrorCategory.APPLICATION,
+    severity: ErrorSeverity = ErrorSeverity.MEDIUM,
+    retryable: bool = False,
+    subscription_name: str = "",
+    retry_count: int = 0,
+    sent_to_dlq: bool = False,
+) -> ErrorInfo:
+    return ErrorInfo(
+        event_id=uuid4(),
+        event_type="TestEvent",
+        position=pos(position),
+        error_type=error_type,
+        error_message=error_message,
+        error_stacktrace=error_stacktrace,
+        classification=ErrorClassification(
+            category=category,
+            severity=severity,
+            retryable=retryable,
+        ),
+        subscription_name=subscription_name,
+        retry_count=retry_count,
+        sent_to_dlq=sent_to_dlq,
+    )
+
+
 class TestErrorInfo:
     """Tests for ErrorInfo dataclass."""
 
     @pytest.fixture
     def error_info(self) -> ErrorInfo:
         """Create test error info."""
-        return ErrorInfo(
-            event_id=uuid4(),
-            event_type="TestEvent",
-            position=pos(100),
-            error_type="ValueError",
+        return _make_error_info(
+            position=100,
             error_message="Test error message",
             error_stacktrace="Traceback...",
-            classification=ErrorClassification(
-                category=ErrorCategory.APPLICATION,
-                severity=ErrorSeverity.MEDIUM,
-                retryable=False,
-            ),
             subscription_name="TestSubscription",
             retry_count=2,
         )
@@ -52,7 +75,6 @@ class TestErrorInfo:
     def test_error_info_to_dict(self, error_info: ErrorInfo):
         """Test conversion to dictionary."""
         data = error_info.to_dict()
-
         assert data["event_type"] == "TestEvent"
         assert data["position"] == pos(100).to_str()
         assert data["error_type"] == "ValueError"
@@ -81,22 +103,13 @@ class TestErrorStats:
 
     def test_record_transient_error(self, stats: ErrorStats):
         """Test recording a transient error."""
-        error_info = ErrorInfo(
-            event_id=uuid4(),
-            event_type="TestEvent",
-            position=pos(1),
+        error_info = _make_error_info(
             error_type="ConnectionError",
             error_message="Connection refused",
-            error_stacktrace="...",
-            classification=ErrorClassification(
-                category=ErrorCategory.TRANSIENT,
-                severity=ErrorSeverity.MEDIUM,
-                retryable=True,
-            ),
+            category=ErrorCategory.TRANSIENT,
+            retryable=True,
         )
-
         stats.record_error(error_info)
-
         assert stats.total_errors == 1
         assert stats.transient_errors == 1
         assert stats.permanent_errors == 0
@@ -107,22 +120,8 @@ class TestErrorStats:
 
     def test_record_permanent_error(self, stats: ErrorStats):
         """Test recording a permanent error."""
-        error_info = ErrorInfo(
-            event_id=uuid4(),
-            event_type="TestEvent",
-            position=pos(1),
-            error_type="ValueError",
-            error_message="Invalid data",
-            error_stacktrace="...",
-            classification=ErrorClassification(
-                category=ErrorCategory.APPLICATION,
-                severity=ErrorSeverity.MEDIUM,
-                retryable=False,
-            ),
-        )
-
+        error_info = _make_error_info(error_message="Invalid data")
         stats.record_error(error_info)
-
         assert stats.total_errors == 1
         assert stats.transient_errors == 0
         assert stats.permanent_errors == 1
@@ -130,29 +129,13 @@ class TestErrorStats:
 
     def test_record_dlq_error(self, stats: ErrorStats):
         """Test recording an error sent to DLQ."""
-        error_info = ErrorInfo(
-            event_id=uuid4(),
-            event_type="TestEvent",
-            position=pos(1),
-            error_type="ValueError",
-            error_message="Invalid data",
-            error_stacktrace="...",
-            classification=ErrorClassification(
-                category=ErrorCategory.APPLICATION,
-                severity=ErrorSeverity.MEDIUM,
-                retryable=False,
-            ),
-            sent_to_dlq=True,
-        )
-
+        error_info = _make_error_info(error_message="Invalid data", sent_to_dlq=True)
         stats.record_error(error_info)
-
         assert stats.dlq_count == 1
 
     def test_to_dict(self, stats: ErrorStats):
         """Test conversion to dictionary."""
         data = stats.to_dict()
-
         assert "total_errors" in data
         assert "transient_errors" in data
         assert "permanent_errors" in data
@@ -172,141 +155,77 @@ class TestErrorHandlerRegistry:
     @pytest.fixture
     def error_info(self) -> ErrorInfo:
         """Create test error info."""
-        return ErrorInfo(
-            event_id=uuid4(),
-            event_type="TestEvent",
-            position=pos(1),
-            error_type="ValueError",
-            error_message="Test error",
-            error_stacktrace="...",
-            classification=ErrorClassification(
-                category=ErrorCategory.APPLICATION,
-                severity=ErrorSeverity.HIGH,
-                retryable=False,
-            ),
-        )
+        return _make_error_info(severity=ErrorSeverity.HIGH)
 
     @pytest.mark.asyncio
     async def test_register_and_notify_callback(
-        self,
-        registry: ErrorHandlerRegistry,
-        error_info: ErrorInfo,
+        self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
     ):
         """Test registering and calling a callback."""
         callback = AsyncMock()
         registry.register(callback)
-
         await registry.notify(error_info)
-
         callback.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
     async def test_register_sync_callback(
-        self,
-        registry: ErrorHandlerRegistry,
-        error_info: ErrorInfo,
+        self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
     ):
         """Test registering and calling a sync callback."""
         callback = MagicMock()
         registry.register_sync(callback)
-
         await registry.notify(error_info)
-
         callback.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
-    async def test_category_callback(
-        self,
-        registry: ErrorHandlerRegistry,
-        error_info: ErrorInfo,
-    ):
+    async def test_category_callback(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
         """Test category-specific callback."""
         callback = AsyncMock()
         registry.register_for_category(ErrorCategory.APPLICATION, callback)
-
         await registry.notify(error_info)
-
         callback.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
     async def test_category_callback_not_called_for_different_category(
-        self,
-        registry: ErrorHandlerRegistry,
+        self, registry: ErrorHandlerRegistry
     ):
         """Test category callback not called for different category."""
         callback = AsyncMock()
         registry.register_for_category(ErrorCategory.TRANSIENT, callback)
-
-        error_info = ErrorInfo(
-            event_id=uuid4(),
-            event_type="TestEvent",
-            position=pos(1),
-            error_type="ValueError",
-            error_message="Test error",
-            error_stacktrace="...",
-            classification=ErrorClassification(
-                category=ErrorCategory.APPLICATION,  # Different category
-                severity=ErrorSeverity.MEDIUM,
-                retryable=False,
-            ),
-        )
-
+        error_info = _make_error_info(category=ErrorCategory.APPLICATION)
         await registry.notify(error_info)
-
         callback.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_severity_callback(
-        self,
-        registry: ErrorHandlerRegistry,
-        error_info: ErrorInfo,
-    ):
+    async def test_severity_callback(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
         """Test severity-specific callback."""
         callback = AsyncMock()
         registry.register_for_severity(ErrorSeverity.HIGH, callback)
-
         await registry.notify(error_info)
-
         callback.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
-    async def test_multiple_callbacks(
-        self,
-        registry: ErrorHandlerRegistry,
-        error_info: ErrorInfo,
-    ):
+    async def test_multiple_callbacks(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
         """Test multiple callbacks are called."""
-        callback1 = AsyncMock()
-        callback2 = AsyncMock()
-        callback3 = AsyncMock()
-
+        callback1, callback2, callback3 = AsyncMock(), AsyncMock(), AsyncMock()
         registry.register(callback1)
         registry.register(callback2)
         registry.register(callback3)
-
         await registry.notify(error_info)
-
         callback1.assert_called_once()
         callback2.assert_called_once()
         callback3.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_callback_error_does_not_stop_others(
-        self,
-        registry: ErrorHandlerRegistry,
-        error_info: ErrorInfo,
+        self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
     ):
         """Test that error in one callback doesn't stop others."""
         callback1 = AsyncMock(side_effect=RuntimeError("Callback error"))
         callback2 = AsyncMock()
-
         registry.register(callback1)
         registry.register(callback2)
-
-        # Should not raise
         await registry.notify(error_info)
-
-        # Second callback should still be called
         callback2.assert_called_once()
 
     def test_clear(self, registry: ErrorHandlerRegistry):
@@ -315,9 +234,7 @@ class TestErrorHandlerRegistry:
         registry.register(callback)
         registry.register_for_category(ErrorCategory.APPLICATION, callback)
         registry.register_for_severity(ErrorSeverity.HIGH, callback)
-
         registry.clear()
-
         assert len(registry._callbacks) == 0
         assert len(registry._category_callbacks) == 0
         assert len(registry._severity_callbacks) == 0
@@ -329,7 +246,6 @@ class TestErrorHandlingConfig:
     def test_default_config(self):
         """Test default configuration values."""
         config = ErrorHandlingConfig()
-
         assert config.strategy == ErrorHandlingStrategy.RETRY_THEN_CONTINUE
         assert config.max_recent_errors == 100
         assert config.max_errors_before_stop is None
@@ -343,7 +259,6 @@ class TestErrorHandlingConfig:
             max_errors_before_stop=1000,
             dlq_enabled=False,
         )
-
         assert config.strategy == ErrorHandlingStrategy.DLQ_ONLY
         assert config.max_recent_errors == 50
         assert config.max_errors_before_stop == 1000

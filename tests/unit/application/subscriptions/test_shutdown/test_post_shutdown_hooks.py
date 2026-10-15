@@ -12,6 +12,15 @@ from eventsource.application.subscriptions.shutdown import (
 )
 
 
+def _stopped_result() -> ShutdownResult:
+    return ShutdownResult(
+        phase=ShutdownPhase.STOPPED,
+        duration_seconds=5.0,
+        subscriptions_stopped=1,
+        events_drained=10,
+    )
+
+
 class TestPostShutdownHooks:
     """Tests for post-shutdown hook functionality."""
 
@@ -60,16 +69,8 @@ class TestPostShutdownHooks:
             received_result = result
 
         coordinator.on_post_shutdown(capture_result)
-
-        test_result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
-
+        test_result = _stopped_result()
         await coordinator._execute_post_shutdown_hooks(test_result)
-
         assert received_result is test_result
 
     @pytest.mark.asyncio
@@ -86,16 +87,7 @@ class TestPostShutdownHooks:
 
         coordinator.on_post_shutdown(hook1)
         coordinator.on_post_shutdown(hook2)
-
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
-
-        await coordinator._execute_post_shutdown_hooks(result)
-
+        await coordinator._execute_post_shutdown_hooks(_stopped_result())
         assert execution_order == [1, 2]
 
     @pytest.mark.asyncio
@@ -113,16 +105,7 @@ class TestPostShutdownHooks:
 
         coordinator.on_post_shutdown(failing_hook)
         coordinator.on_post_shutdown(success_hook)
-
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
-
-        await coordinator._execute_post_shutdown_hooks(result)
-
+        await coordinator._execute_post_shutdown_hooks(_stopped_result())
         assert hook2_executed
 
     @pytest.mark.asyncio
@@ -140,16 +123,7 @@ class TestPostShutdownHooks:
 
         coordinator.on_post_shutdown(slow_hook)
         coordinator.on_post_shutdown(success_hook)
-
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
-
-        await coordinator._execute_post_shutdown_hooks(result)
-
+        await coordinator._execute_post_shutdown_hooks(_stopped_result())
         assert hook2_executed
 
     @pytest.mark.asyncio
@@ -165,7 +139,6 @@ class TestPostShutdownHooks:
             received_forced = result.forced
 
         coordinator.on_post_shutdown(check_forced)
-
         result = ShutdownResult(
             phase=ShutdownPhase.FORCED,
             duration_seconds=10.0,
@@ -173,9 +146,7 @@ class TestPostShutdownHooks:
             events_drained=0,
             forced=True,
         )
-
         await coordinator._execute_post_shutdown_hooks(result)
-
         assert hook_executed
         assert received_forced is True
 
@@ -197,7 +168,6 @@ class TestPostShutdownHooks:
             pass
 
         result = await coordinator.shutdown(stop_func=stop_func)
-
         assert hook_called
         assert received_result is result
 
@@ -227,7 +197,6 @@ class TestPostShutdownHooks:
             drain_func=drain_func,
             checkpoint_func=checkpoint_func,
         )
-
         assert received_result is not None
         assert received_result.events_drained == 42
         assert received_result.checkpoints_saved == 5
@@ -242,7 +211,6 @@ class TestPostShutdownHooks:
 
         coordinator.on_post_shutdown(hook)
         assert len(coordinator._post_shutdown_hooks) == 1
-
         coordinator.reset()
         assert len(coordinator._post_shutdown_hooks) == 0
 
@@ -250,16 +218,7 @@ class TestPostShutdownHooks:
     async def test_no_hooks_execution_is_safe(self):
         """Test that executing with no hooks registered is safe."""
         coordinator = ShutdownCoordinator()
-
-        result = ShutdownResult(
-            phase=ShutdownPhase.STOPPED,
-            duration_seconds=5.0,
-            subscriptions_stopped=1,
-            events_drained=10,
-        )
-
-        # Should not raise
-        await coordinator._execute_post_shutdown_hooks(result)
+        await coordinator._execute_post_shutdown_hooks(_stopped_result())
 
     @pytest.mark.asyncio
     async def test_hooks_execute_after_all_phases(self):
@@ -285,15 +244,12 @@ class TestPostShutdownHooks:
             phase_order.append("post_hook")
 
         coordinator.on_post_shutdown(post_hook)
-
         await coordinator.shutdown(
             stop_func=stop_func,
             drain_func=drain_func,
             checkpoint_func=checkpoint_func,
             close_func=close_func,
         )
-
-        # Post-shutdown hooks should be last
         assert phase_order == ["stop", "drain", "checkpoint", "close", "post_hook"]
 
     @pytest.mark.asyncio
@@ -313,7 +269,6 @@ class TestPostShutdownHooks:
             pass
 
         await coordinator.shutdown(stop_func=stop_func)
-
         assert received_reason == ShutdownReason.PROGRAMMATIC
 
     @pytest.mark.asyncio
@@ -332,7 +287,6 @@ class TestPostShutdownHooks:
             raise RuntimeError("Stop failed")
 
         result = await coordinator.shutdown(stop_func=failing_stop)
-
         assert hook_executed
         assert result.forced
         assert result.error is not None
