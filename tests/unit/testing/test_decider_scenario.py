@@ -194,3 +194,63 @@ class TestMultiAggregateDeciderScenario:
         assert len(scenario.states) == 2
         assert scenario.get_state(id_1).owner == "alice"
         assert scenario.get_state(id_2).owner == "bob"
+
+
+class TestWhenAllAndThenState:
+    def test_when_all_folds_commands_sequentially_and_collects_events(self) -> None:
+        agg_id = uuid4()
+        scenario = (
+            DeciderScenario(Account)
+            .when_all(
+                OpenAccount(account_id=agg_id, owner="alice"),
+                DepositMoney(account_id=agg_id, amount=40.0),
+                DepositMoney(account_id=agg_id, amount=15.0),
+            )
+            .then_events(AccountOpened, MoneyDeposited, MoneyDeposited)
+            .then_state(lambda s: s.is_open and s.owner == "alice" and s.balance == 55.0)
+        )
+        assert len(scenario.events) == 3
+
+    def test_when_all_stops_on_first_rejection(self) -> None:
+        agg_id = uuid4()
+        (
+            DeciderScenario(Account)
+            .when_all(
+                DepositMoney(account_id=agg_id, amount=10.0),
+                OpenAccount(account_id=agg_id, owner="alice"),
+            )
+            .then_rejected(match="not open")
+        )
+
+    def test_then_state_accepts_exact_state_value(self) -> None:
+        from tests.unit.domain.test_decider_aggregate import AccountState
+
+        agg_id = uuid4()
+        (
+            DeciderScenario(Account)
+            .when_all(
+                OpenAccount(account_id=agg_id, owner="alice"),
+                DepositMoney(account_id=agg_id, amount=25.0),
+            )
+            .then_state(AccountState(owner="alice", balance=25.0, is_open=True))
+        )
+
+    def test_then_state_fails_on_mismatch_or_false_predicate(self) -> None:
+        from tests.unit.domain.test_decider_aggregate import AccountState
+
+        agg_id = uuid4()
+        scenario = DeciderScenario(Account).when(OpenAccount(account_id=agg_id, owner="alice"))
+
+        with pytest.raises(AssertionError, match="state predicate"):
+            scenario.then_state(lambda s: s.balance > 0)
+
+        with pytest.raises(AssertionError, match="expected state"):
+            scenario.then_state(AccountState(owner="bob", balance=0.0, is_open=True))
+
+    def test_then_state_fails_when_command_was_rejected(self) -> None:
+        scenario = DeciderScenario(Account).when(DepositMoney(account_id=uuid4(), amount=5.0))
+        with pytest.raises(AssertionError, match="rejected"):
+            scenario.then_state(lambda s: True)
+
+    def test_private_state_shim_is_removed(self) -> None:
+        assert not hasattr(DeciderScenario, "_state")

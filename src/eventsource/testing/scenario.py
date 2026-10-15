@@ -94,17 +94,6 @@ class DeciderScenario:
         )
 
     @property
-    def _state(self) -> Any:
-        """Internal/backward-compatible state accessor."""
-        if not self._states:
-            return self._default_state
-        if len(self._states) == 1:
-            return next(iter(self._states.values()))
-        if self._last_target_id and self._last_target_id in self._states:
-            return self._states[self._last_target_id]
-        return next(iter(self._states.values()))
-
-    @property
     def states(self) -> dict[UUID, Any]:
         """Dictionary mapping aggregate IDs to their evolved states."""
         return dict(self._states)
@@ -181,20 +170,64 @@ class DeciderScenario:
 
     def when(self, command: object, *, aggregate_id: UUID | None = None) -> DeciderScenario:
         """Run decide, capturing produced events or the raised exception."""
-        target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
-        self._last_target_id = target_id
+        return self.when_all(command, aggregate_id=aggregate_id)
 
-        if target_id is not None:
-            current_state = self._states.get(target_id, self._initial_state())
-        else:
-            current_state = self._default_state
-
+    def when_all(self, *commands: object, aggregate_id: UUID | None = None) -> DeciderScenario:
+        """Sequentially run multiple commands, evolving state after each and collecting all events."""
         self._events = None
         self._error = None
-        try:
-            self._events = list(self._decide(command, current_state))
-        except Exception as exc:  # noqa: BLE001 - the exception IS the result
-            self._error = exc
+        collected: list[DomainEvent] = []
+
+        for command in commands:
+            target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
+            self._last_target_id = target_id
+
+            if target_id is not None:
+                current_state = self._states.get(target_id, self._initial_state())
+            else:
+                current_state = self._default_state
+
+            try:
+                emitted = list(self._decide(command, current_state))
+            except Exception as exc:  # noqa: BLE001 - the exception IS the result
+                self._error = exc
+                return self
+
+            for event in emitted:
+                current_state = self._evolve(current_state, event)
+            if target_id is not None:
+                self._states[target_id] = current_state
+            else:
+                self._default_state = current_state
+            collected.extend(emitted)
+
+        self._events = collected
+        return self
+
+    def then_no_error(self) -> DeciderScenario:
+        """Assert that the command(s) succeeded without raising an exception."""
+        if self._events is None and self._error is None:
+            raise AssertionError("call when() before then_no_error()")
+        if self._error is not None:
+            raise AssertionError(
+                f"expected command to succeed, but it was rejected: {self._error!r}"
+            )
+        return self
+
+    def then_state(
+        self,
+        expected_or_predicate: Any,
+        *,
+        aggregate_id: UUID | None = None,
+    ) -> DeciderScenario:
+        """Assert evolved state equals expected state or satisfies predicate."""
+        self.then_no_error()
+        actual = self.get_state(aggregate_id) if aggregate_id is not None else self.state
+        if callable(expected_or_predicate) and not isinstance(expected_or_predicate, type):
+            if not expected_or_predicate(actual):
+                raise AssertionError(f"state predicate returned False for state {actual!r}")
+        elif actual != expected_or_predicate:
+            raise AssertionError(f"expected state {expected_or_predicate!r}, got {actual!r}")
         return self
 
     def then_events(self, *event_types: type[DomainEvent]) -> DeciderScenario:
@@ -232,4 +265,7 @@ class DeciderScenario:
         return self
 
 
-__all__ = ["DeciderScenario"]
+Scenario = DeciderScenario
+ScenarioResult = DeciderScenario
+
+__all__ = ["DeciderScenario", "Scenario", "ScenarioResult"]
