@@ -26,12 +26,9 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
     """Declares and owns the RabbitMQ exchange/queue topology."""
 
     def __init__(
-        self,
-        config: RabbitMQEventBusConfig,
-        connection: RabbitMQConnectionManager,
+        self, config: RabbitMQEventBusConfig, connection: RabbitMQConnectionManager
     ) -> None:
-        self._config = config
-        self._connection = connection
+        self._config, self._connection = config, connection
         self._exchange: AbstractExchange | None = None
         self._dlq_exchange: AbstractExchange | None = None
         self._consumer_queue: AbstractQueue | None = None
@@ -55,7 +52,6 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         return self._dlq_queue
 
     async def declare_all(self) -> None:
-        """Declare exchange, consumer queue, bindings, and DLQ per config flags."""
         if self._config.enable_dlq:
             await self._declare_dlq()
         await self._declare_exchange()
@@ -63,11 +59,9 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         await self._bind_queue()
 
     async def redeclare(self) -> None:
-        """Re-declare topology after reconnection."""
         await self.declare_all()
 
     async def queue_health(self, queue_name: str) -> QueueInfo | None:
-        """Passively query a queue's message and consumer counts."""
         channel = self._connection.channel
         if channel is None or channel.is_closed:
             return None
@@ -76,15 +70,9 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
             msg_cnt = declared.declaration_result.message_count or 0
             con_cnt = declared.declaration_result.consumer_count or 0
             state = "running" if con_cnt > 0 else "idle"
-            self._logger.debug(
-                f"Queue info retrieved: {queue_name}",
-                extra={
-                    "queue_name": queue_name,
-                    "message_count": msg_cnt,
-                    "consumer_count": con_cnt,
-                    "state": state,
-                },
-            )
+            extra = {"queue_name": queue_name, "message_count": msg_cnt}
+            extra.update(consumer_count=con_cnt, state=state)
+            self._logger.debug(f"Queue info retrieved: {queue_name}", extra=extra)
             return QueueInfo(
                 name=queue_name, message_count=msg_cnt, consumer_count=con_cnt, state=state
             )
@@ -96,7 +84,6 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
             )
 
     async def _declare_exchange(self) -> None:
-        """Declare the main event exchange with the configured exchange type."""
         channel, cfg = self._connection.require_channel(), self._config
         exchange_type_map = {
             "topic": ExchangeType.TOPIC,
@@ -108,18 +95,14 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
         self._exchange = await channel.declare_exchange(
             name=cfg.exchange_name, type=ex_type, durable=cfg.durable, auto_delete=cfg.auto_delete
         )
-        self._logger.info(
-            f"Declared exchange: {cfg.exchange_name}",
-            extra={
-                "exchange_name": cfg.exchange_name,
-                "exchange_type": cfg.exchange_type,
-                "durable": cfg.durable,
-                "auto_delete": cfg.auto_delete,
-            },
-        )
+        extra: dict[str, Any] = {
+            "exchange_name": cfg.exchange_name,
+            "exchange_type": cfg.exchange_type,
+        }
+        extra.update(durable=cfg.durable, auto_delete=cfg.auto_delete)
+        self._logger.info(f"Declared exchange: {cfg.exchange_name}", extra=extra)
 
     async def _declare_queue(self) -> None:
-        """Declare the consumer queue with optional DLQ arguments."""
         channel, cfg = self._connection.require_channel(), self._config
         arguments: dict[str, Any] = {}
         if cfg.enable_dlq:
@@ -131,18 +114,11 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
             auto_delete=cfg.auto_delete,
             arguments=arguments or None,
         )
-        self._logger.info(
-            f"Declared queue: {cfg.queue_name}",
-            extra={
-                "queue_name": cfg.queue_name,
-                "durable": cfg.durable,
-                "auto_delete": cfg.auto_delete,
-                "dlq_enabled": cfg.enable_dlq,
-            },
-        )
+        extra = {"queue_name": cfg.queue_name, "durable": cfg.durable}
+        extra.update(auto_delete=cfg.auto_delete, dlq_enabled=cfg.enable_dlq)
+        self._logger.info(f"Declared queue: {cfg.queue_name}", extra=extra)
 
     async def _declare_dlq(self) -> None:
-        """Declare the dead letter direct exchange, queue, and binding."""
         channel, cfg = self._connection.require_channel(), self._config
         self._dlq_exchange = await channel.declare_exchange(
             name=cfg.dlq_exchange_name,
@@ -165,22 +141,13 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
             auto_delete=cfg.auto_delete,
             arguments=dlq_args or None,
         )
-        self._logger.info(
-            f"Declared DLQ queue: {cfg.dlq_queue_name}",
-            extra={
-                "dlq_queue_name": cfg.dlq_queue_name,
-                "durable": cfg.durable,
-                "dlq_message_ttl": cfg.dlq_message_ttl,
-                "dlq_max_length": cfg.dlq_max_length,
-            },
-        )
+        dlq_extra = {"dlq_queue_name": cfg.dlq_queue_name, "durable": cfg.durable}
+        dlq_extra.update(dlq_message_ttl=cfg.dlq_message_ttl, dlq_max_length=cfg.dlq_max_length)
+        self._logger.info(f"Declared DLQ queue: {cfg.dlq_queue_name}", extra=dlq_extra)
         await self._dlq_queue.bind(exchange=self._dlq_exchange, routing_key=cfg.queue_name)
+        bind_extra = {"dlq_queue_name": cfg.dlq_queue_name, "routing_key": cfg.queue_name}
+        bind_extra["dlq_exchange_name"] = cfg.dlq_exchange_name
         self._logger.info(
-            f"Bound DLQ queue {cfg.dlq_queue_name} to DLQ exchange "
-            f"{cfg.dlq_exchange_name} with routing key '{cfg.queue_name}'",
-            extra={
-                "dlq_queue_name": cfg.dlq_queue_name,
-                "dlq_exchange_name": cfg.dlq_exchange_name,
-                "routing_key": cfg.queue_name,
-            },
+            f"Bound DLQ queue {cfg.dlq_queue_name} to DLQ exchange {cfg.dlq_exchange_name} with routing key '{cfg.queue_name}'",
+            extra=bind_extra,
         )

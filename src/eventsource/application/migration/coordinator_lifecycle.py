@@ -71,20 +71,15 @@ class CoordinatorLifecycleMixin:
         created_by: str | None = None,
     ) -> Migration:
         """Start a new tenant migration and begin background bulk copy phase."""
-        with self._tracer.span(
-            "eventsource.coordinator.start_migration",
-            {
-                ATTR_MIGRATION_TENANT_ID: str(tenant_id),
-                ATTR_MIGRATION_SOURCE_STORE: self._source_store_id,
-                ATTR_MIGRATION_TARGET_STORE: target_store_id,
-                "target_store_id": target_store_id,
-            },
-        ):
-            config = config or MigrationConfig()
-            existing = await self._migration_repo.get_by_tenant(tenant_id)
-            if existing is not None:
+        attrs = {
+            ATTR_MIGRATION_TENANT_ID: str(tenant_id),
+            ATTR_MIGRATION_SOURCE_STORE: self._source_store_id,
+            ATTR_MIGRATION_TARGET_STORE: target_store_id,
+            "target_store_id": target_store_id,
+        }
+        with self._tracer.span("eventsource.coordinator.start_migration", attrs):
+            if (existing := await self._migration_repo.get_by_tenant(tenant_id)) is not None:
                 raise MigrationAlreadyExistsError(tenant_id, existing.id)
-
             self._router.register_store(target_store_id, target_store)
             migration = Migration(
                 id=uuid4(),
@@ -92,7 +87,7 @@ class CoordinatorLifecycleMixin:
                 source_store_id=self._source_store_id,
                 target_store_id=target_store_id,
                 phase=MigrationPhase.PENDING,
-                config=config,
+                config=config or MigrationConfig(),
                 created_by=created_by,
             )
             await self._migration_repo.create(migration)
@@ -103,55 +98,45 @@ class CoordinatorLifecycleMixin:
                 self._source_store_id,
                 target_store_id,
             )
-
+            details = {
+                "tenant_id": str(tenant_id),
+                "source_store_id": self._source_store_id,
+                "target_store_id": target_store_id,
+            }
             await self._record_audit(
                 MigrationAuditEntry.migration_started(
                     migration_id=migration.id,
                     occurred_at=datetime.now(UTC),
                     operator=created_by,
-                    details={
-                        "tenant_id": str(tenant_id),
-                        "source_store_id": self._source_store_id,
-                        "target_store_id": target_store_id,
-                    },
+                    details=details,
                 )
             )
-
             await self._routing_repo.get_or_default(tenant_id, self._source_store_id)
             await self._routing_repo.set_migration_state(
                 tenant_id, TenantMigrationState.BULK_COPY, migration.id
             )
             await self._migration_repo.update_phase(migration.id, MigrationPhase.BULK_COPY)
-
-            migration_id = migration.id
-            refreshed_migration = await self._migration_repo.get(migration_id)
-            if refreshed_migration is None:
-                raise MigrationNotFoundError(migration_id)
-            migration = refreshed_migration
-
-            self._target_stores[migration.id] = target_store
-            self._active_tasks[migration.id] = asyncio.create_task(
-                self._run_bulk_copy(migration, target_store),
-                name=f"bulk_copy_{migration.id}",
+            if (refreshed := await self._migration_repo.get(migration.id)) is None:
+                raise MigrationNotFoundError(migration.id)
+            self._target_stores[refreshed.id] = target_store
+            self._active_tasks[refreshed.id] = asyncio.create_task(
+                self._run_bulk_copy(refreshed, target_store), name=f"bulk_copy_{refreshed.id}"
             )
-            return migration
+            return refreshed
 
     async def get_status(self, migration_id: UUID) -> MigrationStatus:
         """Get current status of a migration."""
         with self._tracer.span(
-            "eventsource.coordinator.get_status",
-            {ATTR_MIGRATION_ID: str(migration_id)},
+            "eventsource.coordinator.get_status", {ATTR_MIGRATION_ID: str(migration_id)}
         ):
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             return self._build_status(migration)
 
     async def list_active_migrations(self) -> list[MigrationStatus]:
         """List all active (non-terminal) migrations."""
         with self._tracer.span("eventsource.coordinator.list_active_migrations", {}):
-            migrations = await self._migration_repo.list_active()
-            return [self._build_status(m) for m in migrations]
+            return [self._build_status(m) for m in await self._migration_repo.list_active()]
 
     async def wait_for_phase(
         self,
@@ -164,8 +149,7 @@ class CoordinatorLifecycleMixin:
         """Wait for migration to reach a specific phase or terminal state."""
         start = asyncio.get_event_loop().time()
         while True:
-            migration = await self._migration_repo.get(migration_id)
-            if migration is None:
+            if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             if migration.phase == phase or migration.phase.is_terminal:
                 return migration
@@ -174,11 +158,9 @@ class CoordinatorLifecycleMixin:
             await asyncio.sleep(poll_interval)
 
     async def get_migration(self, migration_id: UUID) -> Migration | None:
-        """Get a migration by ID."""
         return await self._migration_repo.get(migration_id)
 
     async def get_migration_for_tenant(self, tenant_id: UUID) -> Migration | None:
-        """Get the active migration for a tenant."""
         return await self._migration_repo.get_by_tenant(tenant_id)
 
 

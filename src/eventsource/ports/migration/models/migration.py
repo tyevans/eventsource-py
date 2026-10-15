@@ -1,9 +1,4 @@
-"""
-Tenant migration operation data model.
-
-This module defines the central Migration entity tracking lifecycle state,
-progress, metrics, and error information for a tenant migration operation.
-"""
+"""Tenant migration operation data model."""
 
 from __future__ import annotations
 
@@ -18,44 +13,7 @@ from eventsource.ports.positions import Position
 
 @dataclass
 class Migration:
-    """
-    Represents a tenant migration.
-
-    Tracks the state and progress of migrating a tenant's events
-    from a source store to a target store.
-
-    This is a mutable dataclass because migration state changes
-    throughout the migration lifecycle.
-
-    Attributes:
-        id: Unique migration identifier.
-        tenant_id: Tenant being migrated.
-        source_store_id: Source event store identifier.
-        target_store_id: Target event store identifier.
-        phase: Current migration phase.
-        events_total: Total events to migrate.
-        events_copied: Events copied so far.
-        last_source_position: Last processed position in source (None
-            before anything has been copied).
-        last_target_position: Last written position in target (None
-            before anything has been copied).
-        started_at: When migration started.
-        bulk_copy_started_at: When bulk copy phase started.
-        bulk_copy_completed_at: When bulk copy phase completed.
-        dual_write_started_at: When dual-write phase started.
-        cutover_started_at: When cutover phase started.
-        completed_at: When migration completed.
-        config: Migration configuration.
-        error_count: Number of errors encountered.
-        last_error: Last error message.
-        last_error_at: When last error occurred.
-        is_paused: Whether migration is paused.
-        paused_at: When migration was paused.
-        pause_reason: Reason for pause.
-        created_at: When migration was created.
-        updated_at: When migration was last updated.
-        created_by: Who created the migration.
-    """
+    """Tracks the state and progress of migrating a tenant's events between stores."""
 
     id: UUID
     tenant_id: UUID
@@ -85,80 +43,43 @@ class Migration:
 
     @property
     def progress_percent(self) -> float:
-        """
-        Calculate progress percentage (0-100).
-
-        Returns:
-            Progress as a percentage.
-        """
+        """Calculate progress percentage (0-100)."""
         if self.events_total == 0:
             return 0.0
         return min(100.0, (self.events_copied / self.events_total) * 100)
 
     @property
     def is_active(self) -> bool:
-        """
-        Check if migration is active (not terminal).
-
-        Returns:
-            True if migration is still active.
-        """
+        """Check if migration is active (not terminal)."""
         return not self.phase.is_terminal
 
     @property
     def is_terminal(self) -> bool:
-        """
-        Check if migration has reached a terminal state.
-
-        Returns:
-            True if migration has completed, aborted, or failed.
-        """
+        """Check if migration has reached a terminal state."""
         return self.phase.is_terminal
 
     @property
     def events_remaining(self) -> int:
-        """
-        Calculate events remaining to copy.
-
-        Returns:
-            Number of events remaining.
-        """
+        """Calculate events remaining to copy."""
         return max(0, self.events_total - self.events_copied)
 
     @property
     def duration(self) -> timedelta | None:
-        """
-        Calculate total migration duration.
-
-        Returns:
-            Duration from start to completion or current time.
-        """
+        """Calculate total migration duration."""
         if self.started_at is None:
             return None
-        end = self.completed_at or datetime.now()
-        return end - self.started_at
+        return (self.completed_at or datetime.now()) - self.started_at
 
     @property
     def bulk_copy_duration(self) -> timedelta | None:
-        """
-        Calculate bulk copy phase duration.
-
-        Returns:
-            Duration of bulk copy phase.
-        """
+        """Calculate bulk copy phase duration."""
         if self.bulk_copy_started_at is None:
             return None
-        end = self.bulk_copy_completed_at or datetime.now()
-        return end - self.bulk_copy_started_at
+        return (self.bulk_copy_completed_at or datetime.now()) - self.bulk_copy_started_at
 
     @property
     def current_phase_started_at(self) -> datetime | None:
-        """
-        Get the start time of the current phase.
-
-        Returns:
-            Start time of the current phase.
-        """
+        """Get the start time of the current phase."""
         phase_start_times = {
             MigrationPhase.BULK_COPY: self.bulk_copy_started_at,
             MigrationPhase.DUAL_WRITE: self.dual_write_started_at,
@@ -168,18 +89,8 @@ class Migration:
         return phase_start_times.get(self.phase, self.started_at)
 
     def can_transition_to(self, target_phase: MigrationPhase) -> bool:
-        """
-        Check if transition to target phase is valid.
-
-        Args:
-            target_phase: The target phase.
-
-        Returns:
-            True if the transition is valid.
-        """
+        """Check if transition to target phase is valid."""
         return self.phase.can_transition_to(target_phase)
 
 
-__all__ = [
-    "Migration",
-]
+__all__ = ["Migration"]

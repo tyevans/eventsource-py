@@ -11,112 +11,7 @@ from typing import Any
 
 @dataclass
 class RabbitMQEventBusConfig:
-    """Configuration for RabbitMQ event bus.
-
-    This configuration class provides all settings needed for connecting to
-    RabbitMQ and managing message exchange and queue behavior. It follows
-    the same patterns as RedisEventBusConfig for consistency across the
-    eventsource library.
-
-    Attributes:
-        rabbitmq_url: RabbitMQ connection URL (amqp:// or amqps://).
-            Format: amqp://user:password@host:port/vhost
-        exchange_name: Name of the event exchange. Events are published to this
-            exchange and routed to bound queues based on exchange type.
-        exchange_type: Type of exchange. Supported types:
-            - 'topic': Route messages based on routing key patterns (default)
-            - 'direct': Route messages to queues with matching routing key
-            - 'fanout': Broadcast messages to all bound queues
-            - 'headers': Route based on message header attributes
-        consumer_group: Name of the consumer group. Used in queue naming to
-            allow multiple consumer groups to receive the same events.
-        consumer_name: Unique name for this consumer instance. Auto-generated
-            from hostname and UUID if not provided. Used for consumer tagging
-            and debugging.
-        prefetch_count: Maximum number of unacknowledged messages per consumer.
-            Controls flow and prevents overwhelming slow consumers.
-        max_retries: Maximum number of retry attempts before sending to DLQ.
-            After this many failures, the message is moved to the dead letter queue.
-        enable_dlq: Whether to enable dead letter queue. When True, messages that
-            fail after max_retries are sent to a DLQ for manual inspection.
-        dlq_exchange_suffix: Suffix appended to exchange_name for DLQ exchange name.
-        dlq_message_ttl: Time-to-live in milliseconds for messages in the DLQ.
-            If set, messages will be automatically removed from the DLQ after this time.
-            If None (default), messages persist until manually removed.
-        dlq_max_length: Maximum number of messages the DLQ can hold.
-            If set, oldest messages are dropped when the limit is exceeded.
-            If None (default), no limit is applied.
-        durable: Whether exchanges and queues survive broker restarts.
-            Should be True for production to ensure message durability.
-        auto_delete: Whether to delete queues when all consumers disconnect.
-            Should be False for production to prevent message loss.
-        reconnect_delay: Fixed delay in seconds between reconnection attempts.
-            Passed to aio-pika's ``connect_robust()`` as ``reconnect_interval``,
-            which retries at this constant interval -- aio-pika does not back
-            off, so there is no separate maximum-delay setting.
-        heartbeat: Heartbeat interval in seconds. Used by RabbitMQ to detect
-            dead connections and prevent firewall timeouts.
-        enable_tracing: Enable OpenTelemetry tracing if available. When True,
-            publishes and consumes are traced for observability.
-        ssl_options: Additional SSL/TLS options passed to aio-pika connect.
-            Used for advanced SSL configurations beyond the convenience fields.
-        ssl_context: Pre-configured SSLContext to use for TLS connections.
-            If provided, takes precedence over ssl_options and convenience fields.
-            Allows full control over SSL/TLS configuration.
-        verify_ssl: Whether to verify the server's SSL certificate. Default True.
-            Setting to False disables certificate verification (NOT recommended
-            for production). A warning is logged when verification is disabled.
-        ca_file: Path to CA certificate file for verifying server certificates.
-            Used when connecting to RabbitMQ with custom CA certificates.
-        cert_file: Path to client certificate file for mutual TLS (mTLS).
-            Must be used together with key_file for client certificate auth.
-        key_file: Path to client private key file for mutual TLS (mTLS).
-            Must be used together with cert_file for client certificate auth.
-        retry_base_delay: Base delay in seconds for exponential backoff between
-            retries. Actual delay is: retry_base_delay * (2 ** retry_count).
-            Default is 1.0 second.
-        retry_max_delay: Maximum delay in seconds between retries. Caps the
-            exponential backoff to prevent excessively long waits.
-            Default is 60.0 seconds.
-        retry_jitter: Add random jitter to retry delays to prevent thundering
-            herd. Value is 0.0 to 1.0 representing the fraction of delay to
-            randomize. Default is 0.1 (10% jitter).
-        shutdown_timeout: Default timeout in seconds for graceful shutdown.
-            Used by the context manager and shutdown() method when no explicit
-            timeout is provided. Default is 30.0 seconds.
-        routing_key_pattern: Pattern for binding queues to exchanges. Behavior
-            varies by exchange type:
-            - topic: Supports wildcards (* for single word, # for zero or more words).
-              Default is "#" (receive all messages).
-            - direct: Requires exact match. Default is the queue_name.
-            - fanout: Ignored (all bound queues receive all messages).
-            - headers: Ignored (routing uses header matching).
-            When None (default), the binding pattern is automatically chosen
-            based on exchange type. Set explicitly to override.
-        publish_chunk_size: Maximum number of events per chunk when publishing a
-            batch. Large batches are split into chunks of this size to prevent
-            overwhelming the broker; `max_concurrent_publishes` then bounds how
-            many publishes within a chunk run concurrently. Default is 100.
-            Unrelated to Kafka's `producer_max_batch_bytes` (a byte threshold)
-            or Redis's `stream_read_count` (a consume-side read count) --
-            this one counts events on the publish side.
-        max_concurrent_publishes: Maximum number of concurrent publish operations
-            within a batch chunk. Controls the level of parallelism when publishing
-            batches. Default is 10.
-
-    Example:
-        >>> config = RabbitMQEventBusConfig(
-        ...     rabbitmq_url="amqp://user:pass@rabbitmq.example.com:5672/",
-        ...     exchange_name="myapp.events",
-        ...     consumer_group="order-projection",
-        ...     prefetch_count=20,
-        ...     enable_dlq=True,
-        ... )
-        >>> print(config.queue_name)
-        'myapp.events.order-projection'
-        >>> print(config.dlq_exchange_name)
-        'myapp.events_dlq'
-    """
+    """Configuration for RabbitMQ event bus connection, topology, DLQ, and retry behavior."""
 
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     exchange_name: str = "events"
@@ -151,9 +46,7 @@ class RabbitMQEventBusConfig:
     def __post_init__(self) -> None:
         """Generate consumer name ({hostname}-{uuid[:8]}) if not provided."""
         if self.consumer_name is None:
-            hostname = socket.gethostname()
-            unique_id = str(uuid.uuid4())[:8]
-            self.consumer_name = f"{hostname}-{unique_id}"
+            self.consumer_name = f"{socket.gethostname()}-{str(uuid.uuid4())[:8]}"
 
     @property
     def queue_name(self) -> str:
@@ -174,13 +67,9 @@ class RabbitMQEventBusConfig:
         """Get the effective routing key pattern for queue binding."""
         if self.routing_key_pattern is not None:
             return self.routing_key_pattern
-
         exchange_type_lower = self.exchange_type.lower()
-        if exchange_type_lower == "topic":
-            return "#"
-        elif exchange_type_lower == "direct":
+        if exchange_type_lower == "direct":
             return self.queue_name
-        elif exchange_type_lower in ("fanout", "headers"):
+        if exchange_type_lower in ("fanout", "headers"):
             return ""
-        else:
-            return "#"
+        return "#"

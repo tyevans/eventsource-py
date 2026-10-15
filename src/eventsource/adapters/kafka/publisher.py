@@ -10,44 +10,29 @@ from typing import TYPE_CHECKING, Any
 from eventsource.adapters.kafka.serialization import EventSerializer
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
-from eventsource.observability.attributes import (
-    ATTR_AGGREGATE_ID,
-    ATTR_AGGREGATE_TYPE,
-    ATTR_EVENT_ID,
-    ATTR_EVENT_TYPE,
-    ATTR_MESSAGING_DESTINATION,
-    ATTR_MESSAGING_OPERATION,
-    ATTR_MESSAGING_SYSTEM,
-)
+from eventsource.observability import attributes as _attr
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from opentelemetry.propagate import inject
-    from opentelemetry.trace import Status, StatusCode
 
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.connection import KafkaConnectionManager
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
 
-    PROPAGATION_AVAILABLE = OTEL_AVAILABLE
-else:
-    try:
-        from opentelemetry.propagate import inject
-        from opentelemetry.trace import Status, StatusCode
+try:
+    from opentelemetry.propagate import inject
+    from opentelemetry.trace import Status, StatusCode
 
-        PROPAGATION_AVAILABLE = OTEL_AVAILABLE
-    except ImportError:
-        inject = Status = StatusCode = None
-        PROPAGATION_AVAILABLE = False
+    PROPAGATION_AVAILABLE = OTEL_AVAILABLE
+except ImportError:
+    inject = Status = StatusCode = None  # type: ignore[assignment, misc]
+    PROPAGATION_AVAILABLE = False
 
 logger = logging.getLogger("eventsource.bus.kafka")
 
 
 class KafkaPublisher:
-    """Owns the send/ack mechanics for publishing events to Kafka."""
-
     def __init__(
         self,
         config: KafkaEventBusConfig,
@@ -63,15 +48,12 @@ class KafkaPublisher:
         self._tracer, self._enable_tracing = tracer, enable_tracing
 
     async def publish_all(self, events: Sequence[DomainEvent], background: bool) -> None:
-        """Hand every event to the producer sequentially, then resolve delivery."""
         pending = [await self._begin_publish_single_event(event, background) for event in events]
-        if background:
-            for future, published_event, span in pending:
-                self._track_background_publish(future, published_event, span)
-                if span:
-                    span.end()
-        else:
+        if not background:
             await asyncio.gather(*(self._await_publish_ack(handle) for handle in pending))
+        for future, published_event, span in pending if background else ():
+            self._track_background_publish(future, published_event, span)
+            span.end() if span else None
 
     def _metric_attrs(self, event_type: str, **extra: str) -> dict[str, str]:
         base = {"messaging.system": "kafka", "messaging.destination": self._config.topic_name}
@@ -95,17 +77,15 @@ class KafkaPublisher:
         value, headers = self._serialize_event(event), self._create_headers(event)
         span: Any = None
         if self._enable_tracing:
-            attrs = {ATTR_MESSAGING_SYSTEM: "kafka", "messaging.destination_kind": "topic"}
-            attrs[ATTR_MESSAGING_DESTINATION] = self._config.topic_name
-            attrs[ATTR_MESSAGING_OPERATION] = "publish"
-            attrs[ATTR_EVENT_TYPE] = event.event_type
-            attrs[ATTR_EVENT_ID] = str(event.event_id)
-            attrs[ATTR_AGGREGATE_ID] = str(event.aggregate_id)
-            attrs[ATTR_AGGREGATE_TYPE] = event.aggregate_type
-            span_name = f"eventsource.event_bus.publish {event.event_type}"
-            span = self._tracer.start_span(
-                name=span_name, kind=SpanKindEnum.PRODUCER, attributes=attrs
-            )
+            attrs = {_attr.ATTR_MESSAGING_SYSTEM: "kafka", "messaging.destination_kind": "topic"}
+            attrs[_attr.ATTR_MESSAGING_DESTINATION] = self._config.topic_name
+            attrs[_attr.ATTR_MESSAGING_OPERATION] = "publish"
+            attrs[_attr.ATTR_EVENT_TYPE] = event.event_type
+            attrs[_attr.ATTR_EVENT_ID] = str(event.event_id)
+            attrs[_attr.ATTR_AGGREGATE_ID] = str(event.aggregate_id)
+            attrs[_attr.ATTR_AGGREGATE_TYPE] = event.aggregate_type
+            name = f"eventsource.event_bus.publish {event.event_type}"
+            span = self._tracer.start_span(name=name, kind=SpanKindEnum.PRODUCER, attributes=attrs)
             if PROPAGATION_AVAILABLE and inject is not None:
                 carrier: dict[str, str] = {}
                 inject(carrier)
@@ -115,8 +95,7 @@ class KafkaPublisher:
             future = await producer.send(topic=topic, key=key, value=value, headers=headers)
         except Exception as e:
             self._record_publish_error(event, span, e)
-            if span:
-                span.end()
+            span.end() if span else None
             raise
         return future, event, span
 
@@ -139,8 +118,7 @@ class KafkaPublisher:
             self._record_publish_error(event, span, e)
             raise
         finally:
-            if span:
-                span.end()
+            span.end() if span else None
 
     def _track_background_publish(self, future: Any, event: DomainEvent, span: Any) -> None:
         event_type, event_id = event.event_type, str(event.event_id)
@@ -180,7 +158,9 @@ class KafkaPublisher:
         headers = [(f, str(getattr(event, f)).encode("utf-8")) for f in fields]
         headers.append(("occurred_at", event.occurred_at.isoformat().encode("utf-8")))
         headers.append(("correlation_id", str(event.correlation_id).encode("utf-8")))
-        for attr in ("tenant_id", "causation_id", "actor_id"):
-            if val := getattr(event, attr):
-                headers.append((attr, str(val).encode("utf-8")))
+        headers.extend(
+            (a, str(v).encode("utf-8"))
+            for a in ("tenant_id", "causation_id", "actor_id")
+            if (v := getattr(event, a))
+        )
         return headers
