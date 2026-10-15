@@ -60,18 +60,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         return self._model_class.model_validate(data)
 
     async def get_many(self, ids: list[UUID]) -> list[TModel]:
-        """Get multiple read models by their IDs.
-
-        Efficiently retrieves multiple records in a single database query.
-        Missing IDs are silently ignored (not included in results).
-
-        Args:
-            ids: List of unique identifiers
-
-        Returns:
-            List of found read models. Order is not guaranteed to match
-            input order. Missing IDs are not included.
-        """
+        """Get multiple read models by their IDs (missing IDs are ignored)."""
         if not ids:
             return []
 
@@ -97,17 +86,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             return [self._row_to_model(row) for row in rows]
 
     async def exists(self, id: UUID) -> bool:
-        """Check if a read model exists (and is not soft-deleted).
-
-        More efficient than `get()` when you only need to check existence.
-
-        Args:
-            id: Unique identifier to check
-
-        Returns:
-            True if the read model exists and is not soft-deleted,
-            False otherwise
-        """
+        """Check if a read model exists and is not soft-deleted."""
         with self._tracer.span(
             "eventsource.readmodel.exists",
             {
@@ -128,18 +107,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             return row is not None
 
     async def find(self, query: Query | None = None) -> list[TModel]:
-        """Find read models matching a query.
-
-        Supports filtering, ordering, and pagination. Soft-deleted records
-        are excluded unless `include_deleted=True` is set in the query.
-
-        Args:
-            query: Query with filters, ordering, pagination.
-                   If None, returns all non-deleted records.
-
-        Returns:
-            List of matching read models
-        """
+        """Find read models matching a query (filtering, ordering, pagination)."""
         if query is None:
             query = Query()
 
@@ -161,18 +129,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             return [self._row_to_model(row) for row in rows]
 
     async def count(self, query: Query | None = None) -> int:
-        """Count read models matching a query.
-
-        Useful for pagination or checking how many records match
-        without retrieving them all.
-
-        Args:
-            query: Query with filters.
-                   If None, counts all non-deleted records.
-
-        Returns:
-            Number of matching read models
-        """
+        """Count read models matching a query."""
         if query is None:
             query = Query()
 
@@ -193,14 +150,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             return int(row[0]) if row else 0
 
     def _build_select_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
-        """Build SELECT SQL from Query.
-
-        Args:
-            query: Query specification with filters, ordering, pagination
-
-        Returns:
-            Tuple of (SQL string, parameter tuple)
-        """
+        """Build SELECT SQL and parameter tuple from Query."""
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
         params: list[Any] = []
 
@@ -234,14 +184,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         return " ".join(parts), tuple(params)
 
     def _build_count_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
-        """Build COUNT SQL from Query.
-
-        Args:
-            query: Query specification with filters
-
-        Returns:
-            Tuple of (SQL string, parameter tuple)
-        """
+        """Build COUNT SQL and parameter tuple from Query."""
         parts = [f"SELECT COUNT(*) FROM {self._table_name}"]  # nosec B608
         params: list[Any] = []
 
@@ -260,23 +203,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         return " ".join(parts), tuple(params)
 
     def _filter_to_sql(self, filter_: Filter) -> tuple[str, list[Any]]:
-        """Convert a Filter to SQL clause with parameters.
-
-        Delegates the operator dispatch to `adapters/_common` so this
-        adapter cannot drift from its siblings -- see
-        `ReadModelRepository.find` for the semantics. UUID-to-text coercion
-        is this dialect's contribution, declared once in the shared
-        `SQLITE` dialect.
-
-        Args:
-            filter_: Filter condition to convert
-
-        Returns:
-            Tuple of (SQL clause, parameter list)
-
-        Raises:
-            ValueError: On an unknown field name or an unknown operator
-        """
+        """Convert a Filter to SQL clause with parameters via shared SQLITE dialect."""
         params: list[Any] = []
 
         def bind(value: Any) -> str:

@@ -1,6 +1,4 @@
-"""
-Types, enums, data structures, and statistics for subscription error handling.
-"""
+"""Types, enums, data structures, and statistics for subscription error handling."""
 
 from __future__ import annotations
 
@@ -19,17 +17,8 @@ _RATE_WINDOW_SECONDS = 60
 """Width of the rolling window behind `ErrorStats.error_rate_per_minute`."""
 
 
-# =============================================================================
-# Error Classification Enums & Data Structures
-# =============================================================================
-
-
 class ErrorCategory(Enum):
-    """
-    Categories of errors for classification.
-
-    These categories help determine how to handle different types of errors.
-    """
+    """Categories of errors for classification."""
 
     TRANSIENT = "transient"
     """Temporary failures that may succeed on retry (network issues, timeouts)."""
@@ -48,11 +37,7 @@ class ErrorCategory(Enum):
 
 
 class ErrorSeverity(Enum):
-    """
-    Severity levels for errors.
-
-    Determines the urgency and escalation path for errors.
-    """
+    """Severity levels determining urgency and escalation path for errors."""
 
     LOW = "low"
     """Minor errors that don't significantly impact processing."""
@@ -69,11 +54,7 @@ class ErrorSeverity(Enum):
 
 @dataclass(frozen=True)
 class ErrorClassification:
-    """
-    Classification result for an error.
-
-    Combines category, severity, and retry information.
-    """
+    """Classification result combining category, severity, and retry information."""
 
     category: ErrorCategory
     severity: ErrorSeverity
@@ -81,19 +62,9 @@ class ErrorClassification:
     description: str = ""
 
 
-# =============================================================================
-# Error Context and Tracking
-# =============================================================================
-
-
 @dataclass
 class ErrorInfo:
-    """
-    Detailed information about a processing error.
-
-    Captures all relevant context about an error for debugging,
-    monitoring, and DLQ handling.
-    """
+    """Detailed information about a processing error for debugging, monitoring, and DLQ."""
 
     event_id: UUID
     event_type: str
@@ -130,11 +101,7 @@ class ErrorInfo:
 
 @dataclass
 class ErrorStats:
-    """
-    Aggregate error statistics for a subscription.
-
-    Tracks error patterns and rates for health monitoring.
-    """
+    """Aggregate error statistics for a subscription."""
 
     total_errors: int = 0
     transient_errors: int = 0

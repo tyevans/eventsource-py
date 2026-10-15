@@ -1,42 +1,9 @@
 """
 SyncLagTracker - Monitor synchronization lag between source and target stores.
 
-The SyncLagTracker counts how many source events the target has not yet
-copied during the dual-write phase of migration. It calculates lag metrics,
-tracks lag history, and determines when synchronization is close enough for
-cutover.
-
-Responsibilities:
-    - Count source events not yet copied to the target
-    - Track lag metrics over time (current, average, max)
-    - Provide convergence detection for cutover eligibility
-    - Integrate with DualWriteInterceptor for real-time updates
-    - Support configurable sync thresholds from MigrationConfig
-
-Usage:
-    >>> from eventsource.application.migration import SyncLagTracker, MigrationConfig
-    >>>
-    >>> tracker = SyncLagTracker(
-    ...     source_store=source,
-    ...     target_store=target,
-    ...     config=MigrationConfig(),  # cutover_max_lag_events defaults to 0 (strict)
-    ... )
-    >>>
-    >>> # Calculate current lag (since = last copied source position)
-    >>> lag = await tracker.calculate_lag(since=migration.last_source_position)
-    >>> print(f"Lag: {lag.events} events")
-    >>>
-    >>> # Check if ready for cutover
-    >>> if tracker.is_sync_ready():
-    ...     print("Ready for cutover!")
-    >>>
-    >>> # Get lag statistics
-    >>> stats = tracker.get_lag_stats()
-    >>> print(f"Avg lag: {stats['average_lag']}, Max lag: {stats['max_lag']}")
-
-See Also:
-    - Task: P2-002-sync-lag-tracking.md
-    - FRD: docs/tasks/multi-tenant-live-migration/multi-tenant-live-migration.md
+Counts how many source events the target has not yet copied during the
+dual-write phase of migration, tracks lag metrics over time, and determines
+when synchronization is close enough for cutover.
 """
 
 from __future__ import annotations
@@ -69,37 +36,9 @@ class SyncLagTracker(SyncLagAnalysisMixin):
     """
     Tracks synchronization lag between source and target stores.
 
-    Counts the source events the target has not yet copied during the
-    dual-write phase of migration. Provides lag metrics, convergence
-    detection, and cutover eligibility checks.
-
-    The tracker maintains a sliding window of lag samples to calculate
-    statistics like average and max lag. It also detects convergence
-    trends to help determine optimal cutover timing.
-
-    Example:
-        >>> tracker = SyncLagTracker(
-        ...     source_store=shared_store,
-        ...     target_store=dedicated_store,
-        ...     config=MigrationConfig(cutover_max_lag_events=50),  # nonzero: accepts up to 50 events lost at the switch
-        ...     tenant_id=tenant_uuid,
-        ... )
-        >>>
-        >>> # Take a lag measurement
-        >>> lag = await tracker.calculate_lag(since=last_copied_position)
-        >>> print(f"Lag: {lag.events} events")
-        >>>
-        >>> # Check readiness for cutover
-        >>> if tracker.is_sync_ready():
-        ...     print("Synchronization lag is within threshold")
-
-    Attributes:
-        _source: The source (authoritative) event store.
-        _target: The target event store being migrated to.
-        _config: Migration configuration with sync threshold.
-        _tenant_id: Optional tenant ID for multi-tenant migrations.
-        _lag_samples: Deque of recent lag samples for statistics.
-        _current_lag: Most recent lag measurement.
+    Counts source events not yet copied during the dual-write phase of
+    migration and maintains a sliding window of lag samples for convergence
+    detection and cutover eligibility checks.
     """
 
     def __init__(
@@ -114,26 +53,7 @@ class SyncLagTracker(SyncLagAnalysisMixin):
         enable_tracing: bool = True,
         max_sample_history: int = 100,
     ) -> None:
-        """
-        Initialize the sync lag tracker.
-
-        Args:
-            source_store: The authoritative source event store.
-            target_store: The target event store being migrated to.
-            config: Migration configuration (defaults to MigrationConfig()).
-            tenant_id: Optional tenant ID for logging and tracing.
-            migration_id: Optional migration ID. When set, each
-                `calculate_lag()` call reports its result to that
-                migration's `MigrationMetrics` (the `migration.sync.lag`
-                gauge). Omitted by tests and any caller not tracking a
-                specific migration -- lag is still computed and returned
-                either way, only the metric emission is skipped.
-            tracer: Optional custom Tracer instance.
-            enable_tracing: Whether to enable OpenTelemetry tracing.
-            max_sample_history: Maximum number of lag samples to retain
-                for statistics calculation.
-        """
-        # Composition-based tracing (replaces TracingMixin)
+        """Initialize the sync lag tracker."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._source = source_store
@@ -143,13 +63,8 @@ class SyncLagTracker(SyncLagAnalysisMixin):
         self._migration_id = migration_id
         self._max_sample_history = max_sample_history
 
-        # Lag tracking state
         self._lag_samples: deque[LagSample] = deque(maxlen=max_sample_history)
         self._current_lag: SyncLag | None = None
-
-    # =========================================================================
-    # Public Properties
-    # =========================================================================
 
     @property
     def source_store(self) -> FullEventStore:
@@ -181,42 +96,12 @@ class SyncLagTracker(SyncLagAnalysisMixin):
         """Get the maximum lag events allowed for cutover."""
         return self._config.cutover_max_lag_events
 
-    # =========================================================================
-    # Lag Calculation
-    # =========================================================================
-
     async def calculate_lag(self, *, since: Position | None = None) -> SyncLag:
         """Count source events not yet copied, bounded by the sync threshold.
 
-        `since` is the last source position the target has copied (the
-        migration's `last_source_position`); None means nothing has been
-        copied and the count starts at the head of the source feed. The
-        count is exact up to `cutover_max_lag_events + 1`; beyond that it
-        reports the bound and stops reading, which is all a convergence
-        decision needs.
-
-        The reported `source_position` and `target_position` are each
-        store's own current position, carried for reporting only -- they
-        come from different stores and are never compared with each other.
-
-        Args:
-            since: The anchor to count from -- the furthest source
-                position provably present in the target. During
-                dual-write this is `DualWriteInterceptor.safe_lag_anchor`
-                applied to the migration's `last_source_position`, which
-                advances over mirrored writes but never past a mirroring
-                failure. None counts from the head of the source feed.
-
-                The interceptor's watermarks are in memory and are not
-                persisted, so after an orchestrator restart the anchor
-                falls back to the bulk-copy checkpoint and CUTOVER WILL
-                REFUSE until a fresh copy pass advances that checkpoint.
-                That trade is accepted deliberately -- persisting a
-                watermark per event would cost more than the failure mode
-                it avoids.
-
-        Returns:
-            SyncLag with the count behind and both stores' positions.
+        `since` is the last source position the target has copied (or None
+        to count from the head of the source feed). The count is exact up to
+        `cutover_max_lag_events + 1` and bounded beyond that.
         """
         with self._tracer.span(
             "eventsource.sync_lag.calculate_lag",

@@ -50,20 +50,8 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
     """
     Reads historical events from the event store and delivers to subscriber.
 
-    The CatchUpRunner handles:
-    - Batch reading from EventStore.read_all()
-    - Delivering events to the subscriber
-    - Checkpointing according to configuration
-    - Progress tracking and logging
-
-    The runner processes events from the current subscription position up to
-    a target position (typically obtained from GlobalEventFeed.current_position()).
-
-    Example:
-        >>> runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
-        >>> result = await runner.run_until_position(target_position=watermark)
-        >>> if result.completed:
-        ...     print(f"Processed {result.events_processed} events")
+    Processes events in batches from the current subscription position up to
+    a target position, handling delivery, checkpointing, and progress tracking.
     """
 
     def __init__(
@@ -90,13 +78,9 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
         self._last_checkpoint_time: float = 0.0
         self._reached_target = False
 
-        if event_filter is not None:
-            self._filter = event_filter
-        else:
-            self._filter = EventFilter.from_config_and_subscriber(
-                self.config,
-                subscription.subscriber,
-            )
+        self._filter = event_filter or EventFilter.from_config_and_subscriber(
+            self.config, subscription.subscriber
+        )
 
         self._batch_capable = supports_batch_handling(subscription.subscriber)
         self._flow_controller = FlowController()
@@ -121,20 +105,7 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
         self,
         target_position: Position,
     ) -> CatchUpResult:
-        """
-        Run catch-up until reaching the target position.
-
-        Reads events in batches from the current position until reaching the
-        target position, a stop request, or an error. A batch that delivers
-        nothing (every envelope filtered out) does not stop the loop -- only
-        reaching the target position (or a stop request) does.
-
-        Args:
-            target_position: Position to catch up to
-
-        Returns:
-            CatchUpResult with processing statistics
-        """
+        """Run catch-up in batches until reaching the target position, stop request, or error."""
         start_position = self.subscription.last_processed_position
 
         with self._tracer.span(
