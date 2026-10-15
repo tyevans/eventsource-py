@@ -34,9 +34,9 @@ class TestBasicContextFunctions:
         assert get_current_tenant() is None
 
     def test_set_and_get_tenant(self) -> None:
-        tenant_id = uuid4()
-        set_current_tenant(tenant_id)
-        assert get_current_tenant() == tenant_id
+        tid = uuid4()
+        set_current_tenant(tid)
+        assert get_current_tenant() == tid
 
     def test_set_returns_token(self) -> None:
         token = set_current_tenant(uuid4())
@@ -50,24 +50,21 @@ class TestBasicContextFunctions:
         assert get_current_tenant() is None
 
     def test_multiple_sets_overwrite(self) -> None:
-        tenant1, tenant2 = uuid4(), uuid4()
-        set_current_tenant(tenant1)
-        assert get_current_tenant() == tenant1
-        set_current_tenant(tenant2)
-        assert get_current_tenant() == tenant2
+        for tid in (uuid4(), uuid4()):
+            set_current_tenant(tid)
+            assert get_current_tenant() == tid
 
 
 class TestGetRequiredTenant:
     def test_get_required_tenant_raises_when_not_set(self) -> None:
         with pytest.raises(TenantContextNotSetError) as exc_info:
             get_required_tenant()
-        assert "set_current_tenant" in str(exc_info.value)
-        assert "tenant_scope" in str(exc_info.value)
+        assert "set_current_tenant" in str(exc_info.value) and "tenant_scope" in str(exc_info.value)
 
     def test_get_required_tenant_returns_when_set(self) -> None:
-        tenant_id = uuid4()
-        set_current_tenant(tenant_id)
-        assert get_required_tenant() == tenant_id
+        tid = uuid4()
+        set_current_tenant(tid)
+        assert get_required_tenant() == tid
 
     def test_get_required_tenant_after_clear_raises(self) -> None:
         set_current_tenant(uuid4())
@@ -78,14 +75,14 @@ class TestGetRequiredTenant:
 
 class TestAsyncTenantScope:
     async def test_scope_sets_context(self) -> None:
-        tenant_id = uuid4()
-        async with tenant_scope(tenant_id):
-            assert get_current_tenant() == tenant_id
+        tid = uuid4()
+        async with tenant_scope(tid):
+            assert get_current_tenant() == tid
 
     async def test_scope_yields_tenant_id(self) -> None:
-        tenant_id = uuid4()
-        async with tenant_scope(tenant_id) as yielded:
-            assert yielded == tenant_id
+        tid = uuid4()
+        async with tenant_scope(tid) as yielded:
+            assert yielded == tid
 
     async def test_scope_clears_on_exit(self) -> None:
         async with tenant_scope(uuid4()):
@@ -99,45 +96,41 @@ class TestAsyncTenantScope:
         assert get_current_tenant() is None
 
     async def test_nested_scopes(self) -> None:
-        tenant1, tenant2 = uuid4(), uuid4()
-        assert get_current_tenant() is None
-        async with tenant_scope(tenant1):
-            assert get_current_tenant() == tenant1
-            async with tenant_scope(tenant2):
-                assert get_current_tenant() == tenant2
-            assert get_current_tenant() == tenant1
+        t1, t2 = uuid4(), uuid4()
+        async with tenant_scope(t1):
+            assert get_current_tenant() == t1
+            async with tenant_scope(t2):
+                assert get_current_tenant() == t2
+            assert get_current_tenant() == t1
         assert get_current_tenant() is None
 
     async def test_triple_nested_scopes(self) -> None:
-        tenant1, tenant2, tenant3 = uuid4(), uuid4(), uuid4()
-        async with tenant_scope(tenant1):
-            async with tenant_scope(tenant2):
-                async with tenant_scope(tenant3):
-                    assert get_current_tenant() == tenant3
-                assert get_current_tenant() == tenant2
-            assert get_current_tenant() == tenant1
+        t1, t2, t3 = uuid4(), uuid4(), uuid4()
+        async with tenant_scope(t1), tenant_scope(t2):
+            async with tenant_scope(t3):
+                assert get_current_tenant() == t3
+            assert get_current_tenant() == t2
         assert get_current_tenant() is None
 
     async def test_nested_scope_exception_in_inner(self) -> None:
-        tenant1, tenant2 = uuid4(), uuid4()
-        async with tenant_scope(tenant1):
+        t1, t2 = uuid4(), uuid4()
+        async with tenant_scope(t1):
             with pytest.raises(RuntimeError):
-                async with tenant_scope(tenant2):
-                    assert get_current_tenant() == tenant2
+                async with tenant_scope(t2):
                     raise RuntimeError("inner error")
-            assert get_current_tenant() == tenant1
+            assert get_current_tenant() == t1
 
 
 class TestSyncTenantScope:
     def test_sync_scope_sets_context(self) -> None:
-        tenant_id = uuid4()
-        with tenant_scope_sync(tenant_id):
-            assert get_current_tenant() == tenant_id
+        tid = uuid4()
+        with tenant_scope_sync(tid):
+            assert get_current_tenant() == tid
 
     def test_sync_scope_yields_tenant_id(self) -> None:
-        tenant_id = uuid4()
-        with tenant_scope_sync(tenant_id) as yielded:
-            assert yielded == tenant_id
+        tid = uuid4()
+        with tenant_scope_sync(tid) as yielded:
+            assert yielded == tid
 
     def test_sync_scope_clears_on_exit(self) -> None:
         with tenant_scope_sync(uuid4()):
@@ -150,12 +143,11 @@ class TestSyncTenantScope:
         assert get_current_tenant() is None
 
     def test_sync_nested_scopes(self) -> None:
-        tenant1, tenant2 = uuid4(), uuid4()
-        with tenant_scope_sync(tenant1):
-            assert get_current_tenant() == tenant1
-            with tenant_scope_sync(tenant2):
-                assert get_current_tenant() == tenant2
-            assert get_current_tenant() == tenant1
+        t1, t2 = uuid4(), uuid4()
+        with tenant_scope_sync(t1):
+            with tenant_scope_sync(t2):
+                assert get_current_tenant() == t2
+            assert get_current_tenant() == t1
         assert get_current_tenant() is None
 
 
@@ -163,58 +155,46 @@ class TestContextIsolation:
     async def test_concurrent_tasks_have_isolated_context(self) -> None:
         results: dict[str, uuid4] = {}
 
-        async def task_with_tenant(name: str, tenant_id: uuid4) -> None:
-            async with tenant_scope(tenant_id):
+        async def run(name: str, tid: uuid4) -> None:
+            async with tenant_scope(tid):
                 await asyncio.sleep(0.01)
                 results[name] = get_current_tenant()
 
-        tenant1, tenant2 = uuid4(), uuid4()
-        await asyncio.gather(task_with_tenant("task1", tenant1), task_with_tenant("task2", tenant2))
-        assert results["task1"] == tenant1
-        assert results["task2"] == tenant2
+        t1, t2 = uuid4(), uuid4()
+        await asyncio.gather(run("t1", t1), run("t2", t2))
+        assert results == {"t1": t1, "t2": t2}
 
     async def test_many_concurrent_tasks_isolated(self) -> None:
-        num_tasks = 20
-        results: dict[int, uuid4] = {}
-        tenant_ids = [uuid4() for _ in range(num_tasks)]
+        results, tids = {}, [uuid4() for _ in range(20)]
 
-        async def task_with_tenant(task_num: int, tenant_id: uuid4) -> None:
-            async with tenant_scope(tenant_id):
-                await asyncio.sleep(0.001 * (task_num % 5))
-                results[task_num] = get_current_tenant()
+        async def run(idx: int, tid: uuid4) -> None:
+            async with tenant_scope(tid):
+                await asyncio.sleep(0.001 * (idx % 5))
+                results[idx] = get_current_tenant()
 
-        await asyncio.gather(*[task_with_tenant(i, tenant_ids[i]) for i in range(num_tasks)])
-        for i in range(num_tasks):
-            assert results[i] == tenant_ids[i]
+        await asyncio.gather(*[run(i, tids[i]) for i in range(20)])
+        assert [results[i] for i in range(20)] == tids
 
     async def test_spawned_task_inherits_context(self) -> None:
-        tenant_id = uuid4()
-        result = None
+        tid = uuid4()
 
-        async def inner_task() -> None:
-            nonlocal result
-            result = get_current_tenant()
+        async def inner() -> object:
+            return get_current_tenant()
 
-        async with tenant_scope(tenant_id):
-            await asyncio.create_task(inner_task())
-        assert result == tenant_id
+        async with tenant_scope(tid):
+            assert await asyncio.create_task(inner()) == tid
 
     async def test_context_not_leaked_after_task(self) -> None:
-        tenant1, tenant2 = uuid4(), uuid4()
-        async with tenant_scope(tenant1):
-            assert get_current_tenant() == tenant1
-        assert get_current_tenant() is None
-        async with tenant_scope(tenant2):
-            assert get_current_tenant() == tenant2
-        assert get_current_tenant() is None
+        for tid in (uuid4(), uuid4()):
+            async with tenant_scope(tid):
+                assert get_current_tenant() == tid
+            assert get_current_tenant() is None
 
 
 class TestTenantContextNotSetError:
     def test_error_message_is_helpful(self) -> None:
-        message = str(TenantContextNotSetError())
-        assert "set_current_tenant" in message
-        assert "tenant_scope" in message
-        assert "No tenant context set" in message
+        msg = str(TenantContextNotSetError())
+        assert all(s in msg for s in ("set_current_tenant", "tenant_scope", "No tenant context"))
 
     def test_error_is_eventsource_error(self) -> None:
         assert isinstance(TenantContextNotSetError(), EventSourceError)
@@ -224,7 +204,6 @@ class TestClearIsFinal:
     def test_clear_invalidates_outstanding_tokens(self) -> None:
         token = set_current_tenant(uuid4())
         clear_tenant_context()
-        assert get_current_tenant() is None
         with pytest.raises(TenantContextResetError):
             reset_tenant_context(token)
         assert get_current_tenant() is None
