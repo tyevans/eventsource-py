@@ -1,7 +1,7 @@
 ---
 id: "0189"
 title: Ergonomic Async Context Managers, Resource Leak Finalizers, and Snapshot Store Decomposition
-status: Refined
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

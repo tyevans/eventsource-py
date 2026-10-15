@@ -1,7 +1,7 @@
 ---
 id: "0181"
 title: Remove EventSourceJSONEncoder Legacy Shim and Migrate All JSON Call Sites to orjson
-status: Refined
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

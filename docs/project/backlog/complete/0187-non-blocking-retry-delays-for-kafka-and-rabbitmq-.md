@@ -1,7 +1,7 @@
 ---
 id: "0187"
 title: Remove SQL & PostgreSQL Lock Legacy Shims and Decompose Lock & DLQ Modules
-status: Refined
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

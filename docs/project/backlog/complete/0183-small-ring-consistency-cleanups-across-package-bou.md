@@ -1,7 +1,7 @@
 ---
 id: "0183"
 title: Consolidate Conformance Suites, Remove Legacy Checkpoint & Scenario Shims, and Decompose ReadModel Ports
-status: Refined
+status: Complete
 target_bc: core
 governing_adrs:
   - ADR-0002

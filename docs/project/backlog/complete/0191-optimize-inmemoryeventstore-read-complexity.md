@@ -1,7 +1,7 @@
 ---
 id: "0191"
 title: Optimize InMemoryEventStore Read Complexity with Category Index and Binary Search
-status: Proposed
+status: Complete
 target_bc: adapters
 governing_adrs:
   - ADR-0002

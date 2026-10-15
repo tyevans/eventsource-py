@@ -1,7 +1,7 @@
 ---
 id: "0190"
 title: Fluent AggregateRepository & Scenario Interfaces and Domain/Projection Module Decomposition
-status: Refined
+status: Complete
 target_bc: domain
 governing_adrs:
   - ADR-0002

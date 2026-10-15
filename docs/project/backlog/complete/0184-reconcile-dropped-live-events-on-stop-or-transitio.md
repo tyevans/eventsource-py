@@ -1,7 +1,7 @@
 ---
 id: "0184"
 title: Optimize Subscription EventFilter Fast-Paths, Decompose Filtering Modules, and Verify Lag Reconciliation
-status: Refined
+status: Complete
 target_bc: application
 governing_adrs:
   - ADR-0002
