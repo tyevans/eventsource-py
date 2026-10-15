@@ -61,34 +61,37 @@ class CutoverExecutionMixin:
         since: Position | None = None,
     ) -> CutoverResult:
         """Execute the atomic cutover from source to target store with automatic rollback."""
-        config = config or MigrationConfig()
-        effective_timeout_ms = timeout_ms if timeout_ms is not None else config.cutover_timeout_ms
+        cfg = config or MigrationConfig()
+        eff_timeout = timeout_ms if timeout_ms is not None else cfg.cutover_timeout_ms
         attrs = {
             ATTR_CUTOVER_MIGRATION_ID: str(migration_id),
             ATTR_MIGRATION_ID: str(migration_id),
             ATTR_TENANT_ID: str(tenant_id),
-            ATTR_CUTOVER_TIMEOUT_MS: effective_timeout_ms,
+            ATTR_CUTOVER_TIMEOUT_MS: eff_timeout,
             ATTR_TARGET_STORE_ID: target_store_id,
         }
         with self._tracer.span("eventsource.cutover.execute", attrs):
-            logger.info(
-                "Starting cutover for migration %s, tenant %s, target store %s",
-                migration_id,
-                tenant_id,
-                target_store_id,
-            )
+            msg = "Starting cutover for migration %s, tenant %s, target store %s"
+            logger.info(msg, migration_id, tenant_id, target_store_id)
             lock_key = migration_lock_key(tenant_id, "cutover")
             try:
                 async with self._lock_manager.acquire(
                     lock_key, timeout=self._lock_acquisition_timeout
                 ):
-                    args = (migration_id, tenant_id, lag_tracker, target_store_id, config)
-                    result = await self._execute_cutover_locked(*args, effective_timeout_ms, since)
+                    result = await self._execute_cutover_locked(
+                        migration_id,
+                        tenant_id,
+                        lag_tracker,
+                        target_store_id,
+                        cfg,
+                        eff_timeout,
+                        since,
+                    )
             except LockAcquisitionError as e:
                 logger.warning("Failed to acquire cutover lock for tenant %s: %s", tenant_id, e)
-                msg = f"Failed to acquire cutover lock: {e}"
+                err = f"Failed to acquire cutover lock: {e}"
                 result = CutoverResult(
-                    success=False, duration_ms=0.0, error_message=msg, rolled_back=False
+                    success=False, duration_ms=0.0, error_message=err, rolled_back=False
                 )
             get_migration_metrics(str(migration_id), str(tenant_id)).record_cutover_duration(
                 result.duration_ms, success=result.success
@@ -122,37 +125,25 @@ class CutoverExecutionMixin:
                     migration_id=migration_id,
                     reason="lag_calculation_failed",
                 )
-            if not lag.is_within_threshold(config.cutover_max_lag_events):
-                raise CutoverLagError(
-                    migration_id=migration_id,
-                    current_lag=lag.events,
-                    max_lag=config.cutover_max_lag_events,
-                )
-            logger.debug(
-                "Sync lag within threshold: %d events (max %d)",
-                lag.events,
-                config.cutover_max_lag_events,
-            )
+            max_lag = config.cutover_max_lag_events
+            if not lag.is_within_threshold(max_lag):
+                raise CutoverLagError(migration_id, lag.events, max_lag)
+            logger.debug("Sync lag within threshold: %d events (max %d)", lag.events, max_lag)
             await self._routing_repo.set_migration_state(
                 tenant_id, TenantMigrationState.CUTOVER_PAUSED, migration_id=migration_id
             )
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             if elapsed_ms >= timeout_ms:
-                raise CutoverTimeoutError(
-                    migration_id=migration_id, elapsed_ms=elapsed_ms, timeout_ms=timeout_ms
-                )
+                raise CutoverTimeoutError(migration_id, elapsed_ms, timeout_ms)
             remaining_ms = max(0, timeout_ms - elapsed_ms - 10)
             if remaining_ms > 0:
                 await asyncio.sleep(min(remaining_ms / 1000, 0.010))
             await lag_tracker.calculate_lag(since=since)
-            final_lag = lag_tracker.current_lag
-            if final_lag:
-                events_synced = max(0, lag.events - final_lag.events)
+            if lag_tracker.current_lag:
+                events_synced = max(0, lag.events - lag_tracker.current_lag.events)
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             if elapsed_ms >= timeout_ms:
-                raise CutoverTimeoutError(
-                    migration_id=migration_id, elapsed_ms=elapsed_ms, timeout_ms=timeout_ms
-                )
+                raise CutoverTimeoutError(migration_id, elapsed_ms, timeout_ms)
             try:
                 target_store = self._router.get_store(target_store_id)
                 if target_store is not None:
@@ -173,16 +164,10 @@ class CutoverExecutionMixin:
                 migration_id=migration_id,
             )
             self._router.clear_dual_write_interceptor(tenant_id)
-            final_elapsed_ms = (time.perf_counter() - start_time) * 1000
-            logger.info(
-                "Cutover completed for tenant %s in %.2fms (synced %d events)",
-                tenant_id,
-                final_elapsed_ms,
-                events_synced,
-            )
-            return CutoverResult(
-                success=True, duration_ms=final_elapsed_ms, events_synced=events_synced
-            )
+            final_ms = (time.perf_counter() - start_time) * 1000
+            msg = "Cutover completed for tenant %s in %.2fms (synced %d events)"
+            logger.info(msg, tenant_id, final_ms, events_synced)
+            return CutoverResult(success=True, duration_ms=final_ms, events_synced=events_synced)
         except Exception as e:
             duration_ms = (
                 e.elapsed_ms
@@ -201,13 +186,7 @@ class CutoverExecutionMixin:
                 logger.exception("Unexpected error during cutover for tenant %s", tenant_id)
             error_msg = str(e) if isinstance(e, CutoverError) else f"Unexpected error: {e}"
             rolled_back = await self._rollback(tenant_id, migration_id, source_store_id)
-            return CutoverResult(
-                success=False,
-                duration_ms=duration_ms,
-                events_synced=events_synced,
-                error_message=error_msg,
-                rolled_back=rolled_back,
-            )
+            return CutoverResult(False, duration_ms, events_synced, error_msg, rolled_back)
         finally:
             await self._router.resume_writes(tenant_id)
             logger.debug("Resumed writes for tenant %s", tenant_id)

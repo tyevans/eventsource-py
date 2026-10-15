@@ -80,10 +80,8 @@ class LiveDeliveryMixin:
             start_time = time.perf_counter()
             async with await self._flow_controller.acquire():
                 try:
-                    await self._call_guarded(
-                        lambda: settle_handler_result(subscriber.handle_batch(deliverable)),
-                        "handle_batch",
-                    )
+                    op = lambda: settle_handler_result(subscriber.handle_batch(deliverable))  # noqa: E731
+                    await self._call_guarded(op, "handle_batch")
                 except Exception as e:
                     batch_succeeded = False
                     extra = {
@@ -91,17 +89,14 @@ class LiveDeliveryMixin:
                         "batch_size": len(deliverable),
                         "error": str(e),
                     }
-                    logger.warning(
-                        "Live batch handler failed, falling back to per-event delivery", extra=extra
-                    )
+                    msg = "Live batch handler failed, falling back to per-event delivery"
+                    logger.warning(msg, extra=extra)
                 else:
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
                         per_event_ms = duration_ms / len(deliverable)
-                        for event in deliverable:
-                            self._metrics.record_event_processed(
-                                event_type=event.event_type, duration_ms=per_event_ms
-                            )
+                        for ev in deliverable:
+                            self._metrics.record_event_processed(ev.event_type, per_event_ms)
 
         if not batch_succeeded:
             for envelope, _passes in included:
@@ -118,16 +113,11 @@ class LiveDeliveryMixin:
             last_envelope = envelope
             if self._metrics:
                 self._metrics.record_lag(self.subscription.lag)
-            pos = (
-                envelope.position
-                if envelope.position is not None
-                else self.subscription.last_processed_position
-            )
-            await self.subscription.record_event_processed(
-                position=pos, event_id=envelope.event.event_id, event_type=envelope.event.event_type
-            )
+            pos = envelope.position or self.subscription.last_processed_position
+            ev = envelope.event
+            await self.subscription.record_event_processed(pos, ev.event_id, ev.event_type)
             if envelope.position is not None:
-                await self._maybe_checkpoint_in_batch(envelope.position, envelope.event)
+                await self._maybe_checkpoint_in_batch(envelope.position, ev)
 
         if (
             last_envelope is not None
@@ -156,7 +146,7 @@ class LiveDeliveryMixin:
                 logger.debug("Event filtered out", extra=extra)
                 if position is not None:
                     await self.subscription.record_event_processed(
-                        position=position, event_id=event.event_id, event_type=event.event_type
+                        position, event.event_id, event.event_type
                     )
                 else:
                     await self.subscription.record_events_unseen(1)
@@ -177,18 +167,12 @@ class LiveDeliveryMixin:
                     self._stats.events_processed += 1
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
-                        self._metrics.record_event_processed(
-                            event_type=event.event_type, duration_ms=duration_ms
-                        )
+                        self._metrics.record_event_processed(event.event_type, duration_ms)
                         self._metrics.record_lag(self.subscription.lag)
 
-                    pos = (
-                        position
-                        if position is not None
-                        else self.subscription.last_processed_position
-                    )
+                    pos = position or self.subscription.last_processed_position
                     await self.subscription.record_event_processed(
-                        position=pos, event_id=event.event_id, event_type=event.event_type
+                        pos, event.event_id, event.event_type
                     )
                     if position is not None:
                         await self._maybe_checkpoint(position, event)
@@ -197,9 +181,7 @@ class LiveDeliveryMixin:
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
                         self._metrics.record_event_failed(
-                            event_type=event.event_type,
-                            error_type=type(e).__name__,
-                            duration_ms=duration_ms,
+                            event.event_type, type(e).__name__, duration_ms
                         )
                     await self.subscription.record_event_failed(e)
                     if not self.config.continue_on_error:

@@ -65,10 +65,8 @@ class LiveDrainMixin:
             self.event_bus.subscribe(event_type, handler)
         self._subscribed = True
         names = [et.__name__ for et in event_types]
-        logger.debug(
-            "Subscribed to event types",
-            extra={"subscription": self.subscription.name, "event_types": names},
-        )
+        extra = {"subscription": self.subscription.name, "event_types": names}
+        logger.debug("Subscribed to event types", extra=extra)
 
     def _create_event_handler(self) -> _LiveEventHandler:
         """Create a handler wrapper that routes events to our processing method."""
@@ -79,10 +77,8 @@ class LiveDrainMixin:
         del event
         if self._buffer_enabled:
             self._buffered_wakes += 1
-            logger.debug(
-                "Wake-up buffered",
-                extra={"subscription": self.subscription.name, "buffer_size": self._buffered_wakes},
-            )
+            extra = {"subscription": self.subscription.name, "buffer_size": self._buffered_wakes}
+            logger.debug("Wake-up buffered", extra=extra)
         elif self.subscription.is_paused:
             self._paused_wakes += 1
             self._events_buffered_during_pause += 1
@@ -96,21 +92,16 @@ class LiveDrainMixin:
 
     async def _drain_feed(self) -> int:
         """Read and process every envelope on the global feed past our checkpoint."""
-        processed = 0
         options = FeedReadOptions(tenant_id=self.config.tenant_id, limit=self.config.batch_size)
         if self._batch_capable:
             return await self._drain_feed_grouped(options)
-
+        processed = 0
         while not self._stop_requested:
-            from_position = self.subscription.last_processed_position
+            pos = self.subscription.last_processed_position
             envelopes_in_batch, stopped = 0, False
-            async for envelope in self.event_feed.read_all(
-                from_position=from_position, options=options
-            ):
-                if self._stop_requested:
-                    stopped = True
-                    break
-                await self.subscription.wait_if_paused(self._stop_event)
+            async for envelope in self.event_feed.read_all(from_position=pos, options=options):
+                if not self._stop_requested:
+                    await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     stopped = True
                     break
@@ -127,20 +118,14 @@ class LiveDrainMixin:
         """Drain the feed delivering each read's envelopes through `handle_batch()`."""
         processed = 0
         while not self._stop_requested:
-            from_position = self.subscription.last_processed_position
-            page = [
-                envelope
-                async for envelope in self.event_feed.read_all(
-                    from_position=from_position, options=options
-                )
-            ]
+            pos = self.subscription.last_processed_position
+            page = [e async for e in self.event_feed.read_all(from_position=pos, options=options)]
             if not page:
                 break
             included: list[tuple[EventEnvelope, bool]] = []
             for envelope in page:
-                if self._stop_requested:
-                    break
-                await self.subscription.wait_if_paused(self._stop_event)
+                if not self._stop_requested:
+                    await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     break
                 self._stats.events_received += 1
@@ -163,10 +148,8 @@ class LiveDrainMixin:
             processed = await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            logger.info(
-                "Buffer processed",
-                extra={"subscription": self.subscription.name, "events_processed": processed},
-            )
+            extra = {"subscription": self.subscription.name, "events_processed": processed}
+            logger.info("Buffer processed", extra=extra)
             return processed
 
     async def disable_buffer(self) -> None:
@@ -175,9 +158,8 @@ class LiveDrainMixin:
         await self.subscription.transition_to(SubscriptionState.LIVE)
         if self._metrics:
             self._metrics.record_state("live")
-        logger.info(
-            "Buffer disabled, now processing live", extra={"subscription": self.subscription.name}
-        )
+        extra = {"subscription": self.subscription.name}
+        logger.info("Buffer disabled, now processing live", extra=extra)
 
     async def process_pause_buffer(self) -> int:
         """Drain the global feed to deliver whatever arrived during pause."""
@@ -186,21 +168,17 @@ class LiveDrainMixin:
             ATTR_BUFFER_SIZE: self._paused_wakes,
         }
         with self._tracer.span("eventsource.live_runner.process_pause_buffer", attrs) as span:
-            logger.info(
-                "Processing pause buffer",
-                extra={
-                    "subscription": self.subscription.name,
-                    "pause_buffer_size": self._paused_wakes,
-                },
-            )
+            extra_start = {
+                "subscription": self.subscription.name,
+                "pause_buffer_size": self._paused_wakes,
+            }
+            logger.info("Processing pause buffer", extra=extra_start)
             self._paused_wakes = 0
             processed = await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            logger.info(
-                "Pause buffer processed",
-                extra={"subscription": self.subscription.name, "events_processed": processed},
-            )
+            extra_done = {"subscription": self.subscription.name, "events_processed": processed}
+            logger.info("Pause buffer processed", extra=extra_done)
             self._events_buffered_during_pause = 0
             return processed
 
