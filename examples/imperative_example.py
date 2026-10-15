@@ -1,10 +1,7 @@
-"""
-Imperative Aggregate Example
+"""Imperative Aggregate Example (`_apply` style on `AggregateRoot`).
 
-Demonstrates the hand-written `_apply` style on `AggregateRoot`.
 See `basic_usage.py` for the primary (decider) style, and
 `docs/explanation/aggregate-styles.md` for a comparison of the two.
-
 Run with: python -m eventsource.examples.imperative_example
 """
 
@@ -96,7 +93,6 @@ class BankAccountAggregate(AggregateRoot[BankAccountState]):
             raise ValueError("Account already opened")
         if initial_balance < 0:
             raise ValueError("Initial balance cannot be negative")
-
         self.apply_event(
             AccountOpened(
                 aggregate_id=self.aggregate_id,
@@ -112,7 +108,6 @@ class BankAccountAggregate(AggregateRoot[BankAccountState]):
             raise ValueError("Account is not open")
         if amount <= 0:
             raise ValueError("Deposit amount must be positive")
-
         self.apply_event(
             MoneyDeposited(
                 aggregate_id=self.aggregate_id,
@@ -129,7 +124,6 @@ class BankAccountAggregate(AggregateRoot[BankAccountState]):
             raise ValueError("Withdrawal amount must be positive")
         if amount > self.state.balance:
             raise ValueError(f"Insufficient balance: {self.state.balance}")
-
         self.apply_event(
             MoneyWithdrawn(
                 aggregate_id=self.aggregate_id,
@@ -141,10 +135,7 @@ class BankAccountAggregate(AggregateRoot[BankAccountState]):
 
 async def main():
     """Demonstrate basic event sourcing usage."""
-    print("=" * 60)
-    print("Event Sourcing Basic Usage Example")
-    print("=" * 60)
-
+    print(f"{'=' * 60}\nEvent Sourcing Basic Usage Example\n{'=' * 60}")
     event_store = InMemoryEventStore()
     repo = AggregateRepository(event_store=event_store, aggregate_factory=BankAccountAggregate)
 
@@ -153,24 +144,20 @@ async def main():
     account = repo.create_new(account_id)
     account.open(owner_name="Alice", initial_balance=100.0)
     await repo.save(account)
-    print(f"   Owner: {account.state.owner_name}")
-    print(f"   Balance: ${account.state.balance:.2f}")
-    print(f"   Version: {account.version}")
+    print(f"   Owner: {account.state.owner_name}, Balance: ${account.state.balance:.2f}")
 
     print("\n2. Loading account and making deposits")
-    loaded_account = await repo.load(account_id)
-    loaded_account.deposit(50.0)
-    loaded_account.deposit(25.0)
-    await repo.save(loaded_account)
-    print(f"   Balance after deposits: ${loaded_account.state.balance:.2f}")
-    print(f"   Version: {loaded_account.version}")
+    loaded = await repo.load(account_id)
+    loaded.deposit(50.0)
+    loaded.deposit(25.0)
+    await repo.save(loaded)
+    print(f"   Balance after deposits: ${loaded.state.balance:.2f} (v{loaded.version})")
 
     print("\n3. Making a withdrawal")
     account = await repo.load(account_id)
     account.withdraw(30.0)
     await repo.save(account)
-    print(f"   Balance after withdrawal: ${account.state.balance:.2f}")
-    print(f"   Version: {account.version}")
+    print(f"   Balance after withdrawal: ${account.state.balance:.2f} (v{account.version})")
 
     print("\n4. Event history:")
     stream_id = StreamId(aggregate_id=account_id, category="BankAccount")
@@ -185,27 +172,17 @@ async def main():
 
     print("\n5. Business rule validation:")
     account = await repo.load(account_id)
-    try:
-        account.withdraw(1000.0)
-    except ValueError as e:
-        print(f"   Withdrawal blocked: {e}")
-
-    try:
-        account.deposit(-50.0)
-    except ValueError as e:
-        print(f"   Deposit blocked: {e}")
+    for label, fn in [("Withdrawal", account.withdraw), ("Deposit", account.deposit)]:
+        try:
+            fn(1000.0 if label == "Withdrawal" else -50.0)
+        except ValueError as e:
+            print(f"   {label} blocked: {e}")
 
     print("\n6. Final account state:")
-    final_account = await repo.load(account_id)
-    print(f"   Account ID: {final_account.aggregate_id}")
-    print(f"   Owner: {final_account.state.owner_name}")
-    print(f"   Balance: ${final_account.state.balance:.2f}")
-    print(f"   Version: {final_account.version}")
-    print(f"   Is Open: {final_account.state.is_open}")
-
-    print("\n" + "=" * 60)
-    print("Example completed successfully!")
-    print("=" * 60)
+    final = await repo.load(account_id)
+    print(f"   ID: {final.aggregate_id}, Owner: {final.state.owner_name}, v{final.version}")
+    print(f"   Balance: ${final.state.balance:.2f}, Open: {final.state.is_open}")
+    print(f"\n{'=' * 60}\nExample completed successfully!\n{'=' * 60}")
 
 
 if __name__ == "__main__":

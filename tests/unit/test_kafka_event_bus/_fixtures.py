@@ -83,9 +83,8 @@ class SampleSubscriber:
 @pytest.fixture
 def event_registry() -> EventRegistry:
     registry = EventRegistry()
-    registry.register(SampleOrderCreated)
-    registry.register(SampleOrderShipped)
-    registry.register(SamplePaymentReceived)
+    for cls in (SampleOrderCreated, SampleOrderShipped, SamplePaymentReceived):
+        registry.register(cls)
     return registry
 
 
@@ -104,8 +103,7 @@ def mock_producer() -> AsyncMock:
     producer = AsyncMock()
 
     async def default_send(*args: Any, **kwargs: Any) -> Any:
-        future: AsyncMock = AsyncMock()
-        return future
+        return AsyncMock()
 
     producer.send = default_send
     return producer
@@ -128,26 +126,9 @@ skip_if_no_otel_metrics = pytest.mark.skipif(
 )
 
 
-def _get_metric_value(metrics_data: Any, metric_name: str) -> int:
-    """Get the sum of a counter metric."""
+def _iter_data_points(metrics_data: Any, metric_name: str):
     if not metrics_data or not metrics_data.resource_metrics:
-        return 0
-    for resource_metric in metrics_data.resource_metrics:
-        for scope_metric in resource_metric.scope_metrics:
-            for metric in scope_metric.metrics:
-                if metric.name == metric_name:
-                    total = 0
-                    if hasattr(metric, "data") and hasattr(metric.data, "data_points"):
-                        for dp in metric.data.data_points:
-                            total += dp.value
-                    return total
-    return 0
-
-
-def _get_metric_attributes(metrics_data: Any, metric_name: str) -> dict[str, Any]:
-    """Get attributes from the first data point of a metric."""
-    if not metrics_data or not metrics_data.resource_metrics:
-        return {}
+        return
     for resource_metric in metrics_data.resource_metrics:
         for scope_metric in resource_metric.scope_metrics:
             for metric in scope_metric.metrics:
@@ -156,56 +137,30 @@ def _get_metric_attributes(metrics_data: Any, metric_name: str) -> dict[str, Any
                     and hasattr(metric, "data")
                     and hasattr(metric.data, "data_points")
                 ):
-                    for dp in metric.data.data_points:
-                        return dict(dp.attributes)
+                    yield from metric.data.data_points
+
+
+def _get_metric_value(metrics_data: Any, metric_name: str) -> int:
+    return sum(dp.value for dp in _iter_data_points(metrics_data, metric_name))
+
+
+def _get_metric_attributes(metrics_data: Any, metric_name: str) -> dict[str, Any]:
+    for dp in _iter_data_points(metrics_data, metric_name):
+        return dict(dp.attributes)
     return {}
 
 
 def _has_histogram_data(metrics_data: Any, metric_name: str) -> bool:
-    """Check if a histogram has recorded data."""
-    if not metrics_data or not metrics_data.resource_metrics:
-        return False
-    for resource_metric in metrics_data.resource_metrics:
-        for scope_metric in resource_metric.scope_metrics:
-            for metric in scope_metric.metrics:
-                if (
-                    metric.name == metric_name
-                    and hasattr(metric, "data")
-                    and hasattr(metric.data, "data_points")
-                ):
-                    return len(metric.data.data_points) > 0
-    return False
+    return any(True for _ in _iter_data_points(metrics_data, metric_name))
 
 
 def _get_histogram_sum(metrics_data: Any, metric_name: str) -> float:
-    """Get the sum value from a histogram metric."""
-    if not metrics_data or not metrics_data.resource_metrics:
-        return 0.0
-    for resource_metric in metrics_data.resource_metrics:
-        for scope_metric in resource_metric.scope_metrics:
-            for metric in scope_metric.metrics:
-                if (
-                    metric.name == metric_name
-                    and hasattr(metric, "data")
-                    and hasattr(metric.data, "data_points")
-                ):
-                    for dp in metric.data.data_points:
-                        return float(dp.sum)
+    for dp in _iter_data_points(metrics_data, metric_name):
+        return float(dp.sum)
     return 0.0
 
 
 def _get_gauge_value(metrics_data: Any, metric_name: str) -> float | None:
-    """Get the value from a gauge metric."""
-    if not metrics_data or not metrics_data.resource_metrics:
-        return None
-    for resource_metric in metrics_data.resource_metrics:
-        for scope_metric in resource_metric.scope_metrics:
-            for metric in scope_metric.metrics:
-                if (
-                    metric.name == metric_name
-                    and hasattr(metric, "data")
-                    and hasattr(metric.data, "data_points")
-                ):
-                    for dp in metric.data.data_points:
-                        return float(dp.value)
+    for dp in _iter_data_points(metrics_data, metric_name):
+        return float(dp.value)
     return None

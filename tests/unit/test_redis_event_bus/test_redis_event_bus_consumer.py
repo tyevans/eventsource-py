@@ -21,16 +21,7 @@ from ._fixtures import (
     mock_redis,
 )
 
-__all__ = [
-    "TestRedisEventBusDLQ",
-    "TestRedisEventBusDeserialization",
-    "TestRedisEventBusMessageProcessing",
-    "TestRedisEventBusPendingRecovery",
-    "bus",
-    "config",
-    "event_registry",
-    "mock_redis",
-]
+__all__ = ["bus", "config", "event_registry", "mock_redis"]
 
 
 def _order_msg(event: SampleOrderCreated) -> dict[str, str]:
@@ -65,16 +56,11 @@ class TestRedisEventBusDeserialization:
     async def test_deserialize_known_event(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        aggregate_id = uuid4()
-        event = _new_order(aggregate_id)
-        msg = {"event_type": "SampleOrderCreated", "payload": event.model_dump_json()}
-        result = bus._deserialize_event("SampleOrderCreated", msg)
-        assert result is not None
-        assert (result.event_type, result.order_number, result.aggregate_id) == (
-            "SampleOrderCreated",
-            "ORD-001",
-            aggregate_id,
-        )
+        agg_id = uuid4()
+        msg = {"event_type": "SampleOrderCreated", "payload": _new_order(agg_id).model_dump_json()}
+        res = bus._deserialize_event("SampleOrderCreated", msg)
+        assert res is not None and res.event_type == "SampleOrderCreated"
+        assert (res.order_number, res.aggregate_id) == ("ORD-001", agg_id)
 
     async def test_deserialize_unknown_event(
         self, bus: RedisEventBus, event_registry: EventRegistry
@@ -96,14 +82,7 @@ class TestRedisEventBusMessageProcessing:
     async def test_process_message_unknown_event(
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
-        msg = {
-            "event_id": str(uuid4()),
-            "event_type": "UnknownEvent",
-            "aggregate_id": str(uuid4()),
-            "aggregate_type": "Unknown",
-            "occurred_at": datetime.now(UTC).isoformat(),
-            "payload": "{}",
-        }
+        msg = {**_order_msg(_new_order()), "event_type": "UnknownEvent", "payload": "{}"}
         await bus._process_message("msg-123", msg, "test_consumer")
         mock_redis.xack.assert_called_once()
 
@@ -122,8 +101,10 @@ class TestRedisEventBusDLQ:
         mock_redis.xadd.assert_called_once()
         kw = mock_redis.xadd.call_args.kwargs
         assert kw["name"] == "test_events:stream_dlq"
-        assert kw["fields"]["original_message_id"] == "msg-123"
-        assert kw["fields"]["retry_count"] == "3"
+        assert (kw["fields"]["original_message_id"], kw["fields"]["retry_count"]) == (
+            "msg-123",
+            "3",
+        )
 
     async def test_get_dlq_messages(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         mock_redis.xrange.return_value = [
@@ -163,8 +144,7 @@ class TestRedisEventBusPendingRecovery:
     ) -> None:
         mock_redis.xpending.return_value = {"pending": 0}
         s = await bus.recover_pending_messages()
-        assert (s["checked"], s["claimed"], s["reprocessed"]) == (0, 0, 0)
-        assert (s["dlq"], s["failed"]) == (0, 0)
+        assert [s[k] for k in ("checked", "claimed", "reprocessed", "dlq", "failed")] == [0] * 5
 
     async def test_recover_pending_messages_success(
         self, bus: RedisEventBus, event_registry: EventRegistry, mock_redis: AsyncMock
@@ -184,8 +164,7 @@ class TestRedisEventBusPendingRecovery:
         payload = {"event_id": str(uuid4()), "event_type": "SampleOrderCreated", "payload": "{}"}
         mock_redis.xclaim.return_value = [("msg-123", payload)]
         mock_redis.get.return_value = "3"
-        stats = await bus.recover_pending_messages(min_idle_time_ms=60000, max_retries=3)
-        assert stats["dlq"] == 1
+        assert (await bus.recover_pending_messages(60000, max_retries=3))["dlq"] == 1
 
     async def test_recover_pending_messages_honors_an_explicit_zero(
         self, bus: RedisEventBus, mock_redis: AsyncMock
@@ -193,8 +172,7 @@ class TestRedisEventBusPendingRecovery:
         mock_redis.xpending.return_value = {"pending": 1}
         mock_redis.xpending_range.return_value = _pending_entry(delivered=1, idle_ms=0)
         mock_redis.xclaim.return_value = []
-        stats = await bus.recover_pending_messages(min_idle_time_ms=0)
-        assert stats["claimed"] == 0
+        assert (await bus.recover_pending_messages(min_idle_time_ms=0))["claimed"] == 0
         mock_redis.xclaim.assert_awaited()
 
     async def test_start_consuming_in_background_populates_the_consumer_task(
