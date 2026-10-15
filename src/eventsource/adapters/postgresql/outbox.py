@@ -1,10 +1,4 @@
-"""
-PostgreSQL outbox repository for transactional event publishing.
-
-Reads and writes `event_outbox` rows using the schema in
-`src/eventsource/migrations/templates/outbox.sql`, sharing the table contract
-with `adapters/postgresql/store.py::_write_to_outbox`.
-"""
+"""PostgreSQL outbox repository for transactional event publishing."""
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -36,13 +30,11 @@ class PostgreSQLOutboxRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """Initialize the outbox repository with a connection/engine and tracer."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self.conn = conn
 
     async def add_event(self, event: DomainEvent) -> UUID:
-        """Add an event to the outbox for publishing and return its outbox record ID."""
         attrs = {
             ATTR_EVENT_ID: str(event.event_id),
             ATTR_EVENT_TYPE: event.event_type,
@@ -52,8 +44,6 @@ class PostgreSQLOutboxRepository:
         }
         with self._tracer.span("eventsource.outbox.add", attrs):
             outbox_id = uuid4()
-            now = datetime.now(UTC)
-            event_data = outbox_event_data(event)
             query = text("""
                 INSERT INTO event_outbox
                     (id, event_id, event_type, aggregate_id, aggregate_type,
@@ -68,18 +58,16 @@ class PostgreSQLOutboxRepository:
                 "aggregate_id": event.aggregate_id,
                 "aggregate_type": event.aggregate_type,
                 "tenant_id": event.tenant_id,
-                "event_data": json_dumps(event_data),
-                "created_at": now,
+                "event_data": json_dumps(outbox_event_data(event)),
+                "created_at": datetime.now(UTC),
             }
             async with sql_connection(self.conn, write=True) as conn:
                 await conn.execute(query, params)
             return outbox_id
 
     async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
-        """Get pending events that need to be published, ordered by created_at ASC."""
-        with self._tracer.span(
-            "eventsource.outbox.get_pending", {"limit": limit, ATTR_DB_SYSTEM: "postgresql"}
-        ) as span:
+        attrs = {"limit": limit, ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.outbox.get_pending", attrs) as span:
             query = text("""
                 SELECT id, event_id, event_type, aggregate_id, aggregate_type,
                        tenant_id, event_data, created_at, retry_count
@@ -87,89 +75,59 @@ class PostgreSQLOutboxRepository:
                 ORDER BY created_at ASC LIMIT :limit
             """)
             async with sql_connection(self.conn, write=False) as conn:
-                result = await conn.execute(query, {"limit": limit})
-                rows = result.fetchall()
+                rows = (await conn.execute(query, {"limit": limit})).fetchall()
             entries = [
-                OutboxEntry(
-                    id=row[0],
-                    event_id=row[1],
-                    event_type=row[2],
-                    aggregate_id=row[3],
-                    aggregate_type=row[4],
-                    tenant_id=row[5],
-                    event_data=row[6],
-                    created_at=row[7],
-                    status="pending",
-                    retry_count=row[8],
-                )
-                for row in rows
+                OutboxEntry(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], "pending", r[8])
+                for r in rows
             ]
             if span:
                 span.set_attribute(ATTR_EVENT_COUNT, len(entries))
             return entries
 
     async def mark_published(self, outbox_id: UUID) -> None:
-        """Mark an outbox event as successfully published."""
-        with self._tracer.span(
-            "eventsource.outbox.mark_published",
-            {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "postgresql"},
-        ):
-            now = datetime.now(UTC)
-            query = text("""
-                UPDATE event_outbox SET status = 'published', published_at = :published_at
-                WHERE id = :id
-            """)
+        attrs = {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.outbox.mark_published", attrs):
+            query = text("UPDATE event_outbox SET status = 'published', published_at = :published_at WHERE id = :id")  # fmt: skip
             async with sql_connection(self.conn, write=True) as conn:
-                await conn.execute(query, {"id": outbox_id, "published_at": now})
+                await conn.execute(query, {"id": outbox_id, "published_at": datetime.now(UTC)})
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
-        """Increment retry count for a failed publishing attempt."""
         attrs = {
             "outbox.id": str(outbox_id),
             "error": error[:100] if error else None,
             ATTR_DB_SYSTEM: "postgresql",
         }
         with self._tracer.span("eventsource.outbox.increment_retry", attrs):
-            query = text("""
-                UPDATE event_outbox SET retry_count = retry_count + 1, last_error = :error
-                WHERE id = :id
-            """)
+            query = text("UPDATE event_outbox SET retry_count = retry_count + 1, last_error = :error WHERE id = :id")  # fmt: skip
             async with sql_connection(self.conn, write=True) as conn:
                 await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
-        """Mark an outbox event as permanently failed."""
         attrs = {
             "outbox.id": str(outbox_id),
             "error": error[:100] if error else None,
             ATTR_DB_SYSTEM: "postgresql",
         }
         with self._tracer.span("eventsource.outbox.mark_failed", attrs):
-            query = text(
-                "UPDATE event_outbox SET status = 'failed', last_error = :error WHERE id = :id"
-            )
+            query = text("UPDATE event_outbox SET status = 'failed', last_error = :error WHERE id = :id")  # fmt: skip
             async with sql_connection(self.conn, write=True) as conn:
                 await conn.execute(query, {"id": outbox_id, "error": error})
 
     async def cleanup_published(self, days: int = 7) -> int:
-        """Clean up published events older than specified days and return deleted count."""
-        with self._tracer.span(
-            "eventsource.outbox.cleanup", {"older_than_days": days, ATTR_DB_SYSTEM: "postgresql"}
-        ) as span:
+        attrs = {"older_than_days": days, ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.outbox.cleanup", attrs) as span:
             query = text("""
                 DELETE FROM event_outbox
                 WHERE status = 'published' AND published_at < NOW() - INTERVAL '1 day' * :days
                 RETURNING id
             """)
             async with sql_connection(self.conn, write=True) as conn:
-                result = await conn.execute(query, {"days": days})
-                deleted = len(result.fetchall())
+                deleted = len((await conn.execute(query, {"days": days})).fetchall())
             if span:
                 span.set_attribute("deleted_count", deleted)
             return deleted
 
     async def get_stats(self) -> OutboxStats:
-        """Get outbox statistics."""
         with self._tracer.span("eventsource.outbox.get_stats", {ATTR_DB_SYSTEM: "postgresql"}):
             query = text("""
                 SELECT
@@ -181,22 +139,11 @@ class PostgreSQLOutboxRepository:
                 FROM event_outbox
             """)
             async with sql_connection(self.conn, write=False) as conn:
-                result = await conn.execute(query)
-                row = result.fetchone()
+                row = (await conn.execute(query)).fetchone()
             if row is None:
-                return OutboxStats(
-                    pending_count=0,
-                    published_count=0,
-                    failed_count=0,
-                    oldest_pending=None,
-                    avg_retries=0.0,
-                )
+                return OutboxStats(0, 0, 0, None, 0.0)
             return OutboxStats(
-                pending_count=row[0] or 0,
-                published_count=row[1] or 0,
-                failed_count=row[2] or 0,
-                oldest_pending=row[3],
-                avg_retries=float(row[4]) if row[4] else 0.0,
+                row[0] or 0, row[1] or 0, row[2] or 0, row[3], float(row[4]) if row[4] else 0.0
             )
 
 

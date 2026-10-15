@@ -50,7 +50,6 @@ class SQLiteSnapshotStore:
         enable_tracing: bool = True,
         busy_timeout: int = 5000,
     ) -> None:
-        """Initialize the SQLite snapshot store."""
         if not AIOSQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
@@ -61,7 +60,6 @@ class SQLiteSnapshotStore:
         logger.debug("SQLiteSnapshotStore initialized with %s", database_path)
 
     async def _conn(self) -> aiosqlite.Connection:
-        """Return the live connection, opening and initializing it on first use."""
         if self._connection is not None:
             return self._connection
         async with self._init_lock:
@@ -76,7 +74,6 @@ class SQLiteSnapshotStore:
             return conn
 
     async def close(self) -> None:
-        """Close the underlying connection, if open. Safe to call multiple times."""
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
@@ -97,7 +94,6 @@ class SQLiteSnapshotStore:
         return {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: aggregate_type}
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
-        """Save or update a snapshot using INSERT OR REPLACE."""
         s = snapshot
         attrs = {**self._agg_attrs(s.aggregate_id, s.aggregate_type), ATTR_VERSION: s.version}
         sql = (
@@ -120,17 +116,14 @@ class SQLiteSnapshotStore:
             logger.debug("Saved snapshot for %s/%s", s.aggregate_type, s.aggregate_id)
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
-        """Get the snapshot for an aggregate, or None if not found."""
-        attrs = self._agg_attrs(aggregate_id, aggregate_type)
         sql = (
             "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at "
             "FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"
         )
-        with self._tracer.span("eventsource.snapshot.get", attrs):
+        with self._tracer.span("eventsource.snapshot.get", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
-                cursor = await conn.execute(sql, (str(aggregate_id), aggregate_type))
-                row = await cursor.fetchone()
+                row = await (await conn.execute(sql, (str(aggregate_id), aggregate_type))).fetchone()  # fmt: skip
             if row is None:
                 logger.debug("No snapshot found for %s/%s", aggregate_type, aggregate_id)
                 return None
@@ -144,42 +137,28 @@ class SQLiteSnapshotStore:
             return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], created)
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
-        """Delete the snapshot for an aggregate; returns True if deleted."""
-        attrs = self._agg_attrs(aggregate_id, aggregate_type)
         sql = "DELETE FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"
-        with self._tracer.span("eventsource.snapshot.delete", attrs):
+        with self._tracer.span("eventsource.snapshot.delete", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
                 cursor = await conn.execute(sql, (str(aggregate_id), aggregate_type))
                 await conn.commit()
                 deleted: bool = cursor.rowcount > 0
-            logger.debug(
-                "%s snapshot for %s/%s",
-                "Deleted" if deleted else "No",
-                aggregate_type,
-                aggregate_id,
-            )
+            logger.debug("%s snapshot for %s/%s", "Deleted" if deleted else "No", aggregate_type, aggregate_id)  # fmt: skip
             return deleted
 
     async def snapshot_exists(self, aggregate_id: UUID, aggregate_type: str) -> bool:
-        """Check if a snapshot exists for the given aggregate."""
-        attrs = self._agg_attrs(aggregate_id, aggregate_type)
-        sql = (
-            "SELECT EXISTS (SELECT 1 FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?)"
-        )
-        with self._tracer.span("eventsource.snapshot.exists", attrs):
+        sql = "SELECT EXISTS (SELECT 1 FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?)"  # fmt: skip
+        with self._tracer.span("eventsource.snapshot.exists", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
-                cursor = await conn.execute(sql, (str(aggregate_id), aggregate_type))
-                row = await cursor.fetchone()
+                row = await (await conn.execute(sql, (str(aggregate_id), aggregate_type))).fetchone()  # fmt: skip
                 return bool(row[0]) if row else False
 
     async def delete_snapshots_by_type(
         self, aggregate_type: str, schema_version_below: int | None = None
     ) -> int:
-        """Delete all snapshots for a given aggregate type."""
-        attrs = {ATTR_AGGREGATE_TYPE: aggregate_type}
-        with self._tracer.span("eventsource.snapshot.delete_by_type", attrs):
+        with self._tracer.span("eventsource.snapshot.delete_by_type", {ATTR_AGGREGATE_TYPE: aggregate_type}):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
                 if schema_version_below is not None:
@@ -192,12 +171,9 @@ class SQLiteSnapshotStore:
                 count: int = cursor.rowcount
             if count > 0:
                 sfx = f" (schema_version < {schema_version_below})" if schema_version_below else ""
-                logger.info(
-                    "Deleted %d snapshots for aggregate type %s%s", count, aggregate_type, sfx
-                )
+                logger.info("Deleted %d snapshots for aggregate type %s%s", count, aggregate_type, sfx)  # fmt: skip
             return count
 
     @property
     def database_path(self) -> str:
-        """Get the database path."""
         return self._database_path

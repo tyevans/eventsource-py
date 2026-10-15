@@ -27,8 +27,6 @@ _SELECT_COLUMNS = (
     "global_position, event_id, event_type, aggregate_type, aggregate_id, "
     "tenant_id, actor_id, version, timestamp, payload, created_at"
 )
-# Defer rows whose inserting transaction is not yet committed to avoid skipping
-# out-of-order global_position commits.
 _HORIZON_PREDICATE = "(txid IS NULL OR txid < CAST(:txid_horizon AS text)::xid8)"
 _HORIZON_QUERY = "SELECT eventsource_feed_horizon()"
 
@@ -44,16 +42,12 @@ class PostgreSQLEventStoreReadMixin:
         """Ensures schema is initialized (implemented in PostgreSQLEventStore)."""
 
     def read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions | None = None,
+        self, stream: StreamId, options: StreamReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         return self._do_read_stream(stream, options or StreamReadOptions())
 
     async def _do_read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions,
+        self, stream: StreamId, options: StreamReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         await self._ensure_schema()
         query_parts = [
@@ -76,49 +70,33 @@ class PostgreSQLEventStoreReadMixin:
             query_parts.append("LIMIT :limit")
             params["limit"] = options.limit
         async with self._session_factory() as session:
-            result = await session.execute(text("\n".join(query_parts)), params)
-            rows = result.mappings().all()
+            rows = (await session.execute(text("\n".join(query_parts)), params)).mappings().all()
         for row in rows:
             yield self._row_to_envelope(row)
 
     async def get_stream_version(self, stream: StreamId) -> int:
         await self._ensure_schema()
+        sql = "SELECT COALESCE(MAX(version), 0) FROM events WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type"  # fmt: skip
+        params = {"aggregate_id": stream.aggregate_id, "aggregate_type": stream.category}
         async with self._session_factory() as session:
-            result = await session.execute(
-                text(
-                    "SELECT COALESCE(MAX(version), 0) FROM events "
-                    "WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type"
-                ),
-                {"aggregate_id": stream.aggregate_id, "aggregate_type": stream.category},
-            )
-            return result.scalar() or 0
+            return (await session.execute(text(sql), params)).scalar() or 0
 
     async def event_exists(self, event_id: UUID) -> bool:
         await self._ensure_schema()
+        sql = "SELECT 1 FROM events WHERE event_id = :event_id LIMIT 1"
         async with self._session_factory() as session:
-            result = await session.execute(
-                text("SELECT 1 FROM events WHERE event_id = :event_id LIMIT 1"),
-                {"event_id": event_id},
-            )
-            return result.first() is not None
+            return (await session.execute(text(sql), {"event_id": event_id})).first() is not None
 
     def read_all(
-        self,
-        from_position: Position | None = None,
-        options: FeedReadOptions | None = None,
+        self, from_position: Position | None = None, options: FeedReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         return self._do_read_all(from_position, options or FeedReadOptions())
 
     async def _do_read_all(
-        self,
-        from_position: Position | None,
-        options: FeedReadOptions,
+        self, from_position: Position | None, options: FeedReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         await self._ensure_schema()
-        query_parts = [
-            f"SELECT {_SELECT_COLUMNS} FROM events"  # nosec B608 -- constant column list
-            f" WHERE {_HORIZON_PREDICATE}"
-        ]
+        query_parts = [f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE}"]  # nosec B608  # fmt: skip
         params: dict[str, Any] = {}
         if from_position is not None:
             query_parts.append("AND global_position > :from_position")
@@ -134,44 +112,29 @@ class PostgreSQLEventStoreReadMixin:
             query_parts.append("LIMIT :limit")
             params["limit"] = options.limit
         async with self._session_factory() as session:
-            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
-            params["txid_horizon"] = horizon
-            result = await session.execute(text("\n".join(query_parts)), params)
-            rows = result.mappings().all()
+            params["txid_horizon"] = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
+            rows = (await session.execute(text("\n".join(query_parts)), params)).mappings().all()
         for row in rows:
             yield self._row_to_envelope(row)
 
     async def current_position(self) -> Position | None:
         await self._ensure_schema()
+        sql = f"SELECT MAX(global_position) FROM events WHERE {_HORIZON_PREDICATE}"  # nosec B608
         async with self._session_factory() as session:
             horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
-            result = await session.execute(
-                text(
-                    "SELECT MAX(global_position) FROM events"  # nosec B608 -- constant predicate
-                    f" WHERE {_HORIZON_PREDICATE}"
-                ),
-                {"txid_horizon": horizon},
-            )
-            value = result.scalar()
+            value = (await session.execute(text(sql), {"txid_horizon": horizon})).scalar()
         return None if value is None else self._codec.encode(value)
 
     def read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions | None = None,
+        self, category: str, options: CategoryReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         return self._do_read_category(category, options or CategoryReadOptions())
 
     async def _do_read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions,
+        self, category: str, options: CategoryReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         await self._ensure_schema()
-        query_parts = [
-            f"SELECT {_SELECT_COLUMNS} FROM events"  # nosec B608 -- constant column list
-            " WHERE aggregate_type = :aggregate_type"
-        ]
+        query_parts = [f"SELECT {_SELECT_COLUMNS} FROM events WHERE aggregate_type = :aggregate_type"]  # nosec B608  # fmt: skip
         params: dict[str, Any] = {"aggregate_type": category}
         if options.tenant_id is not None:
             query_parts.append("AND tenant_id = :tenant_id")
@@ -184,8 +147,7 @@ class PostgreSQLEventStoreReadMixin:
             query_parts.append("LIMIT :limit")
             params["limit"] = options.limit
         async with self._session_factory() as session:
-            result = await session.execute(text("\n".join(query_parts)), params)
-            rows = result.mappings().all()
+            rows = (await session.execute(text("\n".join(query_parts)), params)).mappings().all()
         for row in rows:
             yield self._row_to_envelope(row)
 
