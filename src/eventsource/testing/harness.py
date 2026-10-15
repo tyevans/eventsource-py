@@ -28,6 +28,7 @@ from uuid import UUID
 from eventsource.adapters.memory import (
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
+    InMemoryReadModelRepository,
     InMemorySnapshotStore,
 )
 from eventsource.adapters.memory.bus import InMemoryEventBus
@@ -37,10 +38,12 @@ from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
 from eventsource.ports import ExpectedVersion
+from eventsource.ports.readmodels.model import ReadModel
 from eventsource.testing.assertions import EventAssertions
 
 TEvent = TypeVar("TEvent", bound=DomainEvent)
 TAggregate = TypeVar("TAggregate", bound=AggregateRoot[Any])
+TModel = TypeVar("TModel", bound=ReadModel)
 
 
 class InMemoryTestHarness:
@@ -142,6 +145,13 @@ class InMemoryTestHarness:
             snapshot_threshold=snapshot_threshold,
             enable_tracing=False,
         )
+
+    def create_read_model_repository(
+        self,
+        model_class: type[TModel],
+    ) -> InMemoryReadModelRepository[TModel]:
+        """Create an InMemoryReadModelRepository with tracing disabled for tests."""
+        return InMemoryReadModelRepository(model_class, enable_tracing=False)
 
     def reset(self) -> None:
         """Reset all state and create fresh in-memory components."""
