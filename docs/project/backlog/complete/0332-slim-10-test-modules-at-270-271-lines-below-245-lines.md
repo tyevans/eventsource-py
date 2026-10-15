@@ -1,7 +1,7 @@
 ---
 id: TASK-0332
 title: "Compact 10 test modules at 270-271 lines below 245 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

@@ -1,7 +1,7 @@
 ---
 id: TASK-0336
 title: "Synchronize Diataxis guides for SubscriberRegistry and standalone RecordingEventBus"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
