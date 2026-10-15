@@ -15,8 +15,6 @@ from eventsource.testing.assertions import EventAssertions
 
 
 class DeciderScenario:
-    """Synchronous given/when/then harness for decider-style domains."""
-
     _NON_AGGREGATE_ID_FIELDS = frozenset(
         {"command_id", "correlation_id", "causation_id", "tenant_id", "actor_id"}
     )
@@ -33,10 +31,8 @@ class DeciderScenario:
             decide, evolve = aggregate_class.decide, aggregate_class.evolve
             initial_state = aggregate_class.initial_state
         if decide is None or evolve is None or initial_state is None:
-            raise TypeError(
-                "DeciderScenario needs an aggregate class or all of "
-                "decide=, evolve=, initial_state="
-            )
+            msg = "DeciderScenario needs an aggregate class or all of decide=, evolve=, initial_state="
+            raise TypeError(msg)
         self._decide, self._evolve, self._initial_state = decide, evolve, initial_state
         self._states: dict[UUID, Any] = {}
         self._default_state: Any = initial_state()
@@ -46,51 +42,40 @@ class DeciderScenario:
 
     @property
     def events(self) -> list[DomainEvent]:
-        """Events produced by when(); empty before when() or on rejection."""
         return list(self._events) if self._events is not None else []
 
     @property
     def state(self) -> Any:
-        """Current state for single-aggregate scenarios or initial state."""
         if not self._states:
             return self._default_state
         if len(self._states) == 1:
             return next(iter(self._states.values()))
         if self._last_target_id and self._last_target_id in self._states:
             return self._states[self._last_target_id]
-        raise ValueError(
-            "Multiple aggregate states exist in scenario. Use get_state(aggregate_id) "
-            "or .states to access per-aggregate state."
-        )
+        msg = "Multiple aggregate states exist in scenario. Use get_state(aggregate_id) or .states to access per-aggregate state."
+        raise ValueError(msg)
 
     @property
     def states(self) -> dict[UUID, Any]:
-        """Dictionary mapping aggregate IDs to their evolved states."""
         return dict(self._states)
 
     def get_state(self, aggregate_id: UUID | None = None) -> Any:
-        """Return state for a specific aggregate ID, or the single/initial state."""
         if aggregate_id is None:
             return self.state
         return self._states.get(aggregate_id, self._initial_state())
 
     def given(self, *events: DomainEvent | Iterable[DomainEvent]) -> DeciderScenario:
-        """Fold prior events into state via evolve, partitioned by aggregate ID."""
         for item in events:
             for ev in (item,) if isinstance(item, DomainEvent) else item:
                 if isinstance(ev, DomainEvent):
-                    self._apply_given_event(ev)
+                    agg_id = getattr(ev, "aggregate_id", None)
+                    if isinstance(agg_id, UUID):
+                        self._states[agg_id] = self._evolve(self.get_state(agg_id), ev)
+                    else:
+                        self._default_state = self._evolve(self._default_state, ev)
         return self
 
-    def _apply_given_event(self, event: DomainEvent) -> None:
-        agg_id = getattr(event, "aggregate_id", None)
-        if not isinstance(agg_id, UUID):
-            self._default_state = self._evolve(self._default_state, event)
-            return
-        self._states[agg_id] = self._evolve(self.get_state(agg_id), event)
-
     def given_commands(self, *commands: object, aggregate_id: UUID | None = None) -> Self:
-        """Sequentially fold prior commands (decide -> evolve) into aggregate state."""
         for command in commands:
             target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
             state = self.get_state(target_id) if target_id else self._default_state
@@ -107,41 +92,35 @@ class DeciderScenario:
     def _resolve_target_id(self, command: object, explicit_id: UUID | None = None) -> UUID | None:
         if explicit_id is not None:
             return explicit_id
-        cmd_agg_id = getattr(command, "aggregate_id", None)
-        if isinstance(cmd_agg_id, UUID):
+        if isinstance(cmd_agg_id := getattr(command, "aggregate_id", None), UUID):
             return cmd_agg_id
-        field_values: list[tuple[str, Any]] = []
         if isinstance(command, BaseModel):
-            field_values = [(k, getattr(command, k)) for k in type(command).model_fields]
+            fields = [(k, getattr(command, k)) for k in type(command).model_fields]
         elif hasattr(command, "__dict__"):
-            field_values = list(command.__dict__.items())
-        elif hasattr(command, "__dataclass_fields__"):
-            field_values = [(k, getattr(command, k)) for k in command.__dataclass_fields__]
-        uuid_candidates: list[tuple[str, UUID]] = []
-        for name, val in field_values:
+            fields = list(command.__dict__.items())
+        else:
+            dc_fields = getattr(command, "__dataclass_fields__", ())
+            fields = [(k, getattr(command, k)) for k in dc_fields]
+        uuid_candidates: list[UUID] = []
+        for name, val in fields:
             if name not in self._NON_AGGREGATE_ID_FIELDS and isinstance(val, UUID):
                 if val in self._states:
                     return val
                 if name.endswith("_id") or name == "id":
-                    uuid_candidates.append((name, val))
+                    uuid_candidates.append(val)
         if len(uuid_candidates) == 1:
-            return uuid_candidates[0][1]
+            return uuid_candidates[0]
         if len(self._states) == 1:
             return next(iter(self._states.keys()))
         if not self._states:
             return None
-        raise ValueError(
-            f"Multiple aggregates exist in scenario ({list(self._states.keys())}). "
-            "Please specify which aggregate to evaluate via when(command, aggregate_id=...) "
-            "or set an aggregate ID on the command."
-        )
+        msg = f"Multiple aggregates exist in scenario ({list(self._states.keys())}). Please specify which aggregate to evaluate via when(command, aggregate_id=...) or set an aggregate ID on the command."
+        raise ValueError(msg)
 
     def when(self, command: object, *, aggregate_id: UUID | None = None) -> DeciderScenario:
-        """Run decide, capturing produced events or the raised exception."""
         return self.when_all(command, aggregate_id=aggregate_id)
 
     def when_all(self, *commands: object, aggregate_id: UUID | None = None) -> DeciderScenario:
-        """Sequentially run multiple commands, evolving state and collecting events."""
         self._events, self._error = None, None
         collected: list[DomainEvent] = []
         for command in commands:
@@ -150,7 +129,7 @@ class DeciderScenario:
             state = self.get_state(target_id) if target_id else self._default_state
             try:
                 emitted = list(self._decide(command, state))
-            except Exception as exc:  # noqa: BLE001 - the exception IS the result
+            except Exception as exc:  # noqa: BLE001
                 self._error = exc
                 return self
             for event in emitted:
@@ -167,16 +146,15 @@ class DeciderScenario:
         if self._events is None and self._error is None:
             raise AssertionError("call when() before then_no_error()")
         if self._error is not None:
-            msg = f"expected command to succeed, but it was rejected: {self._error!r}"
-            raise AssertionError(msg)
+            err = self._error
+            raise AssertionError(f"expected command to succeed, but it was rejected: {err!r}")
         return self
 
     def then_no_events(self) -> Self:
         self.then_no_error()
         if self._events:
-            raise AssertionError(
-                f"expected no events, got {[type(e).__name__ for e in self._events]}"
-            )
+            got = [type(e).__name__ for e in self._events]
+            raise AssertionError(f"expected no events, got {got}")
         return self
 
     def then_event(self, event_type: type[DomainEvent], **expected_fields: Any) -> Self:
@@ -199,14 +177,14 @@ class DeciderScenario:
     def then_events(self, *event_types: type[DomainEvent]) -> DeciderScenario:
         if self._events is None and self._error is None:
             raise AssertionError("call when() before then_events()")
+        expected = [t.__name__ for t in event_types]
         if self._error is not None:
-            names = [t.__name__ for t in event_types]
+            err = self._error
             raise AssertionError(
-                f"expected events {names} but the command was rejected: {self._error!r}"
+                f"expected events {expected} but the command was rejected: {err!r}"
             )
         assert self._events is not None
         actual = [type(e).__name__ for e in self._events]
-        expected = [t.__name__ for t in event_types]
         if actual != expected:
             raise AssertionError(f"expected events {expected}, got {actual}")
         return self
@@ -216,14 +194,13 @@ class DeciderScenario:
             raise AssertionError("call when() before then_event_types()")
         exp_names = [t.__name__ for t in expected_types]
         if self._error is not None:
-            raise AssertionError(
-                f"Expected event types {exp_names}, but command raised {self._error!r}"
-            )
+            err = self._error
+            raise AssertionError(f"Expected event types {exp_names}, but command raised {err!r}")
         assert self._events is not None
         actual_types = [type(e) for e in self._events]
         if actual_types != list(expected_types):
-            act_names = [t.__name__ for t in actual_types]
-            raise AssertionError(f"Expected event types {exp_names}, got {act_names}")
+            got = [t.__name__ for t in actual_types]
+            raise AssertionError(f"Expected event types {exp_names}, got {got}")
         return self
 
     def then_rejected(
@@ -234,14 +211,12 @@ class DeciderScenario:
         if self._error is None:
             raise AssertionError(f"expected rejection but command produced {self.events!r}")
         if not isinstance(self._error, exc_type):
-            raise AssertionError(
-                f"expected {exc_type.__name__}, got {type(self._error).__name__}: {self._error}"
-            )
+            got_name = type(self._error).__name__
+            raise AssertionError(f"expected {exc_type.__name__}, got {got_name}: {self._error}")
         if match is not None and not re.search(match, str(self._error)):
             raise AssertionError(f"rejection message {str(self._error)!r} does not match {match!r}")
         return self
 
 
-Scenario = DeciderScenario
-ScenarioResult = DeciderScenario
+Scenario = ScenarioResult = DeciderScenario
 __all__ = ["DeciderScenario", "Scenario", "ScenarioResult"]
