@@ -125,3 +125,20 @@ async def test_assertions_property_binds_to_published_events() -> None:
         label="custom",
     )
     assert matched.event_id == event.event_id
+
+
+async def test_default_wrapped_bus_and_len() -> None:
+    bus = RecordingEventBus()
+    assert isinstance(bus.wrapped, InMemoryEventBus)
+    assert len(bus) == 0
+
+    received: list[DomainEvent] = []
+    bus.subscribe(RecordedEvent, received.append)
+
+    event = RecordedEvent(aggregate_id=uuid4(), label="standalone")
+    await bus.publish([event])
+
+    assert len(bus) == 1
+    assert received == [event]
+    bus.clear_published_events()
+    assert len(bus) == 0
