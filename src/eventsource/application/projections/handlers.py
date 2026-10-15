@@ -2,7 +2,7 @@
 
 import inspect
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -58,13 +58,7 @@ class HandlerRegistry:
             self._handlers[event_type] = HandlerInfo(
                 event_type, attr_name, attr, is_async, param_count
             )
-            extra = {
-                "owner": self._owner_name,
-                "handler": attr_name,
-                "event_type": event_type.__name__,
-                "is_async": is_async,
-                "param_count": param_count,
-            }
+            extra = {"owner": self._owner_name, "handler": attr_name, "event_type": event_type.__name__, "is_async": is_async, "param_count": param_count}  # fmt: skip
             logger.debug("Registered handler %s for %s", attr_name, event_type.__name__, extra=extra)  # fmt: skip
 
     def _validate_handlers(self) -> None:
@@ -73,49 +67,35 @@ class HandlerRegistry:
 
     def _validate_handler(self, handler_info: HandlerInfo) -> None:
         name, event_type = handler_info.handler_name, handler_info.event_type
-
         if self._require_async and not handler_info.is_async:
             raise ValueError(
                 f"Handler '{name}' in {self._owner_name} must be async.\n\n"
                 f"Change:\n  def {name}(self, ...)\n\n"
                 f"To:\n  async def {name}(self, event: {event_type.__name__}) -> None"
             )
-
         if handler_info.param_count < 1 or handler_info.param_count > 2:
             raise HandlerSignatureError(
                 name, self._owner_name, event_type, handler_info.param_count, self._require_async
             )
-
         try:
             ann = list(inspect.signature(handler_info.handler).parameters.values())[-1].annotation
             if ann != inspect.Parameter.empty and isinstance(ann, type) and ann != event_type:
-                extra = {
-                    "owner": self._owner_name,
-                    "handler": name,
-                    "expected_type": event_type.__name__,
-                    "actual_annotation": ann.__name__,
-                }
+                extra = {"owner": self._owner_name, "handler": name, "expected_type": event_type.__name__, "actual_annotation": ann.__name__}  # fmt: skip
                 msg = "Handler %s in %s: Event type annotation %s doesn't match @handles(%s)"
-                logger.warning(
-                    msg, name, self._owner_name, ann.__name__, event_type.__name__, extra=extra
-                )
+                logger.warning(msg, name, self._owner_name, ann.__name__, event_type.__name__, extra=extra)  # fmt: skip
         except (ValueError, TypeError):
             pass
 
-    def get_handler(self, event_type: type[DomainEvent]) -> HandlerInfo | None:
-        """Get the handler info for a specific event type, or None if not found."""
-        return self._handlers.get(event_type)
+    def get_handler(self, target: type[DomainEvent] | DomainEvent) -> HandlerInfo | None:
+        return self._handlers.get(target if isinstance(target, type) else type(target))
 
-    def has_handler(self, event_type: type[DomainEvent]) -> bool:
-        """Check if a handler exists for the given event type."""
-        return event_type in self._handlers
+    def has_handler(self, target: type[DomainEvent] | DomainEvent) -> bool:
+        return (target if isinstance(target, type) else type(target)) in self._handlers
 
     def get_subscribed_events(self) -> list[type[DomainEvent]]:
-        """Get list of event types that have handlers."""
         return list(self._handlers.keys())
 
     def get_all_handlers(self) -> dict[type[DomainEvent], HandlerInfo]:
-        """Get dictionary mapping event types to handler info."""
         return dict(self._handlers)
 
     async def dispatch(self, event: DomainEvent, context: Any = None) -> bool:
@@ -124,7 +104,6 @@ class HandlerRegistry:
         if handler_info is None:
             self._handle_unregistered_event(event)
             return False
-
         args = (event,) if handler_info.param_count == 1 else (context, event)
         if handler_info.is_async:
             await handler_info.handler(*args)  # type: ignore[misc]
@@ -139,31 +118,29 @@ class HandlerRegistry:
             raise UnhandledEventError(event_name, event.event_id, self._owner_name, available)
         if self._unregistered_event_handling == "warn":
             avail_str = ", ".join(available) if available else "none"
-            extra = {
-                "owner": self._owner_name,
-                "event_type": event_name,
-                "event_id": str(event.event_id),
-                "available_handlers": available,
-            }
-            logger.warning(
-                "No handler registered for event type %s in %s. "
-                "Available handlers: %s. Add @handles(%s) decorator to handle this event.",
-                event_name,
-                self._owner_name,
-                avail_str,
-                event_name,
-                extra=extra,
-            )
+            extra = {"owner": self._owner_name, "event_type": event_name, "event_id": str(event.event_id), "available_handlers": available}  # fmt: skip
+            msg = "No handler registered for event type %s in %s. Available handlers: %s. Add @handles(%s) decorator to handle this event."
+            logger.warning(msg, event_name, self._owner_name, avail_str, event_name, extra=extra)
 
     @property
     def owner(self) -> Any:
-        """Get the owner object."""
         return self._owner
 
     @property
     def handler_count(self) -> int:
-        """Get the number of registered handlers."""
         return len(self._handlers)
+
+    def __len__(self) -> int:
+        return len(self._handlers)
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __contains__(self, target: type[DomainEvent] | DomainEvent) -> bool:
+        return self.has_handler(target)
+
+    def __iter__(self) -> Iterator[type[DomainEvent]]:
+        return iter(self._handlers)
 
     def __repr__(self) -> str:
         return f"HandlerRegistry({self._owner_name}, handlers={self.handler_count}, require_async={self._require_async})"
