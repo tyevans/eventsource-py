@@ -16,18 +16,24 @@ from eventsource.adapters.serialization import json_dumps
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
-from eventsource.ports import (
-    AppendResult,
-    ExpectedVersion,
-    Position,
-    outbox_event_data,
-)
+from eventsource.ports import AppendResult, ExpectedVersion, Position, outbox_event_data
 
 _EVENT_ID_UNIQUE_CONSTRAINT = "events_event_id_key"
 _AGGREGATE_VERSION_UNIQUE_CONSTRAINT = "uq_events_aggregate_version"
 _MAX_VERSION_SQL = text(
     "SELECT COALESCE(MAX(version), 0) FROM events "
     "WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type"
+)
+_INSERT_EVENT_SQL = text(
+    "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, tenant_id, "
+    "actor_id, version, timestamp, payload, created_at) VALUES (:event_id, :event_type, "
+    ":aggregate_type, :aggregate_id, :tenant_id, :actor_id, :version, :timestamp, :payload, NOW()) "
+    "RETURNING global_position"
+)
+_INSERT_OUTBOX_SQL = text(
+    "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
+    "tenant_id, event_data, created_at, status) VALUES (:id, :event_id, :event_type, "
+    ":aggregate_id, :aggregate_type, :tenant_id, :event_data, :created_at, 'pending')"
 )
 
 
@@ -63,10 +69,7 @@ class PostgreSQLEventStoreAppendMixin:
         return None
 
     async def append(
-        self,
-        stream: StreamId,
-        events: Sequence[DomainEvent],
-        expected: ExpectedVersion,
+        self, stream: StreamId, events: Sequence[DomainEvent], expected: ExpectedVersion
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
@@ -94,32 +97,21 @@ class PostgreSQLEventStoreAppendMixin:
 
                 for event in events:
                     version += 1
-                    insert_result = await session.execute(
-                        text(
-                            "INSERT INTO events ("
-                            "event_id, event_type, aggregate_type, aggregate_id, "
-                            "tenant_id, actor_id, version, timestamp, payload, created_at"
-                            ") VALUES ("
-                            ":event_id, :event_type, :aggregate_type, :aggregate_id, "
-                            ":tenant_id, :actor_id, :version, :timestamp, :payload, NOW()"
-                            ") RETURNING global_position"
-                        ),
-                        {
-                            "event_id": event.event_id,
-                            "event_type": event.event_type,
-                            "aggregate_type": category,
-                            "aggregate_id": stream.aggregate_id,
-                            "tenant_id": event.tenant_id,
-                            "actor_id": event.actor_id,
-                            "version": version,
-                            "timestamp": event.occurred_at,
-                            "payload": json_dumps(event.model_dump(mode="json")),
-                        },
-                    )
+                    params = {
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "aggregate_type": category,
+                        "aggregate_id": stream.aggregate_id,
+                        "tenant_id": event.tenant_id,
+                        "actor_id": event.actor_id,
+                        "version": version,
+                        "timestamp": event.occurred_at,
+                        "payload": json_dumps(event.model_dump(mode="json")),
+                    }
+                    insert_result = await session.execute(_INSERT_EVENT_SQL, params)
                     global_position = insert_result.scalar()
                     if first_position is None and global_position is not None:
                         first_position = self._codec.encode(global_position)
-
                     if self._outbox_enabled:
                         await self._write_to_outbox(session, event, category)
 
@@ -142,22 +134,11 @@ class PostgreSQLEventStoreAppendMixin:
                 raise
 
     async def _write_to_outbox(
-        self,
-        session: AsyncSession,
-        event: DomainEvent,
-        aggregate_type: str,
+        self, session: AsyncSession, event: DomainEvent, aggregate_type: str
     ) -> None:
         """Write one outbox row for `event`, on `session`, before commit."""
         await session.execute(
-            text(
-                "INSERT INTO event_outbox ("
-                "id, event_id, event_type, aggregate_id, aggregate_type, "
-                "tenant_id, event_data, created_at, status"
-                ") VALUES ("
-                ":id, :event_id, :event_type, :aggregate_id, :aggregate_type, "
-                ":tenant_id, :event_data, :created_at, 'pending'"
-                ")"
-            ),
+            _INSERT_OUTBOX_SQL,
             {
                 "id": uuid4(),
                 "event_id": event.event_id,

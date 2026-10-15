@@ -15,42 +15,21 @@ if TYPE_CHECKING:  # isort: skip
     from eventsource.adapters._bus.retry import RetryPolicy
     from eventsource.adapters._sql.engine import create_async_engine
     from eventsource.adapters._sql.positions import IntPositionCodec
-    from eventsource.adapters.kafka import (  # isort: skip
-        KAFKA_AVAILABLE, KafkaEventBus, KafkaEventBusConfig,
-        KafkaEventBusStats, KafkaNotAvailableError,
-    )
-    from eventsource.adapters.memory import (  # isort: skip
-        InMemoryCheckpointRepository, InMemoryDLQRepository,
-        InMemoryEventStore, InMemoryOutboxRepository,
-    )
+    from eventsource.adapters.kafka import KAFKA_AVAILABLE, KafkaEventBus, KafkaEventBusConfig, KafkaEventBusStats, KafkaNotAvailableError  # isort: skip
+    from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository, InMemoryEventStore, InMemoryOutboxRepository  # isort: skip
     from eventsource.adapters.memory.bus import InMemoryEventBus
     from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
-    from eventsource.adapters.postgresql import (  # isort: skip
-        ASYNCPG_AVAILABLE, PostgreSQLEventStore, PostgreSQLOutboxRepository,
-    )
-    from eventsource.adapters.rabbitmq import (  # isort: skip
-        RABBITMQ_AVAILABLE, RabbitMQEventBus, RabbitMQEventBusConfig,
-        RabbitMQEventBusStats, RabbitMQNotAvailableError,
-    )
-    from eventsource.adapters.redis import (  # isort: skip
-        REDIS_AVAILABLE, RedisEventBus, RedisEventBusConfig,
-        RedisEventBusStats, RedisNotAvailableError,
-    )
+    from eventsource.adapters.postgresql import ASYNCPG_AVAILABLE, PostgreSQLEventStore, PostgreSQLOutboxRepository  # isort: skip
+    from eventsource.adapters.rabbitmq import RABBITMQ_AVAILABLE, RabbitMQEventBus, RabbitMQEventBusConfig, RabbitMQEventBusStats, RabbitMQNotAvailableError  # isort: skip
+    from eventsource.adapters.redis import REDIS_AVAILABLE, RedisEventBus, RedisEventBusConfig, RedisEventBusStats, RedisNotAvailableError  # isort: skip
     from eventsource.adapters.sql import SQLCheckpointRepository, SQLDLQRepository
     from eventsource.adapters.sql.projection import DatabaseProjection
     from eventsource.adapters.sql.readmodel_projection import ReadModelProjection
-    from eventsource.adapters.sqlite import (  # isort: skip
-        AIOSQLITE_AVAILABLE, SQLiteEventStore,
-        SQLiteOutboxRepository,  # noqa: F401
-    )
+    from eventsource.adapters.sqlite import AIOSQLITE_AVAILABLE, SQLiteEventStore, SQLiteOutboxRepository  # noqa: F401  # isort: skip
     from eventsource.adapters.sync import SyncEventStoreAdapter
     from eventsource.application.aggregates.repository import AggregateRepository
-    from eventsource.application.projections.base import (  # isort: skip
-        CheckpointTrackingProjection, DeclarativeProjection, Projection,
-    )
-    from eventsource.application.projections.replay import (  # isort: skip
-        ReplayFailedError, ReplayFailure, ReplayReport, replay,
-    )
+    from eventsource.application.projections.base import CheckpointTrackingProjection, DeclarativeProjection, Projection  # isort: skip
+    from eventsource.application.projections.replay import ReplayFailedError, ReplayFailure, ReplayReport, replay  # isort: skip
     from eventsource.application.projections.store import ProjectionOptions, StoreProjection
     from eventsource.domain import StreamId
     from eventsource.domain.aggregate import AggregateRoot, DeclarativeAggregate
@@ -58,28 +37,21 @@ if TYPE_CHECKING:  # isort: skip
     from eventsource.domain.decider import DeciderAggregate
     from eventsource.domain.decorators import handles
     from eventsource.domain.event import DomainEvent
-    from eventsource.domain.event_registry import (  # isort: skip
-        EventRegistry, default_registry, get_event_class, get_event_class_or_none,
-        is_event_registered, list_registered_events, register_event,
-    )
+    from eventsource.domain.event_registry import EventRegistry, default_registry, get_event_class, get_event_class_or_none, is_event_registered, list_registered_events, register_event  # isort: skip
     from eventsource.domain.exceptions import (  # isort: skip
         AggregateIdMismatchError, AggregateNotCreatedError, AggregateNotFoundError,
         AggregateTypeMismatchError, AggregateTypeNotSetError, CommandRejectedError,
         DuplicateEventError, DuplicateEventTypeError, EventNotFoundError, EventSourceError,
         EventTypeNotFoundError, EventVersionError, HandlerDispatchError, OptimisticLockError,
         ProjectionError, SnapshotDeserializationError, SnapshotError, SnapshotNotFoundError,
-        SnapshotSchemaVersionError, TenantContextNotSetError, TenantContextResetError,
-        TenantMismatchError,
+        SnapshotSchemaVersionError, TenantContextNotSetError, TenantContextResetError, TenantMismatchError,
     )
     from eventsource.domain.tenant_context import (  # isort: skip
         TenantContextToken, clear_tenant_context, get_current_tenant, get_required_tenant,
-        reset_tenant_context, set_current_tenant, tenant_context, tenant_scope,
-        tenant_scope_sync,
+        reset_tenant_context, set_current_tenant, tenant_context, tenant_scope, tenant_scope_sync,
     )
     from eventsource.domain.tenant_events import TenantDomainEvent
-    from eventsource.domain.types import (  # isort: skip
-        AggregateId, CausationId, CorrelationId, EventId, TenantId,
-    )
+    from eventsource.domain.types import AggregateId, CausationId, CorrelationId, EventId, TenantId  # isort: skip
     from eventsource.ports import (  # isort: skip
         AggregateStore, AppendResult, CategoryQuery, CategoryReadOptions, EventAppender,
         EventBus, EventEnvelope, EventHandlerFunc, EventLookup, EventPublisher,
@@ -88,14 +60,9 @@ if TYPE_CHECKING:  # isort: skip
         StreamReadOptions, collect, outbox_event_data,
     )
     from eventsource.ports.checkpoints import CheckpointData, CheckpointRepository, LagMetrics
-    from eventsource.ports.dlq import (  # isort: skip
-        DLQEntry, DLQRepository, DLQStats, ProjectionFailureCount,
-    )
+    from eventsource.ports.dlq import DLQEntry, DLQRepository, DLQStats, ProjectionFailureCount  # isort: skip
     from eventsource.ports.exceptions import PositionDecodeError, PositionForeignError
-    from eventsource.ports.handlers import (  # isort: skip
-        AsyncEventHandler, EventHandler, EventSubscriber, FlexibleEventHandler,
-        FlexibleEventSubscriber, SyncEventHandler,
-    )
+    from eventsource.ports.handlers import AsyncEventHandler, EventHandler, EventSubscriber, FlexibleEventHandler, FlexibleEventSubscriber, SyncEventHandler  # isort: skip
     from eventsource.ports.readmodels import ReadModel
     from eventsource.ports.snapshots import Snapshot, SnapshotStore
     from eventsource.testing.recording import RecordingEventBus  # isort: skip
@@ -137,8 +104,7 @@ __all__ = [
     "StreamReadOptions", "FeedReadOptions", "CategoryReadOptions", "AggregateStore",
     "EventAppender", "StreamReader", "EventLookup", "GlobalEventFeed", "CategoryQuery",
     "FullEventStore", "collect", "IntPositionCodec", "DuplicateEventError",
-    "PositionDecodeError", "PositionForeignError", "AIOSQLITE_AVAILABLE",
-    "SQLiteEventStore",
+    "PositionDecodeError", "PositionForeignError", "AIOSQLITE_AVAILABLE", "SQLiteEventStore",
 ]
 # fmt: on
 
@@ -156,13 +122,11 @@ if _AIOSQLITE_AVAILABLE_FOR_ALL:
 def __getattr__(name: str) -> object:
     if name == "SQLiteOutboxRepository" and not _AIOSQLITE_AVAILABLE_FOR_ALL:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_path = _LAZY.get(name)
-    if module_path is None:
+    if (module_path := _LAZY.get(name)) is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     import importlib
 
-    module = importlib.import_module(module_path)
-    value = getattr(module, name)
+    value = getattr(importlib.import_module(module_path), name)
     globals()[name] = value
     return value
 

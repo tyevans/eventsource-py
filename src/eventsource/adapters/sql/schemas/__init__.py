@@ -4,15 +4,8 @@ from pathlib import Path
 from typing import Literal
 
 SchemaName = Literal[
-    "events",
-    "events_partitioned",
-    "outbox",
-    "checkpoints",
-    "dlq",
-    "snapshots",
-    "migration",
-    "all",
-]
+    "events", "events_partitioned", "outbox", "checkpoints", "dlq", "snapshots", "migration", "all"
+]  # fmt: skip
 BackendName = Literal["postgresql", "sqlite"]
 
 _PACKAGE_DIR = Path(__file__).parent
@@ -44,15 +37,12 @@ def _get_backend_templates_dir(backend: BackendName) -> Path:
 
 def _get_backend_schema_file(backend: BackendName) -> Path:
     """Get the combined schema file path for a specific backend."""
-    filename = "all.sql" if backend == "postgresql" else f"{backend}_all.sql"
-    return _SCHEMAS_DIR / filename
+    return _SCHEMAS_DIR / ("all.sql" if backend == "postgresql" else f"{backend}_all.sql")
 
 
 def get_template_path(name: SchemaName, backend: BackendName = "postgresql") -> Path:
     """Get the path to a SQL template file for the given schema name and backend."""
-    templates_dir = _get_backend_templates_dir(backend)
-    path = templates_dir / f"{name}.sql"
-
+    path = _get_backend_templates_dir(backend) / f"{name}.sql"
     if not path.exists():
         if backend != "postgresql":
             raise ValueError(
@@ -67,29 +57,25 @@ def get_schema(
     name: SchemaName, backend: BackendName = "postgresql", *, additive: bool = True
 ) -> str:
     """Load a SQL schema template by name and backend, optionally appending additive fragments."""
-    if name == "all":
-        path = _get_backend_schema_file(backend)
-    else:
-        path = _get_backend_templates_dir(backend) / f"{name}.sql"
-
+    path = (
+        _get_backend_schema_file(backend)
+        if name == "all"
+        else _get_backend_templates_dir(backend) / f"{name}.sql"
+    )
     if not path.exists():
         if backend != "postgresql":
-            available = list_schemas(backend)
             if name == "all":
                 raise FileNotFoundError(
                     f"Combined schema file not found for backend '{backend}': {path}"
                 )
             raise ValueError(
                 f"Schema '{name}' is not available for backend '{backend}'. "
-                f"Available schemas: {available}"
+                f"Available schemas: {list_schemas(backend)}"
             )
         raise FileNotFoundError(f"Schema file not found: {path}")
 
     text = path.read_text()
-    if not additive:
-        return text
-
-    fragments = _ADDITIVE_FRAGMENTS.get((name, backend), ())
+    fragments = _ADDITIVE_FRAGMENTS.get((name, backend), ()) if additive else ()
     if not fragments:
         return text
 
@@ -100,7 +86,6 @@ def get_schema(
         if not fragment_path.exists():
             raise FileNotFoundError(f"Additive fragment not found: {fragment_path}")
         parts.append(fragment_path.read_text())
-
     return "\n\n".join(parts)
 
 
@@ -112,9 +97,7 @@ def get_all_schemas(backend: BackendName = "postgresql") -> str:
 def list_schemas(backend: BackendName = "postgresql") -> list[str]:
     """List all available schema templates for a backend."""
     templates_dir = _get_backend_templates_dir(backend)
-    if not templates_dir.exists():
-        return []
-    return sorted(p.stem for p in templates_dir.glob("*.sql"))
+    return sorted(p.stem for p in templates_dir.glob("*.sql")) if templates_dir.exists() else []
 
 
 def list_backends() -> list[str]:
@@ -151,20 +134,8 @@ SNAPSHOTS_SCHEMA = "snapshots"
 MIGRATION_SCHEMA = "migration"
 
 __all__ = [
-    "get_schema",
-    "get_all_schemas",
-    "get_template_path",
-    "list_schemas",
-    "list_backends",
-    "get_alembic_template",
-    "list_alembic_templates",
-    "EVENTS_SCHEMA",
-    "EVENTS_PARTITIONED_SCHEMA",
-    "OUTBOX_SCHEMA",
-    "CHECKPOINTS_SCHEMA",
-    "DLQ_SCHEMA",
-    "SNAPSHOTS_SCHEMA",
-    "MIGRATION_SCHEMA",
-    "SchemaName",
-    "BackendName",
-]
+    "get_schema", "get_all_schemas", "get_template_path", "list_schemas", "list_backends",
+    "get_alembic_template", "list_alembic_templates", "EVENTS_SCHEMA", "EVENTS_PARTITIONED_SCHEMA",
+    "OUTBOX_SCHEMA", "CHECKPOINTS_SCHEMA", "DLQ_SCHEMA", "SNAPSHOTS_SCHEMA", "MIGRATION_SCHEMA",
+    "SchemaName", "BackendName",
+]  # fmt: skip

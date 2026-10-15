@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from eventsource.application.subscriptions.shutdown_deadlines import ShutdownDeadlineManager
-from eventsource.application.subscriptions.shutdown_hooks import (
+from eventsource.application.subscriptions.shutdown_hooks import (  # fmt: skip
     PostShutdownHook,
     PreShutdownHook,
     ShutdownHookManager,
@@ -25,13 +25,13 @@ from eventsource.application.subscriptions.shutdown_metrics import (
     record_shutdown_initiated,
     reset_shutdown_metrics,
 )
-from eventsource.application.subscriptions.shutdown_models import (
+from eventsource.application.subscriptions.shutdown_models import (  # fmt: skip
     ShutdownPhase,
     ShutdownReason,
     ShutdownResult,
 )
 from eventsource.application.subscriptions.shutdown_periodic import PeriodicCheckpointManager
-from eventsource.application.subscriptions.shutdown_runner import (
+from eventsource.application.subscriptions.shutdown_runner import (  # fmt: skip
     create_shutdown_result,
     execute_shutdown_sequence,
 )
@@ -48,12 +48,9 @@ class ShutdownCoordinator:
     """Coordinates Kubernetes-friendly graceful shutdown of subscriptions."""
 
     def __init__(
-        self,
-        timeout: float = 30.0,
-        drain_timeout: float = 10.0,
-        checkpoint_timeout: float = 5.0,
-        checkpoint_interval: float = 5.0,
-    ) -> None:
+        self, timeout: float = 30.0, drain_timeout: float = 10.0,
+        checkpoint_timeout: float = 5.0, checkpoint_interval: float = 5.0,
+    ) -> None:  # fmt: skip
         self.timeout, self.drain_timeout = timeout, drain_timeout
         self.checkpoint_timeout, self.checkpoint_interval = checkpoint_timeout, checkpoint_interval
         self._signal_manager = ShutdownSignalManager(timeout=timeout)
@@ -118,8 +115,7 @@ class ShutdownCoordinator:
         return self._deadline_manager.get_remaining_shutdown_time()
 
     def _get_adjusted_timeouts(self) -> tuple[float, float, float]:
-        mgr = self._deadline_manager
-        return mgr.get_adjusted_timeouts(self.drain_timeout, self.checkpoint_timeout)
+        return self._deadline_manager.get_adjusted_timeouts(self.drain_timeout, self.checkpoint_timeout)  # fmt: skip
 
     def set_in_flight_count(self, count: int) -> None:
         self._in_flight_at_start = count
@@ -132,14 +128,10 @@ class ShutdownCoordinator:
         return create_shutdown_result(self, start_time, *args)
 
     async def shutdown(
-        self,
-        stop_func: Callable[[], Awaitable[None]],
-        drain_func: Callable[[], Awaitable[int]] | None = None,
-        checkpoint_func: Callable[[], Awaitable[int]] | None = None,
-        close_func: Callable[[], Awaitable[None]] | None = None,
-    ) -> ShutdownResult:
-        fn = execute_shutdown_sequence
-        return await fn(self, stop_func, drain_func, checkpoint_func, close_func)
+        self, stop_func: Callable[[], Awaitable[None]], drain_func: Callable[[], Awaitable[int]] | None = None,
+        checkpoint_func: Callable[[], Awaitable[int]] | None = None, close_func: Callable[[], Awaitable[None]] | None = None,
+    ) -> ShutdownResult:  # fmt: skip
+        return await execute_shutdown_sequence(self, stop_func, drain_func, checkpoint_func, close_func)  # fmt: skip
 
     def reset(self) -> None:
         for mgr in (self._signal_manager, self._periodic_manager, self._deadline_manager):
@@ -152,19 +144,9 @@ class ShutdownCoordinator:
 
 
 __all__ = [
-    "OTEL_METRICS_AVAILABLE",
-    "PostShutdownHook",
-    "PreShutdownHook",
-    "ShutdownCoordinator",
-    "ShutdownMetricsSnapshot",
-    "ShutdownPhase",
-    "ShutdownReason",
-    "ShutdownResult",
-    "get_in_flight_at_shutdown",
-    "record_drain_duration",
-    "record_events_drained",
-    "record_in_flight_at_shutdown",
-    "record_shutdown_completed",
-    "record_shutdown_initiated",
+    "OTEL_METRICS_AVAILABLE", "PostShutdownHook", "PreShutdownHook", "ShutdownCoordinator",
+    "ShutdownMetricsSnapshot", "ShutdownPhase", "ShutdownReason", "ShutdownResult",
+    "get_in_flight_at_shutdown", "record_drain_duration", "record_events_drained",
+    "record_in_flight_at_shutdown", "record_shutdown_completed", "record_shutdown_initiated",
     "reset_shutdown_metrics",
-]
+]  # fmt: skip
