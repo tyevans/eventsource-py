@@ -8,7 +8,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from eventsource.adapters.rabbitmq import RabbitMQEventBusConfig
+from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+
+
+async def _empty_iterator():
+    if False:
+        yield
+
+
+def _wire_mock_aio_pika(mock_aio_pika: MagicMock, iterator_fn=_empty_iterator) -> None:
+    mock_connection = AsyncMock(is_closed=False)
+    mock_channel = AsyncMock(is_closed=False)
+    mock_exchange = AsyncMock()
+    mock_queue = AsyncMock()
+    mock_queue_iter = AsyncMock()
+    mock_queue_iter.__aenter__ = AsyncMock(return_value=iterator_fn())
+    mock_queue_iter.__aexit__ = AsyncMock(return_value=None)
+    mock_queue.iterator = MagicMock(return_value=mock_queue_iter)
+    mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
+    mock_connection.channel = AsyncMock(return_value=mock_channel)
+    mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+    mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
 
 
 class TestRabbitMQStartConsuming:
@@ -26,27 +46,7 @@ class TestRabbitMQStartConsuming:
     async def test_start_consuming_auto_connects(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-
-        async def empty_iterator():
-            if False:
-                yield
-
-        mock_queue_iter = AsyncMock()
-        mock_queue_iter.__aenter__ = AsyncMock(return_value=empty_iterator())
-        mock_queue_iter.__aexit__ = AsyncMock(return_value=None)
-        mock_queue.iterator = MagicMock(return_value=mock_queue_iter)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+        _wire_mock_aio_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         task = asyncio.create_task(bus.start_consuming())
         await asyncio.sleep(0.1)
@@ -62,8 +62,6 @@ class TestRabbitMQStartConsuming:
     async def test_start_consuming_raises_if_queue_not_initialized(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         bus = RabbitMQEventBus(config=config)
         bus._connection_manager._connected = True
         with pytest.raises(RuntimeError, match="Consumer queue not initialized"):
@@ -74,30 +72,15 @@ class TestRabbitMQStartConsuming:
     async def test_start_consuming_sets_consuming_flag(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
         consuming_flag_during_loop = []
+        bus = RabbitMQEventBus(config=config)
 
         async def async_iterator():
             consuming_flag_during_loop.append(bus.is_consuming)
             if False:
                 yield
 
-        mock_queue_iter = AsyncMock()
-        mock_queue_iter.__aenter__ = AsyncMock(return_value=async_iterator())
-        mock_queue_iter.__aexit__ = AsyncMock(return_value=None)
-        mock_queue.iterator = MagicMock(return_value=mock_queue_iter)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-        bus = RabbitMQEventBus(config=config)
+        _wire_mock_aio_pika(mock_aio_pika, async_iterator)
         task = asyncio.create_task(bus.start_consuming())
         await asyncio.sleep(0.1)
         task.cancel()
@@ -111,28 +94,12 @@ class TestRabbitMQStartConsuming:
     async def test_start_consuming_handles_cancellation(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-
         async def infinite_iterator():
             while True:
                 await asyncio.sleep(0.1)
                 yield MagicMock()
 
-        mock_queue_iter = AsyncMock()
-        mock_queue_iter.__aenter__ = AsyncMock(return_value=infinite_iterator())
-        mock_queue_iter.__aexit__ = AsyncMock(return_value=None)
-        mock_queue.iterator = MagicMock(return_value=mock_queue_iter)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+        _wire_mock_aio_pika(mock_aio_pika, infinite_iterator)
         bus = RabbitMQEventBus(config=config)
         task = asyncio.create_task(bus.start_consuming())
         await asyncio.sleep(0.05)
@@ -145,8 +112,6 @@ class TestRabbitMQStartConsuming:
 class TestRabbitMQStopConsuming:
     @pytest.mark.asyncio
     async def test_stop_consuming_sets_flag(self) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         bus = RabbitMQEventBus()
         bus._consumer._consuming = True
         await bus.stop_consuming()
@@ -154,8 +119,6 @@ class TestRabbitMQStopConsuming:
 
     @pytest.mark.asyncio
     async def test_stop_consuming_when_already_stopped(self) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         bus = RabbitMQEventBus()
         assert bus._consumer._consuming is False
         await bus.stop_consuming()
@@ -175,27 +138,7 @@ class TestRabbitMQStartConsumingInBackground:
     async def test_start_consuming_in_background_returns_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-
-        async def empty_iterator():
-            if False:
-                yield
-
-        mock_queue_iter = AsyncMock()
-        mock_queue_iter.__aenter__ = AsyncMock(return_value=empty_iterator())
-        mock_queue_iter.__aexit__ = AsyncMock(return_value=None)
-        mock_queue.iterator = MagicMock(return_value=mock_queue_iter)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+        _wire_mock_aio_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         task = bus.start_consuming_in_background()
         assert isinstance(task, asyncio.Task)
@@ -209,27 +152,7 @@ class TestRabbitMQStartConsumingInBackground:
     async def test_start_consuming_in_background_raises_if_already_running(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-
-        async def empty_iterator():
-            if False:
-                yield
-
-        mock_queue_iter = AsyncMock()
-        mock_queue_iter.__aenter__ = AsyncMock(return_value=empty_iterator())
-        mock_queue_iter.__aexit__ = AsyncMock(return_value=None)
-        mock_queue.iterator = MagicMock(return_value=mock_queue_iter)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+        _wire_mock_aio_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         task1 = bus.start_consuming_in_background()
         await asyncio.sleep(0.05)

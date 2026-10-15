@@ -21,9 +21,22 @@ from tests.unit.application.migration.test_subscription_migrator._fixtures impor
 )
 
 
-class TestSubscriptionMigratorMigrateSubscriptions:
-    """Tests for SubscriptionMigrator.migrate_subscriptions method."""
+def _wire_exact_translation(mock_position_mapper: MagicMock, src: int = 1000, dst: int = 500):
+    mock_position_mapper.translate_position = AsyncMock(return_value=exact_translation(src, dst))
 
+
+def _wire_checkpoint_repo(
+    mock_checkpoint_repo: MagicMock,
+    cps: list[CheckpointData] | None = None,
+    pos: int = 1000,
+) -> None:
+    mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(pos))
+    if cps is not None:
+        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(return_value=cps)
+    mock_checkpoint_repo.save_position = AsyncMock()
+
+
+class TestSubscriptionMigratorMigrateSubscriptions:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_dry_run(
         self,
@@ -33,16 +46,13 @@ class TestSubscriptionMigratorMigrateSubscriptions:
     ) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
-        mock_position_mapper.translate_position = AsyncMock(
-            return_value=exact_translation(1000, 500)
-        )
+        _wire_exact_translation(mock_position_mapper)
         summary = await migrator.migrate_subscriptions(
             migration_id, tenant_id, ["OrderProjection"], dry_run=True
         )
         mock_checkpoint_repo.save_position.assert_not_called()
         assert isinstance(summary, MigrationSummary)
-        assert summary.migration_id == migration_id
-        assert summary.successful_count == 1
+        assert summary.migration_id == migration_id and summary.successful_count == 1
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_executes(
@@ -52,13 +62,9 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_position_mapper: MagicMock,
     ) -> None:
         migration_id, tenant_id, event_id = uuid4(), uuid4(), uuid4()
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         cp = CheckpointData("OrderProjection", event_id, "OrderCreated", position=source_pos(1000))
-        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(return_value=[cp])
-        mock_checkpoint_repo.save_position = AsyncMock()
-        mock_position_mapper.translate_position = AsyncMock(
-            return_value=exact_translation(1000, 500)
-        )
+        _wire_checkpoint_repo(mock_checkpoint_repo, [cp])
+        _wire_exact_translation(mock_position_mapper)
         summary = await migrator.migrate_subscriptions(
             migration_id, tenant_id, ["OrderProjection"], dry_run=False
         )
@@ -68,16 +74,13 @@ class TestSubscriptionMigratorMigrateSubscriptions:
             event_id=event_id,
             event_type="OrderCreated",
         )
-        assert summary.successful_count == 1
-        assert summary.failed_count == 0
+        assert summary.successful_count == 1 and summary.failed_count == 0
         assert summary.all_successful
         saved_position = mock_checkpoint_repo.save_position.call_args.kwargs["position"]
-        assert isinstance(saved_position, Position)
-        assert not isinstance(saved_position, int)
-        assert summary.results[0].source_position == source_pos(1000)
-        assert isinstance(summary.results[0].source_position, Position)
-        assert summary.results[0].target_position == target_pos(500)
-        assert isinstance(summary.results[0].target_position, Position)
+        assert isinstance(saved_position, Position) and not isinstance(saved_position, int)
+        res = summary.results[0]
+        assert res.source_position == source_pos(1000) and isinstance(res.source_position, Position)
+        assert res.target_position == target_pos(500) and isinstance(res.target_position, Position)
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_missing_checkpoint_data(
@@ -86,16 +89,14 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         cp = make_checkpoint_data(
             projection_name="OrderProjection", last_event_id=None, last_event_type=None
         )
-        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(return_value=[cp])
+        _wire_checkpoint_repo(mock_checkpoint_repo, [cp])
         summary = await migrator.migrate_subscriptions(
             uuid4(), uuid4(), ["OrderProjection"], dry_run=False
         )
-        assert summary.skipped_count == 1
-        assert summary.successful_count == 0
+        assert summary.skipped_count == 1 and summary.successful_count == 0
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_translation_error(
@@ -105,10 +106,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_position_mapper: MagicMock,
     ) -> None:
         migration_id = uuid4()
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
-        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
-            return_value=[make_checkpoint_data(last_event_id=uuid4())]
-        )
+        _wire_checkpoint_repo(mock_checkpoint_repo, [make_checkpoint_data(last_event_id=uuid4())])
         err = PositionMappingError(
             "No mapping found",
             migration_id=migration_id,
@@ -119,10 +117,8 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         summary = await migrator.migrate_subscriptions(
             migration_id, uuid4(), ["OrderProjection"], dry_run=False
         )
-        assert summary.failed_count == 1
-        assert summary.successful_count == 0
-        assert not summary.all_successful
-        assert summary.results[0].error_message is not None
+        assert summary.failed_count == 1 and summary.successful_count == 0
+        assert not summary.all_successful and summary.results[0].error_message is not None
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_save_error(
@@ -131,14 +127,9 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
-        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
-            return_value=[make_checkpoint_data(last_event_id=uuid4())]
-        )
+        _wire_checkpoint_repo(mock_checkpoint_repo, [make_checkpoint_data(last_event_id=uuid4())])
         mock_checkpoint_repo.save_position = AsyncMock(side_effect=Exception("Database error"))
-        mock_position_mapper.translate_position = AsyncMock(
-            return_value=exact_translation(1000, 500)
-        )
+        _wire_exact_translation(mock_position_mapper)
         summary = await migrator.migrate_subscriptions(
             uuid4(), uuid4(), ["OrderProjection"], dry_run=False
         )
@@ -164,8 +155,6 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 
 
 class TestSubscriptionMigratorMigrateTenantSubscriptions:
-    """Tests for SubscriptionMigrator.migrate_tenant_subscriptions method."""
-
     @pytest.mark.asyncio
     async def test_migrate_tenant_with_explicit_names(
         self,
@@ -173,14 +162,8 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
-        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
-            return_value=[make_checkpoint_data(last_event_id=uuid4())]
-        )
-        mock_checkpoint_repo.save_position = AsyncMock()
-        mock_position_mapper.translate_position = AsyncMock(
-            return_value=exact_translation(1000, 500)
-        )
+        _wire_checkpoint_repo(mock_checkpoint_repo, [make_checkpoint_data(last_event_id=uuid4())])
+        _wire_exact_translation(mock_position_mapper)
         summary = await migrator.migrate_tenant_subscriptions(
             migration_id=uuid4(), tenant_id=uuid4(), subscription_names=["OrderProjection"]
         )
@@ -200,12 +183,8 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
                 "InventoryProjection", event_id, "InventoryUpdated", source_pos(2000)
             ),
         ]
-        mock_checkpoint_repo.get_all_checkpoints = AsyncMock(return_value=cps)
-        mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
-        mock_checkpoint_repo.save_position = AsyncMock()
-        mock_position_mapper.translate_position = AsyncMock(
-            return_value=exact_translation(1000, 500)
-        )
+        _wire_checkpoint_repo(mock_checkpoint_repo, cps)
+        _wire_exact_translation(mock_position_mapper)
         summary = await migrator.migrate_tenant_subscriptions(
             migration_id=uuid4(), tenant_id=uuid4(), subscription_names=None
         )
@@ -213,8 +192,6 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
 
 
 class TestSubscriptionMigratorVerifyMigration:
-    """Tests for SubscriptionMigrator.verify_migration method."""
-
     @pytest.mark.asyncio
     async def test_verify_migration_all_present(
         self, migrator: SubscriptionMigrator, mock_checkpoint_repo: MagicMock
@@ -223,8 +200,7 @@ class TestSubscriptionMigratorVerifyMigration:
         results = await migrator.verify_migration(
             migration_id=uuid4(), subscription_names=["OrderProjection", "InventoryProjection"]
         )
-        assert all(results.values())
-        assert len(results) == 2
+        assert all(results.values()) and len(results) == 2
 
     @pytest.mark.asyncio
     async def test_verify_migration_some_missing(
