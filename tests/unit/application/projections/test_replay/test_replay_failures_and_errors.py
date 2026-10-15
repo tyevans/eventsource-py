@@ -72,12 +72,7 @@ class TestAPoisonEventDoesNotStopTheRebuild:
 
 
 class TestFailedCountsEventsAndFailuresCountRejections:
-    """The two numbers are allowed to differ, and here they do.
-
-    Both projections reject the one event, so a `failed` counted alongside
-    `failures` -- or derived as `len(failures)` -- would say two events failed
-    when the log holds one.
-    """
+    """`failed` counts distinct events while `failures` counts rejections."""
 
     async def test_two_projections_rejecting_one_event_is_one_failed_event(self) -> None:
         store = await _store_with(OrderPlaced(aggregate_id=uuid4()))
@@ -97,20 +92,11 @@ class TestFailedCountsEventsAndFailuresCountRejections:
         assert report.applied == 0
 
     async def test_an_event_no_projection_handles_still_counts_as_applied(self) -> None:
-        """Delivered and not rejected is the whole test for applied."""
         store = await _store_with(OrderPlaced(aggregate_id=uuid4()))
         report = await replay(store, [])
         assert report.applied == 1
 
     async def test_failed_counts_events_when_the_feed_supplies_no_positions(self) -> None:
-        """A position-less feed must not collapse every failure into one.
-
-        `ReplayFailure.position` is `Position | None` by contract, so a
-        derivation that dedupes on it counts every `None` as the same event
-        and reports one failure for a whole failed rebuild. `failed` answers
-        "how many events did not reach the read models"; three events that
-        each failed are three, whether or not the adapter numbers them.
-        """
         events = [OrderPlaced(aggregate_id=uuid4()) for _ in range(3)]
         feed = PositionlessFeed(events)
 
@@ -120,8 +106,6 @@ class TestFailedCountsEventsAndFailuresCountRejections:
         assert report.failed == 3
 
     async def test_one_positionless_event_rejected_twice_is_still_one_event(self) -> None:
-        """The dedupe still has to dedupe -- fixing the undercount must not
-        turn `failed` into `len(failures)`."""
         feed = PositionlessFeed([OrderPlaced(aggregate_id=uuid4())])
 
         report = await replay(feed, [RejectsEverything("left"), RejectsEverything("right")])
@@ -130,8 +114,6 @@ class TestFailedCountsEventsAndFailuresCountRejections:
         assert report.failed == 1
 
     def test_failed_cannot_be_supplied_independently_of_the_failures(self) -> None:
-        """Restoring a `failed` argument is the change that would let the two
-        drift apart again, and it would look like a convenience."""
         with pytest.raises(TypeError):
             ReplayReport(applied=1, failed=9, last_position=None)  # type: ignore[call-arg]
 
@@ -151,8 +133,6 @@ class TestStrictRaisesOnTheFirstRejection:
         assert raised.value.__cause__ is failure.error
 
     async def test_it_stops_rather_than_carrying_on(self) -> None:
-        """A strict replay that raised and still folded the third event would
-        be a louder default, not a stop."""
         first, poison, last = (OrderPlaced(aggregate_id=uuid4()) for _ in range(3))
         store = await _store_with(first, poison, last)
         collecting = Collecting()
@@ -163,8 +143,6 @@ class TestStrictRaisesOnTheFirstRejection:
         assert [e.event_id for e in collecting.seen] == [first.event_id]
 
     async def test_a_clean_log_is_unaffected_by_strict(self) -> None:
-        """Strict changes nothing when nothing fails -- so a caller can leave
-        it on."""
         store = await _store_with(*(OrderPlaced(aggregate_id=uuid4()) for _ in range(3)))
 
         lenient = await replay(store, [Collecting()])
@@ -173,19 +151,10 @@ class TestStrictRaisesOnTheFirstRejection:
         assert (lenient.applied, lenient.failed) == (strict.applied, strict.failed) == (3, 0)
 
     def test_the_error_is_rooted_in_the_library_hierarchy(self) -> None:
-        """`except ProjectionError` must catch a strict rebuild's stop: it is
-        a projection failing to process an event, which is what that error
-        already means."""
         assert issubclass(ReplayFailedError, ProjectionError)
 
 
 class TestTheFailureListIsBoundedAndSaysSo:
-    """A silent truncation reproduces the defect `failures` exists to fix.
-
-    `failures_truncated` is the honesty: an operator who sees it non-zero
-    knows the report is a sample rather than the whole story.
-    """
-
     async def test_failures_are_capped_at_max_failures(self) -> None:
         store = await _store_with(*(OrderPlaced(aggregate_id=uuid4()) for _ in range(5)))
 
@@ -209,8 +178,6 @@ class TestTheFailureListIsBoundedAndSaysSo:
         assert len(report.failures) == 2
 
     async def test_on_failure_fires_for_every_failure_including_dropped_ones(self) -> None:
-        """The hook is the escape hatch from the cap: a caller who wants all
-        of them streams them out instead of holding them in memory."""
         store = await _store_with(*(OrderPlaced(aggregate_id=uuid4()) for _ in range(5)))
         streamed: list[ReplayFailure] = []
 
@@ -223,7 +190,6 @@ class TestTheFailureListIsBoundedAndSaysSo:
 
         assert len(streamed) == 5
         assert report.failures_truncated == 3
-        # The dropped ones are reachable through the hook and only there.
         retained = {f.event_id for f in report.failures}
         assert {f.event_id for f in streamed} - retained
 
@@ -244,9 +210,6 @@ class TestTheFailureListIsBoundedAndSaysSo:
 
 
 class TestSingleProjectionAndSucceededReport:
-    """Callers with a single projection can pass it directly without wrapping
-    in a list, and `report.succeeded` summarizes whether zero failures occurred."""
-
     async def test_replay_accepts_a_bare_single_projection(self) -> None:
         first = OrderPlaced(aggregate_id=uuid4())
         second = OrderPlaced(aggregate_id=uuid4())
@@ -258,8 +221,9 @@ class TestSingleProjectionAndSucceededReport:
         assert [e.event_id for e in projection.seen] == [first.event_id, second.event_id]
         assert report.applied == 2
         assert report.succeeded is True
+        report.raise_for_failures()
 
-    async def test_succeeded_is_false_when_a_failure_is_retained_or_truncated(self) -> None:
+    async def test_succeeded_and_raise_for_failures_when_retained_or_truncated(self) -> None:
         poison = OrderPlaced(aggregate_id=uuid4())
         store = await _store_with(poison)
 
@@ -267,6 +231,12 @@ class TestSingleProjectionAndSucceededReport:
         truncated_report = await replay(store, RejectsOne(poison.event_id), max_failures=0)
 
         assert failed_report.succeeded is False
+        with pytest.raises(ReplayFailedError) as exc_info:
+            failed_report.raise_for_failures()
+        assert exc_info.value.failure.event_id == poison.event_id
+
         assert truncated_report.failures == ()
         assert truncated_report.failures_truncated == 1
         assert truncated_report.succeeded is False
+        with pytest.raises(RuntimeError, match="1 truncated failure"):
+            truncated_report.raise_for_failures()

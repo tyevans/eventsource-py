@@ -108,6 +108,15 @@ class ReplayReport:
         """Whether the replay completed without any failures."""
         return len(self.failures) == 0 and self.failures_truncated == 0
 
+    def raise_for_failures(self) -> None:
+        """Raise ReplayFailedError if any failure occurred during replay."""
+        if self.succeeded:
+            return
+        if self.failures:
+            first = self.failures[0]
+            raise ReplayFailedError(failure=first) from first.error
+        raise RuntimeError(f"replay failed with {self.failures_truncated} truncated failure(s)")
+
 
 class ReplayFailedError(ProjectionError):
     """A `strict=True` replay hit an event a projection rejected.
