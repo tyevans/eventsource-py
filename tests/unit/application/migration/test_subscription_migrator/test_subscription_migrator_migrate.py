@@ -6,7 +6,6 @@ from uuid import uuid4
 import pytest
 
 from eventsource.application.migration.exceptions import PositionMappingError
-from eventsource.application.migration.position_mapper import TranslationResult
 from eventsource.application.migration.subscription_migrator import (
     MigrationSummary,
     SubscriptionMigrationError,
@@ -15,6 +14,7 @@ from eventsource.application.migration.subscription_migrator import (
 from eventsource.ports.checkpoints import CheckpointData
 from eventsource.ports.positions import Position
 from tests.unit.application.migration.test_subscription_migrator._fixtures import (
+    exact_translation,
     make_checkpoint_data,
     source_pos,
     target_pos,
@@ -31,17 +31,10 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_subscriptions in dry_run mode."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-
+        migration_id, tenant_id = uuid4(), uuid4()
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_position_mapper.translate_position = AsyncMock(
-            return_value=TranslationResult(
-                source_position=source_pos(1000),
-                target_position=target_pos(500),
-                is_exact=True,
-            )
+            return_value=exact_translation(1000, 500)
         )
 
         summary = await migrator.migrate_subscriptions(
@@ -51,9 +44,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
             dry_run=True,
         )
 
-        # Should not call save_position in dry_run mode
         mock_checkpoint_repo.save_position.assert_not_called()
-
         assert isinstance(summary, MigrationSummary)
         assert summary.migration_id == migration_id
         assert summary.successful_count == 1
@@ -65,11 +56,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_subscriptions actually migrates checkpoints."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        event_id = uuid4()
-
+        migration_id, tenant_id, event_id = uuid4(), uuid4(), uuid4()
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
@@ -83,11 +70,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         )
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
-            return_value=TranslationResult(
-                source_position=source_pos(1000),
-                target_position=target_pos(500),
-                is_exact=True,
-            )
+            return_value=exact_translation(1000, 500)
         )
 
         summary = await migrator.migrate_subscriptions(
@@ -97,21 +80,16 @@ class TestSubscriptionMigratorMigrateSubscriptions:
             dry_run=False,
         )
 
-        # Should call save_position
         mock_checkpoint_repo.save_position.assert_called_once_with(
             subscription_id="OrderProjection",
             position=target_pos(500),
             event_id=event_id,
             event_type="OrderCreated",
         )
-
         assert summary.successful_count == 1
         assert summary.failed_count == 0
         assert summary.all_successful
 
-        # The checkpoint position and its translated target both round-trip
-        # through save_position as Position tokens -- no int appears anywhere
-        # on the path from checkpoint read to checkpoint write.
         saved_position = mock_checkpoint_repo.save_position.call_args.kwargs["position"]
         assert isinstance(saved_position, Position)
         assert not isinstance(saved_position, int)
@@ -127,10 +105,6 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_subscriptions skips incomplete checkpoint data."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
@@ -143,13 +117,12 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         )
 
         summary = await migrator.migrate_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
+            migration_id=uuid4(),
+            tenant_id=uuid4(),
             subscription_names=["OrderProjection"],
             dry_run=False,
         )
 
-        # Should skip due to incomplete data
         assert summary.skipped_count == 1
         assert summary.successful_count == 0
 
@@ -160,14 +133,10 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_subscriptions handles position translation errors."""
         migration_id = uuid4()
-        tenant_id = uuid4()
-        event_id = uuid4()
-
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
-            return_value=[make_checkpoint_data(last_event_id=event_id)]
+            return_value=[make_checkpoint_data(last_event_id=uuid4())]
         )
         mock_position_mapper.translate_position = AsyncMock(
             side_effect=PositionMappingError(
@@ -180,7 +149,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 
         summary = await migrator.migrate_subscriptions(
             migration_id=migration_id,
-            tenant_id=tenant_id,
+            tenant_id=uuid4(),
             subscription_names=["OrderProjection"],
             dry_run=False,
         )
@@ -197,27 +166,18 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_subscriptions handles checkpoint save errors."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        event_id = uuid4()
-
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
-            return_value=[make_checkpoint_data(last_event_id=event_id)]
+            return_value=[make_checkpoint_data(last_event_id=uuid4())]
         )
         mock_checkpoint_repo.save_position = AsyncMock(side_effect=Exception("Database error"))
         mock_position_mapper.translate_position = AsyncMock(
-            return_value=TranslationResult(
-                source_position=source_pos(1000),
-                target_position=target_pos(500),
-                is_exact=True,
-            )
+            return_value=exact_translation(1000, 500)
         )
 
         summary = await migrator.migrate_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
+            migration_id=uuid4(),
+            tenant_id=uuid4(),
             subscription_names=["OrderProjection"],
             dry_run=False,
         )
@@ -232,10 +192,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         migrator: SubscriptionMigrator,
         mock_checkpoint_repo: MagicMock,
     ) -> None:
-        """A failure reading checkpoint repo must raise SubscriptionMigrationError."""
         migration_id = uuid4()
-        tenant_id = uuid4()
-
         mock_checkpoint_repo.get_position = AsyncMock(
             side_effect=ConnectionError("checkpoint store unreachable")
         )
@@ -243,7 +200,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         with pytest.raises(SubscriptionMigrationError) as exc_info:
             await migrator.migrate_subscriptions(
                 migration_id=migration_id,
-                tenant_id=tenant_id,
+                tenant_id=uuid4(),
                 subscription_names=["OrderProjection"],
                 dry_run=False,
             )
@@ -263,27 +220,18 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_tenant_subscriptions with explicit subscription names."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        event_id = uuid4()
-
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
-            return_value=[make_checkpoint_data(last_event_id=event_id)]
+            return_value=[make_checkpoint_data(last_event_id=uuid4())]
         )
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
-            return_value=TranslationResult(
-                source_position=source_pos(1000),
-                target_position=target_pos(500),
-                is_exact=True,
-            )
+            return_value=exact_translation(1000, 500)
         )
 
         summary = await migrator.migrate_tenant_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
+            migration_id=uuid4(),
+            tenant_id=uuid4(),
             subscription_names=["OrderProjection"],
         )
 
@@ -296,11 +244,7 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migrate_tenant_subscriptions discovers subscriptions from checkpoints."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
         event_id = uuid4()
-
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
                 make_checkpoint_data("OrderProjection", event_id, "OrderCreated", source_pos(1000)),
@@ -312,20 +256,15 @@ class TestSubscriptionMigratorMigrateTenantSubscriptions:
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.save_position = AsyncMock()
         mock_position_mapper.translate_position = AsyncMock(
-            return_value=TranslationResult(
-                source_position=source_pos(1000),
-                target_position=target_pos(500),
-                is_exact=True,
-            )
+            return_value=exact_translation(1000, 500)
         )
 
         summary = await migrator.migrate_tenant_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
+            migration_id=uuid4(),
+            tenant_id=uuid4(),
             subscription_names=None,
         )
 
-        # Should have discovered both subscriptions
         assert summary.successful_count == 2
 
 
@@ -338,13 +277,10 @@ class TestSubscriptionMigratorVerifyMigration:
         migrator: SubscriptionMigrator,
         mock_checkpoint_repo: MagicMock,
     ) -> None:
-        """Test verify_migration returns True for all present checkpoints."""
-        migration_id = uuid4()
-
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
 
         results = await migrator.verify_migration(
-            migration_id=migration_id,
+            migration_id=uuid4(),
             subscription_names=["OrderProjection", "InventoryProjection"],
         )
 
@@ -357,17 +293,11 @@ class TestSubscriptionMigratorVerifyMigration:
         migrator: SubscriptionMigrator,
         mock_checkpoint_repo: MagicMock,
     ) -> None:
-        """Test verify_migration returns False for missing checkpoints."""
-        migration_id = uuid4()
-
-        positions = {
-            "OrderProjection": source_pos(500),
-            "InventoryProjection": None,
-        }
+        positions = {"OrderProjection": source_pos(500), "InventoryProjection": None}
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
 
         results = await migrator.verify_migration(
-            migration_id=migration_id,
+            migration_id=uuid4(),
             subscription_names=["OrderProjection", "InventoryProjection"],
         )
 

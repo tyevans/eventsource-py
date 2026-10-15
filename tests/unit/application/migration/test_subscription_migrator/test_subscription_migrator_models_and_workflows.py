@@ -27,7 +27,6 @@ class TestSubscriptionMigrationResultDataclass:
     """Tests for SubscriptionMigrationResult dataclass."""
 
     def test_result_success(self) -> None:
-        """Test SubscriptionMigrationResult for successful migration."""
         now = datetime.now(UTC)
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
@@ -37,7 +36,6 @@ class TestSubscriptionMigrationResultDataclass:
             is_exact_translation=True,
             migrated_at=now,
         )
-
         assert result.subscription_name == "OrderProjection"
         assert result.success is True
         assert result.source_position == source_pos(1000)
@@ -46,20 +44,17 @@ class TestSubscriptionMigrationResultDataclass:
         assert result.error_message is None
 
     def test_result_failure(self) -> None:
-        """Test SubscriptionMigrationResult for failed migration."""
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=False,
             source_position=source_pos(1000),
             error_message="Translation failed",
         )
-
         assert result.success is False
         assert result.error_message == "Translation failed"
         assert result.target_position is None
 
     def test_result_to_dict(self) -> None:
-        """Test SubscriptionMigrationResult.to_dict serialization."""
         now = datetime.now(UTC)
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
@@ -68,7 +63,6 @@ class TestSubscriptionMigrationResultDataclass:
             target_position=target_pos(500),
             migrated_at=now,
         )
-
         d = result.to_dict()
         assert d["subscription_name"] == "OrderProjection"
         assert d["success"] is True
@@ -77,13 +71,11 @@ class TestSubscriptionMigrationResultDataclass:
         assert d["migrated_at"] == now.isoformat()
 
     def test_result_frozen(self) -> None:
-        """Test SubscriptionMigrationResult is immutable."""
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
             source_position=source_pos(1000),
         )
-
         with pytest.raises(AttributeError):
             result.success = False  # type: ignore[misc]
 
@@ -92,14 +84,12 @@ class TestPlannedMigrationDataclass:
     """Tests for PlannedMigration dataclass."""
 
     def test_planned_migration_exact(self) -> None:
-        """Test PlannedMigration for exact translation."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
             current_position=source_pos(1000),
             planned_target_position=target_pos(500),
             is_exact_translation=True,
         )
-
         assert planned.subscription_name == "OrderProjection"
         assert planned.current_position == source_pos(1000)
         assert planned.planned_target_position == target_pos(500)
@@ -107,7 +97,6 @@ class TestPlannedMigrationDataclass:
         assert planned.warning is None
 
     def test_planned_migration_with_warning(self) -> None:
-        """Test PlannedMigration with warning."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
             current_position=source_pos(1050),
@@ -116,19 +105,16 @@ class TestPlannedMigrationDataclass:
             nearest_source_position=source_pos(1000),
             warning="Using nearest position mapping",
         )
-
         assert planned.is_exact_translation is False
         assert planned.nearest_source_position == source_pos(1000)
         assert planned.warning is not None
 
     def test_planned_migration_to_dict(self) -> None:
-        """Test PlannedMigration.to_dict serialization."""
         planned = PlannedMigration(
             subscription_name="OrderProjection",
             current_position=source_pos(1000),
             planned_target_position=target_pos(500),
         )
-
         d = planned.to_dict()
         assert d["subscription_name"] == "OrderProjection"
         assert d["current_position"] == source_pos(1000).to_str()
@@ -139,16 +125,12 @@ class TestMigrationPlanDataclass:
     """Tests for MigrationPlan dataclass."""
 
     def test_migration_plan_creation(self) -> None:
-        """Test MigrationPlan creation."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-
+        migration_id, tenant_id = uuid4(), uuid4()
         planned = PlannedMigration(
             subscription_name="OrderProjection",
             current_position=source_pos(1000),
             planned_target_position=target_pos(500),
         )
-
         plan = MigrationPlan(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -157,17 +139,13 @@ class TestMigrationPlanDataclass:
             migratable_count=1,
             skipped_subscriptions=["NoCheckpoint"],
         )
-
         assert plan.migration_id == migration_id
         assert plan.tenant_id == tenant_id
         assert plan.migratable_count == 1
         assert len(plan.skipped_subscriptions) == 1
 
     def test_migration_plan_to_dict(self) -> None:
-        """Test MigrationPlan.to_dict serialization."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-
+        migration_id, tenant_id = uuid4(), uuid4()
         plan = MigrationPlan(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -175,7 +153,6 @@ class TestMigrationPlanDataclass:
             total_subscriptions=0,
             migratable_count=0,
         )
-
         d = plan.to_dict()
         assert d["migration_id"] == str(migration_id)
         assert d["tenant_id"] == str(tenant_id)
@@ -186,17 +163,13 @@ class TestMigrationSummaryDataclass:
     """Tests for MigrationSummary dataclass."""
 
     def test_migration_summary_creation(self) -> None:
-        """Test MigrationSummary creation."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-
+        migration_id, tenant_id = uuid4(), uuid4()
         result = SubscriptionMigrationResult(
             subscription_name="OrderProjection",
             success=True,
             source_position=source_pos(1000),
             target_position=target_pos(500),
         )
-
         summary = MigrationSummary(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -205,12 +178,10 @@ class TestMigrationSummaryDataclass:
             failed_count=0,
             duration_ms=100.0,
         )
-
         assert summary.migration_id == migration_id
         assert summary.all_successful is True
 
     def test_migration_summary_not_all_successful(self) -> None:
-        """Test MigrationSummary.all_successful returns False on failures."""
         summary = MigrationSummary(
             migration_id=uuid4(),
             tenant_id=uuid4(),
@@ -221,7 +192,6 @@ class TestMigrationSummaryDataclass:
         assert summary.all_successful is False
 
     def test_migration_summary_empty(self) -> None:
-        """Test MigrationSummary.all_successful returns False when empty."""
         summary = MigrationSummary(
             migration_id=uuid4(),
             tenant_id=uuid4(),
@@ -232,11 +202,7 @@ class TestMigrationSummaryDataclass:
         assert summary.all_successful is False
 
     def test_migration_summary_to_dict(self) -> None:
-        """Test MigrationSummary.to_dict serialization."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        now = datetime.now(UTC)
-
+        migration_id, tenant_id, now = uuid4(), uuid4(), datetime.now(UTC)
         summary = MigrationSummary(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -247,7 +213,6 @@ class TestMigrationSummaryDataclass:
             completed_at=now,
             duration_ms=100.0,
         )
-
         d = summary.to_dict()
         assert d["migration_id"] == str(migration_id)
         assert d["all_successful"] is True
@@ -258,31 +223,25 @@ class TestSubscriptionMigrationErrorException:
     """Tests for SubscriptionMigrationError exception."""
 
     def test_exception_creation(self) -> None:
-        """Test SubscriptionMigrationError creation."""
         migration_id = uuid4()
-
         error = SubscriptionMigrationError(
             message="Migration failed",
             migration_id=migration_id,
             subscription_name="OrderProjection",
             reason="translation_failed",
         )
-
         assert error.subscription_name == "OrderProjection"
         assert error.reason == "translation_failed"
         assert error.migration_id == migration_id
         assert error.recoverable is True
 
     def test_exception_str(self) -> None:
-        """Test SubscriptionMigrationError string representation."""
         migration_id = uuid4()
-
         error = SubscriptionMigrationError(
             message="Migration failed",
             migration_id=migration_id,
             subscription_name="OrderProjection",
         )
-
         assert "Migration failed" in str(error)
         assert str(migration_id) in str(error)
 
@@ -297,11 +256,7 @@ class TestSubscriptionMigratorWorkflows:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test complete migration workflow: plan -> execute -> verify."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        event_id = uuid4()
-
+        migration_id, tenant_id, event_id = uuid4(), uuid4(), uuid4()
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[make_checkpoint_data(last_event_id=event_id)]
@@ -311,31 +266,16 @@ class TestSubscriptionMigratorWorkflows:
             return_value=exact_translation(1000, 500)
         )
 
-        plan = await migrator.plan_migration(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            subscription_names=["OrderProjection"],
-        )
-
+        plan = await migrator.plan_migration(migration_id, tenant_id, ["OrderProjection"])
         assert plan.migratable_count == 1
         assert plan.planned_migrations[0].planned_target_position == target_pos(500)
 
-        summary = await migrator.migrate_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            subscription_names=["OrderProjection"],
-        )
-
+        summary = await migrator.migrate_subscriptions(migration_id, tenant_id, ["OrderProjection"])
         assert summary.successful_count == 1
         assert summary.all_successful
 
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
-
-        verification = await migrator.verify_migration(
-            migration_id=migration_id,
-            subscription_names=["OrderProjection"],
-        )
-
+        verification = await migrator.verify_migration(migration_id, ["OrderProjection"])
         assert verification["OrderProjection"] is True
 
     @pytest.mark.asyncio
@@ -345,15 +285,8 @@ class TestSubscriptionMigratorWorkflows:
         mock_checkpoint_repo: MagicMock,
         mock_position_mapper: MagicMock,
     ) -> None:
-        """Test migration workflow with partial failures."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
-        event_id = uuid4()
-
-        positions = {
-            "OrderProjection": source_pos(1000),
-            "FailingProjection": source_pos(2000),
-        }
+        migration_id, tenant_id, event_id = uuid4(), uuid4(), uuid4()
+        positions = {"OrderProjection": source_pos(1000), "FailingProjection": source_pos(2000)}
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
         mock_checkpoint_repo.get_all_checkpoints = AsyncMock(
             return_value=[
@@ -376,15 +309,12 @@ class TestSubscriptionMigratorWorkflows:
             )
 
         mock_position_mapper.translate_position = AsyncMock(side_effect=translate_position_effect)
-
         summary = await migrator.migrate_subscriptions(
             migration_id=migration_id,
             tenant_id=tenant_id,
             subscription_names=["OrderProjection", "FailingProjection"],
         )
-
         assert summary.successful_count == 1
         assert summary.failed_count == 1
         assert not summary.all_successful
-
         mock_checkpoint_repo.save_position.assert_called_once()
