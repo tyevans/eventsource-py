@@ -29,6 +29,7 @@ from uuid import UUID
 from eventsource.adapters.memory import (
     InMemoryCheckpointRepository,
     InMemoryDLQRepository,
+    InMemoryOutboxRepository,
     InMemoryReadModelRepository,
     InMemorySnapshotStore,
 )
@@ -59,12 +60,8 @@ class InMemoryTestHarness:
     - event_bus: InMemoryEventBus for publishing/subscribing to events
     - checkpoint_repo: InMemoryCheckpointRepository for projection checkpoints
     - dlq_repo: InMemoryDLQRepository for dead letter queue
+    - outbox_repo: InMemoryOutboxRepository for transactional outbox entries
     - snapshot_store: InMemorySnapshotStore for aggregate state snapshots
-
-    Thread Safety:
-        The harness itself is not thread-safe, but the underlying
-        components (InMemoryEventBus) have thread-safe operations.
-        Use one harness per test to avoid cross-test contamination.
     """
 
     def __init__(self) -> None:
@@ -73,7 +70,12 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
+        self._outbox_repo = InMemoryOutboxRepository(enable_tracing=False)
         self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
+
+    def __len__(self) -> int:
+        """Return the number of currently published events."""
+        return len(self.published_events)
 
     @property
     def event_store(self) -> InMemoryEventStore:
@@ -94,6 +96,11 @@ class InMemoryTestHarness:
     def dlq_repo(self) -> InMemoryDLQRepository:
         """Get the in-memory dead letter queue repository."""
         return self._dlq_repo
+
+    @property
+    def outbox_repo(self) -> InMemoryOutboxRepository:
+        """Get the in-memory outbox repository."""
+        return self._outbox_repo
 
     @property
     def snapshot_store(self) -> InMemorySnapshotStore:
@@ -129,6 +136,19 @@ class InMemoryTestHarness:
                 agg_events,
                 version_constraint,
             )
+
+    async def publish_events(
+        self,
+        *events: DomainEvent,
+        persist: bool = False,
+        expected_version: ExpectedVersion | None = None,
+    ) -> None:
+        """Publish events through the harness event bus (and optionally append to event_store)."""
+        if not events:
+            return
+        if persist:
+            await self.append_events(*events, expected_version=expected_version)
+        await self._event_bus.publish(list(events))
 
     async def replay(
         self,
@@ -170,6 +190,7 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
+        self._outbox_repo = InMemoryOutboxRepository(enable_tracing=False)
         self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
 
     def clear_published_events(self) -> None:
