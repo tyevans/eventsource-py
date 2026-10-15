@@ -7,11 +7,21 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.rabbitmq import (
-    RabbitMQEventBusConfig,
-)
+from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
 from ._fixtures import PublishTestEvent, SerializationOrderCreatedEvent
+
+
+def _setup_mocks(mock_aio_pika: MagicMock) -> AsyncMock:
+    mock_connection = AsyncMock(is_closed=False)
+    mock_channel = AsyncMock(is_closed=False)
+    mock_exchange = AsyncMock()
+    mock_queue = AsyncMock()
+    mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
+    mock_connection.channel = AsyncMock(return_value=mock_channel)
+    mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+    mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+    return mock_exchange
 
 
 class TestRabbitMQPublishSingle:
@@ -19,7 +29,6 @@ class TestRabbitMQPublishSingle:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -31,9 +40,6 @@ class TestRabbitMQPublishSingle:
     async def test_publish_single_raises_when_exchange_none(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that _publish_single raises RuntimeError if exchange is None."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         bus._topology._exchange = None
@@ -46,20 +52,7 @@ class TestRabbitMQPublishSingle:
     async def test_publish_single_wait_for_confirm_true(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test _publish_single with wait_for_confirm=True increments confirms."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _setup_mocks(mock_aio_pika)
         event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -74,20 +67,7 @@ class TestRabbitMQPublishSingle:
     async def test_publish_single_wait_for_confirm_false(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test _publish_single with wait_for_confirm=False does not increment confirms."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _setup_mocks(mock_aio_pika)
         event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -103,7 +83,6 @@ class TestRabbitMQPublishMultipleEvents:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -115,20 +94,7 @@ class TestRabbitMQPublishMultipleEvents:
     async def test_publish_multiple_events_sequential(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that multiple events are published sequentially."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        mock_exchange = _setup_mocks(mock_aio_pika)
         events = [PublishTestEvent(aggregate_id=uuid4(), data=f"event-{i}") for i in range(5)]
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -143,27 +109,8 @@ class TestRabbitMQPublishMultipleEvents:
     async def test_publish_handles_partial_failure_in_batch(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that batch publishing handles partial failures.
-
-        With batch publishing (concurrent), all events are attempted even if
-        some fail. The first error encountered is re-raised after all events
-        are processed.
-        """
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        # First call succeeds, second fails, third succeeds
+        mock_exchange = _setup_mocks(mock_aio_pika)
         mock_exchange.publish = AsyncMock(side_effect=[None, Exception("Connection lost"), None])
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
         events = [PublishTestEvent(aggregate_id=uuid4(), data=f"event-{i}") for i in range(3)]
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -171,10 +118,8 @@ class TestRabbitMQPublishMultipleEvents:
         with pytest.raises(Exception, match="Connection lost"):
             await bus.publish(events)
 
-        # With batch publishing, all events are attempted concurrently
-        # So 2 events succeed (first and third), 1 fails (second)
         assert bus.stats.events_published == 2
-        assert mock_exchange.publish.call_count == 3  # All 3 attempted
+        assert mock_exchange.publish.call_count == 3
         assert bus.stats.batch_publishes == 1
         assert bus.stats.batch_partial_failures == 1
 
@@ -184,7 +129,6 @@ class TestRabbitMQPublishWithDifferentEventTypes:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -196,21 +140,7 @@ class TestRabbitMQPublishWithDifferentEventTypes:
     async def test_publish_mixed_event_types(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test publishing events of different types uses correct routing keys."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
-        # Create different event types
+        mock_exchange = _setup_mocks(mock_aio_pika)
         event1 = PublishTestEvent(aggregate_id=uuid4())
         event2 = SerializationOrderCreatedEvent(
             aggregate_id=uuid4(),
@@ -222,7 +152,6 @@ class TestRabbitMQPublishWithDifferentEventTypes:
         await bus.connect()
         await bus.publish([event1, event2])
 
-        # Verify different routing keys were used
         calls = mock_exchange.publish.call_args_list
         assert len(calls) == 2
         assert calls[0].kwargs["routing_key"] == "TestAggregate.PublishTestEvent"

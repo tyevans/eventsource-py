@@ -1,24 +1,25 @@
-"""Unit tests for the `SnapshotStore` / `SnapshotTypeInvalidation` Protocols.
-
-`SnapshotStore` moved from an ABC with concrete default bodies
-(`snapshot_exists`) and a `NotImplementedError`-raising
-`delete_snapshots_by_type` to a `@runtime_checkable` Protocol with no
-implementation code at all; the optional bulk-invalidation capability is
-now its own Protocol, `SnapshotTypeInvalidation`. These tests assert the
-Protocol contract (structural satisfaction, `isinstance` behavior) and
-that the port module contains no implementation code, rather than the
-old ABC-subclassing/instantiation behavior.
-"""
+"""Unit tests for the `SnapshotStore` / `SnapshotTypeInvalidation` Protocols."""
 
 import ast
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 import eventsource.ports.snapshots as _snapshots_port
 from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
+
+
+def _make_snapshot(aggregate_id: UUID | None = None, aggregate_type: str = "Order") -> Snapshot:
+    return Snapshot(
+        aggregate_id=aggregate_id or uuid4(),
+        aggregate_type=aggregate_type,
+        version=1,
+        state={},
+        schema_version=1,
+        created_at=datetime.now(UTC),
+    )
 
 
 def test_snapshot_store_protocol_cannot_be_instantiated() -> None:
@@ -64,7 +65,6 @@ class _CoreOnlySnapshotStore:
     """Satisfies SnapshotStore but not SnapshotTypeInvalidation."""
 
     async def save_snapshot(self, snapshot: Snapshot) -> None: ...
-
     async def get_snapshot(self, aggregate_id, aggregate_type):
         return None
 
@@ -82,13 +82,11 @@ class _IncompleteSnapshotStore:
 
 
 def test_structural_implementation_satisfies_snapshot_store() -> None:
-    store = _FullSnapshotStore()
-    assert isinstance(store, SnapshotStore)
+    assert isinstance(_FullSnapshotStore(), SnapshotStore)
 
 
 def test_structural_implementation_satisfies_snapshot_type_invalidation() -> None:
-    store = _FullSnapshotStore()
-    assert isinstance(store, SnapshotTypeInvalidation)
+    assert isinstance(_FullSnapshotStore(), SnapshotTypeInvalidation)
 
 
 def test_core_only_store_does_not_satisfy_type_invalidation() -> None:
@@ -98,23 +96,13 @@ def test_core_only_store_does_not_satisfy_type_invalidation() -> None:
 
 
 def test_incomplete_store_does_not_satisfy_snapshot_store() -> None:
-    store = _IncompleteSnapshotStore()
-    assert not isinstance(store, SnapshotStore)
+    assert not isinstance(_IncompleteSnapshotStore(), SnapshotStore)
 
 
 async def test_snapshot_exists_true_when_present() -> None:
     store = _FullSnapshotStore()
     aggregate_id = uuid4()
-    snapshot = Snapshot(
-        aggregate_id=aggregate_id,
-        aggregate_type="Order",
-        version=1,
-        state={},
-        schema_version=1,
-        created_at=datetime.now(UTC),
-    )
-    await store.save_snapshot(snapshot)
-
+    await store.save_snapshot(_make_snapshot(aggregate_id))
     assert await store.snapshot_exists(aggregate_id, "Order") is True
 
 
@@ -126,53 +114,22 @@ async def test_snapshot_exists_false_when_missing() -> None:
 async def test_snapshot_exists_distinguishes_aggregate_types() -> None:
     store = _FullSnapshotStore()
     aggregate_id = uuid4()
-    snapshot = Snapshot(
-        aggregate_id=aggregate_id,
-        aggregate_type="Order",
-        version=1,
-        state={},
-        schema_version=1,
-        created_at=datetime.now(UTC),
-    )
-    await store.save_snapshot(snapshot)
-
+    await store.save_snapshot(_make_snapshot(aggregate_id, "Order"))
     assert await store.snapshot_exists(aggregate_id, "Order") is True
     assert await store.snapshot_exists(aggregate_id, "User") is False
 
 
 async def test_delete_snapshots_by_type_only_available_on_capable_stores() -> None:
     capable = _FullSnapshotStore()
-    snapshot = Snapshot(
-        aggregate_id=uuid4(),
-        aggregate_type="Order",
-        version=1,
-        state={},
-        schema_version=1,
-        created_at=datetime.now(UTC),
-    )
-    await capable.save_snapshot(snapshot)
-
-    count = await capable.delete_snapshots_by_type("Order")
-
-    assert count == 1
-
-    incapable = _CoreOnlySnapshotStore()
-    assert not hasattr(incapable, "delete_snapshots_by_type")
+    await capable.save_snapshot(_make_snapshot())
+    assert await capable.delete_snapshots_by_type("Order") == 1
+    assert not hasattr(_CoreOnlySnapshotStore(), "delete_snapshots_by_type")
 
 
 def test_ports_snapshots_module_contains_no_implementation_code() -> None:
-    """`ports/snapshots.py` must contain zero method bodies beyond `...`.
-
-    Mirrors the ast-based purity check in
-    `tests/unit/ports/test_readmodels_port_surface.py`: ports own contracts,
-    never behavior. Every `async def` inside `SnapshotStore` or
-    `SnapshotTypeInvalidation` must have a body that is exactly a docstring
-    (optional) followed by a single `Ellipsis` expression statement -- no
-    `pass`, no `raise NotImplementedError`, no real logic.
-    """
+    """`ports/snapshots.py` must contain zero method bodies beyond `...`."""
     source_path = Path(_snapshots_port.__file__)
     tree = ast.parse(source_path.read_text(), filename=str(source_path))
-
     protocol_names = {"SnapshotStore", "SnapshotTypeInvalidation"}
     violations: list[str] = []
 
@@ -182,7 +139,6 @@ def test_ports_snapshots_module_contains_no_implementation_code() -> None:
                 if not isinstance(item, ast.AsyncFunctionDef):
                     continue
                 body = item.body
-                # Drop a leading docstring, if any.
                 if (
                     body
                     and isinstance(body[0], ast.Expr)
@@ -203,13 +159,7 @@ def test_ports_snapshots_module_contains_no_implementation_code() -> None:
 
 
 def test_ports_snapshots_module_does_not_import_abc() -> None:
-    """No `abc.ABC`/`abstractmethod` machinery -- the port is a Protocol now.
-
-    Checked at the AST level (not a raw substring search) so the module's
-    own prose docstrings -- which are free to *talk about* ABC or
-    NotImplementedError as things the port deliberately no longer uses --
-    don't trip the assertion.
-    """
+    """No `abc.ABC`/`abstractmethod` machinery -- the port is a Protocol now."""
     source_path = Path(_snapshots_port.__file__)
     tree = ast.parse(source_path.read_text(), filename=str(source_path))
 
