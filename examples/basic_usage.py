@@ -1,13 +1,4 @@
-"""
-Basic Usage Example
-
-Demonstrates event sourcing using the decider style:
-- Defining domain events and state
-- Defining commands and a pure decide/evolve aggregate
-- Using the repository pattern and basic event store operations
-
-Run with: python -m eventsource.examples.basic_usage
-"""
+"""Basic Usage Example: event sourcing in the decider style."""
 
 import asyncio
 from uuid import UUID, uuid4
@@ -32,7 +23,6 @@ class AccountOpened(DomainEvent):
     """Event emitted when a bank account is opened."""
 
     aggregate_type: str = "BankAccount"
-
     owner_name: str
     initial_balance: float
 
@@ -42,7 +32,6 @@ class MoneyDeposited(DomainEvent):
     """Event emitted when money is deposited."""
 
     aggregate_type: str = "BankAccount"
-
     amount: float
 
 
@@ -51,7 +40,6 @@ class MoneyWithdrawn(DomainEvent):
     """Event emitted when money is withdrawn."""
 
     aggregate_type: str = "BankAccount"
-
     amount: float
 
 
@@ -102,11 +90,7 @@ class BankAccountAggregate(DeciderAggregate[BankAccountState]):
                 account_id=account_id, owner_name=name, initial_balance=balance
             ), BankAccountState(is_open=False):
                 return [
-                    AccountOpened(
-                        aggregate_id=account_id,
-                        owner_name=name,
-                        initial_balance=balance,
-                    )
+                    AccountOpened(aggregate_id=account_id, owner_name=name, initial_balance=balance)
                 ]
             case OpenAccount(), _:
                 raise CommandRejectedError("account is already open", command=command)
@@ -144,22 +128,16 @@ class BankAccountAggregate(DeciderAggregate[BankAccountState]):
 
 async def main():
     """Demonstrate basic event sourcing usage."""
-    print("=" * 60)
-    print("Event Sourcing Basic Usage Example")
-    print("=" * 60)
+    print("=" * 60 + "\nEvent Sourcing Basic Usage Example\n" + "=" * 60)
 
     event_store = InMemoryEventStore()
-    repo = AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=BankAccountAggregate,
-    )
+    repo = AggregateRepository(event_store=event_store, aggregate_factory=BankAccountAggregate)
 
     account_id = uuid4()
     print(f"\n1. Opening account {account_id}")
     account = repo.create_new(account_id)
     account.execute(OpenAccount(account_id=account_id, owner_name="Alice", initial_balance=100.0))
     await repo.save(account)
-
     print(f"   Owner: {account.state.owner_name}")
     print(f"   Balance: ${account.state.balance:.2f}")
     print(f"   Version: {account.version}")
@@ -169,7 +147,6 @@ async def main():
     loaded_account.execute(DepositMoney(account_id=account_id, amount=50.0))
     loaded_account.execute(DepositMoney(account_id=account_id, amount=25.0))
     await repo.save(loaded_account)
-
     print(f"   Balance after deposits: ${loaded_account.state.balance:.2f}")
     print(f"   Version: {loaded_account.version}")
 
@@ -177,7 +154,6 @@ async def main():
     account = await repo.load(account_id)
     account.execute(WithdrawMoney(account_id=account_id, amount=30.0))
     await repo.save(account)
-
     print(f"   Balance after withdrawal: ${account.state.balance:.2f}")
     print(f"   Version: {account.version}")
 
@@ -194,27 +170,23 @@ async def main():
 
     print("\n5. Business rule validation:")
     account = await repo.load(account_id)
-    try:
-        account.execute(WithdrawMoney(account_id=account_id, amount=1000.0))
-    except CommandRejectedError as e:
-        print(f"   Withdrawal blocked: {e}")
-
-    try:
-        account.execute(DepositMoney(account_id=account_id, amount=-50.0))
-    except CommandRejectedError as e:
-        print(f"   Deposit blocked: {e}")
+    for cmd, label in [
+        (WithdrawMoney(account_id=account_id, amount=1000.0), "Withdrawal"),
+        (DepositMoney(account_id=account_id, amount=-50.0), "Deposit"),
+    ]:
+        try:
+            account.execute(cmd)
+        except CommandRejectedError as e:
+            print(f"   {label} blocked: {e}")
 
     print("\n6. Final account state:")
-    final_account = await repo.load(account_id)
-    print(f"   Account ID: {final_account.aggregate_id}")
-    print(f"   Owner: {final_account.state.owner_name}")
-    print(f"   Balance: ${final_account.state.balance:.2f}")
-    print(f"   Version: {final_account.version}")
-    print(f"   Is Open: {final_account.state.is_open}")
-
-    print("\n" + "=" * 60)
-    print("Example completed successfully!")
-    print("=" * 60)
+    final = await repo.load(account_id)
+    print(f"   Account ID: {final.aggregate_id}")
+    print(f"   Owner: {final.state.owner_name}")
+    print(f"   Balance: ${final.state.balance:.2f}")
+    print(f"   Version: {final.version}")
+    print(f"   Is Open: {final.state.is_open}")
+    print("\n" + "=" * 60 + "\nExample completed successfully!\n" + "=" * 60)
 
 
 if __name__ == "__main__":

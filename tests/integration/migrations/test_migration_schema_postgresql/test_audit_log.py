@@ -19,42 +19,34 @@ pytestmark = [
     skip_if_no_postgres_infra,
 ]
 
+_INSERT_MIGRATION_SQL = text(
+    "INSERT INTO tenant_migrations (id, tenant_id, source_store_id, target_store_id, phase) "
+    "VALUES (:id, :tenant_id, 'source', 'target', :phase)"
+)
+_INSERT_AUDIT_SQL = text(
+    "INSERT INTO migration_audit_log (migration_id, event_type) VALUES (:migration_id, :event_type)"
+)
+
 
 class TestMigrationAuditLogTable:
     """Tests for migration_audit_log table operations."""
 
-    async def test_insert_audit_log_entry(
-        self,
-        migration_schema_engine: AsyncEngine,
-    ) -> None:
-        """Test inserting an audit log entry."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
+    async def test_insert_audit_log_entry(self, migration_schema_engine: AsyncEngine) -> None:
+        migration_id, tenant_id = uuid4(), uuid4()
 
         async with migration_schema_engine.begin() as conn:
-            # Create migration
             await conn.execute(
-                text("""
-                INSERT INTO tenant_migrations (
-                    id, tenant_id, source_store_id, target_store_id, phase
-                ) VALUES (
-                    :id, :tenant_id, 'source', 'target', 'pending'
-                )
-            """),
-                {"id": migration_id, "tenant_id": tenant_id},
+                _INSERT_MIGRATION_SQL,
+                {"id": migration_id, "tenant_id": tenant_id, "phase": "pending"},
             )
-
-            # Insert audit log entry
             await conn.execute(
                 text("""
                 INSERT INTO migration_audit_log (
-                    migration_id, event_type, old_phase, new_phase,
-                    details, operator
+                    migration_id, event_type, old_phase, new_phase, details, operator
                 ) VALUES (
-                    :migration_id, :event_type, :old_phase, :new_phase,
-                    :details, :operator
+                    :migration_id, :event_type, :old_phase, :new_phase, :details, :operator
                 )
-            """),
+                """),
                 {
                     "migration_id": migration_id,
                     "event_type": "migration_started",
@@ -64,13 +56,11 @@ class TestMigrationAuditLogTable:
                     "operator": "test_user",
                 },
             )
-
             result = await conn.execute(
-                text("""
-                SELECT event_type, new_phase, operator
-                FROM migration_audit_log
-                WHERE migration_id = :migration_id
-            """),
+                text(
+                    "SELECT event_type, new_phase, operator FROM migration_audit_log "
+                    "WHERE migration_id = :migration_id"
+                ),
                 {"migration_id": migration_id},
             )
             row = result.fetchone()
@@ -81,84 +71,39 @@ class TestMigrationAuditLogTable:
         assert row[2] == "test_user"
 
     async def test_audit_log_event_type_check_constraint(
-        self,
-        migration_schema_engine: AsyncEngine,
+        self, migration_schema_engine: AsyncEngine
     ) -> None:
-        """Test that invalid event_type values are rejected."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
+        migration_id, tenant_id = uuid4(), uuid4()
 
         async with migration_schema_engine.begin() as conn:
-            # Create migration
             await conn.execute(
-                text("""
-                INSERT INTO tenant_migrations (
-                    id, tenant_id, source_store_id, target_store_id, phase
-                ) VALUES (
-                    :id, :tenant_id, 'source', 'target', 'pending'
-                )
-            """),
-                {"id": migration_id, "tenant_id": tenant_id},
+                _INSERT_MIGRATION_SQL,
+                {"id": migration_id, "tenant_id": tenant_id, "phase": "pending"},
             )
-
             with pytest.raises(Exception):  # noqa: B017 - DB-specific exception
                 await conn.execute(
-                    text("""
-                    INSERT INTO migration_audit_log (
-                        migration_id, event_type
-                    ) VALUES (
-                        :migration_id, 'invalid_event_type'
-                    )
-                """),
-                    {"migration_id": migration_id},
+                    _INSERT_AUDIT_SQL,
+                    {"migration_id": migration_id, "event_type": "invalid_event_type"},
                 )
 
-    async def test_audit_log_cascade_delete(
-        self,
-        migration_schema_engine: AsyncEngine,
-    ) -> None:
-        """Test that audit logs are deleted when migration is deleted."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
+    async def test_audit_log_cascade_delete(self, migration_schema_engine: AsyncEngine) -> None:
+        migration_id, tenant_id = uuid4(), uuid4()
 
         async with migration_schema_engine.begin() as conn:
-            # Create migration
             await conn.execute(
-                text("""
-                INSERT INTO tenant_migrations (
-                    id, tenant_id, source_store_id, target_store_id, phase
-                ) VALUES (
-                    :id, :tenant_id, 'source', 'target', 'completed'
-                )
-            """),
-                {"id": migration_id, "tenant_id": tenant_id},
+                _INSERT_MIGRATION_SQL,
+                {"id": migration_id, "tenant_id": tenant_id, "phase": "completed"},
             )
-
-            # Insert audit log entries
-            event_types = [
-                "migration_started",
-                "phase_changed",
-                "migration_completed",
-            ]
-            for event_type in event_types:
+            for event_type in ["migration_started", "phase_changed", "migration_completed"]:
                 await conn.execute(
-                    text("""
-                    INSERT INTO migration_audit_log (
-                        migration_id, event_type
-                    ) VALUES (
-                        :migration_id, :event_type
-                    )
-                """),
+                    _INSERT_AUDIT_SQL,
                     {"migration_id": migration_id, "event_type": event_type},
                 )
 
-            # Delete migration
             await conn.execute(
                 text("DELETE FROM tenant_migrations WHERE id = :id"),
                 {"id": migration_id},
             )
-
-            # Check that audit logs were cascade deleted
             result = await conn.execute(
                 text("SELECT COUNT(*) FROM migration_audit_log WHERE migration_id = :migration_id"),
                 {"migration_id": migration_id},
@@ -167,51 +112,25 @@ class TestMigrationAuditLogTable:
 
         assert count == 0
 
-    async def test_audit_log_ordering(
-        self,
-        migration_schema_engine: AsyncEngine,
-    ) -> None:
-        """Test that audit logs can be ordered by occurred_at."""
-        migration_id = uuid4()
-        tenant_id = uuid4()
+    async def test_audit_log_ordering(self, migration_schema_engine: AsyncEngine) -> None:
+        migration_id, tenant_id = uuid4(), uuid4()
 
         async with migration_schema_engine.begin() as conn:
-            # Create migration
             await conn.execute(
-                text("""
-                INSERT INTO tenant_migrations (
-                    id, tenant_id, source_store_id, target_store_id, phase
-                ) VALUES (
-                    :id, :tenant_id, 'source', 'target', 'completed'
-                )
-            """),
-                {"id": migration_id, "tenant_id": tenant_id},
+                _INSERT_MIGRATION_SQL,
+                {"id": migration_id, "tenant_id": tenant_id, "phase": "completed"},
             )
-
-            # Insert multiple audit entries
-            for event_type in [
-                "migration_started",
-                "phase_changed",
-                "migration_completed",
-            ]:
+            for event_type in ["migration_started", "phase_changed", "migration_completed"]:
                 await conn.execute(
-                    text("""
-                    INSERT INTO migration_audit_log (
-                        migration_id, event_type
-                    ) VALUES (
-                        :migration_id, :event_type
-                    )
-                """),
+                    _INSERT_AUDIT_SQL,
                     {"migration_id": migration_id, "event_type": event_type},
                 )
 
-            # Query ordered by occurred_at
             result = await conn.execute(
-                text("""
-                SELECT event_type FROM migration_audit_log
-                WHERE migration_id = :migration_id
-                ORDER BY occurred_at ASC
-            """),
+                text(
+                    "SELECT event_type FROM migration_audit_log "
+                    "WHERE migration_id = :migration_id ORDER BY occurred_at ASC"
+                ),
                 {"migration_id": migration_id},
             )
             rows = result.fetchall()
