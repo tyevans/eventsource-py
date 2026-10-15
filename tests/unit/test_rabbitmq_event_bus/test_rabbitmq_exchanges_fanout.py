@@ -7,22 +7,12 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.adapters.rabbitmq import (
-    RabbitMQEventBus,
-    RabbitMQEventBusConfig,
-)
+from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 from eventsource.domain.event import DomainEvent
 
 
 class TestFanoutExchangeBroadcastBehavior:
-    """Comprehensive tests for fanout exchange broadcast behavior.
-
-    Fanout exchanges broadcast all messages to all bound queues, regardless
-    of routing key. These tests validate:
-    - Routing key is ignored for fanout exchanges
-    - Multiple consumer groups can receive the same broadcast
-    - Configuration is correct for fanout use cases
-    """
+    """Comprehensive tests for fanout exchange broadcast behavior."""
 
     @pytest.fixture
     def fanout_config(self) -> RabbitMQEventBusConfig:
@@ -43,16 +33,11 @@ class TestFanoutExchangeBroadcastBehavior:
         assert fanout_config.exchange_type == "fanout"
 
     def test_fanout_config_routing_key_pattern_override(self) -> None:
-        """Test that explicit routing_key_pattern still works for fanout.
-
-        Even though fanout ignores routing keys, explicit pattern should
-        still be used if configured (for logging/tracing purposes).
-        """
+        """Test that explicit routing_key_pattern still works for fanout."""
         config = RabbitMQEventBusConfig(
             exchange_type="fanout",
             routing_key_pattern="custom.pattern",
         )
-        # Explicit pattern takes precedence
         assert config.get_effective_routing_key() == "custom.pattern"
 
     def test_fanout_config_case_insensitive(self) -> None:
@@ -71,10 +56,8 @@ class TestFanoutExchangeBroadcastBehavior:
         self, mock_aio_pika: MagicMock, fanout_config: RabbitMQEventBusConfig
     ) -> None:
         """Test that fanout exchange is declared with ExchangeType.FANOUT."""
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
+        mock_connection = AsyncMock(is_closed=False)
+        mock_channel = AsyncMock(is_closed=False)
         mock_exchange = AsyncMock()
         mock_queue = AsyncMock()
 
@@ -88,7 +71,6 @@ class TestFanoutExchangeBroadcastBehavior:
         bus = RabbitMQEventBus(config=fanout_config)
         await bus.connect()
 
-        # Verify exchange was declared with FANOUT type
         mock_channel.declare_exchange.assert_called()
         call_kwargs = mock_channel.declare_exchange.call_args.kwargs
         assert call_kwargs["type"] == ExchangeType.FANOUT
@@ -101,10 +83,8 @@ class TestFanoutExchangeBroadcastBehavior:
         self, mock_aio_pika: MagicMock, fanout_config: RabbitMQEventBusConfig
     ) -> None:
         """Test that queue is bound with empty routing key for fanout."""
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
+        mock_connection = AsyncMock(is_closed=False)
+        mock_channel = AsyncMock(is_closed=False)
         mock_exchange = AsyncMock()
         mock_queue = AsyncMock()
 
@@ -116,7 +96,6 @@ class TestFanoutExchangeBroadcastBehavior:
         bus = RabbitMQEventBus(config=fanout_config)
         await bus.connect()
 
-        # Verify queue was bound with empty routing key
         mock_queue.bind.assert_called_once()
         call_kwargs = mock_queue.bind.call_args.kwargs
         assert call_kwargs["routing_key"] == ""
@@ -127,15 +106,9 @@ class TestFanoutExchangeBroadcastBehavior:
     async def test_fanout_publish_includes_routing_key_for_logging(
         self, mock_aio_pika: MagicMock, fanout_config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that publish still generates routing key for logging/tracing.
-
-        Even though fanout exchanges ignore routing keys, we still generate
-        them for observability purposes (logging, tracing, debugging).
-        """
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
+        """Test that publish still generates routing key for logging/tracing."""
+        mock_connection = AsyncMock(is_closed=False)
+        mock_channel = AsyncMock(is_closed=False)
         mock_exchange = AsyncMock()
         mock_queue = AsyncMock()
         mock_queue.declaration_result.message_count = 0
@@ -157,39 +130,26 @@ class TestFanoutExchangeBroadcastBehavior:
         await bus.connect()
         await bus.publish([event])
 
-        # Routing key is still generated and passed (for logging)
-        # Fanout exchange ignores it, but it's included for observability
         mock_exchange.publish.assert_called_once()
         call_kwargs = mock_exchange.publish.call_args.kwargs
         assert call_kwargs["routing_key"] == "Notification.NotificationSent"
 
 
 class TestFanoutExchangeMultipleConsumerGroups:
-    """Tests for multiple consumer groups with fanout exchange.
-
-    With fanout exchanges, each consumer group gets its own queue, and all
-    queues bound to the exchange receive all messages (broadcast pattern).
-    """
+    """Tests for multiple consumer groups with fanout exchange."""
 
     def test_different_consumer_groups_have_different_queue_names(self) -> None:
         """Test that different consumer groups create different queue names."""
         config1 = RabbitMQEventBusConfig(
-            exchange_name="broadcast",
-            exchange_type="fanout",
-            consumer_group="notifications",
+            exchange_name="broadcast", exchange_type="fanout", consumer_group="notifications"
         )
         config2 = RabbitMQEventBusConfig(
-            exchange_name="broadcast",
-            exchange_type="fanout",
-            consumer_group="audit-log",
+            exchange_name="broadcast", exchange_type="fanout", consumer_group="audit-log"
         )
         config3 = RabbitMQEventBusConfig(
-            exchange_name="broadcast",
-            exchange_type="fanout",
-            consumer_group="cache-invalidation",
+            exchange_name="broadcast", exchange_type="fanout", consumer_group="cache-invalidation"
         )
 
-        # Same exchange, different queues
         assert config1.exchange_name == config2.exchange_name == config3.exchange_name
         assert config1.queue_name == "broadcast.notifications"
         assert config2.queue_name == "broadcast.audit-log"
@@ -198,23 +158,14 @@ class TestFanoutExchangeMultipleConsumerGroups:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_multiple_buses_same_fanout_exchange(self, mock_aio_pika: MagicMock) -> None:
-        """Test that multiple buses can connect to the same fanout exchange.
-
-        This simulates the pattern where multiple consumer groups (services)
-        each receive all broadcast messages independently.
-        """
-        # Create shared mock connection infrastructure
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel1 = AsyncMock()
-        mock_channel1.is_closed = False
-        mock_channel2 = AsyncMock()
-        mock_channel2.is_closed = False
+        """Test that multiple buses can connect to the same fanout exchange."""
+        mock_connection = AsyncMock(is_closed=False)
+        mock_channel1 = AsyncMock(is_closed=False)
+        mock_channel2 = AsyncMock(is_closed=False)
         mock_exchange = AsyncMock()
         mock_queue1 = AsyncMock()
         mock_queue2 = AsyncMock()
 
-        # Track which channel/queue is being used
         call_count = {"channel": 0, "queue": 0}
 
         def get_channel() -> AsyncMock:
@@ -232,7 +183,6 @@ class TestFanoutExchangeMultipleConsumerGroups:
         mock_channel1.declare_queue = AsyncMock(side_effect=get_queue)
         mock_channel2.declare_queue = AsyncMock(side_effect=get_queue)
 
-        # Configure two consumer groups on the same fanout exchange
         config1 = RabbitMQEventBusConfig(
             exchange_name="system-events",
             exchange_type="fanout",
@@ -252,11 +202,9 @@ class TestFanoutExchangeMultipleConsumerGroups:
         await bus1.connect()
         await bus2.connect()
 
-        # Both should connect successfully
         assert bus1._connection_manager._connected
         assert bus2._connection_manager._connected
 
-        # Verify different queue names were declared
         queue_declare_calls = [
             mock_channel1.declare_queue.call_args,
             mock_channel2.declare_queue.call_args,
@@ -267,14 +215,7 @@ class TestFanoutExchangeMultipleConsumerGroups:
 
 
 class TestFanoutExchangeUseCases:
-    """Tests demonstrating fanout exchange use cases.
-
-    Fanout exchanges are ideal for:
-    1. Notifications - broadcast to all notification handlers
-    2. Logging/Audit - all services receive all events
-    3. Cache Invalidation - broadcast cache clear commands
-    4. Development/Debug - monitor all events during development
-    """
+    """Tests demonstrating fanout exchange use cases."""
 
     def test_notification_broadcast_config(self) -> None:
         """Test configuration for notification broadcast use case."""
@@ -282,10 +223,9 @@ class TestFanoutExchangeUseCases:
             exchange_name="notifications",
             exchange_type="fanout",
             consumer_group="email-handler",
-            durable=True,  # Survive restarts
-            auto_delete=False,  # Don't delete on disconnect
+            durable=True,
+            auto_delete=False,
         )
-
         assert config.exchange_type == "fanout"
         assert config.get_effective_routing_key() == ""
         assert config.queue_name == "notifications.email-handler"
@@ -297,9 +237,8 @@ class TestFanoutExchangeUseCases:
             exchange_type="fanout",
             consumer_group="audit-logger",
             durable=True,
-            prefetch_count=50,  # Higher throughput for logging
+            prefetch_count=50,
         )
-
         assert config.exchange_type == "fanout"
         assert config.queue_name == "domain-events.audit-logger"
 
@@ -309,10 +248,9 @@ class TestFanoutExchangeUseCases:
             exchange_name="cache-invalidation",
             exchange_type="fanout",
             consumer_group="frontend-cache",
-            durable=False,  # Cache invalidation can be transient
-            auto_delete=True,  # OK to lose messages if consumer disconnects
+            durable=False,
+            auto_delete=True,
         )
-
         assert config.exchange_type == "fanout"
         assert config.durable is False
         assert config.auto_delete is True
@@ -323,11 +261,10 @@ class TestFanoutExchangeUseCases:
             exchange_name="all-events",
             exchange_type="fanout",
             consumer_group="dev-monitor",
-            durable=False,  # Don't need durability for dev
-            auto_delete=True,  # Clean up when dev session ends
-            enable_dlq=False,  # No need for DLQ in dev
+            durable=False,
+            auto_delete=True,
+            enable_dlq=False,
         )
-
         assert config.exchange_type == "fanout"
         assert config.enable_dlq is False
         assert config.auto_delete is True
