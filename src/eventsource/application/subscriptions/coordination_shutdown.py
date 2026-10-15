@@ -106,12 +106,7 @@ class ShutdownNotification:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for serialization.
-
-        Returns:
-            Dictionary representation suitable for JSON serialization.
-        """
+        """Convert to dictionary suitable for JSON serialization."""
         return {
             "instance_id": self.instance_id,
             "intent": self.intent.value,
@@ -124,15 +119,7 @@ class ShutdownNotification:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ShutdownNotification:
-        """
-        Create from dictionary.
-
-        Args:
-            data: Dictionary with notification fields.
-
-        Returns:
-            ShutdownNotification instance.
-        """
+        """Create a ShutdownNotification instance from a dictionary."""
         return cls(
             instance_id=data["instance_id"],
             intent=ShutdownIntent(data["intent"]),
@@ -145,29 +132,14 @@ class ShutdownNotification:
 
     @property
     def time_remaining_seconds(self) -> float:
-        """
-        Get seconds until expected completion.
-
-        Returns:
-            Seconds remaining, or 0.0 if already past expected completion.
-        """
+        """Get seconds until expected completion, or 0.0 if already past."""
         remaining = (self.expected_completion_at - datetime.now(UTC)).total_seconds()
         return max(0.0, remaining)
 
     @property
     def is_expired(self) -> bool:
-        """
-        Check if the shutdown notification has expired.
-
-        Returns:
-            True if past expected completion time.
-        """
+        """Check if the shutdown notification has expired."""
         return self.time_remaining_seconds <= 0.0
-
-
-# =============================================================================
-# Heartbeat Message
-# =============================================================================
 
 
 @dataclass(frozen=True)
@@ -179,9 +151,6 @@ class HeartbeatMessage:
     and processing work. Absence of heartbeats indicates a crashed
     or network-partitioned instance.
 
-    Heartbeats complement shutdown notifications by detecting crashes
-    where no explicit notification can be sent.
-
     Attributes:
         instance_id: Unique identifier of the instance
         timestamp: When heartbeat was generated
@@ -189,16 +158,6 @@ class HeartbeatMessage:
         in_flight_count: Current in-flight events
         is_leader: Whether this instance is the leader
         load_factor: Current load as fraction (0.0-1.0)
-
-    Example:
-        >>> heartbeat = HeartbeatMessage(
-        ...     instance_id="worker-1",
-        ...     timestamp=datetime.now(UTC),
-        ...     subscriptions=("order-projection",),
-        ...     in_flight_count=5,
-        ...     is_leader=True,
-        ...     load_factor=0.75,
-        ... )
     """
 
     instance_id: str
@@ -209,12 +168,7 @@ class HeartbeatMessage:
     load_factor: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for serialization.
-
-        Returns:
-            Dictionary representation suitable for JSON serialization.
-        """
+        """Convert to dictionary suitable for JSON serialization."""
         return {
             "instance_id": self.instance_id,
             "timestamp": self.timestamp.isoformat(),
@@ -226,15 +180,7 @@ class HeartbeatMessage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HeartbeatMessage:
-        """
-        Create from dictionary.
-
-        Args:
-            data: Dictionary with heartbeat fields.
-
-        Returns:
-            HeartbeatMessage instance.
-        """
+        """Create a HeartbeatMessage instance from a dictionary."""
         return cls(
             instance_id=data["instance_id"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -245,22 +191,9 @@ class HeartbeatMessage:
         )
 
     def is_stale(self, max_age_seconds: float = 15.0) -> bool:
-        """
-        Check if the heartbeat is stale.
-
-        Args:
-            max_age_seconds: Maximum age before considered stale.
-
-        Returns:
-            True if heartbeat is older than max_age_seconds.
-        """
+        """Check if the heartbeat is older than max_age_seconds."""
         age = (datetime.now(UTC) - self.timestamp).total_seconds()
         return age > max_age_seconds
-
-
-# =============================================================================
-# Peer Info
-# =============================================================================
 
 
 @dataclass

@@ -47,35 +47,18 @@ class ErrorSeverity(Enum):
     """
 
     CRITICAL = "critical"
-    """System-level failure requiring immediate attention."""
-
     ERROR = "error"
-    """Significant failure that may require operator intervention."""
-
     WARNING = "warning"
-    """Issue that should be monitored but may self-resolve."""
-
     INFO = "info"
-    """Informational condition, not a failure."""
 
     @property
     def should_alert(self) -> bool:
-        """
-        Check if this severity level should trigger an alert.
-
-        Returns:
-            True for CRITICAL and ERROR levels.
-        """
+        """Check if this severity level should trigger an alert (True for CRITICAL and ERROR)."""
         return self in (ErrorSeverity.CRITICAL, ErrorSeverity.ERROR)
 
     @property
     def log_level(self) -> int:
-        """
-        Get the corresponding Python logging level.
-
-        Returns:
-            Python logging level constant.
-        """
+        """Get the corresponding Python logging level constant."""
         level_map = {
             ErrorSeverity.CRITICAL: logging.CRITICAL,
             ErrorSeverity.ERROR: logging.ERROR,
@@ -94,45 +77,22 @@ class ErrorRecoverability(Enum):
 
     Attributes:
         RECOVERABLE: Error can be recovered from with operator action.
-            The migration can continue after the issue is resolved.
-            Examples: Sync lag too high, consistency check failed.
-
-        TRANSIENT: Temporary error that may resolve on retry.
-            The system should automatically retry with backoff.
-            Examples: Network timeout, temporary database unavailability.
-
+        TRANSIENT: Temporary error that may resolve on retry with backoff.
         FATAL: Unrecoverable error requiring migration abort.
-            No automatic recovery is possible; migration must be aborted.
-            Examples: Data corruption, invalid state transitions.
     """
 
     RECOVERABLE = "recoverable"
-    """Error can be recovered from with operator action."""
-
     TRANSIENT = "transient"
-    """Temporary error that may resolve on retry."""
-
     FATAL = "fatal"
-    """Unrecoverable error requiring migration abort."""
 
     @property
     def should_retry(self) -> bool:
-        """
-        Check if automatic retry is appropriate for this category.
-
-        Returns:
-            True only for TRANSIENT errors.
-        """
+        """Check if automatic retry is appropriate (True only for TRANSIENT errors)."""
         return self == ErrorRecoverability.TRANSIENT
 
     @property
     def should_abort(self) -> bool:
-        """
-        Check if the migration should be aborted.
-
-        Returns:
-            True only for FATAL errors.
-        """
+        """Check if the migration should be aborted (True only for FATAL errors)."""
         return self == ErrorRecoverability.FATAL
 
 
@@ -153,49 +113,19 @@ class ErrorClassification:
         retry_config: Configuration for automatic retry (if applicable).
         documentation_url: Link to documentation about this error.
         metrics_labels: Labels for metrics instrumentation.
-
-    Example:
-        >>> classification = ErrorClassification(
-        ...     severity=ErrorSeverity.WARNING,
-        ...     recoverability=ErrorRecoverability.TRANSIENT,
-        ...     error_code="MIGRATION_CONN_TIMEOUT",
-        ...     category="connectivity",
-        ...     suggested_action="Check database connectivity",
-        ...     retry_config=RetryConfig(max_attempts=5, base_delay_ms=1000),
-        ... )
     """
 
     severity: ErrorSeverity
-    """The severity level of the error."""
-
     recoverability: ErrorRecoverability
-    """How the error can be recovered from."""
-
     error_code: str
-    """Unique error code for programmatic handling."""
-
     category: str
-    """Error category for grouping related errors."""
-
     suggested_action: str
-    """Human-readable guidance for operators."""
-
     retry_config: RetryConfig | None = None
-    """Configuration for automatic retry (if applicable)."""
-
     documentation_url: str | None = None
-    """Link to documentation about this error."""
-
     metrics_labels: dict[str, str] = field(default_factory=dict)
-    """Labels for metrics instrumentation."""
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert classification to dictionary for serialization.
-
-        Returns:
-            Dictionary representation of the classification.
-        """
+        """Convert classification to dictionary for serialization."""
         result: dict[str, Any] = {
             "severity": self.severity.value,
             "recoverability": self.recoverability.value,
@@ -215,9 +145,7 @@ class ErrorClassification:
 @dataclass(frozen=True)
 class RetryConfig:
     """
-    Configuration for automatic error retry.
-
-    Implements exponential backoff with jitter for transient errors.
+    Configuration for automatic error retry with exponential backoff and jitter.
 
     Attributes:
         max_attempts: Maximum number of retry attempts (including initial).
@@ -225,31 +153,13 @@ class RetryConfig:
         max_delay_ms: Maximum delay between retries in milliseconds.
         exponential_base: Base for exponential backoff (default 2.0).
         jitter_factor: Random jitter factor (0.0 to 1.0, default 0.1).
-
-    Example:
-        >>> config = RetryConfig(
-        ...     max_attempts=5,
-        ...     base_delay_ms=100,
-        ...     max_delay_ms=10000,
-        ... )
-        >>> config.get_delay_ms(attempt=3)  # Returns delay for 3rd attempt
-        800  # (100 * 2^3 = 800ms, plus jitter)
     """
 
     max_attempts: int = 3
-    """Maximum number of retry attempts (including initial)."""
-
     base_delay_ms: float = 100.0
-    """Base delay between retries in milliseconds."""
-
     max_delay_ms: float = 30000.0
-    """Maximum delay between retries in milliseconds."""
-
     exponential_base: float = 2.0
-    """Base for exponential backoff."""
-
     jitter_factor: float = 0.1
-    """Random jitter factor (0.0 to 1.0)."""
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -268,37 +178,17 @@ class RetryConfig:
             raise ValueError(f"jitter_factor must be between 0.0 and 1.0, got {self.jitter_factor}")
 
     def get_delay_ms(self, attempt: int) -> float:
-        """
-        Calculate delay for a specific retry attempt.
-
-        Uses exponential backoff with optional jitter.
-
-        Args:
-            attempt: Current attempt number (0-indexed).
-
-        Returns:
-            Delay in milliseconds before the next retry.
-        """
+        """Calculate delay in milliseconds for a 0-indexed retry attempt."""
         import random
 
-        # Calculate base exponential delay
         delay = self.base_delay_ms * (self.exponential_base**attempt)
-
-        # Apply jitter
         if self.jitter_factor > 0:
             jitter = delay * self.jitter_factor * random.random()  # nosec B311 - retry jitter, not security
             delay = delay + jitter
-
-        # Cap at maximum
         return min(delay, self.max_delay_ms)
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for serialization.
-
-        Returns:
-            Dictionary representation of the retry config.
-        """
+        """Convert to dictionary for serialization."""
         return {
             "max_attempts": self.max_attempts,
             "base_delay_ms": self.base_delay_ms,
