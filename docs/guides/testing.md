@@ -305,7 +305,10 @@ published domain events:
   or `snapshot_threshold` is specified) with tracing disabled for fast tests.
 - **`harness.create_read_model_repository(OrderSummary)`**:
   creates an `InMemoryReadModelRepository` for the given `ReadModel` subclass
-  with tracing disabled for fast unit and projection tests.
+  with tracing disabled for fast unit and projection tests, supporting
+  `len(read_repo)`, `await read_repo.get_or_raise(id)` (returning `TModel` or
+  raising `ReadModelNotFoundError`), and `await read_repo.clear()` (an alias for
+  `await read_repo.truncate()`).
 - **`await harness.append_events(*events, expected_version=None)`**:
   seeds one or more pre-existing events (or sequences of events) into
   `harness.event_store`, automatically grouped by `(aggregate_id, aggregate_type)`
@@ -318,11 +321,17 @@ published domain events:
   a sequence of projections and returns a `ReplayReport` (accepting all optional
   keyword arguments supported by `replay()`, such as `strict=True` or
   `tenant_id=...`).
+- **`harness.event_store`**: provides an `InMemoryEventStore` supporting O(1)
+  `len(harness.event_store)` (total stored events across the global log),
+  `await harness.event_store.get_event_count()`, and synchronous
+  `harness.event_store.clear()` (resetting stored events, streams, categories,
+  and event IDs).
 - **`harness.snapshot_store` & `harness.outbox_repo`**: provide pre-configured
   `InMemorySnapshotStore` and `InMemoryOutboxRepository` instances that are reset
   alongside `checkpoint_repo` and `dlq_repo` when `harness.reset()` is called.
-  All in-memory repositories (`snapshot_store`, `checkpoint_repo`, `dlq_repo`,
-  `outbox_repo`) and `harness` itself support `len(...)`.
+  All in-memory repositories (`event_store`, `snapshot_store`, `checkpoint_repo`,
+  `dlq_repo`, `outbox_repo`, and `create_read_model_repository(...)` instances)
+  and `harness` itself support `len(...)`.
 - **`harness.assertions`**: returns an `EventAssertions` wrapper over
   `harness.published_events` supporting `len(harness.assertions)` and expressive
   helpers (`assert_event_published`, `assert_no_event_published`,
@@ -353,8 +362,10 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
         create_if_missing=False,
     )
 
-    # EventAssertions wrapper and len(harness)
+    # EventAssertions wrapper, len(harness), and InMemoryEventStore helpers
     assert len(harness) == 2
+    assert len(harness.event_store) == 2
+    assert await harness.event_store.get_event_count() == 2
     assert len(harness.assertions) == 2
     harness.assertions.assert_event_count(2)
     harness.assertions.assert_event_type_count(OrderShipped, 1)
@@ -365,11 +376,23 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     )
     assert shipped.aggregate_id == order_id
 
+    # InMemoryReadModelRepository helpers: len(), get_or_raise(), and clear()
+    await read_repo.save(OrderSummary(id=order_id, status="shipped"))
+    assert len(read_repo) == 1
+    summary = await read_repo.get_or_raise(order_id)
+    assert summary.status == "shipped"
+    await read_repo.clear()
+    assert len(read_repo) == 0
+
     # Verify automatic snapshot creation in harness.snapshot_store at version 2
     assert len(harness.snapshot_store) == 1
     snapshot = await harness.snapshot_store.get_snapshot(order_id, "Order")
     assert snapshot is not None
     assert snapshot.version == 2
+
+    # Synchronously reset stored events, streams, categories, and event IDs
+    harness.event_store.clear()
+    assert len(harness.event_store) == 0
 ```
 
 ### Seeding pre-existing events and replaying projections with `harness.append_events` and `harness.replay`
