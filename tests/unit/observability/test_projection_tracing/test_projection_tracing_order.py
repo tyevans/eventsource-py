@@ -8,6 +8,18 @@ from uuid import uuid4
 import pytest
 from pydantic import Field
 
+from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
+from eventsource.adapters.sql.projection import DatabaseProjection
+from eventsource.application.projections.base import (
+    CheckpointTrackingProjection,
+    DeclarativeProjection,
+    Projection,
+)
+from eventsource.application.projections.coordinator import (
+    ProjectionCoordinator,
+    ProjectionRegistry,
+)
+from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
@@ -16,7 +28,6 @@ from eventsource.observability.attributes import (
 )
 
 
-# Sample events for testing
 class OrderCreated(DomainEvent):
     """Sample event for testing."""
 
@@ -31,13 +42,18 @@ class OrderShipped(DomainEvent):
     tracking_number: str = Field(..., description="Tracking number")
 
 
+def _make_span_cm(span: MagicMock | None = None) -> MagicMock:
+    cm = MagicMock()
+    cm.__enter__ = Mock(return_value=span or MagicMock())
+    cm.__exit__ = Mock(return_value=None)
+    return cm
+
+
 class TestDeclarativeProjectionTracing:
     """Tests for DeclarativeProjection tracing support."""
 
     def test_enable_tracing_passed_through(self):
         """enable_tracing is passed to parent class."""
-        from eventsource.application.projections.base import DeclarativeProjection
-        from eventsource.domain.decorators import handles
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
@@ -45,29 +61,14 @@ class TestDeclarativeProjectionTracing:
                 pass
 
         projection = TestProjection(enable_tracing=True)
-
         assert projection._enable_tracing is True
         assert projection._tracer is not None
 
     @pytest.mark.asyncio
     async def test_handler_dispatch_creates_span(self):
         """Handler dispatch creates span when tracing enabled."""
-        from eventsource.application.projections.base import DeclarativeProjection
-        from eventsource.domain.decorators import handles
-
-        mock_tracer = Mock()
-        mock_span_handle = MagicMock()
-        mock_span_handler = MagicMock()
-        # Create separate context managers for each span call
-        mock_span_cm_handle = MagicMock()
-        mock_span_cm_handle.__enter__ = Mock(return_value=mock_span_handle)
-        mock_span_cm_handle.__exit__ = Mock(return_value=None)
-        mock_span_cm_handler = MagicMock()
-        mock_span_cm_handler.__enter__ = Mock(return_value=mock_span_handler)
-        mock_span_cm_handler.__exit__ = Mock(return_value=None)
-        # First call for handle(), second call for handler dispatch
-        mock_tracer.span.side_effect = [mock_span_cm_handle, mock_span_cm_handler]
-        mock_tracer.enabled = True
+        mock_tracer = Mock(enabled=True)
+        mock_tracer.span.side_effect = [_make_span_cm(), _make_span_cm()]
 
         class TestProjection(DeclarativeProjection):
             @handles(OrderCreated)
@@ -77,15 +78,10 @@ class TestDeclarativeProjectionTracing:
         projection = TestProjection(enable_tracing=True)
         projection._tracer = mock_tracer
 
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await projection.handle(event)
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
 
-        # Verify at least two spans were created (handle + handler dispatch)
         assert mock_tracer.span.call_count == 2
-
-        # Check handler dispatch span
-        calls = mock_tracer.span.call_args_list
-        handler_call = calls[1]
+        handler_call = mock_tracer.span.call_args_list[1]
         assert handler_call[0][0] == "eventsource.projection.handler"
         attrs = handler_call[0][1]
         assert attrs[ATTR_PROJECTION_NAME] == "TestProjection"
@@ -99,30 +95,21 @@ class TestDatabaseProjectionTracing:
     @pytest.fixture
     def mock_session_factory(self):
         """Create a mock async session factory."""
-        mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock()
-
-        mock_session = AsyncMock()
-        mock_session.connection = AsyncMock(return_value=mock_conn)
+        mock_conn = AsyncMock(execute=AsyncMock())
+        mock_session = AsyncMock(connection=AsyncMock(return_value=mock_conn))
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
-
-        mock_begin = MagicMock()
-        mock_begin.__aenter__ = AsyncMock(return_value=None)
-        mock_begin.__aexit__ = AsyncMock(return_value=None)
+        mock_begin = MagicMock(
+            __aenter__=AsyncMock(return_value=None),
+            __aexit__=AsyncMock(return_value=None),
+        )
         mock_session.begin = MagicMock(return_value=mock_begin)
-
-        mock_factory = MagicMock()
-        mock_factory.return_value = mock_session
+        mock_factory = MagicMock(return_value=mock_session)
         mock_factory.__call__ = MagicMock(return_value=mock_session)
-
         return mock_factory, mock_session, mock_conn
 
     def test_enable_tracing_passed_through(self, mock_session_factory):
         """enable_tracing is passed to parent class."""
-        from eventsource.adapters.sql.projection import DatabaseProjection
-        from eventsource.domain.decorators import handles
-
         factory, _, _ = mock_session_factory
 
         class TestProjection(DatabaseProjection):
@@ -130,11 +117,7 @@ class TestDatabaseProjectionTracing:
             async def _handle_order_created(self, conn, event: OrderCreated) -> None:
                 pass
 
-        projection = TestProjection(
-            session_factory=factory,
-            enable_tracing=True,
-        )
-
+        projection = TestProjection(session_factory=factory, enable_tracing=True)
         assert projection._enable_tracing is True
         assert projection._tracer is not None
 
@@ -144,37 +127,22 @@ class TestProjectionRegistryTracing:
 
     def test_enable_tracing_parameter_default_false(self):
         """enable_tracing defaults to False."""
-        from eventsource.application.projections.coordinator import ProjectionRegistry
-
         registry = ProjectionRegistry()
-
         assert registry._enable_tracing is False
-        # With composition-based tracing, _tracer is always set but disabled
         assert registry._tracer is not None
         assert registry._tracer.enabled is False
 
     def test_enable_tracing_parameter_true(self):
         """enable_tracing=True enables tracing."""
-        from eventsource.application.projections.coordinator import ProjectionRegistry
-
         registry = ProjectionRegistry(enable_tracing=True)
-
         assert registry._enable_tracing is True
         assert registry._tracer is not None
 
     @pytest.mark.asyncio
     async def test_dispatch_creates_span_when_enabled(self):
         """dispatch() creates span when tracing enabled."""
-        from eventsource.application.projections.base import Projection
-        from eventsource.application.projections.coordinator import ProjectionRegistry
-
-        mock_tracer = Mock()
-        mock_span = MagicMock()
-        mock_span_cm = MagicMock()
-        mock_span_cm.__enter__ = Mock(return_value=mock_span)
-        mock_span_cm.__exit__ = Mock(return_value=None)
-        mock_tracer.span.return_value = mock_span_cm
-        mock_tracer.enabled = True
+        mock_tracer = Mock(enabled=True)
+        mock_tracer.span.return_value = _make_span_cm()
 
         class TestProjection(Projection):
             async def handle(self, event: DomainEvent) -> None:
@@ -187,20 +155,14 @@ class TestProjectionRegistryTracing:
         registry._tracer = mock_tracer
         registry.register_projection(TestProjection())
 
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await registry.dispatch(event)
+        await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
 
-        # Verify span was created
         mock_tracer.span.assert_called()
-        call_args = mock_tracer.span.call_args
-        assert call_args[0][0] == "eventsource.projection.registry.dispatch"
+        assert mock_tracer.span.call_args[0][0] == "eventsource.projection.registry.dispatch"
 
     @pytest.mark.asyncio
     async def test_dispatch_no_span_when_disabled(self):
         """dispatch() does not create span when tracing disabled."""
-        from eventsource.application.projections.base import Projection
-        from eventsource.application.projections.coordinator import ProjectionRegistry
-
         handled_events = []
 
         class TestProjection(Projection):
@@ -213,12 +175,9 @@ class TestProjectionRegistryTracing:
         registry = ProjectionRegistry(enable_tracing=False)
         registry.register_projection(TestProjection())
 
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await registry.dispatch(event)
+        await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
 
-        # Event should still be dispatched
         assert len(handled_events) == 1
-        # With composition-based tracing, _tracer is always set but disabled
         assert registry._tracer is not None
         assert registry._tracer.enabled is False
 
@@ -228,59 +187,32 @@ class TestProjectionCoordinatorTracing:
 
     def test_enable_tracing_parameter_default_false(self):
         """enable_tracing defaults to False."""
-        from eventsource.application.projections.coordinator import (
-            ProjectionCoordinator,
-            ProjectionRegistry,
-        )
-
-        registry = ProjectionRegistry()
-        coordinator = ProjectionCoordinator(registry=registry)
-
+        coordinator = ProjectionCoordinator(registry=ProjectionRegistry())
         assert coordinator._enable_tracing is False
-        # With composition-based tracing, _tracer is always set but disabled
         assert coordinator._tracer is not None
         assert coordinator._tracer.enabled is False
 
     def test_enable_tracing_parameter_true(self):
         """enable_tracing=True enables tracing."""
-        from eventsource.application.projections.coordinator import (
-            ProjectionCoordinator,
-            ProjectionRegistry,
-        )
-
-        registry = ProjectionRegistry()
-        coordinator = ProjectionCoordinator(registry=registry, enable_tracing=True)
-
+        coordinator = ProjectionCoordinator(registry=ProjectionRegistry(), enable_tracing=True)
         assert coordinator._enable_tracing is True
         assert coordinator._tracer is not None
 
     @pytest.mark.asyncio
     async def test_dispatch_events_creates_span_when_enabled(self):
         """dispatch_events() creates span when tracing enabled."""
-        from eventsource.application.projections.coordinator import (
-            ProjectionCoordinator,
-            ProjectionRegistry,
-        )
+        mock_tracer = Mock(enabled=True)
+        mock_tracer.span.return_value = _make_span_cm()
 
-        mock_tracer = Mock()
-        mock_span = MagicMock()
-        mock_span_cm = MagicMock()
-        mock_span_cm.__enter__ = Mock(return_value=mock_span)
-        mock_span_cm.__exit__ = Mock(return_value=None)
-        mock_tracer.span.return_value = mock_span_cm
-        mock_tracer.enabled = True
-
-        registry = ProjectionRegistry()
-        coordinator = ProjectionCoordinator(registry=registry, enable_tracing=True)
+        coordinator = ProjectionCoordinator(registry=ProjectionRegistry(), enable_tracing=True)
         coordinator._tracer = mock_tracer
 
-        events = [OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")]
-        await coordinator.dispatch_events(events)
+        await coordinator.dispatch_events(
+            [OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")]
+        )
 
-        # Verify span was created
         mock_tracer.span.assert_called()
-        call_args = mock_tracer.span.call_args
-        assert call_args[0][0] == "eventsource.projection.coordinate"
+        assert mock_tracer.span.call_args[0][0] == "eventsource.projection.coordinate"
 
 
 class TestBackwardCompatibility:
@@ -289,8 +221,6 @@ class TestBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_checkpoint_projection_without_tracing_arg_works(self):
         """CheckpointTrackingProjection works without enable_tracing arg."""
-        from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-        from eventsource.application.projections.base import CheckpointTrackingProjection
 
         class TestProjection(CheckpointTrackingProjection):
             def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -299,22 +229,13 @@ class TestBackwardCompatibility:
             async def _process_event(self, event: DomainEvent) -> None:
                 pass
 
-        # Should work without enable_tracing argument
         projection = TestProjection(checkpoint_repo=InMemoryCheckpointRepository())
-
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await projection.handle(event)
-
-        # Checkpoint should be updated
-        checkpoint = await projection.get_checkpoint()
-        assert checkpoint is not None
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
+        assert await projection.get_checkpoint() is not None
 
     @pytest.mark.asyncio
     async def test_declarative_projection_without_tracing_arg_works(self):
         """DeclarativeProjection works without enable_tracing arg."""
-        from eventsource.application.projections.base import DeclarativeProjection
-        from eventsource.domain.decorators import handles
-
         handled_events = []
 
         class TestProjection(DeclarativeProjection):
@@ -322,20 +243,13 @@ class TestBackwardCompatibility:
             async def _handle_order_created(self, event: OrderCreated) -> None:
                 handled_events.append(event)
 
-        # Should work without enable_tracing argument
         projection = TestProjection()
-
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await projection.handle(event)
-
+        await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert len(handled_events) == 1
 
     @pytest.mark.asyncio
     async def test_registry_without_tracing_arg_works(self):
         """ProjectionRegistry works without enable_tracing arg."""
-        from eventsource.application.projections.base import Projection
-        from eventsource.application.projections.coordinator import ProjectionRegistry
-
         handled_events = []
 
         class TestProjection(Projection):
@@ -345,28 +259,16 @@ class TestBackwardCompatibility:
             async def reset(self) -> None:
                 pass
 
-        # Should work without enable_tracing argument
         registry = ProjectionRegistry()
         registry.register_projection(TestProjection())
-
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await registry.dispatch(event)
-
+        await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert len(handled_events) == 1
 
     @pytest.mark.asyncio
     async def test_coordinator_without_tracing_arg_works(self):
         """ProjectionCoordinator works without enable_tracing arg."""
-        from eventsource.application.projections.coordinator import (
-            ProjectionCoordinator,
-            ProjectionRegistry,
+        coordinator = ProjectionCoordinator(registry=ProjectionRegistry())
+        count = await coordinator.dispatch_events(
+            [OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")]
         )
-
-        # Should work without enable_tracing argument
-        registry = ProjectionRegistry()
-        coordinator = ProjectionCoordinator(registry=registry)
-
-        events = [OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")]
-        count = await coordinator.dispatch_events(events)
-
         assert count == 1
