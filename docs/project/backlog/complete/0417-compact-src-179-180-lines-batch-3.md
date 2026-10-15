@@ -1,7 +1,7 @@
 ---
 id: TASK-0417
 title: "Compact 179-180 line src modules below 165 lines (Batch 3)"
-status: Refined
+status: Complete
 target_bc: architecture
 dependencies: [TASK-0414]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0417: Compact 179-180 line src modules below 165 lines (Batch 3)
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `architecture`
 
 ## Objective

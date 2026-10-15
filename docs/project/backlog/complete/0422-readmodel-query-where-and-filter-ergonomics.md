@@ -1,7 +1,7 @@
 ---
 id: TASK-0422
 title: "Add Query.where(), variadic/keyword with_filter(), and Iterable Filter.in_/not_in"
-status: Refined
+status: Complete
 target_bc: ports
 dependencies: [TASK-0414]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0422: Add Query.where(), variadic/keyword with_filter(), and Iterable Filter.in_/not_in
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `ports`
 
 ## Objective
