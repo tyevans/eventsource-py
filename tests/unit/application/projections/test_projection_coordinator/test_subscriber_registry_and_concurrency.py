@@ -19,16 +19,11 @@ from tests.unit.application.projections.test_projection_coordinator._fixtures im
 
 
 class TestSubscriberRegistry:
-    """Tests for SubscriberRegistry."""
-
     @pytest.fixture
     def registry(self) -> SubscriberRegistry:
-        """Create a fresh subscriber registry."""
         return SubscriberRegistry()
 
     def test_register_subscriber(self, registry: SubscriberRegistry) -> None:
-        """Can register a subscriber."""
-
         class TestSubscriber(EventSubscriber):
             def subscribed_to(self) -> list[type[DomainEvent]]:
                 return [OrderCreated]
@@ -38,13 +33,10 @@ class TestSubscriberRegistry:
 
         subscriber = TestSubscriber()
         registry.register(subscriber)
-
         assert subscriber in registry.subscribers
         assert registry.get_subscriber_count() == 1
 
     def test_unregister_subscriber(self, registry: SubscriberRegistry) -> None:
-        """Can unregister a subscriber."""
-
         class TestSubscriber(EventSubscriber):
             def subscribed_to(self) -> list[type[DomainEvent]]:
                 return [OrderCreated]
@@ -55,13 +47,10 @@ class TestSubscriberRegistry:
         subscriber = TestSubscriber()
         registry.register(subscriber)
         result = registry.unregister(subscriber)
-
         assert result is True
         assert registry.get_subscriber_count() == 0
 
     def test_get_subscribers_for_event_type(self, registry: SubscriberRegistry) -> None:
-        """get_subscribers_for returns subscribers for event type."""
-
         class OrderSubscriber(EventSubscriber):
             def subscribed_to(self) -> list[type[DomainEvent]]:
                 return [OrderCreated]
@@ -78,20 +67,17 @@ class TestSubscriberRegistry:
 
         order_sub = OrderSubscriber()
         shipping_sub = ShippingSubscriber()
-
         registry.register(order_sub)
         registry.register(shipping_sub)
 
         order_subs = registry.get_subscribers_for(OrderCreated)
         shipping_subs = registry.get_subscribers_for(OrderShipped)
-
         assert order_sub in order_subs
         assert shipping_sub not in order_subs
         assert shipping_sub in shipping_subs
 
     @pytest.mark.asyncio
     async def test_dispatch_to_interested_subscribers(self, registry: SubscriberRegistry) -> None:
-        """dispatch only sends to interested subscribers."""
         order_events: list[DomainEvent] = []
         shipping_events: list[DomainEvent] = []
 
@@ -114,7 +100,6 @@ class TestSubscriberRegistry:
 
         created = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         shipped = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-
         await registry.dispatch(created)
         await registry.dispatch(shipped)
 
@@ -127,7 +112,6 @@ class TestSubscriberRegistry:
     async def test_dispatch_handles_errors(
         self, registry: SubscriberRegistry, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """dispatch logs errors and continues."""
         good_events: list[DomainEvent] = []
 
         class FailingSubscriber(EventSubscriber):
@@ -146,19 +130,14 @@ class TestSubscriberRegistry:
 
         registry.register(FailingSubscriber())
         registry.register(GoodSubscriber())
-
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await registry.dispatch(event)
 
-        # GoodSubscriber should still receive event
         assert len(good_events) == 1
-
-        # Error logged
         assert any("Error in subscriber" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_dispatch_many(self, registry: SubscriberRegistry) -> None:
-        """dispatch_many processes events in order."""
         events: list[DomainEvent] = []
 
         class TestSubscriber(EventSubscriber):
@@ -169,10 +148,8 @@ class TestSubscriberRegistry:
                 events.append(event)
 
         registry.register(TestSubscriber())
-
         event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         event2 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-002")
-
         await registry.dispatch_many([event1, event2])
 
         assert len(events) == 2
@@ -181,11 +158,8 @@ class TestSubscriberRegistry:
 
 
 class TestConcurrentExecution:
-    """Tests for concurrent execution behavior."""
-
     @pytest.mark.asyncio
     async def test_projections_run_concurrently(self) -> None:
-        """Projections execute concurrently within dispatch."""
         execution_order: list[str] = []
         execution_lock = asyncio.Lock()
 
@@ -213,22 +187,16 @@ class TestConcurrentExecution:
         registry = ProjectionRegistry()
         registry.register_projection(SlowProjection())
         registry.register_projection(FastProjection())
-
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await registry.dispatch(event)
 
-        # Both should start before slow finishes
         _slow_start_idx = execution_order.index("slow_start")
         slow_end_idx = execution_order.index("slow_end")
         fast_start_idx = execution_order.index("fast_start")
-
-        # Fast should start while slow is running
         assert fast_start_idx < slow_end_idx
 
     @pytest.mark.asyncio
     async def test_registry_dispatch_respects_max_concurrency(self) -> None:
-        """ProjectionRegistry never runs more than max_concurrency handlers
-        at once, even when fan-out is wider than the bound."""
         in_flight = 0
         peak_in_flight = 0
         peak_lock = asyncio.Lock()
@@ -249,20 +217,14 @@ class TestConcurrentExecution:
         registry = ProjectionRegistry(max_concurrency=3)
         for _ in range(10):
             registry.register_projection(TrackedProjection())
-
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await registry.dispatch(event)
 
         assert peak_in_flight <= 3
-        # Sanity: with 10 projections and no cap, uncapped would hit 10.
         assert peak_in_flight == 3
 
     @pytest.mark.asyncio
-    async def test_subscriber_registry_dispatch_respects_max_concurrency(
-        self,
-    ) -> None:
-        """SubscriberRegistry never runs more than max_concurrency subscribers
-        at once, even when fan-out is wider than the bound."""
+    async def test_subscriber_registry_dispatch_respects_max_concurrency(self) -> None:
         in_flight = 0
         peak_in_flight = 0
         peak_lock = asyncio.Lock()
@@ -283,7 +245,6 @@ class TestConcurrentExecution:
         registry = SubscriberRegistry(max_concurrency=2)
         for _ in range(8):
             registry.register(TrackedSubscriber())
-
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         await registry.dispatch(event)
 
