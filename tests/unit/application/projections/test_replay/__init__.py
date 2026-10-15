@@ -21,6 +21,7 @@ from tests.unit.application.projections.test_replay.test_replay_bounded_reads im
 from tests.unit.application.projections.test_replay.test_replay_failures_and_errors import (
     TestAPoisonEventDoesNotStopTheRebuild,
     TestFailedCountsEventsAndFailuresCountRejections,
+    TestSingleProjectionAndSucceededReport,
     TestStrictRaisesOnTheFirstRejection,
     TestTheFailureListIsBoundedAndSaysSo,
 )
@@ -40,6 +41,7 @@ __all__ = [  # pragma: allowlist secret
     "TestFailedCountsEventsAndFailuresCountRejections",
     "TestMaxEventsGuardsAgainstANonAdvancingCursor",
     "TestScopingReachesTheAdaptersQuery",
+    "TestSingleProjectionAndSucceededReport",
     "TestStrictRaisesOnTheFirstRejection",
     "TestTheFailureListIsBoundedAndSaysSo",
     "TestTheReadIsBounded",

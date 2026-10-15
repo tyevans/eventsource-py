@@ -33,7 +33,7 @@ delivery.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from eventsource.domain.exceptions import ProjectionError
 from eventsource.ports.envelopes import FeedReadOptions
@@ -103,6 +103,11 @@ class ReplayReport:
         """Events at least one retained failure names (distinct by `event_id`)."""
         return len({failure.event_id for failure in self.failures})
 
+    @property
+    def succeeded(self) -> bool:
+        """Whether the replay completed without any failures."""
+        return len(self.failures) == 0 and self.failures_truncated == 0
+
 
 class ReplayFailedError(ProjectionError):
     """A `strict=True` replay hit an event a projection rejected.
@@ -121,7 +126,7 @@ class ReplayFailedError(ProjectionError):
 
 async def replay(
     feed: GlobalEventFeed,
-    projections: Sequence[EventSubscriber],
+    projections: Sequence[EventSubscriber] | EventSubscriber,
     *,
     from_position: Position | None = None,
     tenant_id: UUID | None = None,
@@ -141,6 +146,11 @@ async def replay(
       counts dropped ones); `on_failure` is invoked for every failure before
       any strict raise.
     """
+    projection_list: tuple[EventSubscriber, ...] = (
+        (cast("EventSubscriber", projections),)
+        if hasattr(projections, "handle")
+        else tuple(projections)
+    )
     applied = seen = truncated = 0
     failures: list[ReplayFailure] = []
     last_position: Position | None = None
@@ -168,7 +178,7 @@ async def replay(
                 cursor = envelope.position
 
             rejected = False
-            for projection in projections:
+            for projection in projection_list:
                 try:
                     await projection.handle(envelope.event)
                 except Exception as exc:
