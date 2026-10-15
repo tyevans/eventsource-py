@@ -13,9 +13,7 @@ from eventsource.adapters.rabbitmq import death_headers
 
 def _message(headers: dict[str, Any] | None) -> MagicMock:
     """Build a mock AbstractIncomingMessage-like object with the given headers."""
-    message = MagicMock()
-    message.headers = headers
-    return message
+    return MagicMock(headers=headers)
 
 
 def _headers_with_death(
@@ -41,11 +39,6 @@ def _headers_with_death(
     }
 
 
-# ---------------------------------------------------------------------------
-# get_death_count
-# ---------------------------------------------------------------------------
-
-
 def test_death_count_zero_when_no_header() -> None:
     assert death_headers.get_death_count(_message({})) == 0
 
@@ -59,12 +52,7 @@ def test_death_count_reads_first_entry() -> None:
 
 
 def test_death_count_sums_multiple_death_records() -> None:
-    headers = {
-        "x-death": [
-            {"count": 3},
-            {"count": 2},
-        ]
-    }
+    headers = {"x-death": [{"count": 3}, {"count": 2}]}
     assert death_headers.get_death_count(_message(headers)) == 5
 
 
@@ -87,11 +75,6 @@ def test_death_count_roundtrips_any_count(count: int) -> None:
     assert death_headers.get_death_count(_message(_headers_with_death(count))) == count
 
 
-# ---------------------------------------------------------------------------
-# get_first_death_queue
-# ---------------------------------------------------------------------------
-
-
 def test_first_death_queue_none_when_no_header() -> None:
     assert death_headers.get_first_death_queue(_message({})) is None
 
@@ -103,14 +86,8 @@ def test_first_death_queue_returns_recorded_queue() -> None:
 
 @given(queue=st.text(min_size=1, max_size=50))
 def test_first_death_queue_returns_recorded_queue_property(queue: str) -> None:
-    assert (
-        death_headers.get_first_death_queue(_message(_headers_with_death(1, queue=queue))) == queue
-    )
-
-
-# ---------------------------------------------------------------------------
-# get_first_death_reason
-# ---------------------------------------------------------------------------
+    msg = _message(_headers_with_death(1, queue=queue))
+    assert death_headers.get_first_death_queue(msg) == queue
 
 
 def test_first_death_reason_none_when_no_header() -> None:
@@ -124,15 +101,8 @@ def test_first_death_reason_returns_recorded_reason() -> None:
 
 @given(reason=st.text(min_size=1, max_size=50))
 def test_first_death_reason_returns_recorded_reason_property(reason: str) -> None:
-    assert (
-        death_headers.get_first_death_reason(_message(_headers_with_death(1, reason=reason)))
-        == reason
-    )
-
-
-# ---------------------------------------------------------------------------
-# get_first_death_exchange
-# ---------------------------------------------------------------------------
+    msg = _message(_headers_with_death(1, reason=reason))
+    assert death_headers.get_first_death_reason(msg) == reason
 
 
 def test_first_death_exchange_none_when_no_header() -> None:
@@ -146,15 +116,8 @@ def test_first_death_exchange_returns_recorded_exchange() -> None:
 
 @given(exchange=st.text(min_size=1, max_size=50))
 def test_first_death_exchange_returns_recorded_exchange_property(exchange: str) -> None:
-    assert (
-        death_headers.get_first_death_exchange(_message(_headers_with_death(1, exchange=exchange)))
-        == exchange
-    )
-
-
-# ---------------------------------------------------------------------------
-# get_original_routing_key
-# ---------------------------------------------------------------------------
+    msg = _message(_headers_with_death(1, exchange=exchange))
+    assert death_headers.get_first_death_exchange(msg) == exchange
 
 
 def test_original_routing_key_none_when_no_header() -> None:
@@ -182,11 +145,6 @@ def test_original_routing_key_roundtrips_property(routing_key: str) -> None:
     assert death_headers.get_original_routing_key(_message(headers)) == routing_key
 
 
-# ---------------------------------------------------------------------------
-# is_from_dlq
-# ---------------------------------------------------------------------------
-
-
 def test_is_from_dlq_false_without_header() -> None:
     assert death_headers.is_from_dlq(_message({})) is False
 
@@ -203,14 +161,8 @@ def test_is_from_dlq_true_with_death_record() -> None:
     assert death_headers.is_from_dlq(_message(_headers_with_death(1))) is True
 
 
-# ---------------------------------------------------------------------------
-# get_death_info
-# ---------------------------------------------------------------------------
-
-
 def test_death_info_defaults_when_no_death() -> None:
     info = death_headers.get_death_info(_message({}))
-
     assert info["is_dead_lettered"] is False
     assert info["death_count"] == 0
     assert info["first_death_queue"] is None
@@ -223,7 +175,6 @@ def test_death_info_defaults_when_no_death() -> None:
 def test_death_info_populated_when_dead_lettered() -> None:
     headers = _headers_with_death(2, queue="events.default", reason="rejected", exchange="events")
     info = death_headers.get_death_info(_message(headers))
-
     assert info["is_dead_lettered"] is True
     assert info["death_count"] == 2
     assert info["first_death_queue"] == "events.default"

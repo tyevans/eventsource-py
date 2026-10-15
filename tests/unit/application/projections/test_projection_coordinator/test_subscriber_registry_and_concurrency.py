@@ -6,10 +6,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.application.projections.base import Projection
-from eventsource.application.projections.coordinator import (
-    ProjectionRegistry,
-    SubscriberRegistry,
-)
+from eventsource.application.projections.coordinator import ProjectionRegistry, SubscriberRegistry
 from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import EventSubscriber
 from tests.unit.application.projections.test_projection_coordinator._fixtures import (
@@ -18,34 +15,41 @@ from tests.unit.application.projections.test_projection_coordinator._fixtures im
 )
 
 
+class _SimpleSubscriber(EventSubscriber):
+    def __init__(
+        self,
+        event_types: list[type[DomainEvent]] | None = None,
+        sink: list[DomainEvent] | None = None,
+        fail: bool = False,
+    ) -> None:
+        self._event_types = event_types or [OrderCreated]
+        self._sink = sink
+        self._fail = fail
+
+    def subscribed_to(self) -> list[type[DomainEvent]]:
+        return self._event_types
+
+    async def handle(self, event: DomainEvent) -> None:
+        if self._fail:
+            raise ValueError("Subscriber failed")
+        if self._sink is not None:
+            self._sink.append(event)
+
+
 class TestSubscriberRegistry:
     @pytest.fixture
     def registry(self) -> SubscriberRegistry:
         return SubscriberRegistry()
 
     def test_register_and_fluent_chaining(self, registry: SubscriberRegistry) -> None:
-        class TestSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        sub1, sub2 = TestSubscriber(), TestSubscriber()
+        sub1, sub2 = _SimpleSubscriber(), _SimpleSubscriber()
         returned = registry.register(sub1, sub2)
         assert returned is registry
         assert registry.subscribers == [sub1, sub2]
         assert registry.get_subscriber_count() == 2
 
     def test_init_with_subscribers_and_unregister(self) -> None:
-        class TestSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        subscriber = TestSubscriber()
+        subscriber = _SimpleSubscriber()
         registry = SubscriberRegistry(subscribers=[subscriber])
         assert registry.get_subscribers_for(OrderCreated) == [subscriber]
         assert registry.unregister(subscriber) is True
@@ -54,23 +58,9 @@ class TestSubscriberRegistry:
         assert registry.unregister(subscriber) is False
 
     def test_get_subscribers_for_event_type(self, registry: SubscriberRegistry) -> None:
-        class OrderSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        class ShippingSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderShipped]
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        order_sub, shipping_sub = OrderSubscriber(), ShippingSubscriber()
+        order_sub = _SimpleSubscriber([OrderCreated])
+        shipping_sub = _SimpleSubscriber([OrderShipped])
         registry.register(order_sub, shipping_sub)
-
         assert registry.get_subscribers_for(OrderCreated) == [order_sub]
         assert registry.get_subscribers_for(OrderShipped) == [shipping_sub]
 
@@ -78,27 +68,14 @@ class TestSubscriberRegistry:
     async def test_dispatch_to_interested_subscribers(self, registry: SubscriberRegistry) -> None:
         order_events: list[DomainEvent] = []
         shipping_events: list[DomainEvent] = []
-
-        class OrderSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                order_events.append(event)
-
-        class ShippingSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderShipped]
-
-            async def handle(self, event: DomainEvent) -> None:
-                shipping_events.append(event)
-
-        registry.register(OrderSubscriber(), ShippingSubscriber())
+        registry.register(
+            _SimpleSubscriber([OrderCreated], sink=order_events),
+            _SimpleSubscriber([OrderShipped], sink=shipping_events),
+        )
         created = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         shipped = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
         await registry.dispatch(created)
         await registry.dispatch(shipped)
-
         assert order_events == [created]
         assert shipping_events == [shipped]
 
@@ -107,39 +84,18 @@ class TestSubscriberRegistry:
         self, registry: SubscriberRegistry, caplog: pytest.LogCaptureFixture
     ) -> None:
         good_events: list[DomainEvent] = []
-
-        class FailingSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                raise ValueError("Subscriber failed")
-
-        class GoodSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                good_events.append(event)
-
-        registry.register(FailingSubscriber(), GoodSubscriber())
+        registry.register(
+            _SimpleSubscriber([OrderCreated], fail=True),
+            _SimpleSubscriber([OrderCreated], sink=good_events),
+        )
         await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
-
         assert len(good_events) == 1
         assert any("Error in subscriber" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_dispatch_many(self, registry: SubscriberRegistry) -> None:
         events: list[DomainEvent] = []
-
-        class TestSubscriber(EventSubscriber):
-            def subscribed_to(self) -> list[type[DomainEvent]]:
-                return [OrderCreated]
-
-            async def handle(self, event: DomainEvent) -> None:
-                events.append(event)
-
-        registry.register(TestSubscriber())
+        registry.register(_SimpleSubscriber([OrderCreated], sink=events))
         event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         event2 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-002")
         await registry.dispatch_many([event1, event2])
@@ -167,7 +123,6 @@ class TestConcurrentExecution:
             async def handle(self, event: DomainEvent) -> None:
                 async with execution_lock:
                     execution_order.append("fast_start")
-                async with execution_lock:
                     execution_order.append("fast_end")
 
             async def reset(self) -> None:
@@ -176,8 +131,7 @@ class TestConcurrentExecution:
         registry = ProjectionRegistry()
         registry.register_projection(SlowProjection())
         registry.register_projection(FastProjection())
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await registry.dispatch(event)
+        await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
 
         _slow_start_idx = execution_order.index("slow_start")
         slow_end_idx = execution_order.index("slow_end")
@@ -206,9 +160,7 @@ class TestConcurrentExecution:
         registry = ProjectionRegistry(max_concurrency=3)
         for _ in range(10):
             registry.register_projection(TrackedProjection())
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await registry.dispatch(event)
-
+        await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert peak_in_flight <= 3
         assert peak_in_flight == 3
 
@@ -234,8 +186,6 @@ class TestConcurrentExecution:
         registry = SubscriberRegistry(max_concurrency=2)
         for _ in range(8):
             registry.register(TrackedSubscriber())
-        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
-        await registry.dispatch(event)
-
+        await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert peak_in_flight <= 2
         assert peak_in_flight == 2

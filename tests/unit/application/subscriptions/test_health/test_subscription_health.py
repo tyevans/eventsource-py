@@ -7,6 +7,7 @@ import pytest
 from eventsource.application.subscriptions.health import (
     HealthCheckConfig,
     HealthCheckResult,
+    HealthIndicator,
     HealthStatus,
     SubscriptionHealthChecker,
 )
@@ -14,220 +15,155 @@ from eventsource.application.subscriptions.retry import CircuitBreaker, CircuitS
 from eventsource.application.subscriptions.subscription import Subscription, SubscriptionState
 
 
-class TestSubscriptionHealthChecker:
-    """Tests for SubscriptionHealthChecker."""
+def _ind(result: HealthCheckResult, name: str) -> HealthIndicator | None:
+    return next((i for i in result.indicators if i.name == name), None)
 
+
+def _breaker(state: CircuitState, failures: int = 0) -> MagicMock:
+    cb = MagicMock(spec=CircuitBreaker)
+    cb.state = state
+    cb.failure_count = failures
+    return cb
+
+
+class TestSubscriptionHealthChecker:
     @pytest.fixture
     def checker(self, subscription: Subscription) -> SubscriptionHealthChecker:
-        """Create test health checker."""
-        return SubscriptionHealthChecker(
-            subscription=subscription,
-            config=HealthCheckConfig(),
-        )
+        return SubscriptionHealthChecker(subscription=subscription, config=HealthCheckConfig())
 
     def test_check_returns_result(self, checker: SubscriptionHealthChecker):
-        """Test that check returns a HealthCheckResult."""
         result = checker.check()
         assert isinstance(result, HealthCheckResult)
         assert result.subscription_name == "TestSubscription"
 
     def test_check_starting_state(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test health check in STARTING state."""
-        result = checker.check()
-        state_indicator = next((i for i in result.indicators if i.name == "state"), None)
+        state_indicator = _ind(checker.check(), "state")
         assert state_indicator is not None
         assert state_indicator.status == HealthStatus.UNKNOWN
 
     @pytest.mark.asyncio
     async def test_check_live_state(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test health check in LIVE state."""
         await subscription.transition_to(SubscriptionState.CATCHING_UP)
         await subscription.transition_to(SubscriptionState.LIVE)
-        result = checker.check()
-        state_indicator = next((i for i in result.indicators if i.name == "state"), None)
+        state_indicator = _ind(checker.check(), "state")
         assert state_indicator is not None
         assert state_indicator.status == HealthStatus.HEALTHY
 
     @pytest.mark.asyncio
     async def test_check_error_state(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test health check in ERROR state."""
         subscription.last_error = RuntimeError("Test error")
         await subscription.transition_to(SubscriptionState.ERROR)
-        result = checker.check()
-        state_indicator = next((i for i in result.indicators if i.name == "state"), None)
+        state_indicator = _ind(checker.check(), "state")
         assert state_indicator is not None
         assert state_indicator.status == HealthStatus.UNHEALTHY
 
     def test_check_errors_indicator_healthy(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test errors indicator when healthy."""
-        result = checker.check()
-        errors_indicator = next((i for i in result.indicators if i.name == "errors"), None)
+        errors_indicator = _ind(checker.check(), "errors")
         assert errors_indicator is not None
         assert errors_indicator.status == HealthStatus.HEALTHY
 
     @pytest.mark.asyncio
     async def test_check_errors_indicator_degraded(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test errors indicator when degraded."""
         for _ in range(15):
             await subscription.record_event_failed(ValueError("test"))
-        result = checker.check()
-        errors_indicator = next((i for i in result.indicators if i.name == "errors"), None)
+        errors_indicator = _ind(checker.check(), "errors")
         assert errors_indicator is not None
         assert errors_indicator.status == HealthStatus.DEGRADED
 
     @pytest.mark.asyncio
     async def test_check_errors_indicator_critical(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test errors indicator when critical."""
         for _ in range(150):
             await subscription.record_event_failed(ValueError("test"))
-        result = checker.check()
-        errors_indicator = next((i for i in result.indicators if i.name == "errors"), None)
+        errors_indicator = _ind(checker.check(), "errors")
         assert errors_indicator is not None
         assert errors_indicator.status == HealthStatus.CRITICAL
 
     def test_check_lag_indicator_healthy(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test lag indicator when healthy."""
-        result = checker.check()
-        lag_indicator = next((i for i in result.indicators if i.name == "lag"), None)
+        lag_indicator = _ind(checker.check(), "lag")
         assert lag_indicator is not None
         assert lag_indicator.status == HealthStatus.HEALTHY
 
     @pytest.mark.asyncio
     async def test_check_lag_indicator_degraded(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test lag indicator when degraded."""
         await subscription.record_events_seen(2000)
-        result = checker.check()
-        lag_indicator = next((i for i in result.indicators if i.name == "lag"), None)
+        lag_indicator = _ind(checker.check(), "lag")
         assert lag_indicator is not None
         assert lag_indicator.status == HealthStatus.DEGRADED
 
     @pytest.mark.asyncio
     async def test_check_lag_indicator_critical(
-        self,
-        subscription: Subscription,
-        checker: SubscriptionHealthChecker,
+        self, subscription: Subscription, checker: SubscriptionHealthChecker
     ):
-        """Test lag indicator when critical."""
         await subscription.record_events_seen(15000)
-        result = checker.check()
-        lag_indicator = next((i for i in result.indicators if i.name == "lag"), None)
+        lag_indicator = _ind(checker.check(), "lag")
         assert lag_indicator is not None
         assert lag_indicator.status == HealthStatus.CRITICAL
 
     def test_overall_status_worst_indicator(self, subscription: Subscription):
-        """Test that overall status reflects worst indicator."""
         config = HealthCheckConfig(max_errors_critical=1)
         checker = SubscriptionHealthChecker(subscription, config)
         result = checker.check()
         assert result.overall_status in (HealthStatus.UNKNOWN, HealthStatus.HEALTHY)
 
     def test_check_with_handler_circuit_breaker_closed(self, subscription: Subscription):
-        """Test health check with the handler circuit breaker closed."""
-        circuit_breaker = MagicMock(spec=CircuitBreaker)
-        circuit_breaker.state = CircuitState.CLOSED
-        circuit_breaker.failure_count = 0
+        cb = _breaker(CircuitState.CLOSED, 0)
         checker = SubscriptionHealthChecker(
-            subscription=subscription,
-            handler_circuit_breaker_provider=lambda: circuit_breaker,
+            subscription=subscription, handler_circuit_breaker_provider=lambda: cb
         )
-        result = checker.check()
-        cb_indicator = next(
-            (i for i in result.indicators if i.name == "handler_circuit_breaker"), None
-        )
+        cb_indicator = _ind(checker.check(), "handler_circuit_breaker")
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.HEALTHY
 
     def test_check_with_handler_circuit_breaker_open(self, subscription: Subscription):
-        """Test health check with the handler circuit breaker open."""
-        circuit_breaker = MagicMock(spec=CircuitBreaker)
-        circuit_breaker.state = CircuitState.OPEN
-        circuit_breaker.failure_count = 10
+        cb = _breaker(CircuitState.OPEN, 10)
         checker = SubscriptionHealthChecker(
-            subscription=subscription,
-            handler_circuit_breaker_provider=lambda: circuit_breaker,
+            subscription=subscription, handler_circuit_breaker_provider=lambda: cb
         )
-        result = checker.check()
-        cb_indicator = next(
-            (i for i in result.indicators if i.name == "handler_circuit_breaker"), None
-        )
+        cb_indicator = _ind(checker.check(), "handler_circuit_breaker")
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.UNHEALTHY
 
     def test_check_with_handler_circuit_breaker_half_open(self, subscription: Subscription):
-        """Test health check with the handler circuit breaker half-open."""
-        circuit_breaker = MagicMock(spec=CircuitBreaker)
-        circuit_breaker.state = CircuitState.HALF_OPEN
-        circuit_breaker.failure_count = 5
+        cb = _breaker(CircuitState.HALF_OPEN, 5)
         checker = SubscriptionHealthChecker(
-            subscription=subscription,
-            handler_circuit_breaker_provider=lambda: circuit_breaker,
+            subscription=subscription, handler_circuit_breaker_provider=lambda: cb
         )
-        result = checker.check()
-        cb_indicator = next(
-            (i for i in result.indicators if i.name == "handler_circuit_breaker"), None
-        )
+        cb_indicator = _ind(checker.check(), "handler_circuit_breaker")
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.DEGRADED
 
     def test_check_with_infra_circuit_breaker_open(self, subscription: Subscription):
-        """Test health check with the infra circuit breaker open."""
-        circuit_breaker = MagicMock(spec=CircuitBreaker)
-        circuit_breaker.state = CircuitState.OPEN
-        circuit_breaker.failure_count = 10
+        cb = _breaker(CircuitState.OPEN, 10)
         checker = SubscriptionHealthChecker(
-            subscription=subscription,
-            infra_circuit_breaker_provider=lambda: circuit_breaker,
+            subscription=subscription, infra_circuit_breaker_provider=lambda: cb
         )
         result = checker.check()
         indicator_names = {i.name for i in result.indicators}
         assert "infra_circuit_breaker" in indicator_names
         assert "handler_circuit_breaker" not in indicator_names
-        cb_indicator = next(
-            (i for i in result.indicators if i.name == "infra_circuit_breaker"), None
-        )
+        cb_indicator = _ind(result, "infra_circuit_breaker")
         assert cb_indicator is not None
         assert cb_indicator.status == HealthStatus.UNHEALTHY
 
     def test_check_reports_both_breakers_independently(self, subscription: Subscription):
-        """Both breakers are reported independently when both providers are set."""
-        handler_breaker = MagicMock(spec=CircuitBreaker)
-        handler_breaker.state = CircuitState.OPEN
-        handler_breaker.failure_count = 5
-        infra_breaker = MagicMock(spec=CircuitBreaker)
-        infra_breaker.state = CircuitState.CLOSED
-        infra_breaker.failure_count = 0
+        handler_breaker = _breaker(CircuitState.OPEN, 5)
+        infra_breaker = _breaker(CircuitState.CLOSED, 0)
         checker = SubscriptionHealthChecker(
             subscription=subscription,
             handler_circuit_breaker_provider=lambda: handler_breaker,

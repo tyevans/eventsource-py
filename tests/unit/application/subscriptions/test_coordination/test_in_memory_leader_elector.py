@@ -1,6 +1,7 @@
 """Tests for InMemoryLeaderElector and SharedLeaderState."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -8,25 +9,36 @@ from eventsource.adapters.memory.coordination import InMemoryLeaderElector, Shar
 from eventsource.ports.coordination import LeaderElector
 
 
+def _elector(
+    identity: str = "worker-1", state: SharedLeaderState | None = None
+) -> InMemoryLeaderElector:
+    return InMemoryLeaderElector(_identity=identity, shared_state=state)
+
+
 def _pair() -> tuple[SharedLeaderState, InMemoryLeaderElector, InMemoryLeaderElector]:
     state = SharedLeaderState()
-    return (
-        state,
-        InMemoryLeaderElector(_identity="worker-1", shared_state=state),
-        InMemoryLeaderElector(_identity="worker-2", shared_state=state),
-    )
+    return state, _elector("worker-1", state), _elector("worker-2", state)
+
+
+def _recorder() -> tuple[list[bool], Callable[[bool], Awaitable[None]]]:
+    vals: list[bool] = []
+
+    async def cb(is_leader: bool) -> None:
+        vals.append(is_leader)
+
+    return vals, cb
 
 
 class TestInMemoryLeaderElector:
     @pytest.mark.asyncio
     async def test_single_instance_becomes_leader(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
+        elector = _elector()
         assert await elector.try_acquire() is True
         assert elector.is_leader is True and elector.current_leader == "worker-1"
 
     @pytest.mark.asyncio
     async def test_release_leadership(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
+        elector = _elector()
         await elector.try_acquire()
         await elector.release()
         assert elector.is_leader is False
@@ -34,8 +46,7 @@ class TestInMemoryLeaderElector:
     @pytest.mark.asyncio
     async def test_shared_state_first_wins(self) -> None:
         state, elector1, elector2 = _pair()
-        assert await elector1.try_acquire() is True
-        assert await elector2.try_acquire() is False
+        assert await elector1.try_acquire() is True and await elector2.try_acquire() is False
         assert elector1.is_leader is True and elector2.is_leader is False
         assert state.current_leader == "worker-1"
 
@@ -50,24 +61,16 @@ class TestInMemoryLeaderElector:
 
     @pytest.mark.asyncio
     async def test_callback_invoked_on_become_leader(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
-        vals: list[bool] = []
-
-        async def cb(is_leader: bool) -> None:
-            vals.append(is_leader)
-
+        elector = _elector()
+        vals, cb = _recorder()
         elector.on_leader_change(cb)
         await elector.try_acquire()
         assert vals == [True]
 
     @pytest.mark.asyncio
     async def test_callback_invoked_on_release(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
-        vals: list[bool] = []
-
-        async def cb(is_leader: bool) -> None:
-            vals.append(is_leader)
-
+        elector = _elector()
+        vals, cb = _recorder()
         elector.on_leader_change(cb)
         await elector.try_acquire()
         await elector.release()
@@ -75,36 +78,28 @@ class TestInMemoryLeaderElector:
 
     @pytest.mark.asyncio
     async def test_callback_error_doesnt_break_leadership(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
-        invoked = False
+        elector = _elector()
+        vals, success_cb = _recorder()
 
         async def failing_cb(is_leader: bool) -> None:
             raise RuntimeError("Callback failed")
 
-        async def success_cb(is_leader: bool) -> None:
-            nonlocal invoked
-            invoked = True
-
         elector.on_leader_change(failing_cb)
         elector.on_leader_change(success_cb)
         await elector.try_acquire()
-        assert elector.is_leader is True and invoked is True
+        assert elector.is_leader is True and vals == [True]
 
     @pytest.mark.asyncio
     async def test_force_lose_leadership(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
+        elector = _elector()
         await elector.try_acquire()
         await elector.force_lose_leadership()
         assert elector.is_leader is False
 
     @pytest.mark.asyncio
     async def test_remove_callback(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
-        vals: list[bool] = []
-
-        async def cb(is_leader: bool) -> None:
-            vals.append(is_leader)
-
+        elector = _elector()
+        vals, cb = _recorder()
         elector.on_leader_change(cb)
         removed = elector.remove_leader_change_callback(cb)
         await elector.try_acquire()
@@ -113,32 +108,30 @@ class TestInMemoryLeaderElector:
     @pytest.mark.asyncio
     async def test_concurrent_acquire(self) -> None:
         state = SharedLeaderState()
-        electors = [
-            InMemoryLeaderElector(_identity=f"worker-{i}", shared_state=state) for i in range(10)
-        ]
+        electors = [_elector(f"worker-{i}", state) for i in range(10)]
         results = await asyncio.gather(*(e.try_acquire() for e in electors))
         assert sum(results) == 1 and sum(e.is_leader for e in electors) == 1
 
     def test_satisfies_protocol(self) -> None:
-        assert isinstance(InMemoryLeaderElector(_identity="worker-1"), LeaderElector)
+        assert isinstance(_elector(), LeaderElector)
 
     @pytest.mark.asyncio
     async def test_renew_returns_true_when_leader(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
+        elector = _elector()
         await elector.try_acquire()
         assert await elector.renew() is True
 
     @pytest.mark.asyncio
     async def test_renew_returns_false_when_not_leader(self) -> None:
-        assert await InMemoryLeaderElector(_identity="worker-1").renew() is False
+        assert await _elector().renew() is False
 
     @pytest.mark.asyncio
     async def test_identity_property(self) -> None:
-        assert InMemoryLeaderElector(_identity="my-instance").identity == "my-instance"
+        assert _elector("my-instance").identity == "my-instance"
 
     @pytest.mark.asyncio
     async def test_current_leader_returns_none_when_no_leader_single_instance(self) -> None:
-        assert InMemoryLeaderElector(_identity="worker-1").current_leader is None
+        assert _elector().current_leader is None
 
     @pytest.mark.asyncio
     async def test_current_leader_returns_identity_from_shared_state(self) -> None:
@@ -148,13 +141,13 @@ class TestInMemoryLeaderElector:
 
     @pytest.mark.asyncio
     async def test_try_acquire_returns_true_when_already_leader(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
+        elector = _elector()
         assert await elector.try_acquire() is True
         assert await elector.try_acquire() is True and elector.is_leader is True
 
     @pytest.mark.asyncio
     async def test_release_when_not_leader_is_safe(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
+        elector = _elector()
         await elector.release()
         assert elector.is_leader is False
 
@@ -170,12 +163,8 @@ class TestInMemoryLeaderElector:
 
     @pytest.mark.asyncio
     async def test_callback_invoked_on_force_lose_leadership(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
-        vals: list[bool] = []
-
-        async def cb(is_leader: bool) -> None:
-            vals.append(is_leader)
-
+        elector = _elector()
+        vals, cb = _recorder()
         elector.on_leader_change(cb)
         await elector.try_acquire()
         await elector.force_lose_leadership()
@@ -183,24 +172,14 @@ class TestInMemoryLeaderElector:
 
     @pytest.mark.asyncio
     async def test_remove_nonexistent_callback(self) -> None:
-        async def cb(is_leader: bool) -> None:
-            pass
-
-        assert (
-            InMemoryLeaderElector(_identity="worker-1").remove_leader_change_callback(cb) is False
-        )
+        _, cb = _recorder()
+        assert _elector().remove_leader_change_callback(cb) is False
 
     @pytest.mark.asyncio
     async def test_multiple_callbacks(self) -> None:
-        elector = InMemoryLeaderElector(_identity="worker-1")
-        cb1, cb2 = [], []
-
-        async def callback1(is_leader: bool) -> None:
-            cb1.append(is_leader)
-
-        async def callback2(is_leader: bool) -> None:
-            cb2.append(is_leader)
-
+        elector = _elector()
+        cb1, callback1 = _recorder()
+        cb2, callback2 = _recorder()
         elector.on_leader_change(callback1)
         elector.on_leader_change(callback2)
         await elector.try_acquire()
