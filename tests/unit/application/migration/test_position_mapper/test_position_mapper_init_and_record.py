@@ -14,53 +14,39 @@ from ._fixtures import PositionMapperTestBase, pos
 
 
 class TestPositionMapperInit:
-    """Tests for PositionMapper initialization."""
-
     def test_init_with_repository(self) -> None:
-        """Test initialization with a repository."""
         mock_repo = MagicMock()
         mapper = PositionMapper(mock_repo)
         assert mapper._repo == mock_repo
 
     def test_init_with_tracing_enabled(self) -> None:
-        """Test initialization with tracing enabled."""
         mock_repo = MagicMock()
         mapper = PositionMapper(mock_repo, enable_tracing=True)
         assert mapper._repo == mock_repo
 
     def test_init_with_tracing_disabled(self) -> None:
-        """Test initialization with tracing disabled."""
         mock_repo = MagicMock()
         mapper = PositionMapper(mock_repo, enable_tracing=False)
         assert mapper._repo == mock_repo
 
 
 class TestPositionMapperRecordMapping:
-    """Tests for PositionMapper.record_mapping method."""
-
     @pytest.fixture
     def mock_repo(self) -> MagicMock:
-        """Create a mock repository."""
         repo = MagicMock()
         repo.create = AsyncMock(return_value=1)
         return repo
 
     @pytest.fixture
     def mapper(self, mock_repo: MagicMock) -> PositionMapper:
-        """Create a mapper with mock repository."""
         return PositionMapper(mock_repo, enable_tracing=False)
 
     @pytest.mark.asyncio
     async def test_record_mapping_creates_mapping(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test record_mapping creates a mapping in the repository."""
-        migration_id = uuid4()
-        event_id = uuid4()
-        source_position = pos(1000, "src")
-        target_position = pos(500, "tgt")
+        migration_id, event_id = uuid4(), uuid4()
+        source_position, target_position = pos(1000, "src"), pos(500, "tgt")
 
         await mapper.record_mapping(
             migration_id=migration_id,
@@ -79,13 +65,9 @@ class TestPositionMapperRecordMapping:
 
     @pytest.mark.asyncio
     async def test_record_mapping_with_custom_timestamp(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test record_mapping with custom mapped_at timestamp."""
-        migration_id = uuid4()
-        event_id = uuid4()
+        migration_id, event_id = uuid4(), uuid4()
         custom_time = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
         await mapper.record_mapping(
@@ -101,11 +83,8 @@ class TestPositionMapperRecordMapping:
 
     @pytest.mark.asyncio
     async def test_record_mapping_raises_on_error(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test record_mapping raises PositionMappingError on failure."""
         migration_id = uuid4()
         mock_repo.create.side_effect = Exception("Database error")
         source_position = pos(1000, "src")
@@ -124,38 +103,28 @@ class TestPositionMapperRecordMapping:
 
 
 class TestPositionMapperRecordMappingsBatch:
-    """Tests for PositionMapper.record_mappings_batch method."""
-
     @pytest.fixture
     def mock_repo(self) -> MagicMock:
-        """Create a mock repository."""
         repo = MagicMock()
         repo.create_batch = AsyncMock(return_value=5)
         return repo
 
     @pytest.fixture
     def mapper(self, mock_repo: MagicMock) -> PositionMapper:
-        """Create a mapper with mock repository."""
         return PositionMapper(mock_repo, enable_tracing=False)
 
     @pytest.mark.asyncio
     async def test_record_batch_with_empty_list(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test record_mappings_batch returns 0 for empty list."""
         result = await mapper.record_mappings_batch(uuid4(), [])
         assert result == 0
         mock_repo.create_batch.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_record_batch_creates_mappings_in_ascending_order(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test record_mappings_batch creates all mappings, preserving caller order."""
         migration_id = uuid4()
         mappings = [
             (pos(100, "src"), pos(50, "tgt"), uuid4()),
@@ -170,8 +139,6 @@ class TestPositionMapperRecordMappingsBatch:
         mock_repo.create_batch.assert_called_once()
         call_arg = mock_repo.create_batch.call_args[0][0]
         assert len(call_arg) == 3
-        # The monotonicity precondition requires ascending source-position
-        # order to be preserved by the batch writer, not reordered.
         assert [m.source_position for m in call_arg] == [
             pos(100, "src"),
             pos(200, "src"),
@@ -180,18 +147,14 @@ class TestPositionMapperRecordMappingsBatch:
 
     @pytest.mark.asyncio
     async def test_record_batch_raises_on_error(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test record_mappings_batch raises on failure."""
         migration_id = uuid4()
         mock_repo.create_batch.side_effect = Exception("Batch error")
 
         with pytest.raises(PositionMappingError) as exc_info:
             await mapper.record_mappings_batch(
-                migration_id,
-                [(pos(100, "src"), pos(50, "tgt"), uuid4())],
+                migration_id, [(pos(100, "src"), pos(50, "tgt"), uuid4())]
             )
 
         assert exc_info.value.migration_id == migration_id
@@ -199,19 +162,11 @@ class TestPositionMapperRecordMappingsBatch:
 
 
 class TestPositionMapperHelperMethods(PositionMapperTestBase):
-    """Tests for PositionMapper helper methods."""
-
     @pytest.mark.asyncio
     async def test_get_mapping_by_event_id(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test get_mapping_by_event_id delegates to repository."""
-        migration_id = uuid4()
-        event_id = uuid4()
-        now = datetime.now(UTC)
-
+        migration_id, event_id, now = uuid4(), uuid4(), datetime.now(UTC)
         expected_mapping = PositionMapping(
             migration_id=migration_id,
             source_position=pos(1000, "src"),
@@ -222,66 +177,43 @@ class TestPositionMapperHelperMethods(PositionMapperTestBase):
         mock_repo.find_by_event_id = AsyncMock(return_value=expected_mapping)
 
         result = await mapper.get_mapping_by_event_id(migration_id, event_id)
-
         assert result == expected_mapping
         mock_repo.find_by_event_id.assert_called_once_with(migration_id, event_id)
 
     @pytest.mark.asyncio
-    async def test_get_position_bounds(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
-    ) -> None:
-        """Test get_position_bounds delegates to repository."""
+    async def test_get_position_bounds(self, mapper: PositionMapper, mock_repo: MagicMock) -> None:
         migration_id = uuid4()
         bounds = (pos(100, "src"), pos(10000, "src"))
         mock_repo.get_position_bounds = AsyncMock(return_value=bounds)
 
         result = await mapper.get_position_bounds(migration_id)
-
         assert result == bounds
         mock_repo.get_position_bounds.assert_called_once_with(migration_id)
 
     @pytest.mark.asyncio
     async def test_get_position_bounds_returns_none(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
+        self, mapper: PositionMapper, mock_repo: MagicMock
     ) -> None:
-        """Test get_position_bounds returns None when no mappings."""
         migration_id = uuid4()
         mock_repo.get_position_bounds = AsyncMock(return_value=None)
 
         result = await mapper.get_position_bounds(migration_id)
-
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_mapping_count(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
-    ) -> None:
-        """Test get_mapping_count delegates to repository."""
+    async def test_get_mapping_count(self, mapper: PositionMapper, mock_repo: MagicMock) -> None:
         migration_id = uuid4()
         mock_repo.count_by_migration = AsyncMock(return_value=1500)
 
         result = await mapper.get_mapping_count(migration_id)
-
         assert result == 1500
         mock_repo.count_by_migration.assert_called_once_with(migration_id)
 
     @pytest.mark.asyncio
-    async def test_clear_mappings(
-        self,
-        mapper: PositionMapper,
-        mock_repo: MagicMock,
-    ) -> None:
-        """Test clear_mappings delegates to repository."""
+    async def test_clear_mappings(self, mapper: PositionMapper, mock_repo: MagicMock) -> None:
         migration_id = uuid4()
         mock_repo.delete_by_migration = AsyncMock(return_value=500)
 
         result = await mapper.clear_mappings(migration_id)
-
         assert result == 500
         mock_repo.delete_by_migration.assert_called_once_with(migration_id)

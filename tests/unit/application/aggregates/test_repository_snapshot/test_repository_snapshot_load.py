@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -22,9 +23,32 @@ from tests.unit.application.aggregates.test_repository_snapshot._fixtures import
 )
 
 
-class TestRepositoryConstructor:
-    """Test repository constructor with snapshot parameters."""
+def _make_snapshot(
+    aggregate_id: UUID, state: dict[str, Any], version: int = 5, schema_version: int = 1
+) -> Snapshot:
+    return Snapshot(
+        aggregate_id=aggregate_id,
+        aggregate_type="Test",
+        version=version,
+        state=state,
+        schema_version=schema_version,
+        created_at=datetime.now(UTC),
+    )
 
+
+def _make_events(aggregate_id: UUID, count: int) -> list[TestEvent]:
+    return [
+        TestEvent(
+            aggregate_id=aggregate_id,
+            aggregate_type="Test",
+            aggregate_version=i + 1,
+            value=f"event_{i}",
+        )
+        for i in range(count)
+    ]
+
+
+class TestRepositoryConstructor:
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
         return InMemoryEventStore(event_registry=_REGISTRY)
@@ -78,8 +102,6 @@ class TestRepositoryConstructor:
 
 
 class TestRepositorySnapshotLoad:
-    """Test snapshot-aware load functionality."""
-
     @pytest.fixture
     def event_store(self) -> InMemoryEventStore:
         return InMemoryEventStore(event_registry=_REGISTRY)
@@ -94,7 +116,6 @@ class TestRepositorySnapshotLoad:
         aggregate = TestAggregate(uuid4())
         aggregate.do_something("test-value")
         await repo.save(aggregate)
-
         loaded = await repo.load(aggregate.aggregate_id)
         assert loaded.version == 1
         assert loaded.state.value == "test-value"
@@ -104,41 +125,18 @@ class TestRepositorySnapshotLoad:
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         aggregate_id = uuid4()
-        initial_events = [
-            TestEvent(
-                aggregate_id=aggregate_id,
-                aggregate_type="Test",
-                aggregate_version=i + 1,
-                value=f"event_{i}",
-            )
-            for i in range(5)
-        ]
-        await event_store.append(
-            StreamId(aggregate_id=aggregate_id, category="Test"),
-            initial_events,
-            ExpectedVersion.exact(0),
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
+        await event_store.append(stream, _make_events(aggregate_id, 5), ExpectedVersion.exact(0))
+        await snapshot_store.save_snapshot(
+            _make_snapshot(aggregate_id, {"value": "from_snapshot", "count": 5, "items": []})
         )
-        snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            version=5,
-            state={"value": "from_snapshot", "count": 5, "items": []},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-        await snapshot_store.save_snapshot(snapshot)
-
         event = TestEvent(
             aggregate_id=aggregate_id,
             aggregate_type="Test",
             aggregate_version=6,
             value="after_snapshot",
         )
-        await event_store.append(
-            StreamId(aggregate_id=aggregate_id, category="Test"),
-            [event],
-            ExpectedVersion.exact(5),
-        )
+        await event_store.append(stream, [event], ExpectedVersion.exact(5))
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
@@ -154,28 +152,16 @@ class TestRepositorySnapshotLoad:
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         aggregate_id = uuid4()
-        snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            version=5,
-            state={"value": "old_snapshot", "count": 5, "items": []},
-            schema_version=99,
-            created_at=datetime.now(UTC),
-        )
-        await snapshot_store.save_snapshot(snapshot)
-
-        events = [
-            TestEvent(
-                aggregate_id=aggregate_id,
-                aggregate_type="Test",
-                aggregate_version=i + 1,
-                value=f"event_{i}",
+        await snapshot_store.save_snapshot(
+            _make_snapshot(
+                aggregate_id,
+                {"value": "old_snapshot", "count": 5, "items": []},
+                schema_version=99,
             )
-            for i in range(3)
-        ]
+        )
         await event_store.append(
             StreamId(aggregate_id=aggregate_id, category="Test"),
-            events,
+            _make_events(aggregate_id, 3),
             ExpectedVersion.exact(0),
         )
         repo = AggregateRepository(
@@ -194,10 +180,7 @@ class TestRepositorySnapshotLoad:
         mock_snapshot_store.get_snapshot = AsyncMock(side_effect=Exception("Store error"))
         aggregate_id = uuid4()
         event = TestEvent(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            aggregate_version=1,
-            value="test",
+            aggregate_id=aggregate_id, aggregate_type="Test", aggregate_version=1, value="test"
         )
         await event_store.append(
             StreamId(aggregate_id=aggregate_id, category="Test"),
@@ -217,28 +200,14 @@ class TestRepositorySnapshotLoad:
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         aggregate_id = uuid4()
-        snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            version=5,
-            state={"value": "test", "count": {"invalid": "type"}, "items": []},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-        await snapshot_store.save_snapshot(snapshot)
-
-        events = [
-            TestEvent(
-                aggregate_id=aggregate_id,
-                aggregate_type="Test",
-                aggregate_version=i + 1,
-                value=f"event_{i}",
+        await snapshot_store.save_snapshot(
+            _make_snapshot(
+                aggregate_id, {"value": "test", "count": {"invalid": "type"}, "items": []}
             )
-            for i in range(2)
-        ]
+        )
         await event_store.append(
             StreamId(aggregate_id=aggregate_id, category="Test"),
-            events,
+            _make_events(aggregate_id, 2),
             ExpectedVersion.exact(0),
         )
         repo = AggregateRepository(
@@ -266,16 +235,9 @@ class TestRepositorySnapshotLoad:
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         aggregate_id = uuid4()
-        snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Test",
-            version=5,
-            state={"value": "snapshot_only", "count": 5, "items": []},
-            schema_version=1,
-            created_at=datetime.now(UTC),
+        await snapshot_store.save_snapshot(
+            _make_snapshot(aggregate_id, {"value": "snapshot_only", "count": 5, "items": []})
         )
-        await snapshot_store.save_snapshot(snapshot)
-
         repo = AggregateRepository(
             event_store=event_store,
             aggregate_factory=TestAggregate,
