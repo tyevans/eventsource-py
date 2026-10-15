@@ -97,12 +97,7 @@ class SQLiteSnapshotStore:
     async def __aenter__(self) -> SQLiteSnapshotStore:
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: object,
-        exc_val: object,
-        exc_tb: object,
-    ) -> None:
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         await self.close()
 
     def __del__(self) -> None:
@@ -118,23 +113,18 @@ class SQLiteSnapshotStore:
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
         """Save or update a snapshot using INSERT OR REPLACE."""
-        with self._tracer.span(
-            "eventsource.snapshot.save",
-            {
-                ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
-                ATTR_AGGREGATE_TYPE: snapshot.aggregate_type,
-                ATTR_VERSION: snapshot.version,
-            },
-        ):
+        attrs = {
+            ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
+            ATTR_AGGREGATE_TYPE: snapshot.aggregate_type,
+            ATTR_VERSION: snapshot.version,
+        }
+        with self._tracer.span("eventsource.snapshot.save", attrs):
             conn = await self._conn()
             async with self._lock:
                 await conn.execute(
-                    """
-                    INSERT OR REPLACE INTO snapshots (
-                        aggregate_id, aggregate_type, version,
-                        schema_version, state, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
+                    "INSERT OR REPLACE INTO snapshots ("
+                    "aggregate_id, aggregate_type, version, schema_version, state, created_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         str(snapshot.aggregate_id),
                         snapshot.aggregate_type,
@@ -145,7 +135,6 @@ class SQLiteSnapshotStore:
                     ),
                 )
                 await conn.commit()
-
             logger.debug(
                 "Saved snapshot for %s/%s at version %d",
                 snapshot.aggregate_type,
@@ -153,28 +142,15 @@ class SQLiteSnapshotStore:
                 snapshot.version,
             )
 
-    async def get_snapshot(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> Snapshot | None:
+    async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
         """Get the snapshot for an aggregate, or None if not found."""
-        with self._tracer.span(
-            "eventsource.snapshot.get",
-            {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type,
-            },
-        ):
+        attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: aggregate_type}
+        with self._tracer.span("eventsource.snapshot.get", attrs):
             conn = await self._conn()
             async with self._lock:
                 cursor = await conn.execute(
-                    """
-                    SELECT aggregate_id, aggregate_type, version,
-                           schema_version, state, created_at
-                    FROM snapshots
-                    WHERE aggregate_id = ? AND aggregate_type = ?
-                    """,
+                    "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at "
+                    "FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?",
                     (str(aggregate_id), aggregate_type),
                 )
                 row = await cursor.fetchone()
@@ -208,19 +184,10 @@ class SQLiteSnapshotStore:
             )
             return snapshot
 
-    async def delete_snapshot(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> bool:
+    async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
         """Delete the snapshot for an aggregate; returns True if deleted."""
-        with self._tracer.span(
-            "eventsource.snapshot.delete",
-            {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type,
-            },
-        ):
+        attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: aggregate_type}
+        with self._tracer.span("eventsource.snapshot.delete", attrs):
             conn = await self._conn()
             async with self._lock:
                 cursor = await conn.execute(
@@ -229,7 +196,6 @@ class SQLiteSnapshotStore:
                 )
                 await conn.commit()
                 deleted: bool = cursor.rowcount > 0
-
             logger.debug(
                 "%s snapshot for %s/%s",
                 "Deleted" if deleted else "No",
@@ -238,28 +204,14 @@ class SQLiteSnapshotStore:
             )
             return deleted
 
-    async def snapshot_exists(
-        self,
-        aggregate_id: UUID,
-        aggregate_type: str,
-    ) -> bool:
+    async def snapshot_exists(self, aggregate_id: UUID, aggregate_type: str) -> bool:
         """Check if a snapshot exists for the given aggregate."""
-        with self._tracer.span(
-            "eventsource.snapshot.exists",
-            {
-                ATTR_AGGREGATE_ID: str(aggregate_id),
-                ATTR_AGGREGATE_TYPE: aggregate_type,
-            },
-        ):
+        attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: aggregate_type}
+        with self._tracer.span("eventsource.snapshot.exists", attrs):
             conn = await self._conn()
             async with self._lock:
                 cursor = await conn.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM snapshots
-                        WHERE aggregate_id = ? AND aggregate_type = ?
-                    )
-                    """,
+                    "SELECT EXISTS (SELECT 1 FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?)",
                     (str(aggregate_id), aggregate_type),
                 )
                 row = await cursor.fetchone()
@@ -272,19 +224,13 @@ class SQLiteSnapshotStore:
     ) -> int:
         """Delete all snapshots for a given aggregate type."""
         with self._tracer.span(
-            "eventsource.snapshot.delete_by_type",
-            {
-                ATTR_AGGREGATE_TYPE: aggregate_type,
-            },
+            "eventsource.snapshot.delete_by_type", {ATTR_AGGREGATE_TYPE: aggregate_type}
         ):
             conn = await self._conn()
             async with self._lock:
                 if schema_version_below is not None:
                     cursor = await conn.execute(
-                        """
-                        DELETE FROM snapshots
-                        WHERE aggregate_type = ? AND schema_version < ?
-                        """,
+                        "DELETE FROM snapshots WHERE aggregate_type = ? AND schema_version < ?",
                         (aggregate_type, schema_version_below),
                     )
                 else:
