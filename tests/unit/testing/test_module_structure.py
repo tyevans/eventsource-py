@@ -1,11 +1,11 @@
-"""
-Tests for the eventsource.testing module structure.
+"""Tests for the eventsource.testing module structure and exports."""
 
-These tests verify that the testing module is properly structured,
-all exports are available, and the module can be imported without errors.
-"""
+import inspect
+import types
+from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
 
 class TestModuleImportable:
@@ -133,16 +133,7 @@ class TestAllExports:
         assert isinstance(__all__, list)
 
     def test_all_contains_no_duplicates_or_stale_names(self) -> None:
-        """Test __all__ has no duplicate entries and every entry resolves.
-
-        This intentionally does NOT hardcode the expected export set --
-        eventsource.testing.__all__ is expected to grow as new test
-        utilities are added (e.g. the conformance suites added alongside
-        this test), and a hardcoded set fails on every legitimate
-        addition without catching a real bug. Instead this checks the
-        properties that actually indicate breakage: no duplicates, and
-        every listed name is a real, importable attribute.
-        """
+        """Test __all__ has no duplicate entries and every entry resolves."""
         import eventsource.testing
         from eventsource.testing import __all__
 
@@ -153,15 +144,7 @@ class TestAllExports:
             )
 
     def test_all_contains_every_public_export(self) -> None:
-        """Test every public, non-module attribute of the package is in __all__.
-
-        Catches the case that actually matters: a class or function added
-        to eventsource.testing but silently left out of __all__, so it
-        wouldn't be treated as public API (e.g. missing from generated
-        docs, `from eventsource.testing import *`, etc).
-        """
-        import types
-
+        """Test every public, non-module attribute of the package is in __all__."""
         import eventsource.testing
         from eventsource.testing import __all__
 
@@ -185,13 +168,7 @@ class TestAllExports:
 
 
 class TestPortConformanceSuitesReExported:
-    """The port conformance suites are part of the public testing surface.
-
-    They are documented in docs/guides/validate-custom-backend.md as the way
-    to validate a custom backend, so they must be reachable from
-    ``eventsource.testing`` directly and not only from the nested
-    ``eventsource.testing.conformance_ports`` package.
-    """
+    """The port conformance suites are part of the public testing surface."""
 
     def test_port_suites_importable_from_testing(self) -> None:
         """Every conformance_ports suite is re-exported by eventsource.testing."""
@@ -237,17 +214,14 @@ class TestImplementationStatus:
         class TestEvent(DomainEvent):
             aggregate_type: str = "Test"
 
-        # EventBuilder should now be fully implemented (DX-002)
         builder = EventBuilder(TestEvent)
         assert builder is not None
-        event = builder.build()
-        assert isinstance(event, TestEvent)
+        assert isinstance(builder.build(), TestEvent)
 
     def test_harness_is_implemented(self) -> None:
         """Test InMemoryTestHarness is fully implemented (DX-003 complete)."""
         from eventsource.testing import InMemoryTestHarness
 
-        # InMemoryTestHarness should now be fully implemented (DX-003)
         harness = InMemoryTestHarness()
         assert harness is not None
         assert harness.event_store is not None
@@ -258,7 +232,6 @@ class TestImplementationStatus:
         """Test EventAssertions is fully implemented (DX-004 complete)."""
         from eventsource.testing import EventAssertions
 
-        # EventAssertions should now be fully implemented (DX-004)
         assertions = EventAssertions([])
         assert assertions is not None
         assertions.assert_no_events_published()
@@ -268,26 +241,16 @@ class TestImplementationStatus:
         """Test given_events is fully implemented (DX-004 complete)."""
         from eventsource.testing import InMemoryTestHarness, given_events
 
-        # given_events should now be fully implemented (DX-004)
-        harness = InMemoryTestHarness()
-        await given_events(harness, [])
-        # Should complete without error
+        await given_events(InMemoryTestHarness(), [])
 
     def test_when_command_is_implemented(self) -> None:
         """Test when_command is fully implemented (DX-004 complete)."""
-        from uuid import uuid4
-
-        from pydantic import BaseModel
-
         from eventsource.domain.aggregate import AggregateRoot
         from eventsource.domain.event import DomainEvent
         from eventsource.testing import when_command
 
         class TestState(BaseModel):
             name: str = ""
-
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "Test"
 
         class TestAggregate(AggregateRoot[TestState]):
             aggregate_type: str = "Test"
@@ -301,24 +264,19 @@ class TestImplementationStatus:
             def do_nothing(self) -> None:
                 pass
 
-        # when_command should now be fully implemented (DX-004)
-        agg = TestAggregate(uuid4())
-        events = when_command(agg, lambda a: a.do_nothing())
+        events = when_command(TestAggregate(uuid4()), lambda a: a.do_nothing())
         assert events == []
 
     def test_then_event_published_is_implemented(self) -> None:
         """Test then_event_published is fully implemented (DX-004 complete)."""
-
         from eventsource.domain.event import DomainEvent
         from eventsource.testing import InMemoryTestHarness, then_event_published
 
         class TestEvent(DomainEvent):
             aggregate_type: str = "Test"
 
-        harness = InMemoryTestHarness()
-        # Should raise AssertionError (not NotImplementedError) when no events
         with pytest.raises(AssertionError) as exc_info:
-            then_event_published(harness, TestEvent)
+            then_event_published(InMemoryTestHarness(), TestEvent)
 
         assert "TestEvent" in str(exc_info.value)
 
@@ -326,9 +284,7 @@ class TestImplementationStatus:
         """Test then_no_events_published is fully implemented (DX-004 complete)."""
         from eventsource.testing import InMemoryTestHarness, then_no_events_published
 
-        harness = InMemoryTestHarness()
-        # Should complete without error (no events published)
-        then_no_events_published(harness)
+        then_no_events_published(InMemoryTestHarness())
 
 
 class TestTypeAnnotations:
@@ -336,16 +292,12 @@ class TestTypeAnnotations:
 
     def test_event_builder_has_type_parameter(self) -> None:
         """Test EventBuilder is Generic with type parameter."""
-
         from eventsource.testing import EventBuilder
 
-        # EventBuilder should be Generic
         assert hasattr(EventBuilder, "__class_getitem__")
 
     def test_bdd_functions_have_type_hints(self) -> None:
         """Test BDD functions have proper type hints."""
-        import inspect
-
         from eventsource.testing import (
             given_events,
             then_event_published,
@@ -353,15 +305,8 @@ class TestTypeAnnotations:
             when_command,
         )
 
-        # Check that functions have type hints
-        for func in [
-            given_events,
-            when_command,
-            then_event_published,
-            then_no_events_published,
-        ]:
+        for func in [given_events, when_command, then_event_published, then_no_events_published]:
             sig = inspect.signature(func)
-            # At least some parameters should have annotations
             has_annotations = any(
                 p.annotation != inspect.Parameter.empty for p in sig.parameters.values()
             )
