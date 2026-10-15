@@ -22,6 +22,7 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, TypeVar
 from uuid import UUID
 
@@ -34,10 +35,12 @@ from eventsource.adapters.memory import (
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates import AggregateRepository
+from eventsource.application.projections.replay import ReplayReport, replay
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
 from eventsource.ports import ExpectedVersion
+from eventsource.ports.handlers import EventSubscriber
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.testing.assertions import EventAssertions
 
@@ -126,6 +129,14 @@ class InMemoryTestHarness:
                 agg_events,
                 version_constraint,
             )
+
+    async def replay(
+        self,
+        projections: Sequence[EventSubscriber] | EventSubscriber,
+        **kwargs: Any,
+    ) -> ReplayReport:
+        """Replay events from the harness event store into one or more projections."""
+        return await replay(self._event_store, projections, **kwargs)
 
     def create_repository(
         self,
