@@ -17,6 +17,11 @@ from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
 from eventsource.ports.migration.models import AuditEventType, MigrationAuditEntry
 
+_SELECT_COLS = (
+    "SELECT id, migration_id, event_type, old_phase, new_phase, details, operator, occurred_at "
+    "FROM migration_audit_log"
+)
+
 
 class PostgreSQLMigrationAuditLogRepository:
     """PostgreSQL implementation of MigrationAuditLogRepository."""
@@ -86,11 +91,7 @@ class PostgreSQLMigrationAuditLogRepository:
 
             where_clause = " AND ".join(conditions)
             limit_clause = f"LIMIT {limit}" if limit else ""
-            sql = (
-                "SELECT id, migration_id, event_type, old_phase, new_phase, "  # nosec B608
-                f"details, operator, occurred_at FROM migration_audit_log WHERE {where_clause} "
-                f"ORDER BY occurred_at ASC {limit_clause}"
-            )
+            sql = f"{_SELECT_COLS} WHERE {where_clause} ORDER BY occurred_at ASC {limit_clause}"  # nosec B608
             async with sql_connection(self._conn, write=False) as conn:
                 rows = (await conn.execute(text(sql), params)).fetchall()
             return [self._row_to_entry(row) for row in rows]
@@ -99,10 +100,7 @@ class PostgreSQLMigrationAuditLogRepository:
         """Get an audit entry by ID, or None if not found."""
         attrs = {"audit.entry_id": entry_id, ATTR_DB_SYSTEM: "postgresql"}
         with self._tracer.span("eventsource.audit_log_repo.get_by_id", attrs):
-            query = text(
-                "SELECT id, migration_id, event_type, old_phase, new_phase, "
-                "details, operator, occurred_at FROM migration_audit_log WHERE id = :id"
-            )
+            query = text(f"{_SELECT_COLS} WHERE id = :id")  # nosec B608
             async with sql_connection(self._conn, write=False) as conn:
                 row = (await conn.execute(query, {"id": entry_id})).fetchone()
             return None if row is None else self._row_to_entry(row)
@@ -113,25 +111,12 @@ class PostgreSQLMigrationAuditLogRepository:
         """Get the most recent audit entry for a migration, or None if none exist."""
         attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
         with self._tracer.span("eventsource.audit_log_repo.get_latest", attrs):
+            params: dict[str, Any] = {"migration_id": migration_id}
+            where = "WHERE migration_id = :migration_id"
             if event_type:
-                query = text(
-                    "SELECT id, migration_id, event_type, old_phase, new_phase, details, "
-                    "operator, occurred_at FROM migration_audit_log "
-                    "WHERE migration_id = :migration_id AND event_type = :event_type "
-                    "ORDER BY occurred_at DESC LIMIT 1"
-                )
-                params: dict[str, Any] = {
-                    "migration_id": migration_id,
-                    "event_type": event_type.value,
-                }
-            else:
-                query = text(
-                    "SELECT id, migration_id, event_type, old_phase, new_phase, details, "
-                    "operator, occurred_at FROM migration_audit_log "
-                    "WHERE migration_id = :migration_id ORDER BY occurred_at DESC LIMIT 1"
-                )
-                params = {"migration_id": migration_id}
-
+                where += " AND event_type = :event_type"
+                params["event_type"] = event_type.value
+            query = text(f"{_SELECT_COLS} {where} ORDER BY occurred_at DESC LIMIT 1")  # nosec B608
             async with sql_connection(self._conn, write=False) as conn:
                 row = (await conn.execute(query, params)).fetchone()
             return None if row is None else self._row_to_entry(row)
@@ -142,21 +127,12 @@ class PostgreSQLMigrationAuditLogRepository:
         """Count audit entries for a migration, optionally filtered by event type."""
         attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
         with self._tracer.span("eventsource.audit_log_repo.count_by_migration", attrs):
+            params: dict[str, Any] = {"migration_id": migration_id}
+            where = "WHERE migration_id = :migration_id"
             if event_type:
-                query = text(
-                    "SELECT COUNT(*) FROM migration_audit_log "
-                    "WHERE migration_id = :migration_id AND event_type = :event_type"
-                )
-                params: dict[str, Any] = {
-                    "migration_id": migration_id,
-                    "event_type": event_type.value,
-                }
-            else:
-                query = text(
-                    "SELECT COUNT(*) FROM migration_audit_log WHERE migration_id = :migration_id"
-                )
-                params = {"migration_id": migration_id}
-
+                where += " AND event_type = :event_type"
+                params["event_type"] = event_type.value
+            query = text(f"SELECT COUNT(*) FROM migration_audit_log {where}")  # nosec B608
             async with sql_connection(self._conn, write=False) as conn:
                 row = (await conn.execute(query, params)).fetchone()
             return 0 if row is None else int(row[0])

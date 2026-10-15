@@ -37,17 +37,9 @@ class KafkaConnectionManager:
         self._rebalance_listener: KafkaRebalanceListener | None = None
         self._connected = False
 
-    @property
-    def producer(self) -> AIOKafkaProducer | None:
-        return self._producer
-
-    @property
-    def consumer(self) -> AIOKafkaConsumer | None:
-        return self._consumer
-
-    @property
-    def is_connected(self) -> bool:
-        return self._connected
+    producer: Any = property(lambda self: self._producer)
+    consumer: Any = property(lambda self: self._consumer)
+    is_connected: Any = property(lambda self: self._connected)
 
     @property
     def metrics(self) -> KafkaEventBusMetrics | None:
@@ -63,20 +55,18 @@ class KafkaConnectionManager:
         return self._producer
 
     async def connect(self) -> None:
-        """Connect to Kafka cluster, starting producer and consumer clients."""
         if self._connected:
             logger.warning("KafkaEventBus already connected")
             return
         logger.info("Connecting to Kafka", extra=self._config.get_sanitized_config())
         try:
-            self._producer = AIOKafkaProducer(**self._config.get_producer_config())
-            await self._producer.start()
             cfg = self._config
+            self._producer = AIOKafkaProducer(**cfg.get_producer_config())
+            await self._producer.start()
             self._consumer = AIOKafkaConsumer(cfg.topic_name, **cfg.get_consumer_config())
             await self._consumer.start()
             self._rebalance_listener = KafkaRebalanceListener(self)
-            self._connected = True
-            self._stats.connected_at = datetime.now(UTC)
+            self._connected, self._stats.connected_at = True, datetime.now(UTC)
             extra = {"topic": cfg.topic_name, "consumer_group": cfg.consumer_group}
             logger.info("Connected to Kafka", extra=extra)
         except Exception as e:
@@ -143,11 +133,9 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
         if not revoked:
             return
         parts = [{"topic": tp.topic, "partition": tp.partition} for tp in revoked]
-        extra = {
-            "revoked_partitions": parts,
-            "consumer_group": self._manager._config.consumer_group,
-        }
-        logger.info("Partitions being revoked, committing offsets", extra=extra)
+        grp = self._manager._config.consumer_group
+        ex = {"revoked_partitions": parts, "consumer_group": grp}
+        logger.info("Partitions being revoked, committing offsets", extra=ex)
         if self._manager._consumer:
             try:
                 await self._manager._consumer.commit()
@@ -162,8 +150,5 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
         if not assigned:
             return
         parts = [{"topic": tp.topic, "partition": tp.partition} for tp in assigned]
-        extra = {
-            "assigned_partitions": parts,
-            "consumer_group": self._manager._config.consumer_group,
-        }
-        logger.info("New partitions assigned", extra=extra)
+        ex = {"assigned_partitions": parts, "consumer_group": self._manager._config.consumer_group}
+        logger.info("New partitions assigned", extra=ex)

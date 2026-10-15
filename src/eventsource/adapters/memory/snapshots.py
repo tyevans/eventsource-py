@@ -1,9 +1,4 @@
-"""
-In-memory snapshot store implementation.
-
-Provides a simple, thread-safe snapshot store for testing and development.
-All data is stored in memory and lost when the process ends.
-"""
+"""In-memory snapshot store implementation."""
 
 from __future__ import annotations
 
@@ -26,7 +21,6 @@ class InMemorySnapshotStore:
     """In-memory implementation of SnapshotStore keyed by (aggregate_id, aggregate_type)."""
 
     def __init__(self, *, tracer: Tracer | None = None, enable_tracing: bool = True) -> None:
-        """Initialize the in-memory snapshot store."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._snapshots: dict[tuple[UUID, str], Snapshot] = {}
@@ -35,48 +29,31 @@ class InMemorySnapshotStore:
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
         """Save or update a snapshot using upsert semantics."""
-        attrs = {
-            ATTR_AGGREGATE_ID: str(snapshot.aggregate_id),
-            ATTR_AGGREGATE_TYPE: snapshot.aggregate_type,
-            ATTR_VERSION: snapshot.version,
-        }
+        aid, atype, ver = snapshot.aggregate_id, snapshot.aggregate_type, snapshot.version
+        attrs = {ATTR_AGGREGATE_ID: str(aid), ATTR_AGGREGATE_TYPE: atype, ATTR_VERSION: ver}
         with self._tracer.span("eventsource.snapshot.save", attrs):
             async with self._lock:
-                key = (snapshot.aggregate_id, snapshot.aggregate_type)
-                old_snapshot = self._snapshots.get(key)
+                key = (aid, atype)
+                old = self._snapshots.get(key)
                 self._snapshots[key] = snapshot
-                if old_snapshot:
-                    logger.debug(
-                        "Updated snapshot for %s/%s: v%d -> v%d",
-                        snapshot.aggregate_type,
-                        snapshot.aggregate_id,
-                        old_snapshot.version,
-                        snapshot.version,
-                    )
+                if old:
+                    msg = "Updated snapshot for %s/%s: v%d -> v%d"
+                    logger.debug(msg, atype, aid, old.version, ver)
                 else:
-                    logger.debug(
-                        "Created snapshot for %s/%s at v%d",
-                        snapshot.aggregate_type,
-                        snapshot.aggregate_id,
-                        snapshot.version,
-                    )
+                    logger.debug("Created snapshot for %s/%s at v%d", atype, aid, ver)
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
         """Get the snapshot for an aggregate, or None if not found."""
         attrs = {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: aggregate_type}
         with self._tracer.span("eventsource.snapshot.get", attrs):
             async with self._lock:
-                snapshot = self._snapshots.get((aggregate_id, aggregate_type))
-                if snapshot:
-                    logger.debug(
-                        "Retrieved snapshot for %s/%s at v%d",
-                        aggregate_type,
-                        aggregate_id,
-                        snapshot.version,
-                    )
+                snap = self._snapshots.get((aggregate_id, aggregate_type))
+                if snap:
+                    msg = "Retrieved snapshot for %s/%s at v%d"
+                    logger.debug(msg, aggregate_type, aggregate_id, snap.version)
                 else:
                     logger.debug("No snapshot found for %s/%s", aggregate_type, aggregate_id)
-                return snapshot
+                return snap
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
         """Delete the snapshot for an aggregate. Returns True if deleted."""
@@ -104,35 +81,26 @@ class InMemorySnapshotStore:
         schema_version_below: int | None = None,
     ) -> int:
         """Delete all snapshots for aggregates of a given type."""
-        with self._tracer.span(
-            "eventsource.snapshot.delete_by_type",
-            {ATTR_AGGREGATE_TYPE: aggregate_type},
-        ):
+        attrs = {ATTR_AGGREGATE_TYPE: aggregate_type}
+        with self._tracer.span("eventsource.snapshot.delete_by_type", attrs):
             async with self._lock:
-                keys_to_delete = [
-                    key
-                    for key, snapshot in self._snapshots.items()
-                    if key[1] == aggregate_type
-                    and (
-                        schema_version_below is None
-                        or snapshot.schema_version < schema_version_below
-                    )
+                keys = [
+                    k
+                    for k, s in self._snapshots.items()
+                    if k[1] == aggregate_type
+                    and (schema_version_below is None or s.schema_version < schema_version_below)
                 ]
-                for key in keys_to_delete:
-                    del self._snapshots[key]
-                if keys_to_delete:
-                    suffix = (
+                for k in keys:
+                    del self._snapshots[k]
+                if keys:
+                    sfx = (
                         f" (schema_version < {schema_version_below})"
                         if schema_version_below
                         else ""
                     )
-                    logger.info(
-                        "Deleted %d snapshots for aggregate type %s%s",
-                        len(keys_to_delete),
-                        aggregate_type,
-                        suffix,
-                    )
-                return len(keys_to_delete)
+                    msg = "Deleted %d snapshots for aggregate type %s%s"
+                    logger.info(msg, len(keys), aggregate_type, sfx)
+                return len(keys)
 
     async def clear(self) -> None:
         """Clear all snapshots from the store."""
@@ -144,19 +112,15 @@ class InMemorySnapshotStore:
 
     @property
     def snapshot_count(self) -> int:
-        """Get the number of snapshots currently stored."""
         return len(self._snapshots)
 
     def __len__(self) -> int:
-        """Return total number of snapshots currently stored."""
         return len(self._snapshots)
 
     def __bool__(self) -> bool:
-        """Snapshot store instances are always truthy even when empty."""
         return True
 
     async def close(self) -> None:
-        """No-op resource release for lifecycle parity."""
         return None
 
     async def __aenter__(self) -> InMemorySnapshotStore:
@@ -166,5 +130,4 @@ class InMemorySnapshotStore:
         await self.close()
 
     def __repr__(self) -> str:
-        """String representation for debugging."""
         return f"InMemorySnapshotStore(snapshots={len(self._snapshots)})"

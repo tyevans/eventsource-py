@@ -8,10 +8,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from eventsource.application.migration.exceptions import (
-    MigrationAlreadyExistsError,
-    MigrationNotFoundError,
-)
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_MIGRATION_ID,
@@ -28,6 +24,8 @@ from eventsource.ports.migration.models import (
     MigrationStatus,
     TenantMigrationState,
 )
+
+from .exceptions import MigrationAlreadyExistsError, MigrationNotFoundError
 
 if TYPE_CHECKING:
     from eventsource.application.migration.bulk_copier import BulkCopier
@@ -70,48 +68,37 @@ class CoordinatorLifecycleMixin:
         *,
         created_by: str | None = None,
     ) -> Migration:
-        """Start a new tenant migration and begin background bulk copy phase."""
+        src, tid = self._source_store_id, target_store_id
         attrs = {
             ATTR_MIGRATION_TENANT_ID: str(tenant_id),
-            ATTR_MIGRATION_SOURCE_STORE: self._source_store_id,
-            ATTR_MIGRATION_TARGET_STORE: target_store_id,
-            "target_store_id": target_store_id,
+            ATTR_MIGRATION_SOURCE_STORE: src,
+            ATTR_MIGRATION_TARGET_STORE: tid,
+            "target_store_id": tid,
         }
         with self._tracer.span("eventsource.coordinator.start_migration", attrs):
             if (existing := await self._migration_repo.get_by_tenant(tenant_id)) is not None:
                 raise MigrationAlreadyExistsError(tenant_id, existing.id)
-            self._router.register_store(target_store_id, target_store)
+            self._router.register_store(tid, target_store)
+            cfg = config or MigrationConfig()
             migration = Migration(
                 id=uuid4(),
                 tenant_id=tenant_id,
-                source_store_id=self._source_store_id,
-                target_store_id=target_store_id,
+                source_store_id=src,
+                target_store_id=tid,
                 phase=MigrationPhase.PENDING,
-                config=config or MigrationConfig(),
+                config=cfg,
                 created_by=created_by,
             )
             await self._migration_repo.create(migration)
-            logger.info(
-                "Created migration %s for tenant %s from %s to %s",
-                migration.id,
-                tenant_id,
-                self._source_store_id,
-                target_store_id,
+            msg = "Created migration %s for tenant %s from %s to %s"
+            logger.info(msg, migration.id, tenant_id, src, tid)
+            details = {"tenant_id": str(tenant_id), "source_store_id": src, "target_store_id": tid}
+            now = datetime.now(UTC)
+            entry = MigrationAuditEntry.migration_started(
+                migration_id=migration.id, occurred_at=now, operator=created_by, details=details
             )
-            details = {
-                "tenant_id": str(tenant_id),
-                "source_store_id": self._source_store_id,
-                "target_store_id": target_store_id,
-            }
-            await self._record_audit(
-                MigrationAuditEntry.migration_started(
-                    migration_id=migration.id,
-                    occurred_at=datetime.now(UTC),
-                    operator=created_by,
-                    details=details,
-                )
-            )
-            await self._routing_repo.get_or_default(tenant_id, self._source_store_id)
+            await self._record_audit(entry)
+            await self._routing_repo.get_or_default(tenant_id, src)
             await self._routing_repo.set_migration_state(
                 tenant_id, TenantMigrationState.BULK_COPY, migration.id
             )
@@ -119,22 +106,20 @@ class CoordinatorLifecycleMixin:
             if (refreshed := await self._migration_repo.get(migration.id)) is None:
                 raise MigrationNotFoundError(migration.id)
             self._target_stores[refreshed.id] = target_store
+            coro = self._run_bulk_copy(refreshed, target_store)
             self._active_tasks[refreshed.id] = asyncio.create_task(
-                self._run_bulk_copy(refreshed, target_store), name=f"bulk_copy_{refreshed.id}"
+                coro, name=f"bulk_copy_{refreshed.id}"
             )
             return refreshed
 
     async def get_status(self, migration_id: UUID) -> MigrationStatus:
-        """Get current status of a migration."""
-        with self._tracer.span(
-            "eventsource.coordinator.get_status", {ATTR_MIGRATION_ID: str(migration_id)}
-        ):
+        attrs = {ATTR_MIGRATION_ID: str(migration_id)}
+        with self._tracer.span("eventsource.coordinator.get_status", attrs):
             if (migration := await self._migration_repo.get(migration_id)) is None:
                 raise MigrationNotFoundError(migration_id)
             return self._build_status(migration)
 
     async def list_active_migrations(self) -> list[MigrationStatus]:
-        """List all active (non-terminal) migrations."""
         with self._tracer.span("eventsource.coordinator.list_active_migrations", {}):
             return [self._build_status(m) for m in await self._migration_repo.list_active()]
 
@@ -146,7 +131,6 @@ class CoordinatorLifecycleMixin:
         timeout: float | None = None,
         poll_interval: float = 1.0,
     ) -> Migration:
-        """Wait for migration to reach a specific phase or terminal state."""
         start = asyncio.get_event_loop().time()
         while True:
             if (migration := await self._migration_repo.get(migration_id)) is None:
