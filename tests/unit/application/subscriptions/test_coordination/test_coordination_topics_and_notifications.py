@@ -16,19 +16,15 @@ class TestTopicConstants:
     """Tests for coordination topic constants."""
 
     def test_topic_prefix(self) -> None:
-        """Test that topic prefix is defined."""
         assert COORDINATION_TOPIC_PREFIX == "__eventsource_coordination"
 
     def test_shutdown_topic(self) -> None:
-        """Test shutdown notifications topic."""
         assert SHUTDOWN_NOTIFICATIONS_TOPIC == "__eventsource_coordination.shutdown"
 
     def test_heartbeat_topic(self) -> None:
-        """Test heartbeat topic."""
         assert HEARTBEAT_TOPIC == "__eventsource_coordination.heartbeat"
 
     def test_work_assignment_topic(self) -> None:
-        """Test work assignment topic."""
         assert WORK_ASSIGNMENT_TOPIC == "__eventsource_coordination.work_assignment"
 
 
@@ -36,14 +32,12 @@ class TestShutdownIntent:
     """Tests for ShutdownIntent enumeration."""
 
     def test_all_intents_defined(self) -> None:
-        """Test that all shutdown intents are defined."""
         assert ShutdownIntent.GRACEFUL.value == "graceful"
         assert ShutdownIntent.PREEMPTION.value == "preemption"
         assert ShutdownIntent.HEALTH_FAILURE.value == "health_failure"
         assert ShutdownIntent.MAINTENANCE.value == "maintenance"
 
     def test_intent_from_value(self) -> None:
-        """Test creating intent from string value."""
         assert ShutdownIntent("graceful") == ShutdownIntent.GRACEFUL
         assert ShutdownIntent("preemption") == ShutdownIntent.PREEMPTION
 
@@ -52,10 +46,8 @@ class TestShutdownNotification:
     """Tests for ShutdownNotification."""
 
     def test_create_notification(self) -> None:
-        """Test creating a shutdown notification."""
         now = datetime.now(UTC)
         later = now + timedelta(seconds=30)
-
         notification = ShutdownNotification(
             instance_id="worker-1",
             intent=ShutdownIntent.GRACEFUL,
@@ -65,7 +57,6 @@ class TestShutdownNotification:
             in_flight_count=10,
             metadata={"key": "value"},
         )
-
         assert notification.instance_id == "worker-1"
         assert notification.intent == ShutdownIntent.GRACEFUL
         assert notification.initiated_at == now
@@ -75,10 +66,8 @@ class TestShutdownNotification:
         assert notification.metadata == {"key": "value"}
 
     def test_to_dict(self) -> None:
-        """Test serialization to dictionary."""
         now = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
         later = datetime(2025, 1, 1, 0, 0, 30, tzinfo=UTC)
-
         notification = ShutdownNotification(
             instance_id="worker-1",
             intent=ShutdownIntent.GRACEFUL,
@@ -87,9 +76,7 @@ class TestShutdownNotification:
             subscriptions=("sub-1", "sub-2"),
             in_flight_count=10,
         )
-
         result = notification.to_dict()
-
         assert result["instance_id"] == "worker-1"
         assert result["intent"] == "graceful"
         assert result["initiated_at"] == "2025-01-01T00:00:00+00:00"
@@ -98,7 +85,6 @@ class TestShutdownNotification:
         assert result["in_flight_count"] == 10
 
     def test_from_dict(self) -> None:
-        """Test deserialization from dictionary."""
         data = {
             "instance_id": "worker-1",
             "intent": "preemption",
@@ -108,9 +94,7 @@ class TestShutdownNotification:
             "in_flight_count": 5,
             "metadata": {"spot": True},
         }
-
         notification = ShutdownNotification.from_dict(data)
-
         assert notification.instance_id == "worker-1"
         assert notification.intent == ShutdownIntent.PREEMPTION
         assert notification.subscriptions == ("sub-1",)
@@ -118,7 +102,6 @@ class TestShutdownNotification:
         assert notification.metadata == {"spot": True}
 
     def test_time_remaining_seconds(self) -> None:
-        """Test time remaining calculation."""
         now = datetime.now(UTC)
         notification = ShutdownNotification(
             instance_id="worker-1",
@@ -127,13 +110,9 @@ class TestShutdownNotification:
             expected_completion_at=now + timedelta(seconds=30),
             subscriptions=(),
         )
-
-        remaining = notification.time_remaining_seconds
-
-        assert 29 < remaining <= 30
+        assert 29 < notification.time_remaining_seconds <= 30
 
     def test_time_remaining_expired(self) -> None:
-        """Test time remaining when already expired."""
         now = datetime.now(UTC)
         notification = ShutdownNotification(
             instance_id="worker-1",
@@ -142,14 +121,10 @@ class TestShutdownNotification:
             expected_completion_at=now - timedelta(seconds=30),
             subscriptions=(),
         )
-
         assert notification.time_remaining_seconds == 0.0
 
     def test_is_expired(self) -> None:
-        """Test is_expired property."""
         now = datetime.now(UTC)
-
-        # Not expired
         notification = ShutdownNotification(
             instance_id="worker-1",
             intent=ShutdownIntent.GRACEFUL,
@@ -159,7 +134,6 @@ class TestShutdownNotification:
         )
         assert notification.is_expired is False
 
-        # Expired
         expired_notification = ShutdownNotification(
             instance_id="worker-1",
             intent=ShutdownIntent.GRACEFUL,
@@ -170,7 +144,6 @@ class TestShutdownNotification:
         assert expired_notification.is_expired is True
 
     def test_round_trip(self) -> None:
-        """Test serialize/deserialize round trip."""
         now = datetime.now(UTC)
         original = ShutdownNotification(
             instance_id="worker-1",
@@ -181,10 +154,7 @@ class TestShutdownNotification:
             in_flight_count=15,
             metadata={"reason": "upgrade"},
         )
-
-        data = original.to_dict()
-        restored = ShutdownNotification.from_dict(data)
-
+        restored = ShutdownNotification.from_dict(original.to_dict())
         assert restored.instance_id == original.instance_id
         assert restored.intent == original.intent
         assert restored.subscriptions == original.subscriptions
@@ -196,37 +166,28 @@ class TestModuleExportsP3003:
     """Tests for P3-003 module exports."""
 
     def test_all_exports_defined(self) -> None:
-        """Test that __all__ contains all P3-003 symbols."""
         from eventsource.application.subscriptions import coordination
 
         expected_new = {
-            # Topic constants
             "COORDINATION_TOPIC_PREFIX",
             "SHUTDOWN_NOTIFICATIONS_TOPIC",
             "HEARTBEAT_TOPIC",
             "WORK_ASSIGNMENT_TOPIC",
-            # Enums
             "ShutdownIntent",
-            # Message types
             "ShutdownNotification",
             "HeartbeatMessage",
             "WorkAssignment",
-            # Callback types
             "PeerShutdownCallback",
             "HeartbeatCallback",
             "WorkAssignmentCallback",
             "PeerTimeoutCallback",
-            # Work redistribution
             "PeerInfo",
             "WorkRedistributionCoordinator",
         }
-
-        # Check all expected symbols are in __all__
         for symbol in expected_new:
             assert symbol in coordination.__all__, f"Missing export: {symbol}"
 
     def test_exports_from_subscriptions_package(self) -> None:
-        """Test that P3-003 types are exported from subscriptions package."""
         from eventsource.application.subscriptions import (
             COORDINATION_TOPIC_PREFIX,
             HEARTBEAT_TOPIC,
@@ -244,7 +205,6 @@ class TestModuleExportsP3003:
             WorkRedistributionCoordinator,
         )
 
-        # Verify imports work
         assert COORDINATION_TOPIC_PREFIX is not None
         assert SHUTDOWN_NOTIFICATIONS_TOPIC is not None
         assert HEARTBEAT_TOPIC is not None

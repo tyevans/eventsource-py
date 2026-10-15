@@ -27,42 +27,29 @@ class TestMetricsCollectionDuringMigration:
 
     @pytest.mark.asyncio
     async def test_metrics_track_events_copied(self, migration_id: UUID, tenant_id: UUID) -> None:
-        """Test metrics track events copied during bulk copy."""
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
         metrics.record_events_copied(100, rate_events_per_sec=1000.0)
         metrics.record_events_copied(150, rate_events_per_sec=1500.0)
         metrics.record_events_copied(50, rate_events_per_sec=500.0)
 
         snapshot = metrics.get_snapshot()
-        assert snapshot.events_copied == 300
-        assert snapshot.events_copied_rate == 500.0
+        assert (snapshot.events_copied, snapshot.events_copied_rate) == (300, 500.0)
 
     @pytest.mark.asyncio
     async def test_metrics_track_sync_lag(self, migration_id: UUID, tenant_id: UUID) -> None:
-        """Test metrics track sync lag during dual-write."""
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
-
-        metrics.record_sync_lag(1000)
-        assert metrics.current_sync_lag == 1000
-        metrics.record_sync_lag(500)
-        assert metrics.current_sync_lag == 500
-        metrics.record_sync_lag(0)
-        assert metrics.current_sync_lag == 0
-        metrics.record_sync_lag(-10)
-        assert metrics.current_sync_lag == 0
+        for raw, expected in [(1000, 1000), (500, 500), (0, 0), (-10, 0)]:
+            metrics.record_sync_lag(raw)
+            assert metrics.current_sync_lag == expected
 
     @pytest.mark.asyncio
     async def test_metrics_track_phase_durations(self, migration_id: UUID, tenant_id: UUID) -> None:
-        """Test metrics track phase durations."""
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
         metrics.record_phase_duration("bulk_copy", 300.0)
         metrics.record_phase_duration("dual_write", 600.0)
         metrics.record_phase_duration("cutover", 0.05)
 
         snapshot = metrics.get_snapshot()
-        assert "bulk_copy" in snapshot.phase_durations
-        assert "dual_write" in snapshot.phase_durations
-        assert "cutover" in snapshot.phase_durations
         assert snapshot.phase_durations["bulk_copy"] == 300.0
         assert snapshot.phase_durations["dual_write"] == 600.0
         assert snapshot.phase_durations["cutover"] == 0.05
@@ -71,7 +58,6 @@ class TestMetricsCollectionDuringMigration:
     async def test_metrics_track_cutover_duration(
         self, migration_id: UUID, tenant_id: UUID
     ) -> None:
-        """Test metrics track cutover duration."""
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
         metrics.record_cutover_duration(45.5, success=True)
         metrics.record_cutover_duration(100.0, success=False)
@@ -83,7 +69,6 @@ class TestMetricsCollectionDuringMigration:
 
     @pytest.mark.asyncio
     async def test_metrics_track_failures(self, migration_id: UUID, tenant_id: UUID) -> None:
-        """Test metrics track target write failures and verification failures."""
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
         metrics.record_failed_target_write(error_type="timeout")
         metrics.record_failed_target_write(error_type="connection_error")
@@ -92,20 +77,15 @@ class TestMetricsCollectionDuringMigration:
         metrics.record_verification_failure()
 
         snapshot = metrics.get_snapshot()
-        assert snapshot.failed_target_writes == 3
-        assert snapshot.verification_failures == 2
+        assert (snapshot.failed_target_writes, snapshot.verification_failures) == (3, 2)
 
     @pytest.mark.asyncio
     async def test_metrics_context_managers(self, migration_id: UUID, tenant_id: UUID) -> None:
-        """Test metrics context managers for timing."""
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
-
         with metrics.time_phase("test_phase"):
             await asyncio.sleep(0.01)
 
-        snapshot = metrics.get_snapshot()
-        assert "test_phase" in snapshot.phase_durations
-        assert snapshot.phase_durations["test_phase"] >= 0.01
+        assert metrics.get_snapshot().phase_durations["test_phase"] >= 0.01
 
         with metrics.time_cutover() as timer:
             await asyncio.sleep(0.01)
@@ -140,9 +120,7 @@ class TestStatusStreamingDuringMigration:
         )
         router.register_store("dedicated", target_store)
         migration = await coordinator.start_migration(
-            tenant_id=tenant_id,
-            target_store=target_store,
-            target_store_id="dedicated",
+            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
         )
         return coordinator, migration
 
@@ -157,7 +135,6 @@ class TestStatusStreamingDuringMigration:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """Test that status streamer yields initial status."""
         coordinator, migration = await self._setup_migration(
             source_store,
             target_store,
@@ -168,11 +145,8 @@ class TestStatusStreamingDuringMigration:
             tenant_id,
         )
         streamer = StatusStreamer(
-            coordinator=coordinator,
-            migration_id=migration.id,
-            enable_tracing=False,
+            coordinator=coordinator, migration_id=migration.id, enable_tracing=False
         )
-
         statuses_received = []
         async for status in streamer.stream_status(update_interval=0.1, include_initial=True):
             statuses_received.append(status)
@@ -194,7 +168,6 @@ class TestStatusStreamingDuringMigration:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """Test that stream manager creates and reuses streamers."""
         coordinator, migration = await self._setup_migration(
             source_store,
             target_store,
@@ -228,7 +201,6 @@ class TestStatusStreamingDuringMigration:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """Test that streamer tracks subscriber count."""
         coordinator, migration = await self._setup_migration(
             source_store,
             target_store,
@@ -239,9 +211,7 @@ class TestStatusStreamingDuringMigration:
             tenant_id,
         )
         streamer = StatusStreamer(
-            coordinator=coordinator,
-            migration_id=migration.id,
-            enable_tracing=False,
+            coordinator=coordinator, migration_id=migration.id, enable_tracing=False
         )
         assert streamer.subscriber_count == 0
 

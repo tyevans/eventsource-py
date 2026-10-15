@@ -45,30 +45,41 @@ def _order_message_data(event: SampleOrderCreated) -> dict[str, str]:
     }
 
 
+def _pending_entry(delivered: int = 1, idle_ms: int = 120000) -> list[dict[str, object]]:
+    return [
+        {
+            "message_id": "msg-123",
+            "consumer": "old-consumer",
+            "time_since_delivered": idle_ms,
+            "times_delivered": delivered,
+        }
+    ]
+
+
 class TestRedisEventBusDeserialization:
     """Tests for event deserialization."""
 
     async def test_deserialize_known_event(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        aggregate_id = uuid4()
-        customer_id = uuid4()
+        aggregate_id, customer_id = uuid4(), uuid4()
         event = SampleOrderCreated(
             aggregate_id=aggregate_id, order_number="ORD-001", customer_id=customer_id
         )
         message_data = {"event_type": "SampleOrderCreated", "payload": event.model_dump_json()}
         result = bus._deserialize_event("SampleOrderCreated", message_data)
         assert result is not None
-        assert result.event_type == "SampleOrderCreated"
-        assert result.order_number == "ORD-001"
-        assert result.aggregate_id == aggregate_id
+        assert (result.event_type, result.order_number, result.aggregate_id) == (
+            "SampleOrderCreated",
+            "ORD-001",
+            aggregate_id,
+        )
 
     async def test_deserialize_unknown_event(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
         message_data = {"event_type": "UnknownEvent", "payload": "{}"}
-        result = bus._deserialize_event("UnknownEvent", message_data)
-        assert result is None
+        assert bus._deserialize_event("UnknownEvent", message_data) is None
 
 
 class TestRedisEventBusMessageProcessing:
@@ -103,8 +114,7 @@ class TestRedisEventBusMessageProcessing:
     async def test_process_message_handler_failure(
         self, bus: RedisEventBus, event_registry: EventRegistry, mock_redis: AsyncMock
     ) -> None:
-        handler = FailingHandler()
-        bus.subscribe(SampleOrderCreated, handler)
+        bus.subscribe(SampleOrderCreated, FailingHandler())
         event = SampleOrderCreated(
             aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
         )
@@ -136,26 +146,20 @@ class TestRedisEventBusDLQ:
         ]
         messages = await bus.get_dlq_messages(count=10)
         assert len(messages) == 2
-        assert messages[0]["message_id"] == "msg-1"
-        assert messages[1]["message_id"] == "msg-2"
+        assert (messages[0]["message_id"], messages[1]["message_id"]) == ("msg-1", "msg-2")
         mock_redis.xrange.assert_called_once()
 
     async def test_replay_dlq_message(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
-        mock_redis.xrange.return_value = [
-            (
-                "dlq-msg-123",
-                {
-                    "event_type": "SampleOrderCreated",
-                    "payload": "{}",
-                    "original_message_id": "orig-123",
-                    "retry_count": "3",
-                    "dlq_timestamp": "2024-01-01T00:00:00Z",
-                },
-            ),
-        ]
+        dlq_fields = {
+            "event_type": "SampleOrderCreated",
+            "payload": "{}",
+            "original_message_id": "orig-123",
+            "retry_count": "3",
+            "dlq_timestamp": "2024-01-01T00:00:00Z",
+        }
+        mock_redis.xrange.return_value = [("dlq-msg-123", dlq_fields)]
         mock_redis.xadd.return_value = "new-msg-456"
-        result = await bus.replay_dlq_message("dlq-msg-123")
-        assert result is True
+        assert await bus.replay_dlq_message("dlq-msg-123") is True
         mock_redis.xadd.assert_called_once()
         mock_redis.xdel.assert_called_once()
         fields = mock_redis.xadd.call_args.kwargs["fields"]
@@ -167,8 +171,7 @@ class TestRedisEventBusDLQ:
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
         mock_redis.xrange.return_value = []
-        result = await bus.replay_dlq_message("non-existent")
-        assert result is False
+        assert await bus.replay_dlq_message("non-existent") is False
 
 
 class TestRedisEventBusPendingRecovery:
@@ -179,53 +182,29 @@ class TestRedisEventBusPendingRecovery:
     ) -> None:
         mock_redis.xpending.return_value = {"pending": 0}
         stats = await bus.recover_pending_messages()
-        assert stats["checked"] == 0
-        assert stats["claimed"] == 0
-        assert stats["reprocessed"] == 0
-        assert stats["dlq"] == 0
-        assert stats["failed"] == 0
+        assert (stats["checked"], stats["claimed"], stats["reprocessed"]) == (0, 0, 0)
+        assert (stats["dlq"], stats["failed"]) == (0, 0)
 
     async def test_recover_pending_messages_success(
         self, bus: RedisEventBus, event_registry: EventRegistry, mock_redis: AsyncMock
     ) -> None:
-        handler = OrderHandler()
-        bus.subscribe(SampleOrderCreated, handler)
+        bus.subscribe(SampleOrderCreated, OrderHandler())
         event = SampleOrderCreated(
             aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
         )
         mock_redis.xpending.return_value = {"pending": 1}
-        mock_redis.xpending_range.return_value = [
-            {
-                "message_id": "msg-123",
-                "consumer": "old-consumer",
-                "time_since_delivered": 120000,
-                "times_delivered": 1,
-            }
-        ]
+        mock_redis.xpending_range.return_value = _pending_entry(delivered=1)
         mock_redis.xclaim.return_value = [("msg-123", _order_message_data(event))]
         stats = await bus.recover_pending_messages(min_idle_time_ms=60000)
-        assert stats["checked"] == 1
-        assert stats["claimed"] == 1
-        assert stats["reprocessed"] == 1
+        assert (stats["checked"], stats["claimed"], stats["reprocessed"]) == (1, 1, 1)
 
     async def test_recover_pending_messages_to_dlq(
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
         mock_redis.xpending.return_value = {"pending": 1}
-        mock_redis.xpending_range.return_value = [
-            {
-                "message_id": "msg-123",
-                "consumer": "old-consumer",
-                "time_since_delivered": 120000,
-                "times_delivered": 5,
-            }
-        ]
-        mock_redis.xclaim.return_value = [
-            (
-                "msg-123",
-                {"event_id": str(uuid4()), "event_type": "SampleOrderCreated", "payload": "{}"},
-            )
-        ]
+        mock_redis.xpending_range.return_value = _pending_entry(delivered=5)
+        payload = {"event_id": str(uuid4()), "event_type": "SampleOrderCreated", "payload": "{}"}
+        mock_redis.xclaim.return_value = [("msg-123", payload)]
         mock_redis.get.return_value = "3"
         stats = await bus.recover_pending_messages(min_idle_time_ms=60000, max_retries=3)
         assert stats["dlq"] == 1
@@ -234,14 +213,7 @@ class TestRedisEventBusPendingRecovery:
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
         mock_redis.xpending.return_value = {"pending": 1}
-        mock_redis.xpending_range.return_value = [
-            {
-                "message_id": "msg-123",
-                "consumer": "old-consumer",
-                "time_since_delivered": 0,
-                "times_delivered": 1,
-            }
-        ]
+        mock_redis.xpending_range.return_value = _pending_entry(delivered=1, idle_ms=0)
         mock_redis.xclaim.return_value = []
         stats = await bus.recover_pending_messages(min_idle_time_ms=0)
         assert stats["claimed"] == 0

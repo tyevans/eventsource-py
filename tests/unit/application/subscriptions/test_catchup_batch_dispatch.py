@@ -1,13 +1,4 @@
-"""
-Unit tests for batch dispatch in CatchUpRunner.
-
-Covers task #7: batch-capable subscribers (`supports_batch_handling()`)
-must actually have `handle_batch()` called by the runner with more than one
-event, not just have it exist as unreached code. Also covers the documented
-fallback -- a `handle_batch()` that raises falls back to per-event delivery
--- filtering interacting with batching, and checkpoint-after-settle
-ordering.
-"""
+"""Unit tests for batch dispatch in CatchUpRunner (task #7)."""
 
 from uuid import uuid4
 
@@ -38,8 +29,7 @@ class BatchTestEvent(DomainEvent):
 
 
 class RecordingBatchSubscriber:
-    """A subscriber with handle_batch(); handle() is never expected to run
-    unless the batch call fails and the runner falls back."""
+    """A subscriber with handle_batch(); handle() runs only on fallback."""
 
     def __init__(self, fail_batch: bool = False) -> None:
         self.batch_calls: list[list[DomainEvent]] = []
@@ -109,12 +99,9 @@ class TestBatchDispatch:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """The runner delivers a batch of >1 events through handle_batch(),
-        not one at a time through handle()."""
         subscriber = RecordingBatchSubscriber()
         config = SubscriptionConfig(
-            batch_size=10,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+            batch_size=10, checkpoint_strategy=CheckpointStrategy.EVERY_BATCH
         )
         subscription = Subscription(name="batch-sub", config=config, subscriber=subscriber)
         await add_events(event_store, 5)
@@ -133,13 +120,9 @@ class TestBatchDispatch:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """The subscription's position reflects the whole batch, and the
-        persisted checkpoint under EVERY_BATCH is the last event's position
-        -- not something written mid-batch."""
         subscriber = RecordingBatchSubscriber()
         config = SubscriptionConfig(
-            batch_size=10,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+            batch_size=10, checkpoint_strategy=CheckpointStrategy.EVERY_BATCH
         )
         subscription = Subscription(name="batch-sub", config=config, subscriber=subscriber)
         await add_events(event_store, 3)
@@ -157,12 +140,9 @@ class TestBatchDispatch:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """batch_size caps the read, so more events than batch_size become
-        more than one handle_batch() call."""
         subscriber = RecordingBatchSubscriber()
         config = SubscriptionConfig(
-            batch_size=3,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+            batch_size=3, checkpoint_strategy=CheckpointStrategy.EVERY_BATCH
         )
         subscription = Subscription(name="batch-sub", config=config, subscriber=subscriber)
         await add_events(event_store, 7)
@@ -172,7 +152,6 @@ class TestBatchDispatch:
 
         assert result.completed
         assert result.events_processed == 7
-        # 3 + 3 + 1
         assert [len(c) for c in subscriber.batch_calls] == [3, 3, 1]
 
 
@@ -199,13 +178,11 @@ class TestBatchFallback:
         assert result.completed
         assert result.events_processed == 4
         assert subscriber.single_calls == events
-        # The batch call was attempted (and failed) before falling back.
         assert len(subscriber.batch_calls) == 0
 
 
 class TestBatchFilterInteraction:
-    """Filtering happens before dispatch; filtered-out events never reach
-    handle_batch()."""
+    """Filtering happens before dispatch; filtered-out events never reach handle_batch()."""
 
     async def test_filtered_events_excluded_from_batch(
         self,
@@ -213,9 +190,6 @@ class TestBatchFilterInteraction:
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
         subscriber = RecordingBatchSubscriber()
-        # No event_types filter override -- events_types=None means no
-        # filtering via config, so use aggregate_types to exercise the
-        # filter path without excluding everything.
         config = SubscriptionConfig(
             batch_size=10,
             checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
@@ -227,9 +201,6 @@ class TestBatchFilterInteraction:
 
         result = await runner.run_until_position(await current(event_store))
 
-        # Every envelope was read and position-advanced (progress through
-        # the stream), but none passed the filter, so handle_batch() was
-        # never called with anything.
         assert result.completed
         assert result.events_processed == 0
         assert subscriber.batch_calls == []
@@ -246,8 +217,7 @@ class TestNonBatchSubscriberUnaffected:
     ) -> None:
         subscriber = NonBatchSubscriber()
         config = SubscriptionConfig(
-            batch_size=10,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+            batch_size=10, checkpoint_strategy=CheckpointStrategy.EVERY_BATCH
         )
         subscription = Subscription(name="single-sub", config=config, subscriber=subscriber)
         events = await add_events(event_store, 3)
