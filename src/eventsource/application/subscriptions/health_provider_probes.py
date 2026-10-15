@@ -31,21 +31,16 @@ class HealthCheckProbesMixin:
 
     @property
     def uptime_seconds(self) -> float:
-        """Get manager uptime in seconds."""
         raise NotImplementedError
 
     async def _try_acquire_lock(self) -> bool:
-        """Try to acquire the internal lock within 1.0s; return True if acquired."""
         try:
             async with asyncio.timeout(1.0), self._lock:
                 return True
         except TimeoutError:
             return False
 
-    def _build_subscription_health(
-        self, name: str, subscription: Subscription
-    ) -> SubscriptionHealth:
-        """Evaluate status and construct SubscriptionHealth for a single subscription."""
+    def _build_subscription_health(self, name: str, subscription: Subscription) -> SubscriptionHealth:  # fmt: skip
         checker = self._health_checkers.get(name)
         if checker:
             status = checker.check().overall_status.value
@@ -75,7 +70,6 @@ class HealthCheckProbesMixin:
         """Get comprehensive health status of the subscription manager."""
         subscription_health_list: list[SubscriptionHealth] = []
         healthy = degraded = unhealthy = total_lag = total_processed = total_failed = 0
-
         for name, subscription in self._registry.items():
             sub_health = self._build_subscription_health(name, subscription)
             subscription_health_list.append(sub_health)
@@ -106,53 +100,36 @@ class HealthCheckProbesMixin:
 
     async def readiness_check(self, is_running: bool, is_shutting_down: bool) -> ReadinessStatus:
         """Check if the manager is ready to accept work (Kubernetes-style probe)."""
-        details: dict[str, Any] = {
-            "running": is_running,
-            "subscription_count": len(self._registry),
-            "shutting_down": is_shutting_down,
-        }
+        details: dict[str, Any] = {"running": is_running, "subscription_count": len(self._registry), "shutting_down": is_shutting_down}  # fmt: skip
         if is_shutting_down:
             return ReadinessStatus(ready=False, reason="Manager is shutting down", details=details)
         if not is_running:
             return ReadinessStatus(ready=False, reason="Manager is not running", details=details)
-
         error_subs = [n for n, s in self._registry.items() if s.state == SubscriptionState.ERROR]
         starting_subs = [n for n, s in self._registry.items() if s.state == SubscriptionState.STARTING]  # fmt: skip
         if error_subs:
             details["error_subscriptions"] = error_subs
-            return ReadinessStatus(
-                ready=False,
-                reason=f"Subscriptions in error state: {', '.join(error_subs)}",
-                details=details,
-            )
+            reason = f"Subscriptions in error state: {', '.join(error_subs)}"
+            return ReadinessStatus(ready=False, reason=reason, details=details)
         if starting_subs:
             details["starting_subscriptions"] = starting_subs
-            return ReadinessStatus(
-                ready=False,
-                reason=f"Subscriptions still starting: {', '.join(starting_subs)}",
-                details=details,
-            )
+            reason = f"Subscriptions still starting: {', '.join(starting_subs)}"
+            return ReadinessStatus(ready=False, reason=reason, details=details)
         return ReadinessStatus(ready=True, reason="Manager is ready", details=details)
 
     async def liveness_check(self, is_running: bool) -> LivenessStatus:
         """Check if the manager is alive and responsive (Kubernetes-style probe)."""
         details: dict[str, Any] = {"running": is_running, "uptime_seconds": self.uptime_seconds}
         try:
-            details["lock_responsive"] = await asyncio.wait_for(
-                self._try_acquire_lock(), timeout=5.0
-            )
+            details["lock_responsive"] = await asyncio.wait_for(self._try_acquire_lock(), timeout=5.0)  # fmt: skip
         except TimeoutError:
-            return LivenessStatus(
-                alive=False,
-                reason="Internal lock not responsive (possible deadlock)",
-                details=details,
-            )
+            msg = "Internal lock not responsive (possible deadlock)"
+            return LivenessStatus(alive=False, reason=msg, details=details)
         try:
             details["subscription_count"] = len(self._registry)
         except Exception as e:
-            return LivenessStatus(
-                alive=False, reason=f"Error accessing subscriptions: {e}", details=details
-            )
+            msg = f"Error accessing subscriptions: {e}"
+            return LivenessStatus(alive=False, reason=msg, details=details)
         return LivenessStatus(alive=True, reason="Manager is alive and responsive", details=details)
 
     def get_subscription_health(self, subscription_name: str) -> SubscriptionHealth | None:

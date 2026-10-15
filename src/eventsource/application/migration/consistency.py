@@ -34,7 +34,6 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """Initialize the consistency verifier with source and target event stores."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._source, self._target = source_store, target_store
@@ -50,44 +49,29 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
             raise ValueError(
                 f"sample_percentage must be between 0 and 100, got {sample_percentage}"
             )
-
-        attrs = {
-            "tenant_id": str(tenant_id),
-            "level": level.value,
-            "sample_percentage": sample_percentage,
-        }
+        attrs = {"tenant_id": str(tenant_id), "level": level.value, "sample_percentage": sample_percentage}  # fmt: skip
         with self._tracer.span("eventsource.consistency_verifier.verify_tenant", attrs):
             start_time = time.monotonic()
-            logger.info(
-                "Starting consistency verification for tenant %s, level=%s, sample=%.1f%%",
-                tenant_id,
-                level.value,
-                sample_percentage,
-            )
+            msg = "Starting consistency verification for tenant %s, level=%s, sample=%.1f%%"
+            logger.info(msg, tenant_id, level.value, sample_percentage)
             violations: list[ConsistencyViolation] = []
             stream_results: list[StreamConsistency] = []
-
             try:
                 source_events = await self._collect_tenant_events(self._source, tenant_id)
                 target_events = await self._collect_tenant_events(self._target, tenant_id)
                 source_count, target_count = len(source_events), len(target_events)
-
                 if source_count != target_count:
-                    details = f"Expected {source_count} events, found {target_count}"
                     violations.append(
                         ConsistencyViolation(
                             violation_type="total_count_mismatch",
                             source_value=str(source_count),
                             target_value=str(target_count),
-                            details=details,
+                            details=f"Expected {source_count} events, found {target_count}",
                         )
                     )
-
                 source_by_stream = self._group_events_by_stream(source_events)
                 target_by_stream = self._group_events_by_stream(target_events)
-                all_streams = set(source_by_stream.keys()) | set(target_by_stream.keys())
-
-                for stream_id in all_streams:
+                for stream_id in set(source_by_stream.keys()) | set(target_by_stream.keys()):
                     src_evts = source_by_stream.get(stream_id, [])
                     tgt_evts = target_by_stream.get(stream_id, [])
                     res, viols = await self._verify_stream(
@@ -95,11 +79,9 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                     )
                     stream_results.append(res)
                     violations.extend(viols)
-
                 duration = time.monotonic() - start_time
                 consistent_cnt = sum(1 for s in stream_results if s.is_consistent)
                 is_consistent = len(violations) == 0
-
                 report = VerificationReport(
                     tenant_id=tenant_id,
                     verification_level=level,
@@ -115,15 +97,13 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                     duration_seconds=duration,
                     verified_at=datetime.now(UTC),
                 )
-
                 if is_consistent:
-                    msg = "Consistency verification passed for tenant %s: %d events, %d streams in %.2fs"
-                    logger.info(msg, tenant_id, source_count, len(stream_results), duration)
+                    ok_msg = "Consistency verification passed for tenant %s: %d events, %d streams in %.2fs"
+                    logger.info(ok_msg, tenant_id, source_count, len(stream_results), duration)
                 else:
-                    msg = "Consistency verification FAILED for tenant %s: %d violations found in %.2fs"
-                    logger.warning(msg, tenant_id, len(violations), duration)
+                    err_msg = "Consistency verification FAILED for tenant %s: %d violations found in %.2fs"
+                    logger.warning(err_msg, tenant_id, len(violations), duration)
                 return report
-
             except Exception as e:
                 logger.error("Consistency verification error for tenant %s: %s", tenant_id, e)
                 null_id = UUID("00000000-0000-0000-0000-000000000000")

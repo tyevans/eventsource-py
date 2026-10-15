@@ -22,33 +22,13 @@ class EventNotFoundError(EventSourceError):
 class EventStoreError(EventSourceError):
     """Raised when there's an error in the event store."""
 
-    pass
-
 
 class EventBusError(EventSourceError):
     """Raised when there's an error in the event bus."""
 
-    pass
-
 
 class EventVersionError(EventSourceError):
-    """
-    Raised when event version validation fails during aggregate event application.
-
-    This error occurs when:
-    - An event has a version gap (e.g., jumping from version 2 to version 5)
-    - An event has a version regression (e.g., going from version 5 to version 3)
-    - An event has an unexpected version number
-
-    This validation helps ensure aggregate state integrity by detecting
-    out-of-order or incorrectly versioned events.
-
-    Attributes:
-        expected_version: The version that was expected (current version + 1)
-        actual_version: The version found in the event
-        event_id: ID of the event with invalid version
-        aggregate_id: ID of the aggregate being updated
-    """
+    """Raised when event version validation fails during aggregate event application."""
 
     def __init__(
         self,
@@ -69,24 +49,7 @@ class EventVersionError(EventSourceError):
 
 
 class UnhandledEventError(EventSourceError):
-    """
-    Raised when an event has no registered handler and strict mode is enabled.
-
-    This error occurs in DeclarativeAggregate or DeclarativeProjection when:
-    - An event type is applied/processed that has no @handles decorator
-    - The class has unregistered_event_handling set to "error"
-
-    This helps catch bugs such as:
-    - Typos in handler names
-    - Missing @handles decorators
-    - State inconsistencies from silently ignored events
-
-    Attributes:
-        event_type: The name of the event type that wasn't handled
-        event_id: ID of the unhandled event
-        handler_class: Name of the aggregate/projection class
-        available_handlers: List of event type names that have handlers
-    """
+    """Raised when an event has no registered handler and strict mode is enabled."""
 
     def __init__(
         self,
@@ -114,11 +77,7 @@ class DuplicateEventError(EventSourceError):
 
 
 class EventTypeNotFoundError(EventSourceError):
-    """
-    Raised when an event type is not found in the registry.
-
-    Provides helpful error messages including a list of available event types.
-    """
+    """Raised when an event type is not found in the registry."""
 
     def __init__(self, event_type: str, available_types: list[str]) -> None:
         self.event_type = event_type
@@ -132,9 +91,7 @@ class EventTypeNotFoundError(EventSourceError):
 
 
 class DuplicateEventTypeError(EventSourceError):
-    """
-    Raised when attempting to register a different class with an existing event type name.
-    """
+    """Raised when attempting to register a different class with an existing event type name."""
 
     def __init__(
         self,
