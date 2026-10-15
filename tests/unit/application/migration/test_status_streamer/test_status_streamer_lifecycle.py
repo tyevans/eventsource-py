@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -97,23 +98,7 @@ class TestStatusStreamerStatusChanged:
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
-        new_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=MigrationPhase.DUAL_WRITE,
-            progress_percent=base_status.progress_percent,
-            events_total=base_status.events_total,
-            events_copied=base_status.events_copied,
-            events_remaining=base_status.events_remaining,
-            sync_lag_events=base_status.sync_lag_events,
-            sync_lag_ms=base_status.sync_lag_ms,
-            error_count=base_status.error_count,
-            started_at=base_status.started_at,
-            phase_started_at=base_status.phase_started_at,
-            estimated_completion=base_status.estimated_completion,
-            current_rate_events_per_sec=base_status.current_rate_events_per_sec,
-            is_paused=base_status.is_paused,
-        )
+        new_status = replace(base_status, phase=MigrationPhase.DUAL_WRITE)
         assert streamer._status_changed(base_status, new_status) is True
 
     def test_progress_change_1_percent_is_detected(self, base_status: MigrationStatus) -> None:
@@ -122,22 +107,8 @@ class TestStatusStreamerStatusChanged:
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
-        new_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=base_status.phase,
-            progress_percent=51.0,
-            events_total=base_status.events_total,
-            events_copied=510,
-            events_remaining=490,
-            sync_lag_events=base_status.sync_lag_events,
-            sync_lag_ms=base_status.sync_lag_ms,
-            error_count=base_status.error_count,
-            started_at=base_status.started_at,
-            phase_started_at=base_status.phase_started_at,
-            estimated_completion=base_status.estimated_completion,
-            current_rate_events_per_sec=base_status.current_rate_events_per_sec,
-            is_paused=base_status.is_paused,
+        new_status = replace(
+            base_status, progress_percent=51.0, events_copied=510, events_remaining=490
         )
         assert streamer._status_changed(base_status, new_status) is True
 
@@ -147,22 +118,8 @@ class TestStatusStreamerStatusChanged:
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
-        new_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=base_status.phase,
-            progress_percent=50.5,
-            events_total=base_status.events_total,
-            events_copied=505,
-            events_remaining=495,
-            sync_lag_events=base_status.sync_lag_events,
-            sync_lag_ms=base_status.sync_lag_ms,
-            error_count=base_status.error_count,
-            started_at=base_status.started_at,
-            phase_started_at=base_status.phase_started_at,
-            estimated_completion=base_status.estimated_completion,
-            current_rate_events_per_sec=base_status.current_rate_events_per_sec,
-            is_paused=base_status.is_paused,
+        new_status = replace(
+            base_status, progress_percent=50.5, events_copied=505, events_remaining=495
         )
         assert streamer._status_changed(base_status, new_status) is False
 
@@ -172,23 +129,7 @@ class TestStatusStreamerStatusChanged:
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
-        new_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=base_status.phase,
-            progress_percent=base_status.progress_percent,
-            events_total=base_status.events_total,
-            events_copied=base_status.events_copied,
-            events_remaining=base_status.events_remaining,
-            sync_lag_events=15,
-            sync_lag_ms=15.0,
-            error_count=base_status.error_count,
-            started_at=base_status.started_at,
-            phase_started_at=base_status.phase_started_at,
-            estimated_completion=base_status.estimated_completion,
-            current_rate_events_per_sec=base_status.current_rate_events_per_sec,
-            is_paused=base_status.is_paused,
-        )
+        new_status = replace(base_status, sync_lag_events=15, sync_lag_ms=15.0)
         assert streamer._status_changed(base_status, new_status) is True
 
     def test_error_count_increase_is_detected(self, base_status: MigrationStatus) -> None:
@@ -197,23 +138,7 @@ class TestStatusStreamerStatusChanged:
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
-        new_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=base_status.phase,
-            progress_percent=base_status.progress_percent,
-            events_total=base_status.events_total,
-            events_copied=base_status.events_copied,
-            events_remaining=base_status.events_remaining,
-            sync_lag_events=base_status.sync_lag_events,
-            sync_lag_ms=base_status.sync_lag_ms,
-            error_count=1,
-            started_at=base_status.started_at,
-            phase_started_at=base_status.phase_started_at,
-            estimated_completion=base_status.estimated_completion,
-            current_rate_events_per_sec=base_status.current_rate_events_per_sec,
-            is_paused=base_status.is_paused,
-        )
+        new_status = replace(base_status, error_count=1)
         assert streamer._status_changed(base_status, new_status) is True
 
     def test_pause_state_change_is_detected(self, base_status: MigrationStatus) -> None:
@@ -222,23 +147,7 @@ class TestStatusStreamerStatusChanged:
             migration_id=base_status.migration_id,
             enable_tracing=False,
         )
-        new_status = MigrationStatus(
-            migration_id=base_status.migration_id,
-            tenant_id=base_status.tenant_id,
-            phase=base_status.phase,
-            progress_percent=base_status.progress_percent,
-            events_total=base_status.events_total,
-            events_copied=base_status.events_copied,
-            events_remaining=base_status.events_remaining,
-            sync_lag_events=base_status.sync_lag_events,
-            sync_lag_ms=base_status.sync_lag_ms,
-            error_count=base_status.error_count,
-            started_at=base_status.started_at,
-            phase_started_at=base_status.phase_started_at,
-            estimated_completion=base_status.estimated_completion,
-            current_rate_events_per_sec=base_status.current_rate_events_per_sec,
-            is_paused=True,
-        )
+        new_status = replace(base_status, is_paused=True)
         assert streamer._status_changed(base_status, new_status) is True
 
     def test_no_change_not_detected(self, base_status: MigrationStatus) -> None:

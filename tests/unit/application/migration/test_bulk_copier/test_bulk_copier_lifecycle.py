@@ -79,8 +79,7 @@ class TestBulkCopyResult:
             last_target_position=_pos("target", 500),
             duration_seconds=10.5,
         )
-        assert result.success is True
-        assert result.events_copied == 1000
+        assert result.success is True and result.events_copied == 1000
         assert result.error_message is None
 
     def test_failed_result(self) -> None:
@@ -92,8 +91,7 @@ class TestBulkCopyResult:
             duration_seconds=5.0,
             error_message="Connection failed",
         )
-        assert result.success is False
-        assert result.error_message == "Connection failed"
+        assert result.success is False and result.error_message == "Connection failed"
 
 
 class TestRateLimiter:
@@ -102,8 +100,7 @@ class TestRateLimiter:
         limiter = RateLimiter(max_rate=1000)
         start = asyncio.get_event_loop().time()
         await limiter.wait(100)
-        elapsed = asyncio.get_event_loop().time() - start
-        assert elapsed < 0.1
+        assert asyncio.get_event_loop().time() - start < 0.1
 
     @pytest.mark.asyncio
     async def test_rate_limiter_waits_when_exceeding_capacity(self) -> None:
@@ -111,16 +108,14 @@ class TestRateLimiter:
         await limiter.wait(100)
         start = asyncio.get_event_loop().time()
         await limiter.wait(10)
-        elapsed = asyncio.get_event_loop().time() - start
-        assert elapsed >= 0.05
+        assert asyncio.get_event_loop().time() - start >= 0.05
 
     @pytest.mark.asyncio
     async def test_rate_limiter_with_zero_rate(self) -> None:
         limiter = RateLimiter(max_rate=0)
         start = asyncio.get_event_loop().time()
         await limiter.wait(1000)
-        elapsed = asyncio.get_event_loop().time() - start
-        assert elapsed < 0.1
+        assert asyncio.get_event_loop().time() - start < 0.1
 
     @pytest.mark.asyncio
     async def test_rate_limiter_refills_tokens_over_time(self) -> None:
@@ -129,48 +124,34 @@ class TestRateLimiter:
         await asyncio.sleep(0.5)
         start = asyncio.get_event_loop().time()
         await limiter.wait(400)
-        elapsed = asyncio.get_event_loop().time() - start
-        assert elapsed < 0.1
+        assert asyncio.get_event_loop().time() - start < 0.1
 
 
 class TestBulkCopierInit:
     def test_init_with_required_args(self) -> None:
-        source_store = MagicMock()
-        target_store = MagicMock()
-        migration_repo = MagicMock()
+        source_store, target_store, migration_repo = MagicMock(), MagicMock(), MagicMock()
         copier = BulkCopier(
-            source_store=source_store,
-            target_store=target_store,
-            migration_repo=migration_repo,
+            source_store=source_store, target_store=target_store, migration_repo=migration_repo
         )
-        assert copier._source == source_store
-        assert copier._target == target_store
-        assert copier._migration_repo == migration_repo
-        assert copier._position_mapper is None
-        assert copier.is_cancelled is False
-        assert copier.is_paused is False
+        assert copier._source == source_store and copier._target == target_store
+        assert copier._migration_repo == migration_repo and copier._position_mapper is None
+        assert copier.is_cancelled is False and copier.is_paused is False
 
     def test_init_with_position_mapper(self) -> None:
-        source_store = MagicMock()
-        target_store = MagicMock()
-        migration_repo = MagicMock()
         position_mapper = MagicMock()
         copier = BulkCopier(
-            source_store=source_store,
-            target_store=target_store,
-            migration_repo=migration_repo,
+            source_store=MagicMock(),
+            target_store=MagicMock(),
+            migration_repo=MagicMock(),
             position_mapper=position_mapper,
         )
         assert copier._position_mapper == position_mapper
 
     def test_init_with_tracing_disabled(self) -> None:
-        source_store = MagicMock()
-        target_store = MagicMock()
-        migration_repo = MagicMock()
         copier = BulkCopier(
-            source_store=source_store,
-            target_store=target_store,
-            migration_repo=migration_repo,
+            source_store=MagicMock(),
+            target_store=MagicMock(),
+            migration_repo=MagicMock(),
             enable_tracing=False,
         )
         assert copier._enable_tracing is False
@@ -195,11 +176,9 @@ class TestBulkCopierPauseResumeCancel:
             migration_repo=MagicMock(),
             enable_tracing=False,
         )
-        assert copier.is_paused is False
-        assert copier._pause_event.is_set()
+        assert copier.is_paused is False and copier._pause_event.is_set()
         copier.pause()
-        assert copier.is_paused is True
-        assert not copier._pause_event.is_set()
+        assert copier.is_paused is True and not copier._pause_event.is_set()
 
     def test_resume(self) -> None:
         copier = BulkCopier(
@@ -211,8 +190,7 @@ class TestBulkCopierPauseResumeCancel:
         copier.pause()
         assert copier.is_paused is True
         copier.resume()
-        assert copier.is_paused is False
-        assert copier._pause_event.is_set()
+        assert copier.is_paused is False and copier._pause_event.is_set()
 
 
 class TestBulkCopierWaitIfPaused:
@@ -226,8 +204,7 @@ class TestBulkCopierWaitIfPaused:
         )
         start = asyncio.get_event_loop().time()
         await copier._wait_if_paused()
-        elapsed = asyncio.get_event_loop().time() - start
-        assert elapsed < 0.1
+        assert asyncio.get_event_loop().time() - start < 0.1
 
     @pytest.mark.asyncio
     async def test_wait_if_paused_waits_when_paused(self) -> None:
@@ -246,5 +223,4 @@ class TestBulkCopierWaitIfPaused:
         asyncio.create_task(resume_after_delay())
         start = asyncio.get_event_loop().time()
         await copier._wait_if_paused()
-        elapsed = asyncio.get_event_loop().time() - start
-        assert elapsed >= 0.05
+        assert asyncio.get_event_loop().time() - start >= 0.05

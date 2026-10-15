@@ -34,18 +34,11 @@ class TestAutomaticRollback:
             timestamp=datetime.now(UTC),
         )
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=strict_config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=strict_config
         )
-        assert result.success is False
-        assert result.rolled_back is True
+        assert result.success is False and result.rolled_back is True
         mock_routing_repo.set_migration_state.assert_called_with(
-            tenant_id,
-            TenantMigrationState.DUAL_WRITE,
-            migration_id=migration_id,
+            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id=migration_id
         )
 
     @pytest.mark.asyncio
@@ -62,16 +55,11 @@ class TestAutomaticRollback:
         mock_store = MagicMock()
         mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
-
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is False
+        assert result.success is False and result.rolled_back is True
         assert "health check failed" in result.error_message.lower()
-        assert result.rolled_back is True
 
     @pytest.mark.asyncio
     async def test_rollback_on_routing_update_failure(
@@ -85,13 +73,9 @@ class TestAutomaticRollback:
     ):
         mock_routing_repo.set_routing.side_effect = Exception("Database error")
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is False
-        assert result.rolled_back is True
+        assert result.success is False and result.rolled_back is True
 
     @pytest.mark.asyncio
     async def test_rollback_failure_handled_gracefully(
@@ -114,15 +98,13 @@ class TestAutomaticRollback:
         mock_store = MagicMock()
         mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
-
         call_count = 0
 
         async def failing_set_state(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
-                return
-            raise Exception("Rollback failed")
+            if call_count > 1:
+                raise Exception("Rollback failed")
 
         mock_routing_repo.set_migration_state.side_effect = failing_set_state
         manager = CutoverManager(
@@ -132,13 +114,9 @@ class TestAutomaticRollback:
             enable_tracing=False,
         )
         result = await manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is False
-        assert result.rolled_back is False
+        assert result.success is False and result.rolled_back is False
         mock_router.resume_writes.assert_called_once()
 
 
@@ -156,10 +134,7 @@ class TestWritePauseResume:
         mock_router,
     ):
         await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         mock_router.pause_writes.assert_called_once_with(tenant_id)
 
@@ -174,10 +149,7 @@ class TestWritePauseResume:
         mock_router,
     ):
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         assert result.success is True
         mock_router.resume_writes.assert_called_once_with(tenant_id)
@@ -200,11 +172,7 @@ class TestWritePauseResume:
             timestamp=datetime.now(UTC),
         )
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=strict_config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=strict_config
         )
         assert result.success is False
         mock_router.resume_writes.assert_called_once_with(tenant_id)
@@ -224,28 +192,17 @@ class TestTargetStoreVerification:
         mock_router,
     ):
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         assert result.success is True
         mock_router.get_store.assert_called_with(target_store_id)
 
     @pytest.mark.asyncio
     async def test_cutover_handles_missing_target_store(
-        self,
-        cutover_manager,
-        tenant_id,
-        migration_id,
-        mock_lag_tracker,
-        mock_router,
+        self, cutover_manager, tenant_id, migration_id, mock_lag_tracker, mock_router
     ):
         mock_router.get_store.return_value = None
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id="nonexistent-store",
+            migration_id, tenant_id, mock_lag_tracker, "nonexistent-store"
         )
         assert result.success is True

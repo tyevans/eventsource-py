@@ -21,14 +21,10 @@ class TestReadOperationsRouting:
         mock_routing_repo: AsyncMock,
     ) -> None:
         tenant_id = uuid4()
-        routing = TenantRouting(
-            tenant_id=tenant_id,
-            store_id="dedicated",
-            migration_state=TenantMigrationState.NORMAL,
+        mock_routing_repo.get_routing.return_value = TenantRouting(
+            tenant_id=tenant_id, store_id="dedicated", migration_state=TenantMigrationState.NORMAL
         )
-        mock_routing_repo.get_routing.return_value = routing
-        default_called = False
-        dedicated_called = False
+        default_called, dedicated_called = False, False
 
         def default_read_category(*args, **kwargs):
             nonlocal default_called
@@ -42,18 +38,16 @@ class TestReadOperationsRouting:
 
         mock_default_store.read_category = default_read_category
         mock_dedicated_store.read_category = dedicated_read_category
-
         router = TenantStoreRouter(
             default_store=mock_default_store,
             routing_repo=mock_routing_repo,
             stores={"dedicated": mock_dedicated_store},
             enable_tracing=False,
         )
-
-        options = CategoryReadOptions(tenant_id=tenant_id)
-        async for _ in router.read_category("TestAggregate", options):
+        async for _ in router.read_category(
+            "TestAggregate", CategoryReadOptions(tenant_id=tenant_id)
+        ):
             pass
-
         assert dedicated_called is True
         assert default_called is False
 
@@ -68,10 +62,8 @@ class TestReadOperationsRouting:
             return async_generator_mock([])
 
         mock_default_store.read_category = tracked_read_category
-
         async for _ in router.read_category("TestAggregate"):
             pass
-
         assert read_category_called is True
 
     async def test_event_exists_checks_all_stores(
@@ -80,19 +72,15 @@ class TestReadOperationsRouting:
         mock_dedicated_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        event_id = uuid4()
         mock_default_store.event_exists.return_value = False
         mock_dedicated_store.event_exists.return_value = True
-
         router = TenantStoreRouter(
             default_store=mock_default_store,
             routing_repo=mock_routing_repo,
             stores={"dedicated": mock_dedicated_store},
             enable_tracing=False,
         )
-
-        result = await router.event_exists(event_id)
-        assert result is True
+        assert await router.event_exists(uuid4()) is True
         mock_default_store.event_exists.assert_called_once()
         mock_dedicated_store.event_exists.assert_called_once()
 
@@ -102,19 +90,15 @@ class TestReadOperationsRouting:
         mock_dedicated_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        event_id = uuid4()
         mock_default_store.event_exists.return_value = False
         mock_dedicated_store.event_exists.return_value = False
-
         router = TenantStoreRouter(
             default_store=mock_default_store,
             routing_repo=mock_routing_repo,
             stores={"dedicated": mock_dedicated_store},
             enable_tracing=False,
         )
-
-        result = await router.event_exists(event_id)
-        assert result is False
+        assert await router.event_exists(uuid4()) is False
 
     async def test_get_stream_version(
         self, router: TenantStoreRouter, mock_default_store: MagicMock
@@ -146,30 +130,21 @@ class TestStreamOperationsRouting:
 
         default_store = create_mock_store(store_id="default")
         default_store.read_all = tracked_read_all
-
         router = TenantStoreRouter(
-            default_store=default_store,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
+            default_store=default_store, routing_repo=mock_routing_repo, enable_tracing=False
         )
-
         async for _ in router.read_all():
             pass
-
         assert read_all_called is True
 
     async def test_read_all_routes_to_tenant_store_with_tenant_id(
         self, mock_routing_repo: AsyncMock
     ) -> None:
         tenant_id = uuid4()
-        routing = TenantRouting(
-            tenant_id=tenant_id,
-            store_id="dedicated",
-            migration_state=TenantMigrationState.NORMAL,
+        mock_routing_repo.get_routing.return_value = TenantRouting(
+            tenant_id=tenant_id, store_id="dedicated", migration_state=TenantMigrationState.NORMAL
         )
-        mock_routing_repo.get_routing.return_value = routing
-        default_called = False
-        dedicated_called = False
+        default_called, dedicated_called = False, False
 
         def default_read_all(*args, **kwargs):
             nonlocal default_called
@@ -185,25 +160,20 @@ class TestStreamOperationsRouting:
         dedicated_store = create_mock_store(store_id="dedicated")
         default_store.read_all = default_read_all
         dedicated_store.read_all = dedicated_read_all
-
         router = TenantStoreRouter(
             default_store=default_store,
             routing_repo=mock_routing_repo,
             stores={"dedicated": dedicated_store},
             enable_tracing=False,
         )
-
-        options = FeedReadOptions(tenant_id=tenant_id)
-        async for _ in router.read_all(options=options):
+        async for _ in router.read_all(options=FeedReadOptions(tenant_id=tenant_id)):
             pass
-
         assert dedicated_called is True
         assert default_called is False
 
     async def test_read_stream_routes_to_default_without_tenant(
         self, mock_routing_repo: AsyncMock
     ) -> None:
-        stream = sid()
         read_stream_called = False
 
         def tracked_read_stream(*args, **kwargs):
@@ -213,16 +183,11 @@ class TestStreamOperationsRouting:
 
         default_store = create_mock_store(store_id="default")
         default_store.read_stream = tracked_read_stream
-
         router = TenantStoreRouter(
-            default_store=default_store,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
+            default_store=default_store, routing_repo=mock_routing_repo, enable_tracing=False
         )
-
-        async for _ in router.read_stream(stream):
+        async for _ in router.read_stream(sid()):
             pass
-
         assert read_stream_called is True
 
 
@@ -237,15 +202,10 @@ class TestConcurrentOperations:
             await asyncio.sleep(0.001)
             await router.resume_writes(tenant_id)
 
-        tasks = [asyncio.create_task(pause_resume()) for _ in range(10)]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*[asyncio.create_task(pause_resume()) for _ in range(10)])
         assert router.is_paused(tenant_id) is False
 
     async def test_concurrent_store_registration(self, router: TenantStoreRouter) -> None:
-        def register_stores():
-            for i in range(100):
-                mock_store = create_mock_store(store_id=f"store-{i}")
-                router.register_store(f"store-{i}", mock_store)
-
-        register_stores()
+        for i in range(100):
+            router.register_store(f"store-{i}", create_mock_store(store_id=f"store-{i}"))
         assert len(router.list_stores()) >= 100
