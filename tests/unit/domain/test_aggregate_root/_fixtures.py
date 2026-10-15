@@ -66,64 +66,42 @@ class CounterAggregate(AggregateRoot[CounterState]):
     def _get_initial_state(self) -> CounterState:
         return CounterState(counter_id=self.aggregate_id)
 
+    def _ensure_state(self) -> CounterState:
+        if self._state is None:
+            self._state = self._get_initial_state()
+        return self._state
+
+    def _make_event(self, cls: type[DomainEvent], **kwargs: object) -> DomainEvent:
+        return cls(
+            aggregate_id=self.aggregate_id,
+            aggregate_type=self.aggregate_type,
+            aggregate_version=self.get_next_version(),
+            **kwargs,  # type: ignore[arg-type]
+        )
+
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, CounterIncremented):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(
-                update={"value": self._state.value + event.increment}
-            )
+            state = self._ensure_state()
+            self._state = state.model_copy(update={"value": state.value + event.increment})
         elif isinstance(event, CounterDecremented):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(
-                update={"value": self._state.value - event.decrement}
-            )
+            state = self._ensure_state()
+            self._state = state.model_copy(update={"value": state.value - event.decrement})
         elif isinstance(event, CounterNamed):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(update={"name": event.name})
+            self._state = self._ensure_state().model_copy(update={"name": event.name})
         elif isinstance(event, CounterReset):
             self._state = self._get_initial_state()
 
     def increment(self, amount: int = 1) -> None:
-        self.apply_event(
-            CounterIncremented(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                increment=amount,
-            )
-        )
+        self.apply_event(self._make_event(CounterIncremented, increment=amount))
 
     def decrement(self, amount: int = 1) -> None:
-        self.apply_event(
-            CounterDecremented(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                decrement=amount,
-            )
-        )
+        self.apply_event(self._make_event(CounterDecremented, decrement=amount))
 
     def set_name(self, name: str) -> None:
-        self.apply_event(
-            CounterNamed(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                name=name,
-            )
-        )
+        self.apply_event(self._make_event(CounterNamed, name=name))
 
     def reset(self) -> None:
-        self.apply_event(
-            CounterReset(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-            )
-        )
+        self.apply_event(self._make_event(CounterReset))
 
 
 class OrderAggregate(AggregateRoot[OrderState]):
@@ -132,60 +110,43 @@ class OrderAggregate(AggregateRoot[OrderState]):
     def _get_initial_state(self) -> OrderState:
         return OrderState(order_id=self.aggregate_id)
 
+    def _make_event(self, cls: type[DomainEvent], **kwargs: object) -> DomainEvent:
+        return cls(
+            aggregate_id=self.aggregate_id,
+            aggregate_type=self.aggregate_type,
+            aggregate_version=self.get_next_version(),
+            **kwargs,  # type: ignore[arg-type]
+        )
+
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, OrderCreated):
             self._state = OrderState(
-                order_id=self.aggregate_id,
-                customer_id=event.customer_id,
-                status="created",
+                order_id=self.aggregate_id, customer_id=event.customer_id, status="created"
             )
-        elif isinstance(event, OrderItemAdded):
-            if self._state:
-                self._state = self._state.model_copy(
-                    update={
-                        "items": [*self._state.items, event.item_name],
-                        "total": self._state.total + event.price,
-                    }
-                )
+        elif isinstance(event, OrderItemAdded) and self._state:
+            self._state = self._state.model_copy(
+                update={
+                    "items": [*self._state.items, event.item_name],
+                    "total": self._state.total + event.price,
+                }
+            )
         elif isinstance(event, OrderShipped) and self._state:
             self._state = self._state.model_copy(update={"status": "shipped"})
 
     def create(self, customer_id: UUID) -> None:
         if self.version > 0:
             raise ValueError("Order already exists")
-        self.apply_event(
-            OrderCreated(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                customer_id=customer_id,
-            )
-        )
+        self.apply_event(self._make_event(OrderCreated, customer_id=customer_id))
 
     def add_item(self, item_name: str, price: float) -> None:
         if not self._state or self._state.status == "shipped":
             raise ValueError("Cannot add items to this order")
-        self.apply_event(
-            OrderItemAdded(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                item_name=item_name,
-                price=price,
-            )
-        )
+        self.apply_event(self._make_event(OrderItemAdded, item_name=item_name, price=price))
 
     def ship(self, tracking_number: str) -> None:
         if not self._state or self._state.status != "created":
             raise ValueError("Cannot ship order in current state")
-        self.apply_event(
-            OrderShipped(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                tracking_number=tracking_number,
-            )
-        )
+        self.apply_event(self._make_event(OrderShipped, tracking_number=tracking_number))
 
 
 class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
@@ -194,23 +155,24 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
     def _get_initial_state(self) -> CounterState:
         return CounterState(counter_id=self.aggregate_id)
 
-    @handles(CounterIncremented)
-    def _on_counter_incremented(self, event: CounterIncremented) -> None:
+    def _ensure_state(self) -> CounterState:
         if self._state is None:
             self._state = self._get_initial_state()
-        self._state = self._state.model_copy(update={"value": self._state.value + event.increment})
+        return self._state
+
+    @handles(CounterIncremented)
+    def _on_counter_incremented(self, event: CounterIncremented) -> None:
+        state = self._ensure_state()
+        self._state = state.model_copy(update={"value": state.value + event.increment})
 
     @handles(CounterDecremented)
     def _on_counter_decremented(self, event: CounterDecremented) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-        self._state = self._state.model_copy(update={"value": self._state.value - event.decrement})
+        state = self._ensure_state()
+        self._state = state.model_copy(update={"value": state.value - event.decrement})
 
     @handles(CounterNamed)
     def _on_counter_named(self, event: CounterNamed) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-        self._state = self._state.model_copy(update={"name": event.name})
+        self._state = self._ensure_state().model_copy(update={"name": event.name})
 
     @handles(CounterReset)
     def _on_counter_reset(self, event: CounterReset) -> None:
