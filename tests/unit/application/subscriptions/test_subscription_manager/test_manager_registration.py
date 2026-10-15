@@ -72,13 +72,16 @@ class TestSubscriptionRegistration:
         assert manager.subscription_count == 1
 
     @pytest.mark.asyncio
-    async def test_subscribe_multiple_subscribers(self, manager: SubscriptionManager):
-        """Test subscribing multiple subscribers."""
-        sub1 = await manager.subscribe(OrderProjection())
-        sub2 = await manager.subscribe(CustomerProjection())
+    async def test_subscribe_multiple_subscribers(
+        self, manager: SubscriptionManager, config: SubscriptionConfig
+    ):
+        """Test subscribing multiple subscribers via subscribe() and subscribe_many()."""
+        order = OrderProjection()
+        customer = CustomerProjection()
+        subs = await manager.subscribe_many(order, customer, config=config)
 
-        assert sub1.name == "OrderProjection"
-        assert sub2.name == "CustomerProjection"
+        assert [s.name for s in subs] == ["OrderProjection", "CustomerProjection"]
+        assert all(s.config is config for s in subs)
         assert manager.subscription_count == 2
         assert set(manager.subscription_names) == {"OrderProjection", "CustomerProjection"}
 
@@ -90,15 +93,20 @@ class TestSubscriptionRemoval:
     async def test_unsubscribe_existing(
         self, manager: SubscriptionManager, subscriber: MockSubscriber
     ):
-        """Test unsubscribe removes subscription."""
+        """Test unsubscribe removes subscription by name, Subscription, or EventSubscriber."""
         await manager.subscribe(subscriber)
         assert manager.subscription_count == 1
-
-        result = await manager.unsubscribe("MockSubscriber")
-
-        assert result is True
+        assert await manager.unsubscribe("MockSubscriber") is True
         assert manager.subscription_count == 0
         assert manager.get_subscription("MockSubscriber") is None
+
+        sub = await manager.subscribe(subscriber)
+        assert await manager.unsubscribe(sub) is True
+        assert manager.subscription_count == 0
+
+        await manager.subscribe(subscriber)
+        assert await manager.unsubscribe(subscriber) is True
+        assert manager.subscription_count == 0
 
     @pytest.mark.asyncio
     async def test_unsubscribe_nonexistent(self, manager: SubscriptionManager):
@@ -129,9 +137,11 @@ class TestSubscriptionLookup:
     async def test_get_subscription_existing(
         self, manager: SubscriptionManager, subscriber: MockSubscriber
     ):
-        """Test get_subscription returns existing subscription."""
+        """Test get_subscription returns existing subscription by name, Subscription, or subscriber."""
         expected = await manager.subscribe(subscriber)
         assert manager.get_subscription("MockSubscriber") is expected
+        assert manager.get_subscription(expected) is expected
+        assert manager.get_subscription(subscriber) is expected
 
     @pytest.mark.asyncio
     async def test_get_subscription_nonexistent(self, manager: SubscriptionManager):
@@ -157,12 +167,22 @@ class TestSubscriptionLookup:
         assert set(manager.subscription_names) == {"OrderProjection", "CustomerProjection"}
 
     @pytest.mark.asyncio
-    async def test_registry_bool_and_contains_dunders(self, subscriber: MockSubscriber):
-        """Test SubscriptionRegistry __bool__, contains, and __contains__."""
-        registry = SubscriptionRegistry()
-        assert bool(registry) is True
-        assert len(registry) == 0
+    async def test_manager_and_registry_container_dunders(
+        self, manager: SubscriptionManager, subscriber: MockSubscriber
+    ):
+        """Test SubscriptionManager and SubscriptionRegistry len, bool, in, and iter dunders."""
+        assert bool(manager) is True
+        assert len(manager) == 0
 
+        order = OrderProjection()
+        sub1, sub2 = await manager.subscribe_many(subscriber, order)
+        assert len(manager) == 2
+        assert list(manager) == [sub1, sub2]
+        assert "MockSubscriber" in manager and "Unknown" not in manager
+        assert sub1 in manager and subscriber in manager and CustomerProjection() not in manager
+
+        registry = SubscriptionRegistry()
+        assert bool(registry) is True and len(registry) == 0
         sub = await registry.register(subscriber)
         other_sub = Subscription(
             name="MockSubscriber", config=SubscriptionConfig(), subscriber=OrderProjection()
@@ -171,6 +191,5 @@ class TestSubscriptionLookup:
         assert sub in registry and other_sub not in registry
         assert subscriber in registry and OrderProjection() not in registry
         assert registry.contains("MockSubscriber") is True
-        assert registry.contains(sub) is True
-        assert registry.contains(other_sub) is False
+        assert registry.contains(sub) is True and registry.contains(other_sub) is False
         assert registry.contains(subscriber) is True
