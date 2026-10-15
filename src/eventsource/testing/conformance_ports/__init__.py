@@ -15,9 +15,8 @@ Suites: `AppenderConformance`, `StreamReaderConformance`,
 `ReadModelRepositoryConformance`, `SupportsCloseConformance`,
 `LeaderElectorConformance`.
 
-All port conformance suites live cohesively in `eventsource.testing.conformance_ports`.
-`eventsource.testing.conformance` is retained as a thin compatibility re-export
-for `EventBusConformanceSuite`.
+All port conformance suites live cohesively in `eventsource.testing.conformance_ports`
+and are re-exported from `eventsource.testing`.
 """
 
 from eventsource.testing.conformance_ports.appender import AppenderConformance

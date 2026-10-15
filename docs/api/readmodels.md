@@ -114,7 +114,6 @@ __all__ = [
     "ReadModelError",
     "ReadModelNotFoundError",
     "ReadModelRepository",
-    "ReadModelRepositoryProtocol",
 ]
 ```
 

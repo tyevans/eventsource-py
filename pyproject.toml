@@ -299,7 +299,7 @@ source_modules = [
     "eventsource.adapters.memory.coordination",
     "eventsource.testing.builder",
     "eventsource.testing.assertions",
-    "eventsource.testing.conformance",
+    "eventsource.testing.conformance_ports.bus",
     "eventsource.testing.sync_facade",
     "eventsource.adapters.sync.adapter",
     "eventsource.domain.tenant_context",

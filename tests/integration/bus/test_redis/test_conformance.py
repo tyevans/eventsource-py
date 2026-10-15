@@ -16,7 +16,7 @@ from eventsource import (
     RedisEventBusConfig,
 )
 from eventsource.ports.bus import EventBus
-from eventsource.testing.conformance import EventBusConformanceSuite
+from eventsource.testing.conformance_ports import EventBusConformanceSuite
 from tests.integration.conftest import (
     TestItemCreated,
     skip_if_no_redis_infra,

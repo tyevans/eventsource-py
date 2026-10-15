@@ -1,4 +1,4 @@
-"""Unit and property tests for published_of_type on InMemoryEventBus and RecordingEventBus."""
+"""Unit and property tests for published_of_type on InMemoryEventBus, RecordingEventBus, and InMemoryTestHarness."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.domain.event import DomainEvent
+from eventsource.testing.harness import InMemoryTestHarness
 from eventsource.testing.recording import RecordingEventBus
 
 
@@ -33,14 +34,17 @@ class PaymentReceived(DomainEvent):
 async def test_published_of_type_empty_bus() -> None:
     mem_bus = InMemoryEventBus(enable_tracing=False)
     rec_bus = RecordingEventBus(InMemoryEventBus(enable_tracing=False))
+    harness = InMemoryTestHarness()
 
     assert mem_bus.published_of_type(OrderCreated) == []
     assert rec_bus.published_of_type(OrderCreated) == []
+    assert harness.published_of_type(OrderCreated) == []
 
 
 async def test_published_of_type_filters_and_infers_static_type() -> None:
     mem_bus = InMemoryEventBus(enable_tracing=False)
     rec_bus = RecordingEventBus(mem_bus)
+    harness = InMemoryTestHarness()
 
     created_1 = OrderCreated(aggregate_id=uuid4(), customer_id="c1")
     shipped = OrderShipped(aggregate_id=uuid4(), tracking_number="t1")
@@ -48,49 +52,63 @@ async def test_published_of_type_filters_and_infers_static_type() -> None:
     created_2 = OrderCreated(aggregate_id=uuid4(), customer_id="c2")
 
     await rec_bus.publish([created_1, shipped, payment, created_2])
+    await harness.event_bus.publish([created_1, shipped, payment, created_2])
 
     mem_created: list[OrderCreated] = mem_bus.published_of_type(OrderCreated)
     rec_created: list[OrderCreated] = rec_bus.published_of_type(OrderCreated)
+    har_created: list[OrderCreated] = harness.published_of_type(OrderCreated)
 
     assert mem_created == [created_1, created_2]
     assert rec_created == [created_1, created_2]
+    assert har_created == [created_1, created_2]
     assert [e.customer_id for e in rec_created] == ["c1", "c2"]
 
     mem_shipped: list[OrderShipped] = mem_bus.published_of_type(OrderShipped)
     rec_shipped: list[OrderShipped] = rec_bus.published_of_type(OrderShipped)
+    har_shipped: list[OrderShipped] = harness.published_of_type(OrderShipped)
     assert mem_shipped == [shipped]
     assert rec_shipped == [shipped]
+    assert har_shipped == [shipped]
 
 
 async def test_published_of_type_respects_subclass_hierarchy() -> None:
     mem_bus = InMemoryEventBus(enable_tracing=False)
     rec_bus = RecordingEventBus(mem_bus)
+    harness = InMemoryTestHarness()
 
     created = OrderCreated(aggregate_id=uuid4())
     shipped = OrderShipped(aggregate_id=uuid4())
     payment = PaymentReceived(aggregate_id=uuid4())
 
     await rec_bus.publish([created, payment, shipped])
+    await harness.event_bus.publish([created, payment, shipped])
 
     assert mem_bus.published_of_type(OrderEvent) == [created, shipped]
     assert rec_bus.published_of_type(OrderEvent) == [created, shipped]
+    assert harness.published_of_type(OrderEvent) == [created, shipped]
     assert mem_bus.published_of_type(DomainEvent) == [created, payment, shipped]
     assert rec_bus.published_of_type(DomainEvent) == [created, payment, shipped]
+    assert harness.published_of_type(DomainEvent) == [created, payment, shipped]
 
 
 async def test_clear_published_events_resets_published_of_type() -> None:
     mem_bus = InMemoryEventBus(enable_tracing=False)
     rec_bus = RecordingEventBus(mem_bus)
+    harness = InMemoryTestHarness()
 
     await rec_bus.publish([OrderCreated(aggregate_id=uuid4())])
+    await harness.event_bus.publish([OrderCreated(aggregate_id=uuid4())])
     assert len(mem_bus.published_of_type(OrderCreated)) == 1
     assert len(rec_bus.published_of_type(OrderCreated)) == 1
+    assert len(harness.published_of_type(OrderCreated)) == 1
 
     mem_bus.clear_published_events()
     rec_bus.clear_published_events()
+    harness.clear_published_events()
 
     assert mem_bus.published_of_type(OrderCreated) == []
     assert rec_bus.published_of_type(OrderCreated) == []
+    assert harness.published_of_type(OrderCreated) == []
 
 
 _EVENT_FACTORIES = (
@@ -121,11 +139,16 @@ def test_property_published_of_type_matches_isinstance_in_publish_order(
 
     mem_bus = InMemoryEventBus(enable_tracing=False)
     rec_bus = RecordingEventBus(mem_bus)
+    harness = InMemoryTestHarness()
 
     asyncio.run(rec_bus.publish(events))
+    asyncio.run(harness.event_bus.publish(events))
 
     expected_mem = [e for e in mem_bus.published_events if isinstance(e, target_cls)]
     expected_rec = [e for e in rec_bus.published_events if isinstance(e, target_cls)]
+    expected_har = [e for e in harness.published_events if isinstance(e, target_cls)]
 
     assert mem_bus.published_of_type(target_cls) == expected_mem
     assert rec_bus.published_of_type(target_cls) == expected_rec
+    assert harness.published_of_type(target_cls) == expected_har
+    assert harness.get_events_of_type(target_cls) == expected_har

@@ -20,8 +20,7 @@ The package is organized into six source modules, plus a separate
 | `eventsource.testing.assertions` | `EventAssertions` |
 | `eventsource.testing.recording` | `RecordingEventBus` |
 | `eventsource.testing.bdd` | `given_events`, `when_command`, `then_event_published`, `then_no_events_published`, `then_event_sequence`, `then_event_count`, `DeciderScenario` |
-| `eventsource.testing.conformance` | `EventBusConformanceSuite` |
-| `eventsource.testing.conformance_ports` | `AppenderConformance`, `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`, `SnapshotConformance`, `ProjectionCheckpointsConformance`, `SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`, `DLQRepositoryConformance` |
+| `eventsource.testing.conformance_ports` | `AppenderConformance`, `StreamReaderConformance`, `EventLookupConformance`, `GlobalFeedConformance`, `CategoryQueryConformance`, `EventBusConformanceSuite`, `SnapshotConformance`, `ProjectionCheckpointsConformance`, `SubscriptionPositionsConformance`, `CheckpointRepositoryConformance`, `DLQRepositoryConformance` |
 
 The twelve names from the first six modules are re-exported from
 `eventsource.testing` itself and are the whole of its `__all__`.
@@ -154,7 +153,7 @@ Submodule imports work identically and are useful when you want only one piece:
 
 ```python
 from eventsource.testing.builder import EventBuilder
-from eventsource.testing.conformance import EventBusConformanceSuite
+from eventsource.testing.conformance_ports import EventBusConformanceSuite
 ```
 
 Store port conformance suites are not part of the `eventsource.testing` root

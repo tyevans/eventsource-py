@@ -16,7 +16,7 @@ import pytest
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.domain.event import DomainEvent
 from eventsource.ports.bus import EventBus
-from eventsource.testing.conformance import EventBusConformanceSuite
+from eventsource.testing.conformance_ports import EventBusConformanceSuite
 
 
 # Test event for conformance testing

@@ -33,9 +33,8 @@ Kafka implementations sit behind them and are swappable.
 `docs/core-surface.md` records that boundary module by module. It is also why
 the in-memory backends are not toys but first-class implementations of the same
 ports -- the ones your unit tests run against, and the ones the conformance
-suites in `eventsource.testing.conformance_ports` (stores) and
-`eventsource.testing.conformance` (the bus) hold to the same contract as their
-database-backed siblings.
+suites in `eventsource.testing.conformance_ports` (stores and the bus) hold to
+the same contract as their database-backed siblings.
 
 This document explains how those pieces fit and why they are divided where they
 are. It moves outward from the durable core -- events, aggregates, the store --
