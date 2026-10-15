@@ -26,58 +26,45 @@ pytestmark = [
 ]
 
 
+def _make_batch(prefix: str, count: int, *, fmt: str = "") -> list[DomainEvent]:
+    return [
+        TestItemCreated(
+            aggregate_id=uuid4(),
+            aggregate_version=1,
+            name=f"{prefix} {format(i, fmt)}" if fmt else f"{prefix} {i}",
+            quantity=i % 100 if count == 500 else i,
+        )
+        for i in range(count)
+    ]
+
+
 class TestAdvancedBatchPublishing:
     """Tests for batch publishing functionality."""
 
     @pytest.mark.benchmark
     async def test_large_batch_publish_performance(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
-        """Test publishing a large batch of events completes efficiently."""
         batch_size = 500
-        events: list[DomainEvent] = [
-            TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Large Batch Item {i}",
-                quantity=i % 100,
-            )
-            for i in range(batch_size)
-        ]
+        events = _make_batch("Large Batch Item", batch_size)
 
         start_time = datetime.now(UTC)
         result = await rabbitmq_event_bus.publish_batch(events)
-        end_time = datetime.now(UTC)
+        duration = (datetime.now(UTC) - start_time).total_seconds()
 
-        duration = (end_time - start_time).total_seconds()
         assert result["total"] == batch_size
         assert result["published"] == batch_size
         assert result["failed"] == 0
         assert result["chunks"] > 0
         assert duration < 30.0, f"Batch took {duration}s, expected < 30s"
-
-        throughput = batch_size / duration
-        print(f"Batch publish: {batch_size} events in {duration:.2f}s ({throughput:.1f} events/s)")
-
         assert rabbitmq_event_bus.stats.batch_publishes >= 1
         assert rabbitmq_event_bus.stats.batch_events_published >= batch_size
 
     async def test_batch_publish_with_order_preservation(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
-        """Test batch publishing with order preservation enabled."""
         batch_size = 50
-        events: list[DomainEvent] = [
-            TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Ordered Item {i:04d}",
-                quantity=i,
-            )
-            for i in range(batch_size)
-        ]
+        events = _make_batch("Ordered Item", batch_size, fmt="04d")
 
         result = await rabbitmq_event_bus.publish_batch(events, preserve_order=True)
         assert result["total"] == batch_size
@@ -86,46 +73,24 @@ class TestAdvancedBatchPublishing:
         assert rabbitmq_event_bus.stats.events_published >= batch_size
 
     async def test_batch_publish_concurrent_mode(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
-        """Test batch publishing in concurrent mode (default)."""
         batch_size = 100
-        events: list[DomainEvent] = [
-            TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Concurrent Item {i}",
-                quantity=i,
-            )
-            for i in range(batch_size)
-        ]
+        events = _make_batch("Concurrent Item", batch_size)
 
-        start_time = datetime.now(UTC)
         result = await rabbitmq_event_bus.publish_batch(events, preserve_order=False)
-        concurrent_duration = (datetime.now(UTC) - start_time).total_seconds()
-
         assert result["total"] == batch_size
         assert result["published"] == batch_size
         assert result["failed"] == 0
-        print(f"Concurrent batch: {batch_size} events in {concurrent_duration:.2f}s")
 
-    async def test_batch_publish_empty_batch(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
-        """Test batch publishing with empty list returns immediately."""
+    async def test_batch_publish_empty_batch(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         result = await rabbitmq_event_bus.publish_batch([])
         assert result["total"] == 0
         assert result["published"] == 0
         assert result["failed"] == 0
         assert result["chunks"] == 0
 
-    async def test_batch_publish_single_event(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
-        """Test batch publishing with a single event works correctly."""
+    async def test_batch_publish_single_event(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         event = TestItemCreated(
             aggregate_id=uuid4(),
             aggregate_version=1,
@@ -138,10 +103,8 @@ class TestAdvancedBatchPublishing:
         assert result["failed"] == 0
 
     async def test_batch_publish_verify_all_received(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
-        """Test that all batch-published events are received by consumer."""
         batch_size = 50
         received_events: list[DomainEvent] = []
         all_received = asyncio.Event()
@@ -155,15 +118,7 @@ class TestAdvancedBatchPublishing:
         consume_task = asyncio.create_task(rabbitmq_event_bus.start_consuming())
         await asyncio.sleep(0.5)
 
-        events: list[DomainEvent] = [
-            TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Batch Receive Test {i}",
-                quantity=i,
-            )
-            for i in range(batch_size)
-        ]
+        events = _make_batch("Batch Receive Test", batch_size)
         published_ids = {e.event_id for e in events}
         result = await rabbitmq_event_bus.publish_batch(events)
 
@@ -179,15 +134,10 @@ class TestAdvancedBatchPublishing:
         assert len(received_events) == batch_size, (
             f"Expected {batch_size} events, received {len(received_events)}"
         )
-        received_ids = {e.event_id for e in received_events}
-        assert received_ids == published_ids, "Mismatch between published and received event IDs"
+        assert {e.event_id for e in received_events} == published_ids
         assert result["published"] == batch_size
 
-    async def test_batch_chunking_behavior(
-        self,
-        rabbitmq_connection_url: str,
-    ) -> None:
-        """Test that large batches are chunked according to config."""
+    async def test_batch_chunking_behavior(self, rabbitmq_connection_url: str) -> None:
         unique_suffix = uuid4().hex[:8]
         registry = EventRegistry()
         registry.register(TestItemCreated)
@@ -206,16 +156,7 @@ class TestAdvancedBatchPublishing:
         try:
             await bus.connect()
             batch_size = 55
-            events: list[DomainEvent] = [
-                TestItemCreated(
-                    aggregate_id=uuid4(),
-                    aggregate_version=1,
-                    name=f"Chunk Test Item {i}",
-                    quantity=i,
-                )
-                for i in range(batch_size)
-            ]
-
+            events = _make_batch("Chunk Test Item", batch_size)
             result = await bus.publish_batch(events)
             assert result["total"] == batch_size
             assert result["published"] == batch_size

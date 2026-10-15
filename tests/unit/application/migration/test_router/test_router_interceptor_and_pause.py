@@ -15,8 +15,6 @@ from ._fixtures import TestEvent
 
 
 class TestWritePausedError:
-    """Tests for WritePausedError."""
-
     def test_error_attributes(self) -> None:
         tenant_id = uuid4()
         error = WritePausedError(tenant_id=tenant_id, timeout=5.0)
@@ -31,15 +29,12 @@ class TestWritePausedError:
 
 
 class TestDualWriteInterceptorManagement:
-    """Tests for dual-write interceptor management."""
-
     def test_set_dual_write_interceptor(
         self, router: TenantStoreRouter, mock_dedicated_store: MagicMock
     ) -> None:
         tenant_id = uuid4()
         router.set_dual_write_interceptor(tenant_id, mock_dedicated_store)
-        assert tenant_id in router._dual_write_interceptors
-        assert router._dual_write_interceptors[tenant_id] == mock_dedicated_store
+        assert router._dual_write_interceptors.get(tenant_id) == mock_dedicated_store
 
     def test_clear_dual_write_interceptor(
         self, router: TenantStoreRouter, mock_dedicated_store: MagicMock
@@ -62,8 +57,6 @@ class TestDualWriteInterceptorManagement:
 
 
 class TestWritePauseManagement:
-    """Tests for write pause management."""
-
     async def test_pause_writes(self, router: TenantStoreRouter) -> None:
         tenant_id = uuid4()
         assert await router.pause_writes(tenant_id) is True
@@ -106,8 +99,6 @@ class TestWritePauseManagement:
 
 
 class TestWaitIfPaused:
-    """Tests for _wait_if_paused method."""
-
     async def test_wait_if_paused_returns_immediately_when_not_paused(
         self, router: TenantStoreRouter
     ) -> None:
@@ -135,8 +126,6 @@ class TestWaitIfPaused:
 
 
 class TestMigrationStateRouting:
-    """Tests for routing behavior across all migration states."""
-
     @pytest.mark.parametrize(
         "state,expected_store_key",
         [
@@ -153,8 +142,7 @@ class TestMigrationStateRouting:
         state: TenantMigrationState,
         expected_store_key: str,
     ) -> None:
-        tenant_id = uuid4()
-        aggregate_id = uuid4()
+        tenant_id, aggregate_id = uuid4(), uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         stores = {"source": mock_default_store, "target": mock_dedicated_store}
@@ -178,8 +166,7 @@ class TestMigrationStateRouting:
     async def test_cutover_paused_state_raises(
         self, mock_default_store: MagicMock, mock_routing_repo: AsyncMock
     ) -> None:
-        tenant_id = uuid4()
-        aggregate_id = uuid4()
+        tenant_id, aggregate_id = uuid4(), uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 
@@ -200,13 +187,10 @@ class TestMigrationStateRouting:
 
 
 class TestDualWriteStateWithoutInterceptor:
-    """Tests for DUAL_WRITE state when interceptor is not set."""
-
     async def test_dual_write_falls_back_to_source_without_interceptor(
         self, mock_default_store: MagicMock, mock_routing_repo: AsyncMock
     ) -> None:
-        tenant_id = uuid4()
-        aggregate_id = uuid4()
+        tenant_id, aggregate_id = uuid4(), uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
 

@@ -157,68 +157,51 @@ from .test_rabbitmq_topology_queue import TestRabbitMQQueueBinding, TestRabbitMQ
 
 # fmt: off
 __all__ = [  # pragma: allowlist secret
-    "ConsumerTestEvent", "PublishTestEvent",  # pragma: allowlist secret
-    "SerializationOrderCreatedEvent", "SerializationTestEvent",  # pragma: allowlist secret
-    "TestBatchPublishError", "TestBatchPublishingConfig",  # pragma: allowlist secret
-    "TestBatchPublishingStats", "TestBatchPublishingStatsDict",  # pragma: allowlist secret
-    "TestBindEventType", "TestBindRoutingKey", "TestCalculateRetryDelay",  # pragma: allowlist secret
-    "TestDLQMessageDataclass", "TestDLQMessageExport",  # pragma: allowlist secret
-    "TestDirectExchangeBinding", "TestDirectExchangeConfig",  # pragma: allowlist secret
-    "TestDirectExchangeRoutingKeyGeneration",  # pragma: allowlist secret
-    "TestDirectExchangeWorkQueuePattern", "TestDrainInFlight",  # pragma: allowlist secret
-    "TestFanoutExchangeBroadcastBehavior", "TestFanoutExchangeLogging",  # pragma: allowlist secret
-    "TestFanoutExchangeMultipleConsumerGroups",  # pragma: allowlist secret
-    "TestFanoutExchangeUseCases", "TestFanoutExchangeWithDLQ",  # pragma: allowlist secret
-    "TestForceDisconnect", "TestGetDLQMessageCount", "TestGetDLQMessages",  # pragma: allowlist secret
-    "TestGetQueueInfo", "TestGetStatsDictMethod", "TestGetStatsMethod",  # pragma: allowlist secret
-    "TestGracefulShutdown", "TestGracefulShutdownContextManager",  # pragma: allowlist secret
-    "TestHandleFailedMessage", "TestHealthCheck", "TestHealthCheckResult",  # pragma: allowlist secret
-    "TestOpenTelemetryConsumerTracing", "TestOpenTelemetryTracing",  # pragma: allowlist secret
-    "TestOpenTelemetryGracefulDegradation", "TestProcessMessageWithRetry",  # pragma: allowlist secret
-    "TestPublishBatchMethod", "TestPublishMethodBatchOptimization",  # pragma: allowlist secret
+    "ConsumerTestEvent", "PublishTestEvent", "SerializationOrderCreatedEvent",  # pragma: allowlist secret
+    "SerializationTestEvent", "TestBatchPublishError", "TestBatchPublishingConfig",  # pragma: allowlist secret
+    "TestBatchPublishingStats", "TestBatchPublishingStatsDict", "TestBindEventType",  # pragma: allowlist secret
+    "TestBindRoutingKey", "TestCalculateRetryDelay", "TestDLQMessageDataclass",  # pragma: allowlist secret
+    "TestDLQMessageExport", "TestDirectExchangeBinding", "TestDirectExchangeConfig",  # pragma: allowlist secret
+    "TestDirectExchangeRoutingKeyGeneration", "TestDirectExchangeWorkQueuePattern",  # pragma: allowlist secret
+    "TestDrainInFlight", "TestFanoutExchangeBroadcastBehavior", "TestFanoutExchangeLogging",  # pragma: allowlist secret
+    "TestFanoutExchangeMultipleConsumerGroups", "TestFanoutExchangeUseCases",  # pragma: allowlist secret
+    "TestFanoutExchangeWithDLQ", "TestForceDisconnect", "TestGetDLQMessageCount",  # pragma: allowlist secret
+    "TestGetDLQMessages", "TestGetQueueInfo", "TestGetStatsDictMethod", "TestGetStatsMethod",  # pragma: allowlist secret
+    "TestGracefulShutdown", "TestGracefulShutdownContextManager", "TestHandleFailedMessage",  # pragma: allowlist secret
+    "TestHealthCheck", "TestHealthCheckResult", "TestOpenTelemetryConsumerTracing",  # pragma: allowlist secret
+    "TestOpenTelemetryGracefulDegradation", "TestOpenTelemetryTracing",  # pragma: allowlist secret
+    "TestProcessMessageWithRetry", "TestPublishBatchMethod", "TestPublishMethodBatchOptimization",  # pragma: allowlist secret
     "TestPurgeDLQ", "TestQueueInfo", "TestRabbitMQAvailability",  # pragma: allowlist secret
-    "TestRabbitMQChannelCloseCallback", "TestRabbitMQConfigValidation",  # pragma: allowlist secret
-    "TestRabbitMQConfigImmutabilityAfterInit",  # pragma: allowlist secret
-    "TestRabbitMQConnectWithReconnectionCallbacks",  # pragma: allowlist secret
-    "TestRabbitMQConnectionCloseCallback",  # pragma: allowlist secret
-    "TestRabbitMQConnectionStateTransitions",  # pragma: allowlist secret
-    "TestRabbitMQConnectionWithTopology",  # pragma: allowlist secret
-    "TestRabbitMQConsumerLoopErrorHandling",  # pragma: allowlist secret
-    "TestRabbitMQConsumerStatistics", "TestRabbitMQCreateMessage",  # pragma: allowlist secret
-    "TestRabbitMQDLQConfigOptions", "TestRabbitMQDLQDeclaration",  # pragma: allowlist secret
-    "TestRabbitMQDLQHelperEdgeCases", "TestRabbitMQDLQHelperMethods",  # pragma: allowlist secret
-    "TestRabbitMQDLQQueueDeclarationWithOptions",  # pragma: allowlist secret
-    "TestRabbitMQDeclarationErrors", "TestRabbitMQDispatchEvent",  # pragma: allowlist secret
-    "TestRabbitMQEventBusConfig", "TestRabbitMQEventBusConfigEdgeCases",  # pragma: allowlist secret
-    "TestRabbitMQEventBusConnection", "TestRabbitMQEventBusInit",  # pragma: allowlist secret
-    "TestRabbitMQEventBusContextManager",  # pragma: allowlist secret
-    "TestRabbitMQEventBusInterfaceCompliance",  # pragma: allowlist secret
-    "TestRabbitMQEventBusProperties", "TestRabbitMQEventBusStats",  # pragma: allowlist secret
-    "TestRabbitMQEventBusUrlSanitization",  # pragma: allowlist secret
+    "TestRabbitMQChannelCloseCallback", "TestRabbitMQConfigImmutabilityAfterInit",  # pragma: allowlist secret
+    "TestRabbitMQConfigValidation", "TestRabbitMQConnectWithReconnectionCallbacks",  # pragma: allowlist secret
+    "TestRabbitMQConnectionCloseCallback", "TestRabbitMQConnectionStateTransitions",  # pragma: allowlist secret
+    "TestRabbitMQConnectionWithTopology", "TestRabbitMQConsumerLoopErrorHandling",  # pragma: allowlist secret
+    "TestRabbitMQConsumerStatistics", "TestRabbitMQCreateMessage", "TestRabbitMQDLQConfigOptions",  # pragma: allowlist secret
+    "TestRabbitMQDLQDeclaration", "TestRabbitMQDLQHelperEdgeCases", "TestRabbitMQDLQHelperMethods",  # pragma: allowlist secret
+    "TestRabbitMQDLQQueueDeclarationWithOptions", "TestRabbitMQDeclarationErrors",  # pragma: allowlist secret
+    "TestRabbitMQDispatchEvent", "TestRabbitMQEventBusConfig",  # pragma: allowlist secret
+    "TestRabbitMQEventBusConfigEdgeCases", "TestRabbitMQEventBusConnection",  # pragma: allowlist secret
+    "TestRabbitMQEventBusContextManager", "TestRabbitMQEventBusInit",  # pragma: allowlist secret
+    "TestRabbitMQEventBusInterfaceCompliance", "TestRabbitMQEventBusProperties",  # pragma: allowlist secret
+    "TestRabbitMQEventBusStats", "TestRabbitMQEventBusUrlSanitization",  # pragma: allowlist secret
     "TestRabbitMQEventDeserialization", "TestRabbitMQEventSerialization",  # pragma: allowlist secret
     "TestRabbitMQExchangeDeclaration", "TestRabbitMQGetHandlerName",  # pragma: allowlist secret
-    "TestRabbitMQGetHandlerNameEdgeCases",  # pragma: allowlist secret
-    "TestRabbitMQHandlerNormalization",  # pragma: allowlist secret
-    "TestRabbitMQHandlerNormalizationEdgeCases",  # pragma: allowlist secret
-    "TestRabbitMQLoggingIntegration", "TestRabbitMQModuleAllExports",  # pragma: allowlist secret
-    "TestRabbitMQProcessMessage",  # pragma: allowlist secret
+    "TestRabbitMQGetHandlerNameEdgeCases", "TestRabbitMQHandlerNormalization",  # pragma: allowlist secret
+    "TestRabbitMQHandlerNormalizationEdgeCases", "TestRabbitMQLoggingIntegration",  # pragma: allowlist secret
+    "TestRabbitMQModuleAllExports", "TestRabbitMQProcessMessage",  # pragma: allowlist secret
     "TestRabbitMQProcessMessageWithDLQTracking", "TestRabbitMQPublish",  # pragma: allowlist secret
     "TestRabbitMQPublishMultipleEvents", "TestRabbitMQPublishSingle",  # pragma: allowlist secret
-    "TestRabbitMQPublishWithDifferentEventTypes",  # pragma: allowlist secret
-    "TestRabbitMQQueueBinding", "TestRabbitMQQueueDeclaration",  # pragma: allowlist secret
-    "TestRabbitMQReconnectionCallbacks", "TestRabbitMQRoutingKey",  # pragma: allowlist secret
-    "TestRabbitMQReconnectionStateTracking",  # pragma: allowlist secret
+    "TestRabbitMQPublishWithDifferentEventTypes", "TestRabbitMQQueueBinding",  # pragma: allowlist secret
+    "TestRabbitMQQueueDeclaration", "TestRabbitMQReconnectionCallbacks",  # pragma: allowlist secret
+    "TestRabbitMQReconnectionStateTracking", "TestRabbitMQRoutingKey",  # pragma: allowlist secret
     "TestRabbitMQSerializationRoundTrip", "TestRabbitMQStartConsuming",  # pragma: allowlist secret
-    "TestRabbitMQStartConsumingInBackground",  # pragma: allowlist secret
-    "TestRabbitMQStatsResetBehavior", "TestRabbitMQStopConsuming",  # pragma: allowlist secret
-    "TestRabbitMQStructuredLogging", "TestRabbitMQSubscriptionManagement",  # pragma: allowlist secret
-    "TestRabbitMQSubscriptionIntegration", "TestReplayDLQMessage",  # pragma: allowlist secret
-    "TestReplayMessage", "TestRepublishForRetry", "TestResetStatsMethod",  # pragma: allowlist secret
-    "TestRetryConfiguration", "TestSendToDLQ", "TestShutdownError",  # pragma: allowlist secret
-    "TestShutdownConfigDocumentation", "TestShutdownLogging",  # pragma: allowlist secret
-    "TestStatisticsIntegration", "TestStatisticsTimingFields",  # pragma: allowlist secret
-    "TestStopConsumingGracefully", "TestTLSSupport",  # pragma: allowlist secret
-    "TestTLSSupportConnection",  # pragma: allowlist secret
-    "test_retry_delay_comes_from_the_shared_policy",  # pragma: allowlist secret
+    "TestRabbitMQStartConsumingInBackground", "TestRabbitMQStatsResetBehavior",  # pragma: allowlist secret
+    "TestRabbitMQStopConsuming", "TestRabbitMQStructuredLogging",  # pragma: allowlist secret
+    "TestRabbitMQSubscriptionIntegration", "TestRabbitMQSubscriptionManagement",  # pragma: allowlist secret
+    "TestReplayDLQMessage", "TestReplayMessage", "TestRepublishForRetry", "TestResetStatsMethod",  # pragma: allowlist secret
+    "TestRetryConfiguration", "TestSendToDLQ", "TestShutdownConfigDocumentation",  # pragma: allowlist secret
+    "TestShutdownError", "TestShutdownLogging", "TestStatisticsIntegration",  # pragma: allowlist secret
+    "TestStatisticsTimingFields", "TestStopConsumingGracefully", "TestTLSSupport",  # pragma: allowlist secret
+    "TestTLSSupportConnection", "test_retry_delay_comes_from_the_shared_policy",  # pragma: allowlist secret
 ]
 # fmt: on
