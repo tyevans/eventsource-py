@@ -6,19 +6,23 @@ domain behavior through public frontdoors without database or broker setup:
 - **`Scenario` / `DeciderScenario`** for synchronous, zero-I/O Given-When-Then
   testing of `DeciderAggregate`s and pure `(decide, evolve, initial_state)`
   triples, including `.then_event_types(*EventClasses)`, `.then_events(*EventClasses)`,
-  `.then_event(EventCls, **expected_fields)`, and `.then_no_events()`.
+  `.then_event(EventCls, **expected_fields)`, `.then_no_events()`,
+  `scenario.assertions`, and `len(scenario)`.
 - **`EventBuilder`** with `EventBuilder(EventCls, **fields)` and
   `EventBuilder.build_many(count, *, start_version=None)` for constructing
   individual test events and auto-versioned event sequences with minimal boilerplate.
 - **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
   `await harness.append_events(*events, expected_version=None)`,
   `harness.snapshot_store`, and `harness.assertions` (`EventAssertions` wrapper
-  over `harness.published_events`) for pre-wired repository and bus testing.
+  over `harness.published_events`, including `assert_first_event` and
+  `assert_last_event`) for pre-wired repository and bus testing.
 - **`RecordingEventBus.assertions`** (`bus.assertions.assert_event_published(...)`,
-  `bus.assertions.assert_event_with_fields(...)`, `bus.assertions.assert_event_count(...)`)
-  and **`published_of_type(EventType)`** on `InMemoryTestHarness`, `InMemoryEventBus`,
-  and `RecordingEventBus` for expressive assertions and type-safe inspection of
-  published domain events.
+  `bus.assertions.assert_first_event(...)`, `bus.assertions.assert_last_event(...)`,
+  `bus.assertions.assert_event_with_fields(...)`, `bus.assertions.assert_event_count(...)`),
+  **`published_of_type(EventType)`** on `InMemoryTestHarness`, `InMemoryEventBus`,
+  and `RecordingEventBus`, **`len(bus)` / `bus.clear()`** on `InMemoryEventBus`,
+  and isolated **`EventRegistry([OrderCreated, OrderShipped])`** instances for
+  expressive assertions and type-safe inspection of domain events.
 
 For an introductory walkthrough of testing in `eventsource-py`, see
 [Tutorial 8: Testing](../tutorials/08-testing.md) and the
@@ -170,13 +174,16 @@ def test_then_event_with_fields_and_state() -> None:
 ```
 
 When `when_all(...)` emits multiple events, chain `.then_event(...)` calls to
-inspect specific events and their payloads without breaking the fluent pipeline:
+inspect specific events and their payloads without breaking the fluent pipeline,
+or use `len(scenario)` and `scenario.assertions` (an `EventAssertions` wrapper
+over `scenario.events` supporting `.assert_first_event(EventCls, **fields)`,
+`.assert_last_event(EventCls, **fields)`, `.assert_event_sequence(...)`, etc.):
 
 ```python
 def test_chained_then_event_assertions() -> None:
     account_id = uuid4()
 
-    (
+    scenario = (
         Scenario(Account)
         .when_all(
             OpenAccount(account_id=account_id, owner="alice"),
@@ -186,6 +193,10 @@ def test_chained_then_event_assertions() -> None:
         .then_event(MoneyDeposited, amount=40.0)
         .then_state(lambda state: state.balance == 40.0 and state.is_open)
     )
+
+    assert len(scenario) == 2
+    scenario.assertions.assert_first_event(AccountOpened, owner="alice")
+    scenario.assertions.assert_last_event(MoneyDeposited, amount=40.0)
 ```
 
 ### Asserting no-op commands with `then_no_events`
@@ -336,12 +347,15 @@ published domain events:
   `harness.published_events` supporting `len(harness.assertions)` and expressive
   helpers (`assert_event_published`, `assert_no_event_published`,
   `assert_event_count`, `assert_event_type_count`, `assert_event_sequence`,
-  `assert_event_with_fields`, `assert_event_for_aggregate`,
-  `assert_events_for_aggregate`, `for_aggregate`, and
-  `assert_no_events_published`). Use `harness.assertions.for_aggregate(aggregate_id)`
-  to obtain a scoped `EventAssertions` view filtered to a single aggregate ID
-  (supporting `.assert_event_sequence([...])`, `.assert_event_count(...)`,
-  `len(...)`, etc.), or `harness.assertions.assert_events_for_aggregate(aggregate_id, expected_count=...)`
+  `assert_first_event`, `assert_last_event`, `assert_event_with_fields`,
+  `assert_event_for_aggregate`, `assert_events_for_aggregate`, `for_aggregate`,
+  and `assert_no_events_published`). Use `harness.assertions.assert_first_event(EventCls, **fields)`
+  and `harness.assertions.assert_last_event(EventCls, **fields)` to assert and
+  return the first or last published event (optionally matching field values),
+  `harness.assertions.for_aggregate(aggregate_id)` to obtain a scoped
+  `EventAssertions` view filtered to a single aggregate ID (supporting
+  `.assert_event_sequence([...])`, `.assert_event_count(...)`, `len(...)`, etc.),
+  or `harness.assertions.assert_events_for_aggregate(aggregate_id, expected_count=...)`
   to assert and return the list of events published for that aggregate.
 
 ```python
@@ -375,11 +389,20 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     harness.assertions.assert_event_count(2)
     harness.assertions.assert_event_type_count(OrderShipped, 1)
     harness.assertions.assert_event_sequence([OrderCreated, OrderShipped])
-    shipped = harness.assertions.assert_event_with_fields(
+    created = harness.assertions.assert_first_event(
+        OrderCreated,
+        customer_id=customer_id,
+    )
+    assert created.aggregate_id == order_id
+    shipped = harness.assertions.assert_last_event(
         OrderShipped,
         tracking_number="TRACK-123",
     )
     assert shipped.aggregate_id == order_id
+    harness.assertions.assert_event_with_fields(
+        OrderShipped,
+        tracking_number="TRACK-123",
+    )
 
     # Scoped aggregate assertions via for_aggregate() and assert_events_for_aggregate()
     order_assertions = harness.assertions.for_aggregate(order_id)
@@ -558,6 +581,7 @@ async def test_event_bus_published_of_type() -> None:
         )
 
     # Narrowed to list[MoneyDeposited] on both InMemoryEventBus and RecordingEventBus
+    assert len(bus) == 2
     deposits = bus.published_of_type(MoneyDeposited)
     assert len(deposits) == 1
     assert deposits[0].amount == 50.0
@@ -565,11 +589,44 @@ async def test_event_bus_published_of_type() -> None:
     recorded_opened = recording_bus.published_of_type(AccountOpened)
     assert len(recorded_opened) == 1
     assert recorded_opened[0].owner == "alice"
+
+    bus.clear()
+    assert len(bus) == 0
 ```
 
-Use `harness.clear_published_events()`, `bus.clear_published_events()`, or
-`recording_bus.clear_published_events()` between phases of a test when you want
+Use `harness.clear_published_events()`, `bus.clear()`, `bus.clear_published_events()`,
+or `recording_bus.clear_published_events()` between phases of a test when you want
 to reset the recorded publication history. When using the functional BDD helpers
 from `eventsource.testing.bdd`, pass `event_type=...` to
 `then_event_count(harness, count, event_type=MoneyDeposited)` to assert the
 count of a specific event type rather than the total event count.
+
+## Isolated event registries in tests with `EventRegistry`
+
+When testing custom event buses, serializers, or event stores with an isolated
+`EventRegistry` (instead of mutating the module-level `default_registry`), you
+can pre-populate the registry directly at construction time via
+`EventRegistry([OrderCreated, OrderShipped])` or register multiple event classes
+in one call with `registry.register_all(OrderCreated, OrderShipped)`. Use the
+`in` operator with either an event class (`OrderCreated in registry`) or an
+event type name (`"OrderCreated" in registry`) to verify registration:
+
+```python
+from eventsource import EventRegistry, InMemoryEventBus
+
+
+def test_isolated_event_registry() -> None:
+    # Seed initial event classes directly in EventRegistry(...)
+    registry = EventRegistry([OrderCreated, OrderShipped])
+    assert len(registry) == 2
+    assert OrderCreated in registry
+    assert OrderShipped in registry
+
+    # Or register multiple event classes in a single call
+    extra_registry = EventRegistry()
+    extra_registry.register_all(OrderCreated, OrderShipped)
+    assert OrderCreated in extra_registry
+
+    bus = InMemoryEventBus(event_registry=registry, enable_tracing=False)
+    assert len(bus) == 0
+```
