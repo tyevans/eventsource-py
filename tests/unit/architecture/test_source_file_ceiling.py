@@ -2,8 +2,8 @@
 
 Locks in module factoring gains (ADR-0002) by verifying that every Python
 source file under ``src/eventsource/`` contains strictly fewer than
-``MAX_SRC_LINES`` (325) lines, and every Python file under ``tests/`` and
-``examples/`` contains strictly fewer than ``MAX_TEST_EXAMPLE_LINES`` (345) lines.
+``MAX_SRC_LINES`` (315) lines, and every Python file under ``tests/`` and
+``examples/`` contains strictly fewer than ``MAX_TEST_EXAMPLE_LINES`` (335) lines.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 
 import eventsource
 
-MAX_SRC_LINES = 325
-MAX_TEST_EXAMPLE_LINES = 345
+MAX_SRC_LINES = 315
+MAX_TEST_EXAMPLE_LINES = 335
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_EVENTSOURCE_DIR = Path(eventsource.__file__).resolve().parent
@@ -55,8 +55,8 @@ def format_violation_report(
     return "\n".join(lines)
 
 
-def test_source_files_strictly_below_325_lines() -> None:
-    """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< 325`` lines."""
+def test_source_files_strictly_below_315_lines() -> None:
+    """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< 315`` lines."""
     py_files = list(SRC_EVENTSOURCE_DIR.rglob("*.py"))
     assert py_files, f"Expected Python files under {SRC_EVENTSOURCE_DIR}"
 
@@ -67,7 +67,7 @@ def test_source_files_strictly_below_325_lines() -> None:
 
 
 def test_all_tests_and_examples_under_ceiling() -> None:
-    """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< 345`` lines."""
+    """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< 335`` lines."""
     violations: list[tuple[Path, int]] = []
     for directory in (TESTS_DIR, EXAMPLES_DIR):
         py_files = list(directory.rglob("*.py"))
@@ -80,29 +80,33 @@ def test_all_tests_and_examples_under_ceiling() -> None:
 
 
 @pytest.mark.parametrize(
-    ("line_count", "expected_violation"),
+    ("max_lines", "line_count", "expected_violation"),
     [
-        (324, False),
-        (325, True),
-        (326, True),
+        (MAX_SRC_LINES, 314, False),
+        (MAX_SRC_LINES, 315, True),
+        (MAX_SRC_LINES, 316, True),
+        (MAX_TEST_EXAMPLE_LINES, 334, False),
+        (MAX_TEST_EXAMPLE_LINES, 335, True),
+        (MAX_TEST_EXAMPLE_LINES, 336, True),
     ],
 )
 def test_find_ceiling_violations_boundary(
     tmp_path: Path,
+    max_lines: int,
     line_count: int,
     expected_violation: bool,
 ) -> None:
-    """Guard the guard: ``< 325`` passes while ``>= 325`` is reported with path and line count."""
+    """Guard the guard: ``< max_lines`` passes while ``>= max_lines`` is reported."""
     pkg = tmp_path / "src" / "eventsource"
     pkg.mkdir(parents=True)
     sample = pkg / "sample_module.py"
     sample.write_text("\n".join(f"# line {i}" for i in range(line_count)) + "\n", encoding="utf-8")
 
-    violations = find_ceiling_violations(pkg, max_lines=MAX_SRC_LINES)
+    violations = find_ceiling_violations(pkg, max_lines=max_lines)
     if expected_violation:
         assert violations == [(sample, line_count)]
-        report = format_violation_report(violations, base_dir=tmp_path, max_lines=MAX_SRC_LINES)
+        report = format_violation_report(violations, base_dir=tmp_path, max_lines=max_lines)
         assert "src/eventsource/sample_module.py" in report
-        assert f"{line_count} lines (limit < {MAX_SRC_LINES})" in report
+        assert f"{line_count} lines (limit < {max_lines})" in report
     else:
         assert violations == []
