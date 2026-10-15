@@ -88,21 +88,31 @@ class CoordinatorCutoverMixin:
     ) -> MigrationSummary:
         raise NotImplementedError
 
+    async def _audit_cutover(
+        self,
+        migration_id: UUID,
+        event_type: AuditEventType,
+        old_phase: MigrationPhase,
+        new_phase: MigrationPhase,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        entry = MigrationAuditEntry(
+            None, migration_id, event_type, old_phase, new_phase, details, None, datetime.now(UTC)
+        )
+        await self._record_audit(entry)
+
     async def trigger_cutover(
         self, migration_id: UUID, *, timeout_ms: float | None = None
     ) -> CutoverResult:
         """Trigger cutover for a migration in dual-write phase; rolls back to dual-write on failure."""
-        with self._tracer.span(
-            "eventsource.coordinator.trigger_cutover",
-            {
-                ATTR_MIGRATION_ID: str(migration_id),
-                ATTR_MIGRATION_PHASE: MigrationPhase.CUTOVER.value,
-            },
-        ):
+        span_attrs = {
+            ATTR_MIGRATION_ID: str(migration_id),
+            ATTR_MIGRATION_PHASE: MigrationPhase.CUTOVER.value,
+        }
+        with self._tracer.span("eventsource.coordinator.trigger_cutover", span_attrs):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
                 raise MigrationNotFoundError(migration_id)
-
             if migration.phase != MigrationPhase.DUAL_WRITE:
                 raise MigrationStateError(
                     message=f"Cannot trigger cutover: migration is in {migration.phase.value} phase",
@@ -111,35 +121,23 @@ class CoordinatorCutoverMixin:
                     expected_phases=[MigrationPhase.DUAL_WRITE],
                     operation="trigger_cutover",
                 )
-
             lag_tracker = self._lag_trackers.get(migration_id)
             if lag_tracker is None:
                 raise MigrationError(
-                    "No sync lag tracker found for migration",
-                    migration_id=migration_id,
+                    "No sync lag tracker found for migration", migration_id=migration_id
                 )
 
             cutover_manager = self._get_cutover_manager()
             await self._migration_repo.update_phase(migration_id, MigrationPhase.CUTOVER)
             logger.info(
-                "Starting cutover for migration %s, tenant %s",
+                "Starting cutover for migration %s, tenant %s", migration_id, migration.tenant_id
+            )
+            await self._audit_cutover(
                 migration_id,
-                migration.tenant_id,
+                AuditEventType.CUTOVER_INITIATED,
+                MigrationPhase.DUAL_WRITE,
+                MigrationPhase.CUTOVER,
             )
-
-            await self._record_audit(
-                MigrationAuditEntry(
-                    id=None,
-                    migration_id=migration_id,
-                    event_type=AuditEventType.CUTOVER_INITIATED,
-                    old_phase=MigrationPhase.DUAL_WRITE,
-                    new_phase=MigrationPhase.CUTOVER,
-                    details=None,
-                    operator=None,
-                    occurred_at=datetime.now(UTC),
-                )
-            )
-
             result = await cutover_manager.execute_cutover(
                 migration_id=migration_id,
                 tenant_id=migration.tenant_id,
@@ -149,12 +147,10 @@ class CoordinatorCutoverMixin:
                 timeout_ms=timeout_ms,
                 since=self._lag_anchor(migration),
             )
-
             if result.success:
                 await self._complete_cutover(migration)
             else:
                 await self._rollback_cutover(migration, result)
-
             return result
 
     async def _complete_cutover(self, migration: Migration) -> None:
@@ -164,15 +160,12 @@ class CoordinatorCutoverMixin:
             try:
                 if self._target_stores.get(migration.id) is not None:
                     report = await self.verify_consistency(
-                        migration.id,
-                        level=VerificationLevel.HASH,
-                        sample_percentage=100.0,
+                        migration.id, level=VerificationLevel.HASH, sample_percentage=100.0
                     )
                     consistency_verified = report.is_consistent
                     if not report.is_consistent:
                         logger.warning(
-                            "Post-cutover consistency verification found %d violations "
-                            "for migration %s (non-fatal, migration proceeding)",
+                            "Post-cutover consistency verification found %d violations for migration %s (non-fatal, migration proceeding)",
                             len(report.violations),
                             migration.id,
                         )
@@ -214,32 +207,25 @@ class CoordinatorCutoverMixin:
 
         await self._migration_repo.update_phase(migration.id, MigrationPhase.COMPLETED)
         logger.info(
-            "Cutover completed for migration %s: tenant %s now routes to %s "
-            "(consistency_verified=%s, subscriptions_migrated=%d)",
+            "Cutover completed for migration %s: tenant %s now routes to %s (consistency_verified=%s, subscriptions_migrated=%d)",
             migration.id,
             migration.tenant_id,
             migration.target_store_id,
             consistency_verified,
             subscriptions_migrated,
         )
-
-        await self._record_audit(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration.id,
-                event_type=AuditEventType.CUTOVER_COMPLETED,
-                old_phase=MigrationPhase.CUTOVER,
-                new_phase=MigrationPhase.COMPLETED,
-                details={
-                    "target_store_id": migration.target_store_id,
-                    "consistency_verified": consistency_verified,
-                    "subscriptions_migrated": subscriptions_migrated,
-                },
-                operator=None,
-                occurred_at=datetime.now(UTC),
-            )
+        details = {
+            "target_store_id": migration.target_store_id,
+            "consistency_verified": consistency_verified,
+            "subscriptions_migrated": subscriptions_migrated,
+        }
+        await self._audit_cutover(
+            migration.id,
+            AuditEventType.CUTOVER_COMPLETED,
+            MigrationPhase.CUTOVER,
+            MigrationPhase.COMPLETED,
+            details,
         )
-
         self._lag_trackers.pop(migration.id, None)
         self._target_stores.pop(migration.id, None)
         self._cleanup_status_queues(migration.id)
@@ -255,18 +241,12 @@ class CoordinatorCutoverMixin:
         logger.warning(
             "Cutover rolled back for migration %s: %s", migration.id, result.error_message
         )
-
-        await self._record_audit(
-            MigrationAuditEntry(
-                id=None,
-                migration_id=migration.id,
-                event_type=AuditEventType.CUTOVER_ROLLED_BACK,
-                old_phase=MigrationPhase.CUTOVER,
-                new_phase=MigrationPhase.DUAL_WRITE,
-                details={"error_message": result.error_message},
-                operator=None,
-                occurred_at=datetime.now(UTC),
-            )
+        await self._audit_cutover(
+            migration.id,
+            AuditEventType.CUTOVER_ROLLED_BACK,
+            MigrationPhase.CUTOVER,
+            MigrationPhase.DUAL_WRITE,
+            {"error_message": result.error_message},
         )
         await self._notify_status_update(migration.id)
 
@@ -278,7 +258,7 @@ class CoordinatorCutoverMixin:
             raise MigrationError(
                 "Cannot perform cutover: lock_manager not provided to coordinator. "
                 "Provide a lock manager (e.g. PostgreSQLLockManager) when creating "
-                "the coordinator to enable cutover operations.",
+                "the coordinator to enable cutover operations."
             )
         self._cutover_manager = CutoverManager(
             lock_manager=self._lock_manager,

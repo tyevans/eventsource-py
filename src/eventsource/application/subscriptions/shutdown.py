@@ -1,11 +1,4 @@
-"""
-Graceful shutdown coordinator for subscriptions.
-
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0002 (Single-Responsibility Modules and File Limits)
-- TASK-0008 (Decompose Monolithic Modules SubscriptionManager and Shutdown)
-"""
+"""Graceful shutdown coordinator for subscriptions (ADR-0002, ADR-0007, TASK-0008)."""
 
 from __future__ import annotations
 
@@ -49,16 +42,9 @@ logger = logging.getLogger(__name__)
 
 class ShutdownCoordinator:
     """
-    Coordinates graceful shutdown of subscriptions.
-
-    Implements Kubernetes-friendly graceful termination:
-    1. Trap SIGTERM/SIGINT signals
-    2. Stop accepting new events from bus/source
-    3. Wait for in-flight events to be processed (with drain timeout)
-    4. Save final checkpoints for all subscriptions
-    5. Clean close of connections
-
-    If a second signal is received or timeouts expire, forces shutdown.
+    Coordinates Kubernetes-friendly graceful shutdown of subscriptions:
+    traps SIGTERM/SIGINT, stops accepting new events, drains in-flight events,
+    saves final checkpoints, and closes connections cleanly.
     """
 
     def __init__(
@@ -175,11 +161,7 @@ class ShutdownCoordinator:
         """Remove a registered shutdown callback."""
         return self._signal_manager.remove_callback(callback)
 
-    def on_pre_shutdown(
-        self,
-        callback: PreShutdownHook,
-        timeout: float = 5.0,
-    ) -> None:
+    def on_pre_shutdown(self, callback: PreShutdownHook, timeout: float = 5.0) -> None:
         """Register callback to execute before shutdown begins."""
         self._hook_manager.on_pre_shutdown(callback, timeout)
 
@@ -187,10 +169,7 @@ class ShutdownCoordinator:
         """Execute all pre-shutdown hooks in registration order."""
         await self._hook_manager.execute_pre_shutdown_hooks()
 
-    def on_post_shutdown(
-        self,
-        callback: PostShutdownHook,
-    ) -> None:
+    def on_post_shutdown(self, callback: PostShutdownHook) -> None:
         """Register callback to execute after shutdown completes."""
         self._hook_manager.on_post_shutdown(callback)
 
@@ -206,10 +185,7 @@ class ShutdownCoordinator:
         """Programmatically request shutdown."""
         self._signal_manager.request_shutdown(reason)
 
-    def _start_periodic_checkpoints(
-        self,
-        checkpoint_func: Callable[[], Awaitable[int]],
-    ) -> None:
+    def _start_periodic_checkpoints(self, checkpoint_func: Callable[[], Awaitable[int]]) -> None:
         """Start the periodic checkpoint background task."""
         self._periodic_manager.start(checkpoint_func, lambda: self._phase == ShutdownPhase.DRAINING)
 
