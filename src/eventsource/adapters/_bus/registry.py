@@ -46,18 +46,7 @@ class SubscriptionRegistry:
         self._combined = {}
 
     def add(self, event_type: type[DomainEvent], handler: Any) -> HandlerAdapter:
-        """Register a handler for a specific event type.
-
-        Registering the same handler twice is allowed; it will be invoked
-        twice, and each ``remove`` strips one registration.
-
-        Args:
-            event_type: The event class to subscribe to.
-            handler: Object with a ``handle()`` method, or a callable.
-
-        Returns:
-            The HandlerAdapter wrapping the handler, for logging by callers.
-        """
+        """Register a handler for a specific event type (duplicates allowed)."""
         adapter = HandlerAdapter(handler)
         with self._lock:
             self._specific[event_type] = self._specific.get(event_type, ()) + (adapter,)
@@ -65,14 +54,7 @@ class SubscriptionRegistry:
         return adapter
 
     def remove(self, event_type: type[DomainEvent], handler: Any) -> bool:
-        """Remove one registration of a handler for an event type.
-
-        Compares against the raw handler via ``HandlerAdapter.__eq__``, so no
-        throwaway adapter is constructed.
-
-        Returns:
-            True if a registration was found and removed, False otherwise.
-        """
+        """Remove one registration of a handler for an event type."""
         with self._lock:
             adapters = self._specific.get(event_type, ())
             for i, adapter in enumerate(adapters):
@@ -95,11 +77,7 @@ class SubscriptionRegistry:
         return adapter
 
     def remove_wildcard(self, handler: Any) -> bool:
-        """Remove one wildcard registration.
-
-        Returns:
-            True if a registration was found and removed, False otherwise.
-        """
+        """Remove one wildcard registration."""
         with self._lock:
             for i, adapter in enumerate(self._wildcard):
                 if adapter == handler:
@@ -113,12 +91,12 @@ class SubscriptionRegistry:
         for event_type in subscriber.subscribed_to():
             self.add(event_type, subscriber)
 
-    def handlers_for(self, event_type: type[DomainEvent]) -> tuple[HandlerAdapter, ...]:
-        """Get all handlers for an event type: specific first, then wildcard.
+    def remove_subscriber(self, subscriber: FlexibleEventSubscriber) -> int:
+        """Remove a subscriber from every type it declares via subscribed_to()."""
+        return sum(1 for et in subscriber.subscribed_to() if self.remove(et, subscriber))
 
-        The returned tuple is cached and shared. Callers must treat it as
-        immutable -- it is the same object across calls until a mutation.
-        """
+    def handlers_for(self, event_type: type[DomainEvent]) -> tuple[HandlerAdapter, ...]:
+        """Get cached specific-then-wildcard handler tuple for an event type."""
         with self._lock:
             cached = self._combined.get(event_type)
             if cached is not None:
@@ -135,11 +113,7 @@ class SubscriptionRegistry:
             self._invalidate()
 
     def count(self, event_type: type[DomainEvent] | None = None) -> int:
-        """Count type-specific registrations. Excludes wildcard handlers.
-
-        Args:
-            event_type: If given, count only this type. Otherwise count all.
-        """
+        """Count type-specific registrations (excludes wildcard handlers)."""
         with self._lock:
             if event_type is None:
                 return sum(len(adapters) for adapters in self._specific.values())
@@ -149,6 +123,12 @@ class SubscriptionRegistry:
         """Count wildcard registrations."""
         with self._lock:
             return len(self._wildcard)
+
+    def __len__(self) -> int:
+        return self.count() + self.wildcard_count()
+
+    def __bool__(self) -> bool:
+        return True
 
 
 __all__ = ["SubscriptionRegistry"]

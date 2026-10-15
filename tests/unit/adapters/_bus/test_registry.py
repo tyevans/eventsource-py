@@ -99,16 +99,16 @@ def test_wildcard_mutation_invalidates_specific_type_cache() -> None:
     assert before is not after and len(after) == 2
 
 
-def test_count_and_wildcard_count() -> None:
+def test_count_wildcard_count_len_and_bool() -> None:
     registry = SubscriptionRegistry()
+    assert len(registry) == 0 and bool(registry) is True
     registry.add(RegistryEventA, _handler)
     registry.add(RegistryEventA, _make_handlers()[0])
     registry.add(RegistryEventB, _handler)
     registry.add_wildcard(_handler)
-    assert registry.count() == 3
-    assert registry.count(RegistryEventA) == 2
-    assert registry.count(RegistryEventB) == 1
-    assert registry.wildcard_count() == 1
+    assert registry.count() == 3 and registry.count(RegistryEventA) == 2
+    assert registry.count(RegistryEventB) == 1 and registry.wildcard_count() == 1
+    assert len(registry) == 4 and bool(registry) is True
 
 
 def test_clear_removes_everything() -> None:
@@ -116,19 +116,21 @@ def test_clear_removes_everything() -> None:
     registry.add(RegistryEventA, _handler)
     registry.add_wildcard(_handler)
     registry.clear()
-    assert registry.count() == 0 and registry.wildcard_count() == 0
+    assert registry.count() == 0 and registry.wildcard_count() == 0 and len(registry) == 0
 
 
-def test_add_subscriber_registers_every_declared_type() -> None:
+def test_add_and_remove_subscriber_for_every_declared_type() -> None:
     class Subscriber:
         def subscribed_to(self) -> list[type[DomainEvent]]:
             return [RegistryEventA, RegistryEventB]
 
         async def handle(self, event: DomainEvent) -> None: ...
 
-    registry = SubscriptionRegistry()
-    registry.add_subscriber(Subscriber())
+    registry, sub = SubscriptionRegistry(), Subscriber()
+    registry.add_subscriber(sub)
     assert registry.count(RegistryEventA) == 1 and registry.count(RegistryEventB) == 1
+    assert registry.remove_subscriber(sub) == 2
+    assert len(registry) == 0 and registry.remove_subscriber(sub) == 0
 
 
 def test_the_same_handler_may_subscribe_twice() -> None:
@@ -172,6 +174,7 @@ def test_counts_track_net_operations(ops: list[tuple[int, int]]) -> None:
                 wildcard.remove(handler)
         assert registry.count(RegistryEventA) == len(specific)
         assert registry.wildcard_count() == len(wildcard)
+        assert len(registry) == len(specific) + len(wildcard) and bool(registry) is True
         assert len(registry.handlers_for(RegistryEventA)) == len(specific) + len(wildcard)
 
 

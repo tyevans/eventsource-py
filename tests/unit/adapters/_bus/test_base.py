@@ -30,8 +30,7 @@ def _handler(event: DomainEvent) -> None: ...
 def test_subscription_methods_delegate_to_the_registry() -> None:
     bus = StubBus()
     bus.subscribe(BaseBusEvent, _handler)
-    assert bus.get_subscriber_count(BaseBusEvent) == 1
-    assert bus.get_subscriber_count() == 1
+    assert bus.get_subscriber_count(BaseBusEvent) == 1 and bus.get_subscriber_count() == 1
     bus.subscribe_to_all_events(_handler)
     assert bus.get_wildcard_subscriber_count() == 1
     assert bus.unsubscribe(BaseBusEvent, _handler) is True
@@ -45,20 +44,21 @@ def test_clear_subscribers_empties_both_registries() -> None:
     bus.subscribe(BaseBusEvent, _handler)
     bus.subscribe_to_all_events(_handler)
     bus.clear_subscribers()
-    assert bus.get_subscriber_count() == 0
-    assert bus.get_wildcard_subscriber_count() == 0
+    assert bus.get_subscriber_count() == 0 and bus.get_wildcard_subscriber_count() == 0
 
 
-def test_subscribe_all_uses_subscribed_to() -> None:
+def test_subscribe_all_and_unsubscribe_all_use_subscribed_to() -> None:
     class Subscriber:
         def subscribed_to(self) -> list[type[DomainEvent]]:
             return [BaseBusEvent]
 
         async def handle(self, event: DomainEvent) -> None: ...
 
-    bus = StubBus()
-    bus.subscribe_all(Subscriber())
+    bus, sub = StubBus(), Subscriber()
+    bus.subscribe_all(sub)
     assert bus.get_subscriber_count(BaseBusEvent) == 1
+    assert bus.unsubscribe_all(sub) == 1
+    assert bus.get_subscriber_count(BaseBusEvent) == 0 and bus.unsubscribe_all(sub) == 0
 
 
 def test_resolve_event_class_uses_injected_registry_first() -> None:
@@ -116,26 +116,21 @@ async def test_drain_cancels_tasks_that_exceed_the_timeout(caplog) -> None:  # t
     with caplog.at_level("INFO", logger="eventsource.adapters._bus.base"):
         await bus._drain_background(timeout=0.05)
 
-    assert task.cancelled() or task.done()
+    assert task is not None and (task.cancelled() or task.done())
     own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
-    info_messages = [r.message for r in own_records if r.levelname == "INFO"]
-    assert any("Draining 1 background task(s)" in m for m in info_messages)
-
+    assert any("Draining 1 background task(s)" in r.message for r in own_records)
     warnings = [r for r in own_records if r.levelname == "WARNING"]
-    assert len(warnings) == 1
+    assert len(warnings) == 1 and warnings[0].__dict__.get("remaining_tasks") == 1
     assert "1 background task(s) did not complete within 0.05s; cancelling" in warnings[0].message
-    assert warnings[0].__dict__.get("remaining_tasks") == 1
 
 
 async def test_drain_background_default_timeout_lets_a_20s_task_finish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bus = StubBus()
-    captured_timeout: list[float | None] = []
-    real_wait = asyncio.wait
+    bus, captured_timeout, real_wait = StubBus(), [], asyncio.wait
 
     async def spy_wait(*args: object, **kwargs: object) -> object:
-        captured_timeout.append(kwargs.get("timeout"))  # type: ignore[arg-type]
+        captured_timeout.append(kwargs.get("timeout"))
         return await real_wait(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(asyncio, "wait", spy_wait)
@@ -158,11 +153,9 @@ async def test_drain_background_logs_and_suppresses_wait_errors(
     with caplog.at_level("ERROR", logger="eventsource.adapters._bus.base"):
         await bus._drain_background(timeout=1.0)
 
-    own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
-    errors = [r for r in own_records if r.levelname == "ERROR"]
-    assert len(errors) == 1
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1 and errors[0].exc_info
     assert "Error draining background tasks: distinctive wait failure" in errors[0].message
-    assert errors[0].exc_info
     for task in bus._background_tasks:
         task.cancel()
 
@@ -176,8 +169,7 @@ def test_get_subscriber_count_is_scoped_to_the_requested_event_type() -> None:
     bus.subscribe(OtherBusEvent, _handler)
     bus.subscribe(OtherBusEvent, _handler)
     assert bus.get_subscriber_count(BaseBusEvent) == 1
-    assert bus.get_subscriber_count(OtherBusEvent) == 2
-    assert bus.get_subscriber_count() == 3
+    assert bus.get_subscriber_count(OtherBusEvent) == 2 and bus.get_subscriber_count() == 3
 
 
 async def test_on_background_task_done_logs_the_actual_task_exception(caplog) -> None:  # type: ignore[no-untyped-def]
@@ -191,14 +183,12 @@ async def test_on_background_task_done_logs_the_actual_task_exception(caplog) ->
         await bus._drain_background(timeout=5.0)
 
     own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
-    assert len(own_records) == 1
+    assert len(own_records) == 1 and own_records[0].exc_info is not None
     assert "Background task failed: distinctive background failure" in own_records[0].message
-    assert own_records[0].exc_info is not None
 
 
 async def test_drain_background_waits_for_every_pending_task_not_just_the_first() -> None:
-    bus = StubBus()
-    fast_done, slow_done = asyncio.Event(), asyncio.Event()
+    bus, fast_done, slow_done = StubBus(), asyncio.Event(), asyncio.Event()
 
     async def fast() -> None:
         fast_done.set()

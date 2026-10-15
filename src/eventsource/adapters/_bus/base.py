@@ -1,10 +1,4 @@
-"""Concrete base class shared by all EventBus implementations.
-
-All four backends keep their subscribers in process memory, resolve event
-classes by name from a registry, and spawn fire-and-forget tasks they must
-drain on shutdown. That shared behavior lives here, so ``interface.py`` can
-stay a pure ABC that third parties may implement directly.
-"""
+"""Concrete base class shared by all EventBus implementations."""
 
 from __future__ import annotations
 
@@ -73,20 +67,17 @@ class BaseEventBus(EventBus):
     def subscribe_all(self, subscriber: FlexibleEventSubscriber) -> None:
         self._registry.add_subscriber(subscriber)
 
-    def subscribe_to_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> None:
+    def unsubscribe_all(self, subscriber: FlexibleEventSubscriber) -> int:
+        return self._registry.remove_subscriber(subscriber)
+
+    def subscribe_to_all_events(self, handler: FlexibleEventHandler | EventHandlerFunc) -> None:
         adapter = self._registry.add_wildcard(handler)
         logger.info(
             f"Registered wildcard handler {adapter.name}",
             extra={"handler": adapter.name},
         )
 
-    def unsubscribe_from_all_events(
-        self,
-        handler: FlexibleEventHandler | EventHandlerFunc,
-    ) -> bool:
+    def unsubscribe_from_all_events(self, handler: FlexibleEventHandler | EventHandlerFunc) -> bool:
         removed = self._registry.remove_wildcard(handler)
         logger.info(
             f"Wildcard unsubscribe: {'removed' if removed else 'handler not found'}",
