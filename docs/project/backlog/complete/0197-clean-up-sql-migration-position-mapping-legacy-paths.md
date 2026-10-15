@@ -1,7 +1,7 @@
 ---
-id: TASK-0196
-title: "Remove Legacy RabbitMQ Death Header Wrapper Docs and Slim Consumer Dispatch"
-status: Refined
+id: TASK-0197
+title: "Clean Up Legacy Int-Only Position Mapping Comments and Slim Query Helpers"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
@@ -13,10 +13,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0196: Remove Legacy RabbitMQ Death Header Wrapper Docs and Slim Consumer Dispatch
+# TASK-0197: Clean Up Legacy Int-Only Position Mapping Comments and Slim Query Helpers
 
 ## Summary
-Clean up legacy wrapper references in src/eventsource/adapters/rabbitmq/death_headers.py and slim src/eventsource/adapters/rabbitmq/consumer_dispatch.py below 350 lines.
+Clean up legacy integer-only position mapping comments and slim src/eventsource/adapters/sql/migration/position_mapping_query.py below 350 lines.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 400` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).

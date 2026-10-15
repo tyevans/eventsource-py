@@ -1,7 +1,7 @@
 ---
 id: TASK-0204
 title: "Synchronize Diataxis Documentation for Repository.execute, Async Context Managers, and Scenario Helpers"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

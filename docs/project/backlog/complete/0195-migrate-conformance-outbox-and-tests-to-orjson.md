@@ -1,22 +1,22 @@
 ---
-id: TASK-0203
-title: "Optimize EventRegistry Tuple Caching and Slim Module Below 350 Lines"
-status: Refined
+id: TASK-0195
+title: "Migrate Outbox Conformance Suite and Test Helpers to orjson"
+status: Complete
 priority: High
 slice_type: domain
-target_bc: domain
+target_bc: testing
 governing_prd: PRD-0002
 governing_story: US-0002
 governing_adrs:
   - ADR-0002
-  - ADR-0009
+  - ADR-0003
 dependencies: []
 ---
 
-# TASK-0203: Optimize EventRegistry Tuple Caching and Slim Module Below 350 Lines
+# TASK-0195: Migrate Outbox Conformance Suite and Test Helpers to orjson
 
 ## Summary
-Slim src/eventsource/domain/event_registry.py below 350 lines and add Hypothesis property tests for registry lookup invariants.
+Replace the final remaining stdlib json import in src/eventsource/testing/conformance_ports/outbox.py and test JSON helpers with orjson (json_dumps / json_loads).
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 400` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).
