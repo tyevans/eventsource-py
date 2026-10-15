@@ -10,10 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from eventsource.application.subscriptions.config import CheckpointStrategy
 from eventsource.application.subscriptions.subscriber import settle_handler_result
-from eventsource.application.subscriptions.subscription import (
-    Subscription,
-    render_position,
-)
+from eventsource.application.subscriptions.subscription import Subscription, render_position
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
@@ -52,17 +49,13 @@ class LiveDeliveryMixin:
         _batch_only: bool
 
         async def _record_filtered(self, envelope: EventEnvelope) -> None: ...
-
         async def _maybe_checkpoint_in_batch(
             self, position: Position, event: DomainEvent
         ) -> None: ...
-
         async def _maybe_checkpoint(self, position: Position, event: DomainEvent) -> None: ...
-
         async def _save_checkpoint_with_retry(
             self, position: Position, event: DomainEvent
         ) -> None: ...
-
         async def _maybe_save_periodic_checkpoint(
             self, position: Position, event: DomainEvent
         ) -> None: ...
@@ -76,18 +69,7 @@ class LiveDeliveryMixin:
         operation: Callable[[], Awaitable[T]],
         operation_name: str,
     ) -> T:
-        """
-        Call `operation` under `processing_timeout`, through the handler
-        circuit breaker if one is configured.
-
-        `config.processing_timeout` bounds one handler call. Exceeding it
-        raises `TimeoutError`, an ordinary handler failure from here on:
-        `continue_on_error` decides whether the subscription proceeds.
-
-        The timeout is applied inside the breaker rather than around it, so
-        a run of hanging handlers opens the circuit exactly as a run of raising
-        ones does.
-        """
+        """Call `operation` under `processing_timeout` and optional circuit breaker."""
 
         async def bounded() -> T:
             async with asyncio.timeout(self.config.processing_timeout):
@@ -98,14 +80,8 @@ class LiveDeliveryMixin:
         return await bounded()
 
     async def _deliver_page(self, included: list[tuple[EventEnvelope, bool]]) -> None:
-        """
-        Deliver one scanned page as a batch, then record every envelope.
-
-        Args:
-            included: `(envelope, passes_filter)` pairs, in feed order
-        """
+        """Deliver one scanned page as a batch, then record every envelope."""
         deliverable = [envelope.event for envelope, passes in included if passes]
-
         batch_succeeded = True
         if deliverable:
             subscriber = cast(BatchSubscriber, self.subscription.subscriber)
@@ -147,17 +123,17 @@ class LiveDeliveryMixin:
                 self._stats.events_skipped_filtered += 1
                 await self._record_filtered(envelope)
                 continue
-
             self._stats.events_processed += 1
             last_envelope = envelope
             if self._metrics:
                 self._metrics.record_lag(self.subscription.lag)
-            await self.subscription.record_event_processed(
-                position=envelope.position
+            pos = (
+                envelope.position
                 if envelope.position is not None
-                else self.subscription.last_processed_position,
-                event_id=envelope.event.event_id,
-                event_type=envelope.event.event_type,
+                else self.subscription.last_processed_position
+            )
+            await self.subscription.record_event_processed(
+                position=pos, event_id=envelope.event.event_id, event_type=envelope.event.event_type
             )
             if envelope.position is not None:
                 await self._maybe_checkpoint_in_batch(envelope.position, envelope.event)
@@ -170,15 +146,9 @@ class LiveDeliveryMixin:
             await self._save_checkpoint_with_retry(last_envelope.position, last_envelope.event)
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
-        """
-        Process one envelope read from the global feed, applying filters.
-
-        Args:
-            envelope: The feed envelope to process
-        """
+        """Process one envelope read from the global feed, applying filters."""
         event = envelope.event
         position = envelope.position
-
         with self._tracer.span(
             "eventsource.live_runner.process_event",
             {
@@ -200,9 +170,7 @@ class LiveDeliveryMixin:
                 )
                 if position is not None:
                     await self.subscription.record_event_processed(
-                        position=position,
-                        event_id=event.event_id,
-                        event_type=event.event_type,
+                        position=position, event_id=event.event_id, event_type=event.event_type
                     )
                 else:
                     await self.subscription.record_events_unseen(1)
@@ -225,20 +193,16 @@ class LiveDeliveryMixin:
                             "handle_event",
                         )
                     self._stats.events_processed += 1
-
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
                         self._metrics.record_event_processed(
-                            event_type=event.event_type,
-                            duration_ms=duration_ms,
+                            event_type=event.event_type, duration_ms=duration_ms
                         )
                         self._metrics.record_lag(self.subscription.lag)
 
                     if position is not None:
                         await self.subscription.record_event_processed(
-                            position=position,
-                            event_id=event.event_id,
-                            event_type=event.event_type,
+                            position=position, event_id=event.event_id, event_type=event.event_type
                         )
                         await self._maybe_checkpoint(position, event)
                     else:
@@ -247,10 +211,8 @@ class LiveDeliveryMixin:
                             event_id=event.event_id,
                             event_type=event.event_type,
                         )
-
                 except Exception as e:
                     self._stats.events_failed += 1
-
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
                         self._metrics.record_event_failed(
@@ -258,14 +220,10 @@ class LiveDeliveryMixin:
                             error_type=type(e).__name__,
                             duration_ms=duration_ms,
                         )
-
                     await self.subscription.record_event_failed(e)
-
                     if not self.config.continue_on_error:
                         raise
-
                     await self.subscription.record_events_unseen(1)
-
                     logger.warning(
                         "Live event processing failed, continuing",
                         extra={
