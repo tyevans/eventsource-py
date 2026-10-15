@@ -43,11 +43,7 @@ class PostgreSQLMigrationProgressMixin:
         last_target_position: Position | None = None,
     ) -> None:
         """Update bulk copy progress."""
-        attrs = {
-            "migration.id": str(migration_id),
-            "migration.events_copied": events_copied,
-            ATTR_DB_SYSTEM: "postgresql",
-        }
+        attrs = {"migration.id": str(migration_id), "migration.events_copied": events_copied, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span("eventsource.migration_repo.update_progress", attrs):
             now = datetime.now(UTC)
             params: dict[str, Any] = {
@@ -57,108 +53,65 @@ class PostgreSQLMigrationProgressMixin:
                 "updated_at": now,
             }
             if last_target_position is not None:
-                query = text("""
-                    UPDATE tenant_migrations
-                    SET events_copied = :events_copied,
-                        last_source_position_token = :last_source_position_token,
-                        last_target_position_token = :last_target_position_token,
-                        updated_at = :updated_at
-                    WHERE id = :id
-                """)
+                query = text(
+                    "UPDATE tenant_migrations SET events_copied = :events_copied, "
+                    "last_source_position_token = :last_source_position_token, "
+                    "last_target_position_token = :last_target_position_token, "
+                    "updated_at = :updated_at WHERE id = :id"
+                )
                 params["last_target_position_token"] = _token(last_target_position)
             else:
-                query = text("""
-                    UPDATE tenant_migrations
-                    SET events_copied = :events_copied,
-                        last_source_position_token = :last_source_position_token,
-                        updated_at = :updated_at
-                    WHERE id = :id
-                """)
-
+                query = text(
+                    "UPDATE tenant_migrations SET events_copied = :events_copied, "
+                    "last_source_position_token = :last_source_position_token, "
+                    "updated_at = :updated_at WHERE id = :id"
+                )
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
     async def set_events_total(self, migration_id: UUID, events_total: int) -> None:
         """Set the total events count."""
-        attrs = {
-            "migration.id": str(migration_id),
-            "migration.events_total": events_total,
-            ATTR_DB_SYSTEM: "postgresql",
-        }
+        attrs = {"migration.id": str(migration_id), "migration.events_total": events_total, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span("eventsource.migration_repo.set_events_total", attrs):
-            query = text("""
-                UPDATE tenant_migrations
-                SET events_total = :events_total,
-                    updated_at = :updated_at
-                WHERE id = :id
-            """)
-            params = {
-                "id": migration_id,
-                "events_total": events_total,
-                "updated_at": datetime.now(UTC),
-            }
+            query = text(
+                "UPDATE tenant_migrations SET events_total = :events_total, "
+                "updated_at = :updated_at WHERE id = :id"
+            )
+            params = {"id": migration_id, "events_total": events_total, "updated_at": datetime.now(UTC)}  # fmt: skip
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
     async def record_error(self, migration_id: UUID, error: str) -> None:
         """Record an error occurrence (truncated to 1000 characters)."""
-        with self._tracer.span(
-            "eventsource.migration_repo.record_error",
-            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
-        ):
+        attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
+        with self._tracer.span("eventsource.migration_repo.record_error", attrs):
             now = datetime.now(UTC)
-            query = text("""
-                UPDATE tenant_migrations
-                SET error_count = error_count + 1,
-                    last_error = :error,
-                    last_error_at = :error_at,
-                    updated_at = :updated_at
-                WHERE id = :id
-            """)
-            params = {
-                "id": migration_id,
-                "error": error[:1000],
-                "error_at": now,
-                "updated_at": now,
-            }
+            query = text(
+                "UPDATE tenant_migrations SET error_count = error_count + 1, "
+                "last_error = :error, last_error_at = :error_at, "
+                "updated_at = :updated_at WHERE id = :id"
+            )
+            params = {"id": migration_id, "error": error[:1000], "error_at": now, "updated_at": now}
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
         """Set migration pause state."""
-        attrs = {
-            "migration.id": str(migration_id),
-            "migration.paused": paused,
-            ATTR_DB_SYSTEM: "postgresql",
-        }
+        attrs = {"migration.id": str(migration_id), "migration.paused": paused, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span("eventsource.migration_repo.set_paused", attrs):
             now = datetime.now(UTC)
             if paused:
-                query = text("""
-                    UPDATE tenant_migrations
-                    SET is_paused = TRUE,
-                        paused_at = :paused_at,
-                        pause_reason = :reason,
-                        updated_at = :updated_at
-                    WHERE id = :id
-                """)
-                params = {
-                    "id": migration_id,
-                    "paused_at": now,
-                    "reason": reason,
-                    "updated_at": now,
-                }
+                query = text(
+                    "UPDATE tenant_migrations SET is_paused = TRUE, paused_at = :paused_at, "
+                    "pause_reason = :reason, updated_at = :updated_at WHERE id = :id"
+                )
+                params: dict[str, Any] = {"id": migration_id, "paused_at": now, "reason": reason, "updated_at": now}  # fmt: skip
             else:
-                query = text("""
-                    UPDATE tenant_migrations
-                    SET is_paused = FALSE,
-                        paused_at = NULL,
-                        pause_reason = NULL,
-                        updated_at = :updated_at
-                    WHERE id = :id
-                """)
+                query = text(
+                    "UPDATE tenant_migrations SET is_paused = FALSE, paused_at = NULL, "
+                    "pause_reason = NULL, updated_at = :updated_at WHERE id = :id"
+                )
                 params = {"id": migration_id, "updated_at": now}
-
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 

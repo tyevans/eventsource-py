@@ -36,7 +36,6 @@ class ShutdownNotification:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary suitable for JSON serialization."""
         return {
             "instance_id": self.instance_id,
             "intent": self.intent.value,
@@ -49,7 +48,6 @@ class ShutdownNotification:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ShutdownNotification:
-        """Create a ShutdownNotification instance from a dictionary."""
         return cls(
             instance_id=data["instance_id"],
             intent=ShutdownIntent(data["intent"]),
@@ -62,13 +60,10 @@ class ShutdownNotification:
 
     @property
     def time_remaining_seconds(self) -> float:
-        """Get seconds until expected completion, or 0.0 if already past."""
-        remaining = (self.expected_completion_at - datetime.now(UTC)).total_seconds()
-        return max(0.0, remaining)
+        return max(0.0, (self.expected_completion_at - datetime.now(UTC)).total_seconds())
 
     @property
     def is_expired(self) -> bool:
-        """Check if the shutdown notification has expired."""
         return self.time_remaining_seconds <= 0.0
 
 
@@ -84,7 +79,6 @@ class HeartbeatMessage:
     load_factor: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary suitable for JSON serialization."""
         return {
             "instance_id": self.instance_id,
             "timestamp": self.timestamp.isoformat(),
@@ -96,7 +90,6 @@ class HeartbeatMessage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HeartbeatMessage:
-        """Create a HeartbeatMessage instance from a dictionary."""
         return cls(
             instance_id=data["instance_id"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -107,9 +100,7 @@ class HeartbeatMessage:
         )
 
     def is_stale(self, max_age_seconds: float = 15.0) -> bool:
-        """Check if the heartbeat is older than max_age_seconds."""
-        age = (datetime.now(UTC) - self.timestamp).total_seconds()
-        return age > max_age_seconds
+        return (datetime.now(UTC) - self.timestamp).total_seconds() > max_age_seconds
 
 
 @dataclass
@@ -122,30 +113,18 @@ class PeerInfo:
 
     @property
     def status(self) -> str:
-        """Get current status of the peer."""
         if self.shutdown_notification is not None:
-            if self.shutdown_notification.is_expired:
-                return "terminated"
-            return "draining"
+            return "terminated" if self.shutdown_notification.is_expired else "draining"
         if self.last_heartbeat is None:
             return "unknown"
-        if self.last_heartbeat.is_stale():
-            return "stale"
-        return "healthy"
+        return "stale" if self.last_heartbeat.is_stale() else "healthy"
 
     @property
     def subscriptions(self) -> tuple[str, ...]:
-        """Get subscriptions handled by this peer."""
         if self.shutdown_notification is not None:
             return self.shutdown_notification.subscriptions
-        if self.last_heartbeat is not None:
-            return self.last_heartbeat.subscriptions
-        return ()
+        return self.last_heartbeat.subscriptions if self.last_heartbeat is not None else ()
 
-
-# =============================================================================
-# Callback Types
-# =============================================================================
 
 PeerShutdownCallback = Callable[[ShutdownNotification], Awaitable[None]]
 HeartbeatCallback = Callable[[HeartbeatMessage], Awaitable[None]]

@@ -18,12 +18,12 @@ from eventsource.adapters.kafka.config import KafkaEventBusConfig
 from eventsource.adapters.kafka.connection import KafkaConnectionManager
 from eventsource.adapters.kafka.consumer import KafkaConsumerLoop
 from eventsource.adapters.kafka.dlq import KafkaDLQAdmin
-from eventsource.adapters.kafka.metrics import (
+from eventsource.adapters.kafka.metrics import (  # fmt: skip
     KafkaEventBusMetrics,
     register_connection_gauge,
     register_consumer_lag_gauge,
 )
-from eventsource.adapters.kafka.models import (
+from eventsource.adapters.kafka.models import (  # fmt: skip
     DeserializationError,
     KafkaEventBusStats,
     KafkaNotAvailableError,
@@ -65,28 +65,18 @@ def _get_meter() -> Any:
 class KafkaEventBus(KafkaBusPublishMixin, KafkaBusConsumeMixin, KafkaBusDLQMixin, KafkaBusMetricsMixin, BaseEventBus):  # fmt: skip
     """Kafka implementation of the EventBus interface with consumer groups, DLQ, and tracing."""
 
-    def __init__(
-        self,
-        config: KafkaEventBusConfig | None = None,
-        event_registry: EventRegistry | None = None,
-        serializer: EventSerializer | None = None,
-        *,
-        tracer: Tracer | None = None,
-        max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
-    ) -> None:
+    def __init__(self, config: KafkaEventBusConfig | None = None, event_registry: EventRegistry | None = None, serializer: EventSerializer | None = None, *, tracer: Tracer | None = None, max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS) -> None:  # fmt: skip
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
         super().__init__(event_registry=event_registry, max_background_tasks=max_background_tasks)
-        cfg = self._config = config or KafkaEventBusConfig()
-        self._serializer = serializer or EventSerializer()
-        tr = self._tracer = tracer or create_tracer(__name__, cfg.enable_tracing)
-        et = self._enable_tracing = tr.enabled
-        rp = self._retry_policy = RetryPolicy(
-            cfg.retry_base_delay, cfg.retry_max_delay, cfg.retry_jitter, cfg.max_retries
-        )
+        cfg, self._serializer = config or KafkaEventBusConfig(), serializer or EventSerializer()
+        self._config, tr = cfg, tracer or create_tracer(__name__, cfg.enable_tracing)
+        self._tracer, et = tr, tr.enabled
+        self._enable_tracing = et
+        rp = self._retry_policy = RetryPolicy(cfg.retry_base_delay, cfg.retry_max_delay, cfg.retry_jitter, cfg.max_retries)  # fmt: skip
         self._stats, m = KafkaEventBusStats(), _get_meter() if cfg.enable_metrics else None
-        self._meter = m
-        metrics = self._metrics_instance = KafkaEventBusMetrics(m) if m else None
+        self._meter, metrics = m, KafkaEventBusMetrics(m) if m else None
+        self._metrics_instance = metrics
         self._connection_manager = KafkaConnectionManager(cfg, self._stats, metrics)
         deps = (cfg, self._connection_manager, self._serializer, self._stats)
         self._publisher, se = KafkaPublisher(*deps, metrics, tr, et), asyncio.Event()
@@ -98,20 +88,16 @@ class KafkaEventBus(KafkaBusPublishMixin, KafkaBusConsumeMixin, KafkaBusDLQMixin
         logger.debug("KafkaEventBus initialized", extra=cfg.get_sanitized_config())
 
     @property
-    def is_connected(self) -> bool:
-        return self._connection_manager.is_connected  # fmt: skip
+    def is_connected(self) -> bool: return self._connection_manager.is_connected  # fmt: skip
 
     @property
-    def is_consuming(self) -> bool:
-        return self._consumer_loop.is_consuming  # fmt: skip
+    def is_consuming(self) -> bool: return self._consumer_loop.is_consuming  # fmt: skip
 
     @property
-    def config(self) -> KafkaEventBusConfig:
-        return self._config  # fmt: skip
+    def config(self) -> KafkaEventBusConfig: return self._config  # fmt: skip
 
     @property
-    def stats(self) -> KafkaEventBusStats:
-        return self._stats  # fmt: skip
+    def stats(self) -> KafkaEventBusStats: return self._stats  # fmt: skip
 
     async def connect(self) -> None:
         await self._connection_manager.connect()
@@ -149,18 +135,15 @@ class KafkaEventBus(KafkaBusPublishMixin, KafkaBusConsumeMixin, KafkaBusDLQMixin
         await self.disconnect()
         logger.info("KafkaEventBus shutdown complete")
 
-    def _get_security_config(self) -> dict[str, Any]:
-        return self._connection_manager.get_security_config()
+    def _get_security_config(self) -> dict[str, Any]: return self._connection_manager.get_security_config()  # fmt: skip
 
-    def get_stats_dict(self) -> dict[str, Any]:
-        return self._stats.get_stats_dict()
+    def get_stats_dict(self) -> dict[str, Any]: return self._stats.get_stats_dict()  # fmt: skip
 
     async def get_topic_info(self) -> dict[str, Any]:
         if not self.is_connected or not (consumer := self._connection_manager.consumer):
             raise EventBusConnectionError("Not connected to Kafka")
         partitions = consumer.partitions_for_topic(self._config.topic_name)
-        parts = list(partitions) if partitions else []
-        t, g = self._config.topic_name, self._config.consumer_group
+        parts, t, g = list(partitions) if partitions else [], self._config.topic_name, self._config.consumer_group  # fmt: skip
         return {"topic": t, "partitions": parts, "consumer_group": g, "connected": self.is_connected, "consuming": self.is_consuming}  # fmt: skip
 
 
