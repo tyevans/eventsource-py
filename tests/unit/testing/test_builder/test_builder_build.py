@@ -134,7 +134,83 @@ class TestEventBuilderBuild:
         assert event.customer_id == customer_id
         assert event.amount == 250.75
 
+    def test_init_with_initial_fields(self) -> None:
+        """EventBuilder accepts initial fields in constructor."""
+        customer_id = uuid4()
+        event = EventBuilder(
+            SampleEvent, customer_id=customer_id, amount=99.99, actor_id="user-1"
+        ).build()
+
+        assert isinstance(event, SampleEvent)
+        assert event.customer_id == customer_id
+        assert event.amount == 99.99
+        assert event.actor_id == "user-1"
+        assert event.aggregate_version == 1
+
+    def test_init_initial_fields_override_defaults(self) -> None:
+        """Initial fields in constructor can override default aggregate_id and version."""
+        agg_id = uuid4()
+        customer_id = uuid4()
+        event = EventBuilder(
+            SampleEvent,
+            aggregate_id=agg_id,
+            aggregate_version=5,
+            customer_id=customer_id,
+            amount=10.0,
+        ).build()
+
+        assert event.aggregate_id == agg_id
+        assert event.aggregate_version == 5
+
+
+class TestEventBuilderBuildMany:
+    """Tests for build_many() method."""
+
+    def test_build_many_creates_sequential_versions_from_default(self) -> None:
+        """build_many() builds events with sequential versions starting from default 1."""
+        customer_id = uuid4()
+        events = EventBuilder(SampleEvent, customer_id=customer_id, amount=25.0).build_many(3)
+
+        assert len(events) == 3
+        assert [e.aggregate_version for e in events] == [1, 2, 3]
+        assert len({e.aggregate_id for e in events}) == 1
+        assert len({e.event_id for e in events}) == 3
+
+    def test_build_many_uses_builder_version_as_base(self) -> None:
+        """build_many() starts from builder's configured aggregate_version when start_version is None."""
+        events = EventBuilder(MinimalEvent).with_version(10).build_many(3)
+
+        assert [e.aggregate_version for e in events] == [10, 11, 12]
+
+    def test_build_many_uses_explicit_start_version(self) -> None:
+        """build_many() uses explicit start_version over builder's version."""
+        events = EventBuilder(MinimalEvent).with_version(10).build_many(4, start_version=5)
+
+        assert [e.aggregate_version for e in events] == [5, 6, 7, 8]
+
+    def test_build_many_zero_returns_empty_list(self) -> None:
+        """build_many(0) returns an empty list."""
+        events = EventBuilder(MinimalEvent).build_many(0)
+        assert events == []
+
+    def test_build_many_negative_raises_value_error(self) -> None:
+        """build_many() with negative count raises ValueError."""
+        with pytest.raises(ValueError, match="count must be >= 0"):
+            EventBuilder(MinimalEvent).build_many(-1)
+
+    def test_build_many_avoids_event_id_collision_when_event_id_set(self) -> None:
+        """build_many(count > 1) generates distinct event_ids even if with_event_id was called."""
+        explicit_id = uuid4()
+        builder = EventBuilder(MinimalEvent).with_event_id(explicit_id)
+
+        single = builder.build_many(1)
+        assert single[0].event_id == explicit_id
+
+        multiple = builder.build_many(3)
+        assert len({e.event_id for e in multiple}) == 3
+
 
 __all__ = [  # pragma: allowlist secret
     "TestEventBuilderBuild",
+    "TestEventBuilderBuildMany",
 ]
