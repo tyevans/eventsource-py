@@ -53,7 +53,6 @@ except ImportError:
     otel_metrics = None  # type: ignore[assignment]
 
 logger = logging.getLogger("eventsource.bus.kafka")
-
 _meter: Any = None
 
 
@@ -88,17 +87,11 @@ class KafkaEventBus(
         """Initialize the Kafka event bus (raises KafkaNotAvailableError if aiokafka missing)."""
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
-
-        super().__init__(
-            event_registry=event_registry,
-            max_background_tasks=max_background_tasks,
-        )
-
+        super().__init__(event_registry=event_registry, max_background_tasks=max_background_tasks)
         self._config = config or KafkaEventBusConfig()
         self._serializer = serializer or EventSerializer()
         self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)
         self._enable_tracing = self._tracer.enabled
-
         self._retry_policy = RetryPolicy(
             base_delay=self._config.retry_base_delay,
             max_delay=self._config.retry_max_delay,
@@ -116,9 +109,7 @@ class KafkaEventBus(
         self._metrics_instance = metrics
 
         self._connection_manager = KafkaConnectionManager(
-            config=self._config,
-            stats=self._stats,
-            metrics=metrics,
+            config=self._config, stats=self._stats, metrics=metrics
         )
         self._publisher = KafkaPublisher(
             config=self._config,
@@ -129,11 +120,9 @@ class KafkaEventBus(
             tracer=self._tracer,
             enable_tracing=self._enable_tracing,
         )
-
         self._connection_gauge_registered = False
         self._lag_gauge_registered = False
         self._shutdown_event = asyncio.Event()
-
         self._consumer_loop = KafkaConsumerLoop(
             config=self._config,
             connection=self._connection_manager,
@@ -154,27 +143,22 @@ class KafkaEventBus(
             serializer=self._serializer,
             stats=self._stats,
         )
-
         logger.debug("KafkaEventBus initialized", extra=self._config.get_sanitized_config())
 
     @property
     def is_connected(self) -> bool:
-        """Check if connected to Kafka."""
         return self._connection_manager.is_connected
 
     @property
     def is_consuming(self) -> bool:
-        """Check if actively consuming messages."""
         return self._consumer_loop.is_consuming
 
     @property
     def config(self) -> KafkaEventBusConfig:
-        """Get the configuration."""
         return self._config
 
     @property
     def stats(self) -> KafkaEventBusStats:
-        """Get current statistics."""
         return self._stats
 
     async def connect(self) -> None:
@@ -193,7 +177,6 @@ class KafkaEventBus(
         await self._connection_manager.disconnect()
 
     async def __aenter__(self) -> KafkaEventBus:
-        """Enter async context manager."""
         await self.connect()
         return self
 
@@ -203,7 +186,6 @@ class KafkaEventBus(
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Exit async context manager."""
         await self.shutdown(timeout=self._config.shutdown_timeout)
 
     async def shutdown(self, timeout: float | None = None) -> None:
@@ -211,7 +193,6 @@ class KafkaEventBus(
         timeout = timeout or self._config.shutdown_timeout
         logger.info("Shutting down KafkaEventBus", extra={"timeout": timeout})
         self._shutdown_event.set()
-
         consume_task = self._consumer_loop._consume_task
         if consume_task and not consume_task.done():
             try:
@@ -221,17 +202,14 @@ class KafkaEventBus(
                 consume_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await consume_task
-
         await self._drain_background(timeout or self._config.shutdown_timeout)
         await self.disconnect()
         logger.info("KafkaEventBus shutdown complete")
 
     def _get_security_config(self) -> dict[str, Any]:
-        """Get security configuration for additional consumers."""
         return self._connection_manager.get_security_config()
 
     def get_stats_dict(self) -> dict[str, Any]:
-        """Get statistics as a dictionary."""
         return self._stats.get_stats_dict()
 
     async def get_topic_info(self) -> dict[str, Any]:
@@ -239,9 +217,7 @@ class KafkaEventBus(
         consumer = self._connection_manager.consumer
         if not self._connection_manager.is_connected or not consumer:
             raise EventBusConnectionError("Not connected to Kafka")
-
         partitions = consumer.partitions_for_topic(self._config.topic_name)
-
         return {
             "topic": self._config.topic_name,
             "partitions": list(partitions) if partitions else [],

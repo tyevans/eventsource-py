@@ -43,15 +43,12 @@ class SubscriptionLifecycleManager:
         enable_tracing: bool = True,
         leader_elector: "LeaderElector | None" = None,
     ) -> None:
-        """Initialize the lifecycle manager."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-
         self.event_store = event_store
         self.event_bus = event_bus
         self.checkpoint_repo = checkpoint_repo
         self.leader_elector = leader_elector
-
         self._coordinators: dict[str, TransitionCoordinator] = {}
         self._start_resolver = StartFromResolver(event_store, checkpoint_repo)
 
@@ -73,10 +70,8 @@ class SubscriptionLifecycleManager:
     async def start_subscription(self, subscription: Subscription) -> None:
         """Start a single subscription, resolving position and transitioning to live."""
         name = subscription.name
-
         with self._tracer.span(
-            "eventsource.lifecycle.start_subscription",
-            {ATTR_SUBSCRIPTION_NAME: name},
+            "eventsource.lifecycle.start_subscription", {ATTR_SUBSCRIPTION_NAME: name}
         ) as span:
             try:
                 if self.leader_elector is not None and not await self.verify_leadership_lease():
@@ -84,18 +79,14 @@ class SubscriptionLifecycleManager:
                         f"Instance '{self.leader_elector.identity}' does not hold a valid leadership lease; "
                         f"unauthorized cluster transition blocked for subscription '{name}'"
                     )
-
                 start_position = await self._start_resolver.resolve(subscription)
                 subscription.last_processed_position = start_position
-
                 if span and (token := render_position(start_position)) is not None:
                     span.set_attribute(ATTR_POSITION, token)
-
                 logger.info(
                     "Starting subscription",
                     extra={"subscription": name, "start_position": render_position(start_position)},
                 )
-
                 coordinator = TransitionCoordinator(
                     event_store=self.event_store,
                     event_bus=self.event_bus,
@@ -103,7 +94,6 @@ class SubscriptionLifecycleManager:
                     subscription=subscription,
                 )
                 self._coordinators[name] = coordinator
-
                 result = await coordinator.execute()
                 if not result.success:
                     await subscription.set_error(
@@ -112,10 +102,8 @@ class SubscriptionLifecycleManager:
                     raise SubscriptionError(
                         f"Subscription {name} failed to transition: {result.error}"
                     )
-
                 if span:
                     span.set_attribute(ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
-
                 logger.info(
                     "Subscription started successfully",
                     extra={
@@ -143,9 +131,7 @@ class SubscriptionLifecycleManager:
             return e
 
     async def start_all(
-        self,
-        subscriptions: list[Subscription],
-        concurrent: bool = True,
+        self, subscriptions: list[Subscription], concurrent: bool = True
     ) -> dict[str, Exception | None]:
         """Start multiple subscriptions concurrently or sequentially."""
         logger.info(
@@ -153,14 +139,12 @@ class SubscriptionLifecycleManager:
             extra={"subscription_count": len(subscriptions), "concurrent": concurrent},
         )
         results: dict[str, Exception | None] = {}
-
         if concurrent and len(subscriptions) > 1:
             tasks = [
                 (
                     sub.name,
                     asyncio.create_task(
-                        self.start_subscription_isolated(sub),
-                        name=f"start_{sub.name}",
+                        self.start_subscription_isolated(sub), name=f"start_{sub.name}"
                     ),
                 )
                 for sub in subscriptions
@@ -188,14 +172,12 @@ class SubscriptionLifecycleManager:
             )
         else:
             logger.info("All subscriptions started successfully", extra={"count": succeeded})
-
         return results
 
     async def stop_subscription(self, name: str, timeout: float = 30.0) -> None:
         """Stop a single subscription within the given shutdown timeout."""
         with self._tracer.span(
-            "eventsource.lifecycle.stop_subscription",
-            {ATTR_SUBSCRIPTION_NAME: name},
+            "eventsource.lifecycle.stop_subscription", {ATTR_SUBSCRIPTION_NAME: name}
         ):
             if (coordinator := self._coordinators.get(name)) is None:
                 return
@@ -208,11 +190,7 @@ class SubscriptionLifecycleManager:
                     extra={"subscription": name, "timeout": timeout},
                 )
 
-    async def stop_all(
-        self,
-        subscriptions: list[Subscription],
-        timeout: float = 30.0,
-    ) -> None:
+    async def stop_all(self, subscriptions: list[Subscription], timeout: float = 30.0) -> None:
         """Stop multiple subscriptions gracefully within the given timeout."""
         logger.info(
             "Stopping subscriptions",
@@ -225,39 +203,31 @@ class SubscriptionLifecycleManager:
         ]
         if stop_tasks:
             await asyncio.gather(*stop_tasks, return_exceptions=True)
-
         for subscription in subscriptions:
             if not subscription.is_terminal:
                 await subscription.transition_to(SubscriptionState.STOPPED)
-
         logger.info("Subscriptions stopped")
 
     def get_coordinator(self, name: str) -> TransitionCoordinator | None:
-        """Get the coordinator for a subscription, or None if not found."""
         return self._coordinators.get(name)
 
     def get_handler_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
-        """Get active runner's handler CircuitBreaker for subscription, if any."""
         coordinator = self.get_coordinator(name)
         return coordinator.handler_circuit_breaker if coordinator else None
 
     def get_infra_circuit_breaker(self, name: str) -> "CircuitBreaker | None":
-        """Get active runner's infra CircuitBreaker for subscription, if any."""
         coordinator = self.get_coordinator(name)
         return coordinator.infra_circuit_breaker if coordinator else None
 
     def remove_coordinator(self, name: str) -> TransitionCoordinator | None:
-        """Remove and return a coordinator by subscription name."""
         return self._coordinators.pop(name, None)
 
     @property
     def coordinator_names(self) -> list[str]:
-        """Get names of all active coordinators."""
         return list(self._coordinators.keys())
 
     @property
     def coordinators(self) -> dict[str, TransitionCoordinator]:
-        """Get all coordinators."""
         return self._coordinators
 
 
