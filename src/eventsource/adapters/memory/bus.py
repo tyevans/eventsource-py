@@ -81,10 +81,7 @@ class InMemoryEventBus(BaseEventBus):
         if background:
             await self._track_background(self._publish_all(events))
             self._stats["background_tasks_created"] += 1
-            logger.debug(
-                f"Scheduled background publishing of {len(events)} event(s)",
-                extra={"event_count": len(events)},
-            )
+            logger.debug(f"Scheduled background publishing of {len(events)} event(s)", extra={"event_count": len(events)})  # fmt: skip
         else:
             await self._publish_all(events)
 
@@ -100,38 +97,24 @@ class InMemoryEventBus(BaseEventBus):
             self._stats["events_published"] += 1
 
     async def _dispatch_event(self, event: DomainEvent) -> None:
-        event_type = type(event)
-        handlers = self._handlers_for(event_type)
+        etype, eid, aid = type(event).__name__, str(event.event_id), str(event.aggregate_id)
+        handlers = self._handlers_for(type(event))
         if not handlers:
-            logger.debug(
-                f"No handlers registered for event type: {event_type.__name__}",
-                extra={"event_type": event_type.__name__},
-            )
+            logger.debug(f"No handlers registered for event type: {etype}", extra={"event_type": etype})  # fmt: skip
             return
         attrs = {
-            ATTR_EVENT_TYPE: event_type.__name__,
-            ATTR_EVENT_ID: str(event.event_id),
-            ATTR_AGGREGATE_ID: str(event.aggregate_id),
+            ATTR_EVENT_TYPE: etype,
+            ATTR_EVENT_ID: eid,
+            ATTR_AGGREGATE_ID: aid,
             ATTR_HANDLER_COUNT: len(handlers),
         }
-        logger.debug(
-            f"Dispatching {event_type.__name__} to {len(handlers)} handler(s)",
-            extra={
-                "event_type": event_type.__name__,
-                "event_id": str(event.event_id),
-                "aggregate_id": str(event.aggregate_id),
-                "handler_count": len(handlers),
-            },
-        )
+        extra = {"event_type": etype, "event_id": eid, "aggregate_id": aid, "handler_count": len(handlers)}  # fmt: skip
+        logger.debug(f"Dispatching {etype} to {len(handlers)} handler(s)", extra=extra)
         with self._tracer.span("eventsource.event_bus.dispatch", attrs):
             await self._invoke_handlers(handlers, event)
 
-    async def _invoke_handlers(
-        self, handlers: tuple[HandlerAdapter, ...], event: DomainEvent
-    ) -> None:
-        await asyncio.gather(
-            *(self._safe_handle(a, event) for a in handlers), return_exceptions=True
-        )
+    async def _invoke_handlers(self, handlers: tuple[HandlerAdapter, ...], event: DomainEvent) -> None:  # fmt: skip
+        await asyncio.gather(*(self._safe_handle(a, event) for a in handlers), return_exceptions=True)  # fmt: skip
 
     async def _safe_handle(self, adapter: HandlerAdapter, event: DomainEvent) -> None:
         etype, eid = type(event).__name__, str(event.event_id)
@@ -156,16 +139,8 @@ class InMemoryEventBus(BaseEventBus):
                     span.set_attribute(ATTR_HANDLER_SUCCESS, False)
                     span.record_exception(e)
                 self._stats["handler_errors"] += 1
-                logger.error(
-                    f"Handler {adapter.name} failed processing {etype}: {e}",
-                    exc_info=True,
-                    extra={
-                        "handler": adapter.name,
-                        "event_type": etype,
-                        "event_id": eid,
-                        "error": str(e),
-                    },
-                )
+                ex = {"handler": adapter.name, "event_type": etype, "event_id": eid, "error": str(e)}  # fmt: skip
+                logger.error(f"Handler {adapter.name} failed processing {etype}: {e}", exc_info=True, extra=ex)  # fmt: skip
 
     def get_stats(self) -> dict[str, int]:
         """Get statistics about event bus operation."""

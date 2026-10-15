@@ -50,22 +50,11 @@ class DatabaseProjection(DeclarativeProjection):
         )
         self._session_factory = session_factory
         self._current_connection: AsyncConnection | None = None
-        init_extra = {
-            "projection": self._projection_name,
-            "session_factory_type": type(session_factory).__name__,
-        }
-        logger.info(
-            "DatabaseProjection %s initialized with session factory",
-            self._projection_name,
-            extra=init_extra,
-        )
+        init_extra = {"projection": self._projection_name, "session_factory_type": type(session_factory).__name__}  # fmt: skip
+        logger.info("DatabaseProjection %s initialized with session factory", self._projection_name, extra=init_extra)  # fmt: skip
 
     def _event_extra(self, event: DomainEvent) -> dict[str, str]:
-        return {
-            "projection": self._projection_name,
-            "event_id": str(event.event_id),
-            "event_type": event.event_type,
-        }
+        return {"projection": self._projection_name, "event_id": str(event.event_id), "event_type": event.event_type}  # fmt: skip
 
     async def _handle_with_retry(self, event: DomainEvent, span: "Span | None") -> None:
         """Execute retry logic with a fresh database transaction per attempt."""
@@ -80,18 +69,10 @@ class DatabaseProjection(DeclarativeProjection):
                     await record_checkpoint(self._checkpoint_repo, name, event, self._tracer)
                 if span is not None:
                     span.set_attribute("checkpoint.updated", self._checkpoint_repo is not None)
-                logger.debug(
-                    "Projection %s processed event %s (type: %s)",
-                    name,
-                    eid,
-                    event.event_type,
-                    extra=base_extra,
-                )
+                logger.debug("Projection %s processed event %s (type: %s)", name, eid, event.event_type, extra=base_extra)  # fmt: skip
                 return
-
             except Exception as e:
-                err_extra = {**base_extra, "attempt": attempt + 1, "max_attempts": max_attempts}
-                err_extra["error"] = str(e)
+                err_extra = {**base_extra, "attempt": attempt + 1, "max_attempts": max_attempts, "error": str(e)}  # fmt: skip
                 logger.error(
                     "Projection %s failed to process event %s (attempt %d/%d): %s",
                     name,
@@ -102,7 +83,6 @@ class DatabaseProjection(DeclarativeProjection):
                     exc_info=True,
                     extra=err_extra,
                 )
-
                 if not self._retry_policy.should_retry(attempt, e):
                     if span is not None:
                         span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
@@ -114,41 +94,33 @@ class DatabaseProjection(DeclarativeProjection):
                         if sent_to_dlq
                         else "Event %s failed permanently after %d attempts; NO DLQ entry was recorded"
                     )
-                    logger.critical(
-                        msg, eid, attempt + 1, extra={**base_extra, "retry_count": attempt + 1}
-                    )
+                    logger.critical(msg, eid, attempt + 1, extra={**base_extra, "retry_count": attempt + 1})  # fmt: skip
                     raise
 
                 backoff = self._retry_policy.get_backoff(attempt)
-                retry_extra = {**base_extra, "backoff_seconds": backoff}
-                logger.info("Retrying in %.1f seconds...", backoff, extra=retry_extra)
+                logger.info("Retrying in %.1f seconds...", backoff, extra={**base_extra, "backoff_seconds": backoff})  # fmt: skip
                 await asyncio.sleep(backoff)
 
     async def _execute_in_transaction(self, event: DomainEvent) -> None:
         """Execute event processing within a database transaction."""
         extra = self._event_extra(event)
         name, eid = self._projection_name, event.event_id
-        logger.debug(
-            "DatabaseProjection %s beginning transaction for event %s", name, eid, extra=extra
-        )
+        logger.debug("DatabaseProjection %s beginning transaction for event %s", name, eid, extra=extra)  # fmt: skip
 
         async with self._session_factory() as session, session.begin():
             self._current_connection = await session.connection()
             try:
                 await self._process_event(event)
-                msg = "DatabaseProjection %s committing transaction for event %s"
-                logger.debug(msg, name, eid, extra=extra)
+                logger.debug("DatabaseProjection %s committing transaction for event %s", name, eid, extra=extra)  # fmt: skip
             except Exception as e:
-                msg = "DatabaseProjection %s rolling back transaction for event %s: %s"
-                logger.error(msg, name, eid, e, extra={**extra, "error": str(e)})
+                logger.error("DatabaseProjection %s rolling back transaction for event %s: %s", name, eid, e, extra={**extra, "error": str(e)})  # fmt: skip
                 raise
             finally:
                 self._current_connection = None
 
     async def _process_event(self, event: DomainEvent) -> None:
         """Route event to appropriate handler with database connection."""
-        handler_info = self._handler_registry.get_handler(type(event))
-        if handler_info is None:
+        if (handler_info := self._handler_registry.get_handler(type(event))) is None:
             return await super()._process_event(event)
 
         handler_name = handler_info.handler_name

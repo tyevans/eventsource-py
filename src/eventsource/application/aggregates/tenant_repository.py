@@ -26,8 +26,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         validate_on_save: bool = True,
     ) -> None:
         """Initialize the tenant-aware wrapper."""
-        self._repository = repository
-        self._require_tenant_context = require_tenant_context
+        self._repository, self._require_tenant_context = repository, require_tenant_context
         self._validate_on_save = validate_on_save
 
     @property
@@ -58,20 +57,15 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
     def _validate_tenant_consistency(self, aggregate: TAggregate) -> None:
         """Validate all uncommitted events match current tenant context."""
         expected_tenant = get_required_tenant()
-        logger.debug(
-            "Validating tenant consistency for %s (expected tenant: %s)",
-            type(aggregate).__name__,
-            expected_tenant,
-        )
+        agg_name = type(aggregate).__name__
+        logger.debug("Validating tenant consistency for %s (expected tenant: %s)", agg_name, expected_tenant)  # fmt: skip
 
         mismatched_events: list[UUID] = []
         mismatched_tenant: UUID | None = None
 
         for event in aggregate.uncommitted_events:
             event_tenant = getattr(event, "tenant_id", None)
-            if event_tenant is None:
-                continue
-            if event_tenant != expected_tenant:
+            if event_tenant is not None and event_tenant != expected_tenant:
                 mismatched_events.append(event.event_id)
                 if mismatched_tenant is None:
                     mismatched_tenant = event_tenant
@@ -79,15 +73,13 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         if mismatched_events and mismatched_tenant is not None:
             logger.warning(
                 "Tenant mismatch detected for %s: expected %s, got %s. Affected events: %d",
-                type(aggregate).__name__,
+                agg_name,
                 expected_tenant,
                 mismatched_tenant,
                 len(mismatched_events),
             )
             raise TenantMismatchError(
-                expected=expected_tenant,
-                actual=mismatched_tenant,
-                event_ids=mismatched_events,
+                expected=expected_tenant, actual=mismatched_tenant, event_ids=mismatched_events
             )
 
     async def load(self, aggregate_id: UUID) -> TAggregate:
@@ -111,8 +103,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         results: dict[UUID, TAggregate] = {}
         for agg_id in aggregate_ids:
             if ignore_missing:
-                aggregate = await self.get_or_none(agg_id)
-                if aggregate is not None:
+                if (aggregate := await self.get_or_none(agg_id)) is not None:
                     results[agg_id] = aggregate
             else:
                 results[agg_id] = await self.load(agg_id)
@@ -135,11 +126,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         return self._repository.create_new(aggregate_id)
 
     async def execute(
-        self,
-        aggregate_id: UUID,
-        command: Any,
-        *,
-        create_if_missing: bool = True,
+        self, aggregate_id: UUID, command: Any, *, create_if_missing: bool = True
     ) -> TAggregate:
         """Load (or create) an aggregate, execute a command on it, and save with tenant validation."""
         aggregate = (
@@ -147,7 +134,6 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             if create_if_missing
             else await self.load(aggregate_id)
         )
-
         if callable(command) and not isinstance(command, type):
             command(aggregate)
         else:
@@ -162,15 +148,13 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
                     "such as DeciderAggregate."
                 )
             runner(command)
-
         await self.save(aggregate)
         return aggregate
 
     def __repr__(self) -> str:
         """Return string representation."""
         return (
-            f"TenantAwareRepository("
-            f"repository={type(self._repository).__name__}, "
+            f"TenantAwareRepository(repository={type(self._repository).__name__}, "
             f"require_tenant_context={self._require_tenant_context}, "
             f"validate_on_save={self._validate_on_save})"
         )

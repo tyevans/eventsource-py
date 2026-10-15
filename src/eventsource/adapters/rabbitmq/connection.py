@@ -75,25 +75,20 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             s_url = self._sanitize_url(cfg.rabbitmq_url)
             try:
                 ssl_context = self._create_ssl_context()
-                connect_kwargs: dict[str, Any] = {
-                    "heartbeat": cfg.heartbeat,
-                    "reconnect_interval": cfg.reconnect_delay,
-                }
+                kw: dict[str, Any] = {"heartbeat": cfg.heartbeat, "reconnect_interval": cfg.reconnect_delay}  # fmt: skip
                 if ssl_context is not None:
-                    connect_kwargs["ssl_context"] = ssl_context
+                    kw["ssl_context"] = ssl_context
                 if cfg.ssl_options:
-                    connect_kwargs.update(cfg.ssl_options)
-                self._connection = await aio_pika.connect_robust(cfg.rabbitmq_url, **connect_kwargs)
+                    kw.update(cfg.ssl_options)
+                self._connection = await aio_pika.connect_robust(cfg.rabbitmq_url, **kw)
                 self._connection.reconnect_callbacks.add(self._on_reconnect)  # type: ignore[arg-type]
                 self._connection.close_callbacks.add(self._on_connection_close)  # type: ignore[arg-type]
                 self._channel = await self._connection.channel()
                 self._channel.close_callbacks.add(self._on_channel_close)
                 await self._channel.set_qos(prefetch_count=cfg.prefetch_count)
                 await self._run_reconnect_callbacks()
-                self._connected = True
-                self._stats.connected_at = datetime.now(UTC)
+                self._connected, self._stats.connected_at = True, datetime.now(UTC)
                 tls_on = ssl_context is not None
-                tls_status = "TLS" if tls_on else "plaintext"
                 info_ex = {
                     "rabbitmq_url": s_url,
                     "exchange": cfg.exchange_name,
@@ -102,7 +97,7 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                     "dlq_enabled": cfg.enable_dlq,
                     "tls_enabled": tls_on,
                 }
-                msg = f"Connected to RabbitMQ ({tls_status}) and initialized topology"
+                msg = f"Connected to RabbitMQ ({'TLS' if tls_on else 'plaintext'}) and initialized topology"
                 logger.info(msg, extra=info_ex)
             except ssl.SSLError as e:
                 ex: dict[str, Any] = {
@@ -115,8 +110,7 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                 await self.disconnect()
                 raise
             except Exception as e:
-                ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name, "error": str(e)}
-                ex["error_type"] = type(e).__name__
+                ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name, "error": str(e), "error_type": type(e).__name__}  # fmt: skip
                 logger.error(f"Failed to connect to RabbitMQ: {e}", exc_info=True, extra=ex)
                 await self.disconnect()
                 raise
@@ -130,14 +124,12 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             self._connection = None
         self._connected, self._stats.connected_at = False, None
         cfg = self._config
-        ex = {"exchange": cfg.exchange_name, "queue": cfg.queue_name}
-        ex["consumer_group"] = cfg.consumer_group
+        ex = {"exchange": cfg.exchange_name, "queue": cfg.queue_name, "consumer_group": cfg.consumer_group}  # fmt: skip
         logger.info("Disconnected from RabbitMQ", extra=ex)
 
     async def force_disconnect(self) -> None:
         for attr in ("_channel", "_connection"):
-            obj = getattr(self, attr)
-            if obj:
+            if obj := getattr(self, attr):
                 try:
                     if not obj.is_closed:
                         await obj.close()
@@ -164,17 +156,7 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             errors.append("AMQP channel is closed")
         else:
             channel_status = "open"
-        return {
-            "healthy": not errors,
-            "connection_status": connection_status,
-            "channel_status": channel_status,
-            "errors": errors,
-        }
+        return {"healthy": not errors, "connection_status": connection_status, "channel_status": channel_status, "errors": errors}  # fmt: skip
 
 
-__all__ = [
-    "RabbitMQConnectionCallbacksMixin",
-    "RabbitMQConnectionManager",
-    "create_ssl_context",
-    "sanitize_url",
-]
+__all__ = ["RabbitMQConnectionCallbacksMixin", "RabbitMQConnectionManager", "create_ssl_context", "sanitize_url"]  # fmt: skip

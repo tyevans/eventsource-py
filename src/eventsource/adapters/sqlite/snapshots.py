@@ -12,7 +12,7 @@ from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.adapters.sql.schemas import get_schema
 from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import Tracer, create_tracer
-from eventsource.observability.attributes import (
+from eventsource.observability.attributes import (  # fmt: skip
     ATTR_AGGREGATE_ID,
     ATTR_AGGREGATE_TYPE,
     ATTR_VERSION,
@@ -34,8 +34,7 @@ class SQLiteNotAvailableError(ImportError):
 
     def __init__(self) -> None:
         super().__init__(
-            "aiosqlite is required for SQLiteSnapshotStore. "
-            "Install it with: pip install eventsource[sqlite]"
+            "aiosqlite is required for SQLiteSnapshotStore. Install it with: pip install eventsource[sqlite]"
         )
 
 
@@ -96,18 +95,8 @@ class SQLiteSnapshotStore:
     async def save_snapshot(self, snapshot: Snapshot) -> None:
         s = snapshot
         attrs = {**self._agg_attrs(s.aggregate_id, s.aggregate_type), ATTR_VERSION: s.version}
-        sql = (
-            "INSERT OR REPLACE INTO snapshots (aggregate_id, aggregate_type, "
-            "version, schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-        )
-        params = (
-            str(s.aggregate_id),
-            s.aggregate_type,
-            s.version,
-            s.schema_version,
-            json_dumps(s.state),
-            s.created_at.isoformat(),
-        )
+        sql = "INSERT OR REPLACE INTO snapshots (aggregate_id, aggregate_type, version, schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)"  # fmt: skip
+        params = (str(s.aggregate_id), s.aggregate_type, s.version, s.schema_version, json_dumps(s.state), s.created_at.isoformat())  # fmt: skip
         with self._tracer.span("eventsource.snapshot.save", attrs):
             conn = await self._conn()
             async with self._lock:
@@ -116,10 +105,7 @@ class SQLiteSnapshotStore:
             logger.debug("Saved snapshot for %s/%s", s.aggregate_type, s.aggregate_id)
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
-        sql = (
-            "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at "
-            "FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"
-        )
+        sql = "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"  # fmt: skip
         with self._tracer.span("eventsource.snapshot.get", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
@@ -133,8 +119,7 @@ class SQLiteSnapshotStore:
             except (ValueError, TypeError) as e:
                 raise SnapshotDeserializationError(r_id, r_type, e) from e
             logger.debug("Retrieved snapshot for %s/%s", aggregate_type, aggregate_id)
-            created = datetime.fromisoformat(row["created_at"])
-            return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], created)
+            return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], datetime.fromisoformat(row["created_at"]))  # fmt: skip
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
         sql = "DELETE FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"
@@ -165,8 +150,7 @@ class SQLiteSnapshotStore:
                     sql = "DELETE FROM snapshots WHERE aggregate_type = ? AND schema_version < ?"
                     cursor = await conn.execute(sql, (aggregate_type, schema_version_below))
                 else:
-                    sql = "DELETE FROM snapshots WHERE aggregate_type = ?"
-                    cursor = await conn.execute(sql, (aggregate_type,))
+                    cursor = await conn.execute("DELETE FROM snapshots WHERE aggregate_type = ?", (aggregate_type,))  # fmt: skip
                 await conn.commit()
                 count: int = cursor.rowcount
             if count > 0:
