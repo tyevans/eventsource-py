@@ -87,18 +87,14 @@ class ManagerLifecycleMixin:
     async def run_until_shutdown(self, shutdown_timeout: float | None = None) -> ShutdownResult:
         if shutdown_timeout is not None:
             self._shutdown_coordinator.timeout = shutdown_timeout
-        extra = {
-            "subscription_count": len(self._registry),
-            "shutdown_timeout": self._shutdown_coordinator.timeout,
-        }
+        t_out = self._shutdown_coordinator.timeout
+        extra = {"subscription_count": len(self._registry), "shutdown_timeout": t_out}
         logger.info("Starting manager in daemon mode", extra=extra)
         self.register_signals()
         try:
             await self.start()
-            names = self._registry.get_names()
-            logger.info(
-                "Manager running, waiting for shutdown signal", extra={"subscriptions": names}
-            )
+            extra_run = {"subscriptions": self._registry.get_names()}
+            logger.info("Manager running, waiting for shutdown signal", extra=extra_run)
             await self._shutdown_coordinator.wait_for_shutdown()
             self._last_shutdown_result = await self._execute_graceful_shutdown()
             return self._last_shutdown_result
@@ -111,14 +107,12 @@ class ManagerLifecycleMixin:
 
     async def _execute_graceful_shutdown(self) -> ShutdownResult:
         return await self._shutdown_coordinator.shutdown(
-            stop_func=self._stop_accepting_events,
-            drain_func=self._drain_in_flight_events,
-            checkpoint_func=self._save_final_checkpoints,
+            self._stop_accepting_events, self._drain_in_flight_events, self._save_final_checkpoints
         )
 
     async def _stop_accepting_events(self) -> None:
-        count = len(self._lifecycle.coordinators)
-        logger.info("Stopping event acceptance", extra={"subscription_count": count})
+        extra = {"subscription_count": len(self._lifecycle.coordinators)}
+        logger.info("Stopping event acceptance", extra=extra)
         await self.stop()
 
     async def _drain_in_flight_events(self) -> int:
@@ -135,12 +129,9 @@ class ManagerLifecycleMixin:
                 logger.info("Draining in-flight events for subscription", extra=extra)
                 task = asyncio.create_task(fc.wait_for_drain(drain_timeout), name=f"drain-{name}")
                 drain_tasks.append((name, task))
-
-        drain_info = {
-            "total_in_flight": total_in_flight,
-            "subscriptions_with_events": len(drain_tasks),
-        }
-        logger.info("Draining in-flight events", extra=drain_info)
+        n_tasks = len(drain_tasks)
+        extra_d = {"total_in_flight": total_in_flight, "subscriptions_with_events": n_tasks}
+        logger.info("Draining in-flight events", extra=extra_d)
         if not drain_tasks:
             return total_in_flight
         try:
@@ -148,22 +139,20 @@ class ManagerLifecycleMixin:
             total_remaining = 0
             for (name, _), res in zip(drain_tasks, results, strict=True):
                 if isinstance(res, BaseException):
-                    logger.error(
-                        "Drain task failed", extra={"subscription": name, "error": str(res)}
-                    )
+                    extra_err = {"subscription": name, "error": str(res)}
+                    logger.error("Drain task failed", extra=extra_err)
                 elif res > 0:
                     total_remaining += res
-                    extra = {"subscription": name, "remaining_events": res}
-                    logger.warning("Subscription did not fully drain", extra=extra)
+                    extra_w = {"subscription": name, "remaining_events": res}
+                    logger.warning("Subscription did not fully drain", extra=extra_w)
                 else:
                     logger.debug("Subscription drained successfully", extra={"subscription": name})
             if total_remaining > 0:
-                extra = {"total_remaining": total_remaining, "drain_timeout": drain_timeout}
-                logger.warning("Some events did not drain before timeout", extra=extra)
+                extra_t = {"total_remaining": total_remaining, "drain_timeout": drain_timeout}
+                logger.warning("Some events did not drain before timeout", extra=extra_t)
             else:
-                logger.info(
-                    "All events drained successfully", extra={"total_drained": total_in_flight}
-                )
+                extra_ok = {"total_drained": total_in_flight}
+                logger.info("All events drained successfully", extra=extra_ok)
         except Exception as e:
             logger.error("Error during drain phase", extra={"error": str(e)}, exc_info=True)
         return total_in_flight
@@ -171,29 +160,22 @@ class ManagerLifecycleMixin:
     async def _save_final_checkpoints(self) -> int:
         saved_count = 0
         for name, sub in self._registry.items():
+            sub_extra = {"subscription": name}
             ev_id, ev_type = sub.last_event_id, sub.last_event_type
+            pos = sub.last_processed_position
             if ev_id is None or ev_type is None:
-                logger.debug(
-                    "Skipping checkpoint save - no event info", extra={"subscription": name}
-                )
-                continue
-            if (pos := sub.last_processed_position) is None:
-                logger.debug(
-                    "Skipping checkpoint save - no position to checkpoint",
-                    extra={"subscription": name},
-                )
-                continue
-            try:
-                await self.checkpoint_repo.save_position(name, pos, ev_id, ev_type)
-                saved_count += 1
-                logger.debug(
-                    "Checkpoint saved",
-                    extra={"subscription": name, "position": render_position(pos)},
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to save checkpoint", extra={"subscription": name, "error": str(e)}
-                )
+                logger.debug("Skipping checkpoint save - no event info", extra=sub_extra)
+            elif pos is None:
+                msg = "Skipping checkpoint save - no position to checkpoint"
+                logger.debug(msg, extra=sub_extra)
+            else:
+                try:
+                    await self.checkpoint_repo.save_position(name, pos, ev_id, ev_type)
+                    saved_count += 1
+                    extra_p = {**sub_extra, "position": render_position(pos)}
+                    logger.debug("Checkpoint saved", extra=extra_p)
+                except Exception as e:
+                    logger.error("Failed to save checkpoint", extra={**sub_extra, "error": str(e)})
         logger.info("Final checkpoints saved", extra={"checkpoints_saved": saved_count})
         return saved_count
 
