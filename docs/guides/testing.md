@@ -8,14 +8,19 @@ domain behavior through public frontdoors without database or broker setup:
   triples, including `.then_event_types(*EventClasses)`, `.then_events(*EventClasses)`,
   `.then_event(EventCls, **expected_fields)`, `.then_no_events()`,
   `scenario.assertions`, and `len(scenario)`.
-- **`EventBuilder`** with `EventBuilder(EventCls, **fields)` and
+- **`EventBuilder`** with `EventBuilder(EventCls, **fields)`,
+  `EventBuilder.clone(**overrides)`, and
   `EventBuilder.build_many(count, *, start_version=None)` for constructing
-  individual test events and auto-versioned event sequences with minimal boilerplate.
+  individual test events, branching reusable template builders, and building
+  auto-versioned event sequences with minimal boilerplate.
 - **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
   `await harness.append_events(*events, expected_version=None)`,
-  `harness.snapshot_store`, and `harness.assertions` (`EventAssertions` wrapper
+  `harness.snapshot_store`, `harness.assertions` (`EventAssertions` wrapper
   over `harness.published_events`, including `assert_first_event` and
-  `assert_last_event`) for pre-wired repository and bus testing.
+  `assert_last_event`), and variadic BDD helpers `await given_events(harness, event1, event2)`
+  (returning the appended `list[DomainEvent]`) and
+  `then_event_sequence(harness, OrderCreated, OrderShipped)` for pre-wired
+  repository and bus testing.
 - **`RecordingEventBus.assertions`** (`bus.assertions.assert_event_published(...)`,
   `bus.assertions.assert_first_event(...)`, `bus.assertions.assert_last_event(...)`,
   `bus.assertions.assert_event_with_fields(...)`, `bus.assertions.assert_event_count(...)`),
@@ -274,6 +279,37 @@ def test_event_builder_initial_fields() -> None:
 
 You can still chain `.with_aggregate_id(...)`, `.with_version(...)`, or
 `.with_fields(...)` on top of initial keyword fields when needed.
+
+### Branching reusable builders with `EventBuilder.clone`
+
+Use `builder.clone(**overrides)` to copy an existing `EventBuilder` with optional
+field overrides without mutating the base builder—ideal for defining a shared
+template builder in a fixture or test and branching variants from it:
+
+```python
+from uuid import uuid4
+from eventsource.testing import EventBuilder
+
+
+def test_event_builder_clone() -> None:
+    order_id = uuid4()
+    base = EventBuilder(
+        ItemAdded,
+        aggregate_id=order_id,
+        item="Widget",
+        quantity=1,
+    )
+
+    first = base.build()
+    second = base.clone(aggregate_version=2, item="Gadget", quantity=3).build()
+
+    assert first.item == "Widget"
+    assert first.aggregate_version == 1
+    assert second.aggregate_id == order_id
+    assert second.item == "Gadget"
+    assert second.quantity == 3
+    assert second.aggregate_version == 2
+```
 
 ### Building auto-versioned sequences with `EventBuilder.build_many`
 
@@ -596,10 +632,73 @@ async def test_event_bus_published_of_type() -> None:
 
 Use `harness.clear_published_events()`, `bus.clear()`, `bus.clear_published_events()`,
 or `recording_bus.clear_published_events()` between phases of a test when you want
-to reset the recorded publication history. When using the functional BDD helpers
-from `eventsource.testing.bdd`, pass `event_type=...` to
-`then_event_count(harness, count, event_type=MoneyDeposited)` to assert the
-count of a specific event type rather than the total event count.
+to reset the recorded publication history.
+
+### Variadic functional BDD helpers (`given_events` and `then_event_sequence`)
+
+When using the functional BDD helpers from `eventsource.testing.bdd`:
+
+- **`await given_events(harness, *events, expected_version=None)`**: accepts
+  variadic `DomainEvent` instances and/or sequences of events (such as
+  `await given_events(harness, event1, event2)` or `await given_events(harness, [event1, event2])`),
+  appends them to `harness.event_store`, and returns the flattened
+  `list[DomainEvent]` of appended events.
+- **`then_event_sequence(harness, *event_types)`**: accepts variadic event
+  classes and/or sequences of event classes (such as
+  `then_event_sequence(harness, OrderCreated, OrderShipped)` or
+  `then_event_sequence(harness, [OrderCreated, OrderShipped])`), asserts that
+  published events match the exact sequence of types, and returns the published
+  `list[DomainEvent]`.
+- **`then_event_count(harness, count, *, event_type=None)`**: pass `event_type=...`
+  (e.g., `then_event_count(harness, 1, event_type=MoneyDeposited)`) to assert the
+  count of a specific event type rather than the total event count.
+
+```python
+from uuid import uuid4
+from eventsource.testing import (
+    EventBuilder,
+    InMemoryTestHarness,
+    given_events,
+    then_event_count,
+    then_event_sequence,
+)
+
+
+async def test_variadic_bdd_helpers() -> None:
+    harness = InMemoryTestHarness()
+    repo = harness.create_repository(OrderAggregate)
+    order_id = uuid4()
+    customer_id = uuid4()
+
+    created = EventBuilder(
+        OrderCreated,
+        aggregate_id=order_id,
+        customer_id=customer_id,
+    ).build()
+    item_added = EventBuilder(
+        ItemAdded,
+        aggregate_id=order_id,
+        aggregate_version=2,
+        item="Widget",
+    ).build()
+
+    seeded = await given_events(harness, created, item_added)
+    assert len(seeded) == 2
+
+    await harness.publish_events(
+        created,
+        EventBuilder(
+            OrderShipped,
+            aggregate_id=order_id,
+            aggregate_version=3,
+            tracking_number="TRACK-123",
+        ).build(),
+    )
+
+    published = then_event_sequence(harness, OrderCreated, OrderShipped)
+    assert len(published) == 2
+    then_event_count(harness, 1, event_type=OrderShipped)
+```
 
 ## Isolated event registries in tests with `EventRegistry`
 
