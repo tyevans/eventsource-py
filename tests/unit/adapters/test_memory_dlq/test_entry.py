@@ -127,6 +127,7 @@ class TestDLQEntryTypedReturns:
                 aggregate_type="Sample",
                 version=1,
                 state={"ok": True},
+                schema_version=1,
                 created_at=datetime.now(UTC),
             )
         )

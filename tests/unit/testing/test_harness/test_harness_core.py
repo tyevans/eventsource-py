@@ -192,12 +192,12 @@ class TestHarnessRepr:
 
         agg_id = uuid4()
         ev1 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
-        ev2 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2)
+        ev2 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
 
         await harness.publish_events(ev1)
         assert len(harness) == 1
-        assert await harness.event_store.get_event_count() == 0
+        assert [e async for e in harness.event_store.read_all()] == []
 
         await harness.publish_events(ev2, persist=True)
         assert len(harness) == 2
-        assert await harness.event_store.get_event_count() == 1
+        assert len([e async for e in harness.event_store.read_all()]) == 1
