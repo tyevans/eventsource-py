@@ -41,28 +41,23 @@ def create_shutdown_result(
     duration = (datetime.now(UTC) - start_time).total_seconds()
     if forced and error_msg and "double signal" in error_msg.lower():
         outcome = "forced"
-    elif forced:
-        outcome = "timeout"
     else:
-        outcome = "clean"
+        outcome = "timeout" if forced else "clean"
 
     final_reason = coordinator._shutdown_reason
     if forced and coordinator._shutdown_reason != ShutdownReason.DOUBLE_SIGNAL:
         final_reason = ShutdownReason.TIMEOUT
 
-    events_not_drained = max(0, coordinator._in_flight_at_start - events_drained)
+    in_flight = coordinator._in_flight_at_start
+    events_not_drained = max(0, in_flight - events_drained)
     try:
         record_shutdown_completed(outcome, duration)
     except Exception as e:
         logger.debug("Failed to record shutdown completed metric", extra={"error": str(e)})
 
+    drain_dur = coordinator._drain_duration_seconds
     coordinator._last_metrics_snapshot = ShutdownMetricsSnapshot(
-        shutdown_duration_seconds=duration,
-        drain_duration_seconds=coordinator._drain_duration_seconds,
-        events_drained=events_drained,
-        checkpoints_saved=checkpoints_saved,
-        in_flight_at_start=coordinator._in_flight_at_start,
-        outcome=outcome,
+        duration, drain_dur, events_drained, checkpoints_saved, in_flight, outcome
     )
     logger.info(
         "Shutdown complete",
@@ -76,21 +71,20 @@ def create_shutdown_result(
             "error": error_msg,
             "outcome": outcome,
             "reason": final_reason.value if final_reason else None,
-            "in_flight_at_start": coordinator._in_flight_at_start,
+            "in_flight_at_start": in_flight,
             "events_not_drained": events_not_drained,
         },
     )
+    counts = (subscriptions_stopped, events_drained, checkpoints_saved)
     return ShutdownResult(
-        phase=coordinator._phase,
-        duration_seconds=duration,
-        subscriptions_stopped=subscriptions_stopped,
-        events_drained=events_drained,
-        checkpoints_saved=checkpoints_saved,
-        forced=forced,
-        error=error_msg,
-        reason=final_reason,
-        in_flight_at_start=coordinator._in_flight_at_start,
-        events_not_drained=events_not_drained,
+        coordinator._phase,
+        duration,
+        *counts,
+        forced,
+        error_msg,
+        final_reason,
+        in_flight,
+        events_not_drained,
     )
 
 
@@ -103,13 +97,9 @@ async def execute_shutdown_sequence(
 ) -> ShutdownResult:
     """Execute graceful shutdown sequence across coordinator phases."""
     start_time = datetime.now(UTC)
-    events_drained = 0
-    checkpoints_saved = 0
-    subscriptions_stopped = 0
-    forced = False
-    error_msg: str | None = None
-    coordinator._drain_duration_seconds = 0.0
-    coordinator._drain_start_time = 0.0
+    events_drained, checkpoints_saved, subscriptions_stopped = 0, 0, 0
+    forced, error_msg = False, None
+    coordinator._drain_duration_seconds = coordinator._drain_start_time = 0.0
 
     stop_timeout, drain_timeout, checkpoint_timeout = coordinator._get_adjusted_timeouts()
     if coordinator._shutdown_deadline is not None:
@@ -122,7 +112,6 @@ async def execute_shutdown_sequence(
                 "deadline": coordinator._shutdown_deadline.isoformat(),
             },
         )
-
     try:
         record_shutdown_initiated()
     except Exception as e:
@@ -143,14 +132,8 @@ async def execute_shutdown_sequence(
             forced = True
 
         if coordinator._phase == ShutdownPhase.FORCED:
-            return coordinator._create_result(
-                start_time,
-                subscriptions_stopped,
-                events_drained,
-                checkpoints_saved,
-                True,
-                "Forced by double signal",
-            )
+            counts = (subscriptions_stopped, events_drained, checkpoints_saved)
+            return coordinator._create_result(start_time, *counts, True, "Forced by double signal")
 
         if drain_func and not forced and drain_timeout > 0:
             coordinator._phase = ShutdownPhase.DRAINING
@@ -167,12 +150,10 @@ async def execute_shutdown_sequence(
                 coordinator._start_periodic_checkpoints(checkpoint_func)
             try:
                 events_drained = await asyncio.wait_for(drain_func(), timeout=drain_timeout)
+                saved = coordinator._periodic_checkpoints_saved
                 logger.info(
                     "Events drained successfully",
-                    extra={
-                        "events_drained": events_drained,
-                        "periodic_checkpoints_saved": coordinator._periodic_checkpoints_saved,
-                    },
+                    extra={"events_drained": events_drained, "periodic_checkpoints_saved": saved},
                 )
             except TimeoutError:
                 logger.warning("Drain phase timed out", extra={"timeout": drain_timeout})
@@ -191,14 +172,8 @@ async def execute_shutdown_sequence(
             logger.info("Skipping drain phase due to time constraint")
 
         if coordinator._phase == ShutdownPhase.FORCED:
-            return coordinator._create_result(
-                start_time,
-                subscriptions_stopped,
-                events_drained,
-                checkpoints_saved,
-                True,
-                "Forced by double signal",
-            )
+            counts = (subscriptions_stopped, events_drained, checkpoints_saved)
+            return coordinator._create_result(start_time, *counts, True, "Forced by double signal")
 
         if checkpoint_func and checkpoint_timeout > 0:
             coordinator._phase = ShutdownPhase.CHECKPOINTING
@@ -229,9 +204,7 @@ async def execute_shutdown_sequence(
         coordinator._phase = ShutdownPhase.FORCED if forced else ShutdownPhase.STOPPED
     except Exception as e:
         logger.error("Shutdown error", extra={"error": str(e)}, exc_info=True)
-        coordinator._phase = ShutdownPhase.FORCED
-        forced = True
-        error_msg = str(e)
+        coordinator._phase, forced, error_msg = ShutdownPhase.FORCED, True, str(e)
 
     result = coordinator._create_result(
         start_time, subscriptions_stopped, events_drained, checkpoints_saved, forced, error_msg

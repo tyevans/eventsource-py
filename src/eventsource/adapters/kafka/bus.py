@@ -43,14 +43,13 @@ try:
     KAFKA_AVAILABLE = True
 except ImportError:
     KAFKA_AVAILABLE = False
-    AIOKafkaProducer = None
-    AIOKafkaConsumer = None
+    AIOKafkaProducer = AIOKafkaConsumer = None
     KafkaError = Exception
 
 try:
     from opentelemetry import metrics as otel_metrics
 except ImportError:
-    otel_metrics = None  # type: ignore[assignment]
+    otel_metrics = None
 
 logger = logging.getLogger("eventsource.bus.kafka")
 _meter: Any = None
@@ -88,62 +87,37 @@ class KafkaEventBus(
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
         super().__init__(event_registry=event_registry, max_background_tasks=max_background_tasks)
-        self._config = config or KafkaEventBusConfig()
+        cfg = self._config = config or KafkaEventBusConfig()
         self._serializer = serializer or EventSerializer()
-        self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)
+        self._tracer = tracer or create_tracer(__name__, cfg.enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._retry_policy = RetryPolicy(
-            base_delay=self._config.retry_base_delay,
-            max_delay=self._config.retry_max_delay,
-            jitter=self._config.retry_jitter,
-            max_retries=self._config.max_retries,
+            cfg.retry_base_delay, cfg.retry_max_delay, cfg.retry_jitter, cfg.max_retries
         )
         self._stats = KafkaEventBusStats()
 
-        metrics: KafkaEventBusMetrics | None = None
-        self._meter: Any = None
-        if self._config.enable_metrics:
-            self._meter = _get_meter()
-            if self._meter:
-                metrics = KafkaEventBusMetrics(self._meter)
+        self._meter: Any = _get_meter() if cfg.enable_metrics else None
+        metrics = KafkaEventBusMetrics(self._meter) if self._meter else None
         self._metrics_instance = metrics
 
-        self._connection_manager = KafkaConnectionManager(
-            config=self._config, stats=self._stats, metrics=metrics
-        )
-        self._publisher = KafkaPublisher(
-            config=self._config,
-            connection=self._connection_manager,
-            serializer=self._serializer,
-            stats=self._stats,
-            metrics=metrics,
-            tracer=self._tracer,
-            enable_tracing=self._enable_tracing,
-        )
-        self._connection_gauge_registered = False
-        self._lag_gauge_registered = False
+        self._connection_manager = KafkaConnectionManager(cfg, self._stats, metrics)
+        deps = (cfg, self._connection_manager, self._serializer, self._stats)
+        self._publisher = KafkaPublisher(*deps, metrics, self._tracer, self._enable_tracing)
+        self._connection_gauge_registered = self._lag_gauge_registered = False
         self._shutdown_event = asyncio.Event()
         self._consumer_loop = KafkaConsumerLoop(
-            config=self._config,
-            connection=self._connection_manager,
-            serializer=self._serializer,
-            stats=self._stats,
-            metrics=metrics,
-            retry_policy=self._retry_policy,
-            handlers_for=self._handlers_for,
-            resolve_event_class=self._resolve_event_class,
-            tracer=self._tracer,
-            enable_tracing=self._enable_tracing,
-            shutdown_event=self._shutdown_event,
-            on_start=self._register_consumer_lag_gauge,
+            *deps,
+            metrics,
+            self._retry_policy,
+            self._handlers_for,
+            self._resolve_event_class,
+            self._tracer,
+            self._enable_tracing,
+            self._shutdown_event,
+            self._register_consumer_lag_gauge,
         )
-        self._dlq_admin = KafkaDLQAdmin(
-            config=self._config,
-            connection=self._connection_manager,
-            serializer=self._serializer,
-            stats=self._stats,
-        )
-        logger.debug("KafkaEventBus initialized", extra=self._config.get_sanitized_config())
+        self._dlq_admin = KafkaDLQAdmin(*deps)
+        logger.debug("KafkaEventBus initialized", extra=cfg.get_sanitized_config())
 
     @property
     def is_connected(self) -> bool:
@@ -162,13 +136,11 @@ class KafkaEventBus(
         return self._stats
 
     async def connect(self) -> None:
-        """Connect to Kafka cluster."""
         await self._connection_manager.connect()
         if self._connection_manager.is_connected:
             self._wire_metrics()
 
     async def disconnect(self) -> None:
-        """Disconnect from Kafka cluster."""
         if not self._connection_manager.is_connected:
             logger.debug("KafkaEventBus not connected, nothing to disconnect")
             return
