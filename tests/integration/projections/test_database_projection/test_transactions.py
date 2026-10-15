@@ -21,16 +21,22 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-pytestmark = [
-    skip_if_no_postgres_infra,
-    pytest.mark.integration,
-    pytest.mark.postgres,
-]
+pytestmark = [skip_if_no_postgres_infra, pytest.mark.integration, pytest.mark.postgres]
+
+INSERT_SQL = text(
+    "INSERT INTO test_orders (id, order_number, amount) VALUES (:id, :order_number, :amount)"
+)
+
+
+def _event_params(event: OrderCreated) -> dict[str, Any]:
+    return {
+        "id": event.aggregate_id,
+        "order_number": event.order_number,
+        "amount": event.amount,
+    }
 
 
 class TestDatabaseProjectionTransactions:
-    """Integration tests for DatabaseProjection transaction behavior."""
-
     @pytest.mark.asyncio
     async def test_sql_execution_in_handler(
         self,
@@ -46,11 +52,7 @@ class TestDatabaseProjectionTransactions:
                         "INSERT INTO test_orders (id, order_number, amount, status) "
                         "VALUES (:id, :order_number, :amount, 'created')"
                     ),
-                    {
-                        "id": event.aggregate_id,
-                        "order_number": event.order_number,
-                        "amount": event.amount,
-                    },
+                    _event_params(event),
                 )
 
         projection = OrderProjection(session_factory=postgres_session_factory)
@@ -67,9 +69,7 @@ class TestDatabaseProjectionTransactions:
             row = result.fetchone()
 
         assert row is not None
-        assert row[0] == "ORD-001"
-        assert float(row[1]) == 99.99
-        assert row[2] == "created"
+        assert (row[0], float(row[1]), row[2]) == ("ORD-001", 99.99, "created")
 
     @pytest.mark.asyncio
     async def test_transaction_commits_on_success(
@@ -81,17 +81,7 @@ class TestDatabaseProjectionTransactions:
         class OrderProjection(DatabaseProjection):
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
-                await conn.execute(
-                    text(
-                        "INSERT INTO test_orders (id, order_number, amount) "
-                        "VALUES (:id, :order_number, :amount)"
-                    ),
-                    {
-                        "id": event.aggregate_id,
-                        "order_number": event.order_number,
-                        "amount": event.amount,
-                    },
-                )
+                await conn.execute(INSERT_SQL, _event_params(event))
 
         projection = OrderProjection(session_factory=postgres_session_factory)
         aggregate_id = uuid4()
@@ -103,9 +93,7 @@ class TestDatabaseProjectionTransactions:
             result = await conn.execute(
                 text("SELECT COUNT(*) FROM test_orders WHERE id = :id"), {"id": aggregate_id}
             )
-            count = result.scalar()
-
-        assert count == 1
+            assert result.scalar() == 1
 
     @pytest.mark.asyncio
     async def test_transaction_rollback_on_handler_error(
@@ -120,17 +108,7 @@ class TestDatabaseProjectionTransactions:
 
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
-                await conn.execute(
-                    text(
-                        "INSERT INTO test_orders (id, order_number, amount) "
-                        "VALUES (:id, :order_number, :amount)"
-                    ),
-                    {
-                        "id": event.aggregate_id,
-                        "order_number": event.order_number,
-                        "amount": event.amount,
-                    },
-                )
+                await conn.execute(INSERT_SQL, _event_params(event))
                 raise ValueError("Simulated handler error")
 
         projection = FailingProjection(
@@ -148,9 +126,7 @@ class TestDatabaseProjectionTransactions:
             result = await conn.execute(
                 text("SELECT COUNT(*) FROM test_orders WHERE id = :id"), {"id": aggregate_id}
             )
-            count = result.scalar()
-
-        assert count == 0
+            assert result.scalar() == 0
 
     @pytest.mark.asyncio
     async def test_partial_handler_failure_rollback(
@@ -165,20 +141,9 @@ class TestDatabaseProjectionTransactions:
 
             @handles(OrderCreated)
             async def _handle_order_created(self, conn: Any, event: OrderCreated) -> None:
-                sql = text(
-                    "INSERT INTO test_orders (id, order_number, amount) "
-                    "VALUES (:id, :order_number, :amount)"
-                )
+                await conn.execute(INSERT_SQL, _event_params(event))
                 await conn.execute(
-                    sql,
-                    {
-                        "id": event.aggregate_id,
-                        "order_number": event.order_number,
-                        "amount": event.amount,
-                    },
-                )
-                await conn.execute(
-                    sql,
+                    INSERT_SQL,
                     {
                         "id": uuid4(),
                         "order_number": f"{event.order_number}-RELATED",
@@ -199,6 +164,4 @@ class TestDatabaseProjectionTransactions:
 
         async with postgres_engine.begin() as conn:
             result = await conn.execute(text("SELECT COUNT(*) FROM test_orders"))
-            count = result.scalar()
-
-        assert count == 0
+            assert result.scalar() == 0

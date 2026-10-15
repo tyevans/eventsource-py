@@ -31,15 +31,11 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 
 class TestCombinedResilience:
-    """Tests combining multiple resilience features."""
-
     async def test_retry_with_circuit_breaker(self):
-        """Test retry mechanism combined with circuit breaker."""
         breaker = CircuitBreaker(
             config=CircuitBreakerConfig(failure_threshold=3, recovery_timeout=0.1)
         )
-        call_count = 0
-        failures = 0
+        call_count = failures = 0
 
         async def flaky_with_breaker():
             nonlocal call_count, failures
@@ -59,8 +55,7 @@ class TestCombinedResilience:
             config=config,
             retryable_exceptions=(ConnectionError, CircuitBreakerOpenError),
         )
-        assert result == "success"
-        assert breaker.is_closed
+        assert result == "success" and breaker.is_closed
 
     async def test_slow_failing_subscriber_still_drains(
         self,
@@ -69,16 +64,12 @@ class TestCombinedResilience:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """A slow subscriber that intermittently fails still processes the backlog."""
         await populate_event_store(in_memory_event_store, 100)
 
         class SlowChaosProjection:
             def __init__(self):
                 self.events: list[DomainEvent] = []
-                self.event_count = 0
-                self.failures = 0
-                self.concurrent = 0
-                self.max_concurrent = 0
+                self.event_count = self.failures = self.concurrent = self.max_concurrent = 0
                 self._lock = asyncio.Lock()
 
             def subscribed_to(self):
@@ -114,8 +105,7 @@ class TestCombinedResilience:
         await subscription_manager.start()
         await asyncio.sleep(5.0)
         await subscription_manager.stop()
-        assert projection.event_count >= 80
-        assert projection.max_concurrent <= 10
+        assert projection.event_count >= 80 and projection.max_concurrent <= 10
 
     async def test_graceful_degradation(
         self,
@@ -124,7 +114,6 @@ class TestCombinedResilience:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test system degrades gracefully under stress."""
         await populate_event_store(in_memory_event_store, 200)
         fast_projection = CollectingProjection(name="Fast")
         slow_chaos = ChaosProjection(failure_rate=0.1)
@@ -136,11 +125,9 @@ class TestCombinedResilience:
         success = await fast_projection.wait_for_events(200, timeout=30.0)
         await subscription_manager.stop()
         assert success, f"Fast projection got {fast_projection.event_count} events"
-        assert fast_projection.event_count == 200
-        assert slow_chaos.event_count >= 150
+        assert fast_projection.event_count == 200 and slow_chaos.event_count >= 150
 
     async def test_cascading_recovery(self):
-        """Test recovery after cascading failures."""
         breaker = CircuitBreaker(
             config=CircuitBreakerConfig(failure_threshold=3, recovery_timeout=0.2)
         )
@@ -161,16 +148,11 @@ class TestCombinedResilience:
         failure_phase = False
         await asyncio.sleep(0.25)
         result = await breaker.execute(cascading_service)
-        assert result == "recovered"
-        assert breaker.is_closed
+        assert result == "recovered" and breaker.is_closed
 
     async def test_multiple_subscribers_with_different_error_tolerances(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
+        self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
     ):
-        """Test multiple subscribers with different error handling settings."""
         await populate_event_store(in_memory_event_store, 50)
         strict_projection = PositionalFailingProjection(fail_at_positions={25})
         strict_config = SubscriptionConfig(start_from="beginning", continue_on_error=False)
@@ -182,7 +164,6 @@ class TestCombinedResilience:
         await strict_manager.subscribe(strict_projection, strict_config, name="StrictProjection")
         with contextlib.suppress(Exception):
             await strict_manager.start()
-        assert strict_projection.event_count < 50
         assert strict_projection.event_count == 25
         await strict_manager.stop()
 
@@ -200,5 +181,4 @@ class TestCombinedResilience:
         await tolerant_manager.start()
         await asyncio.sleep(1.0)
         await tolerant_manager.stop()
-        assert tolerant_projection.event_count == 47
-        assert len(tolerant_projection.failures) == 3
+        assert (tolerant_projection.event_count, len(tolerant_projection.failures)) == (47, 3)
