@@ -15,6 +15,28 @@ from eventsource.ports.migration.models import PositionMapping
 
 from ._helpers import pos
 
+_SQL_CONN_PATCH = "eventsource.adapters.sql.migration.position_mapping.sql_connection"
+
+
+def _setup_sql_conn(
+    mock_ctx: MagicMock,
+    *,
+    fetchall: list | None = None,
+    fetchone: tuple | None = None,
+    rowcount: int | None = None,
+) -> AsyncMock:
+    mock_conn = AsyncMock()
+    mock_result = MagicMock()
+    if fetchall is not None:
+        mock_result.fetchall.return_value = fetchall
+    if fetchone is not None:
+        mock_result.fetchone.return_value = fetchone
+    if rowcount is not None:
+        mock_result.rowcount = rowcount
+    mock_conn.execute.return_value = mock_result
+    mock_ctx.return_value.__aenter__.return_value = mock_conn
+    return mock_conn
+
 
 class _BaseRepoTest:
     """Shared fixtures for PostgreSQLPositionMappingRepository query tests."""
@@ -35,24 +57,14 @@ class TestPostgreSQLPositionMappingRepositoryListByMigration(_BaseRepoTest):
     async def test_list_by_migration_returns_empty_list(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test list_by_migration returns empty list when no mappings."""
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = []
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.list_by_migration(uuid4())
-            assert result == []
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            _setup_sql_conn(mock_ctx, fetchall=[])
+            assert await repo.list_by_migration(uuid4()) == []
 
     @pytest.mark.asyncio
     async def test_list_by_migration_returns_mappings_ordered_by_id(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test list_by_migration returns mappings ordered by id (source-position order)."""
         migration_id = uuid4()
         now = datetime.now(UTC)
         rows = [
@@ -60,40 +72,22 @@ class TestPostgreSQLPositionMappingRepositoryListByMigration(_BaseRepoTest):
             (2, migration_id, pos(200, "src").to_str(), pos(100, "tgt").to_str(), uuid4(), now),
             (3, migration_id, pos(300, "src").to_str(), pos(150, "tgt").to_str(), uuid4(), now),
         ]
-
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = rows
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            mock_conn = _setup_sql_conn(mock_ctx, fetchall=rows)
             result = await repo.list_by_migration(migration_id)
             assert len(result) == 3
             assert result[0].source_position == pos(100, "src")
             assert result[1].source_position == pos(200, "src")
             assert result[2].source_position == pos(300, "src")
-
-            call_args = mock_conn.execute.call_args
-            assert "ORDER BY id ASC" in str(call_args[0][0])
+            assert "ORDER BY id ASC" in str(mock_conn.execute.call_args[0][0])
 
     @pytest.mark.asyncio
     async def test_list_by_migration_uses_pagination(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test list_by_migration uses limit and offset."""
         migration_id = uuid4()
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchall.return_value = []
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            mock_conn = _setup_sql_conn(mock_ctx, fetchall=[])
             await repo.list_by_migration(migration_id, limit=50, offset=100)
             params = mock_conn.execute.call_args[0][1]
             assert params["limit"] == 50
@@ -107,16 +101,13 @@ class TestPostgreSQLPositionMappingRepositoryListInSourceRange(_BaseRepoTest):
     async def test_list_in_source_range_returns_empty_when_no_mappings(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test list_in_source_range returns empty list when no mappings exist."""
         repo.count_by_migration = AsyncMock(return_value=0)  # type: ignore[method-assign]
-        result = await repo.list_in_source_range(uuid4(), pos(0), pos(100))
-        assert result == []
+        assert await repo.list_in_source_range(uuid4(), pos(0), pos(100)) == []
 
     @pytest.mark.asyncio
     async def test_list_in_source_range_returns_matching_mappings(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test list_in_source_range resolves ordinal bounds and delegates to list_by_migration."""
         migration_id = uuid4()
         mappings = [
             PositionMapping(
@@ -128,7 +119,6 @@ class TestPostgreSQLPositionMappingRepositoryListInSourceRange(_BaseRepoTest):
             )
             for n in (100, 150, 200)
         ]
-
         repo.count_by_migration = AsyncMock(return_value=3)  # type: ignore[method-assign]
         repo._find_first_ordinal_gte = AsyncMock(return_value=0)  # type: ignore[method-assign]
         repo._find_last_ordinal_lte = AsyncMock(return_value=2)  # type: ignore[method-assign]
@@ -142,14 +132,11 @@ class TestPostgreSQLPositionMappingRepositoryListInSourceRange(_BaseRepoTest):
     async def test_list_in_source_range_empty_when_bounds_invert(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test list_in_source_range returns [] when the lower ordinal exceeds the upper."""
         migration_id = uuid4()
         repo.count_by_migration = AsyncMock(return_value=5)  # type: ignore[method-assign]
         repo._find_first_ordinal_gte = AsyncMock(return_value=4)  # type: ignore[method-assign]
         repo._find_last_ordinal_lte = AsyncMock(return_value=1)  # type: ignore[method-assign]
-
-        result = await repo.list_in_source_range(migration_id, pos(900), pos(100))
-        assert result == []
+        assert await repo.list_in_source_range(migration_id, pos(900), pos(100)) == []
 
 
 class TestPostgreSQLPositionMappingRepositoryCountByMigration(_BaseRepoTest):
@@ -159,35 +146,17 @@ class TestPostgreSQLPositionMappingRepositoryCountByMigration(_BaseRepoTest):
     async def test_count_returns_zero_when_no_mappings(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test count_by_migration returns 0 when no mappings."""
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = (0,)
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.count_by_migration(uuid4())
-            assert result == 0
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            _setup_sql_conn(mock_ctx, fetchone=(0,))
+            assert await repo.count_by_migration(uuid4()) == 0
 
     @pytest.mark.asyncio
     async def test_count_returns_correct_count(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test count_by_migration returns correct count."""
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = (1500,)
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.count_by_migration(uuid4())
-            assert result == 1500
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            _setup_sql_conn(mock_ctx, fetchone=(1500,))
+            assert await repo.count_by_migration(uuid4()) == 1500
 
 
 class TestPostgreSQLPositionMappingRepositoryGetPositionBounds(_BaseRepoTest):
@@ -197,16 +166,13 @@ class TestPostgreSQLPositionMappingRepositoryGetPositionBounds(_BaseRepoTest):
     async def test_get_bounds_returns_none_when_no_mappings(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test get_position_bounds returns None when no mappings."""
         repo.count_by_migration = AsyncMock(return_value=0)  # type: ignore[method-assign]
-        result = await repo.get_position_bounds(uuid4())
-        assert result is None
+        assert await repo.get_position_bounds(uuid4()) is None
 
     @pytest.mark.asyncio
     async def test_get_bounds_returns_first_and_last_by_id(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test get_position_bounds returns the first and last mapping by id."""
         migration_id = uuid4()
         first = PositionMapping(
             migration_id=migration_id,
@@ -228,8 +194,10 @@ class TestPostgreSQLPositionMappingRepositoryGetPositionBounds(_BaseRepoTest):
             return first if ordinal == 0 else last
 
         repo._get_by_ordinal = get_by_ordinal  # type: ignore[method-assign]
-        result = await repo.get_position_bounds(migration_id)
-        assert result == (pos(100, "src"), pos(10000, "src"))
+        assert await repo.get_position_bounds(migration_id) == (
+            pos(100, "src"),
+            pos(10000, "src"),
+        )
 
 
 class TestPostgreSQLPositionMappingRepositoryDeleteByMigration(_BaseRepoTest):
@@ -239,32 +207,14 @@ class TestPostgreSQLPositionMappingRepositoryDeleteByMigration(_BaseRepoTest):
     async def test_delete_returns_zero_when_no_mappings(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test delete_by_migration returns 0 when no mappings to delete."""
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.rowcount = 0
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.delete_by_migration(uuid4())
-            assert result == 0
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            _setup_sql_conn(mock_ctx, rowcount=0)
+            assert await repo.delete_by_migration(uuid4()) == 0
 
     @pytest.mark.asyncio
     async def test_delete_returns_count_of_deleted(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        """Test delete_by_migration returns count of deleted mappings."""
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
-            mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.rowcount = 500
-            mock_conn.execute.return_value = mock_result
-            mock_ctx.return_value.__aenter__.return_value = mock_conn
-
-            result = await repo.delete_by_migration(uuid4())
-            assert result == 500
+        with patch(_SQL_CONN_PATCH) as mock_ctx:
+            _setup_sql_conn(mock_ctx, rowcount=500)
+            assert await repo.delete_by_migration(uuid4()) == 500

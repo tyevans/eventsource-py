@@ -11,11 +11,7 @@ from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.adapters.sync import SyncEventStoreAdapter
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
-from eventsource.ports import (
-    ExpectedVersion,
-    FeedReadOptions,
-    Position,
-)
+from eventsource.ports import ExpectedVersion, FeedReadOptions, Position
 
 
 class SampleEvent(DomainEvent):
@@ -30,34 +26,24 @@ class TestSyncEventStoreAdapterEventExists:
 
     @pytest.fixture
     def async_store(self) -> InMemoryEventStore:
-        """Create an async event store."""
         return InMemoryEventStore()
 
     @pytest.fixture
     def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
-        """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
     def test_event_exists_returns_false_for_nonexistent(
         self, sync_store: SyncEventStoreAdapter
     ) -> None:
-        """event_exists returns False for nonexistent event."""
         assert sync_store.event_exists(uuid4()) is False
 
     def test_event_exists_returns_true_for_existing(
         self, sync_store: SyncEventStoreAdapter
     ) -> None:
-        """event_exists returns True for existing event."""
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Sample")
-        event = SampleEvent(
-            aggregate_id=agg_id,
-            aggregate_type="Sample",
-            aggregate_version=1,
-        )
-
+        event = SampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
         sync_store.append(stream, [event], ExpectedVersion.no_stream())
-
         assert sync_store.event_exists(event.event_id) is True
 
 
@@ -66,60 +52,38 @@ class TestSyncEventStoreAdapterReadAll:
 
     @pytest.fixture
     def async_store(self) -> InMemoryEventStore:
-        """Create an async event store."""
         return InMemoryEventStore()
 
     @pytest.fixture
     def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
-        """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
     def test_read_all_returns_empty_list(self, sync_store: SyncEventStoreAdapter) -> None:
-        """read_all returns an empty list for an empty store."""
         envelopes = sync_store.read_all()
-
         assert envelopes == []
         assert isinstance(envelopes, list)
 
     def test_read_all_returns_all_events(self, sync_store: SyncEventStoreAdapter) -> None:
-        """read_all returns all events in the store."""
-        agg_id1 = uuid4()
-        agg_id2 = uuid4()
+        agg_id1, agg_id2 = uuid4(), uuid4()
         stream1 = StreamId(aggregate_id=agg_id1, category="Sample")
         stream2 = StreamId(aggregate_id=agg_id2, category="Sample")
-
-        event1 = SampleEvent(
-            aggregate_id=agg_id1,
-            aggregate_type="Sample",
-            aggregate_version=1,
-        )
-        event2 = SampleEvent(
-            aggregate_id=agg_id2,
-            aggregate_type="Sample",
-            aggregate_version=1,
-        )
-
+        event1 = SampleEvent(aggregate_id=agg_id1, aggregate_type="Sample", aggregate_version=1)
+        event2 = SampleEvent(aggregate_id=agg_id2, aggregate_type="Sample", aggregate_version=1)
         sync_store.append(stream1, [event1], ExpectedVersion.no_stream())
         sync_store.append(stream2, [event2], ExpectedVersion.no_stream())
-
         envelopes = sync_store.read_all()
-
         assert isinstance(envelopes, list)
         assert len(envelopes) == 2
 
     def test_read_all_with_options(self, sync_store: SyncEventStoreAdapter) -> None:
-        """read_all respects FeedReadOptions.limit."""
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Sample")
         events = [
             SampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=i)
             for i in range(1, 6)
         ]
-
         sync_store.append(stream, events, ExpectedVersion.no_stream())
-
         envelopes = sync_store.read_all(None, FeedReadOptions(limit=2))
-
         assert len(envelopes) == 2
 
 
@@ -128,87 +92,62 @@ class TestSyncEventStoreAdapterCurrentPosition:
 
     @pytest.fixture
     def async_store(self) -> InMemoryEventStore:
-        """Create an async event store."""
         return InMemoryEventStore()
 
     @pytest.fixture
     def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
-        """Create a sync adapter."""
         return SyncEventStoreAdapter(async_store, timeout=5.0)
 
     def test_current_position_returns_none_for_empty_store(
         self, sync_store: SyncEventStoreAdapter
     ) -> None:
-        """current_position returns None for an empty store -- not a comparable
-        zero floor."""
         assert sync_store.current_position() is None
 
     def test_current_position_returns_position_after_appends(
         self, sync_store: SyncEventStoreAdapter
     ) -> None:
-        """current_position returns a Position after appends."""
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Sample")
         events = [
             SampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=i)
             for i in range(1, 4)
         ]
-
         sync_store.append(stream, events, ExpectedVersion.no_stream())
-        position = sync_store.current_position()
-
-        assert isinstance(position, Position)
+        assert isinstance(sync_store.current_position(), Position)
 
 
 class TestSyncEventStoreAdapterTimeout:
     """Tests for timeout handling."""
 
     def test_timeout_raises_error(self) -> None:
-        """Operations timeout correctly."""
-
         class SlowStore(InMemoryEventStore):
             async def read_stream(self, *args: object, **kwargs: object):  # type: ignore[override]
                 await asyncio.sleep(1.0)
                 async for envelope in super().read_stream(*args, **kwargs):  # type: ignore[arg-type]
                     yield envelope
 
-        slow_store = SlowStore()
-        sync_store = SyncEventStoreAdapter(slow_store, timeout=0.01)
-
+        sync_store = SyncEventStoreAdapter(SlowStore(), timeout=0.01)
         with pytest.raises((TimeoutError, asyncio.TimeoutError)):
             sync_store.read_stream(StreamId(aggregate_id=uuid4(), category="Sample"))
 
     def test_per_call_timeout_override(self) -> None:
-        """Per-call timeout overrides default."""
-
         class SlowStore(InMemoryEventStore):
             async def event_exists(self, event_id: object) -> bool:  # type: ignore[override]
                 await asyncio.sleep(0.5)
                 return False
 
-        slow_store = SlowStore()
-        sync_store = SyncEventStoreAdapter(slow_store, timeout=10.0)
-
+        sync_store = SyncEventStoreAdapter(SlowStore(), timeout=10.0)
         with pytest.raises((TimeoutError, asyncio.TimeoutError)):
             sync_store.event_exists(uuid4(), timeout=0.01)
 
 
 class TestSyncEventStoreAdapterRunningLoop:
-    """Calling the adapter from a thread that already runs a loop.
-
-    The old behavior handed the coroutine back to the caller's own loop via
-    `run_coroutine_threadsafe` and then blocked that loop's thread waiting for
-    it -- a guaranteed self-deadlock until the timeout expired. There is no
-    correct fallback, so the adapter refuses the call outright.
-    """
+    """Calling the adapter from a thread that already runs a loop."""
 
     async def test_raises_runtime_error_instead_of_deadlocking(self) -> None:
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
-
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=5.0)
         with pytest.raises(RuntimeError) as exc_info:
             sync_store.get_stream_version(StreamId(aggregate_id=uuid4(), category="Sample"))
-
         message = str(exc_info.value)
         assert "running event loop" in message
         assert "asyncio.to_thread" in message
@@ -216,13 +155,9 @@ class TestSyncEventStoreAdapterRunningLoop:
     async def test_does_not_leak_the_unawaited_coroutine(
         self, recwarn: pytest.WarningsRecorder
     ) -> None:
-        """The refused coroutine is closed, so no "never awaited" warning."""
-        store = InMemoryEventStore()
-        sync_store = SyncEventStoreAdapter(store, timeout=5.0)
-
+        sync_store = SyncEventStoreAdapter(InMemoryEventStore(), timeout=5.0)
         with pytest.raises(RuntimeError):
             sync_store.event_exists(uuid4())
-
         assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
 
 
@@ -243,29 +178,22 @@ class TestSyncEventStoreAdapterClose:
     def test_close_delegates_to_a_closable_store(self) -> None:
         store = _ClosableStore()
         sync_store = SyncEventStoreAdapter(store)
-
         sync_store.close()
-
         assert store.close_calls == 1
 
     def test_close_is_idempotent(self) -> None:
         store = _ClosableStore()
         sync_store = SyncEventStoreAdapter(store)
-
         sync_store.close()
         sync_store.close()
-
         assert store.close_calls == 2
 
     def test_close_is_a_no_op_for_a_store_without_the_capability(self) -> None:
         sync_store = SyncEventStoreAdapter(InMemoryEventStore())
-
         sync_store.close()
 
     def test_context_manager_closes_on_exit(self) -> None:
         store = _ClosableStore()
-
         with SyncEventStoreAdapter(store) as sync_store:
             assert sync_store.wrapped_store is store
-
         assert store.close_calls == 1
