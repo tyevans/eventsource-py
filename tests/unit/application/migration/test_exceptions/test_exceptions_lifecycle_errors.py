@@ -16,47 +16,33 @@ from eventsource.ports.migration.models import MigrationPhase
 
 
 class TestMigrationError:
-    """Tests for MigrationError base exception."""
-
     def test_basic_creation(self) -> None:
         error = MigrationError("Test error message")
-        assert str(error) == "Test error message"
-        assert error.message == "Test error message"
-        assert error.migration_id is None
-        assert error.tenant_id is None
-        assert error.recoverable is False
-        assert error.is_recoverable is False
-        assert error.suggested_action is None
+        assert str(error) == "Test error message" and error.message == "Test error message"
+        assert (error.migration_id, error.tenant_id, error.suggested_action) == (None, None, None)
+        assert error.recoverable is False and error.is_recoverable is False
 
     def test_with_migration_id(self) -> None:
         migration_id = uuid4()
         error = MigrationError("Error", migration_id=migration_id)
-        assert error.migration_id == migration_id
-        assert f"migration_id={migration_id}" in str(error)
+        assert error.migration_id == migration_id and f"migration_id={migration_id}" in str(error)
 
     def test_with_tenant_id(self) -> None:
         tenant_id = uuid4()
         error = MigrationError("Error", tenant_id=tenant_id)
-        assert error.tenant_id == tenant_id
-        assert f"tenant_id={tenant_id}" in str(error)
+        assert error.tenant_id == tenant_id and f"tenant_id={tenant_id}" in str(error)
 
     def test_with_recoverable(self) -> None:
         error = MigrationError("Error", recoverable=True)
-        assert error.recoverable is True
-        assert error.is_recoverable is True
+        assert error.recoverable is True and error.is_recoverable is True
         assert "(recoverable)" in str(error)
 
     def test_with_suggested_action(self) -> None:
-        error = MigrationError(
-            "Error",
-            recoverable=True,
-            suggested_action="Retry the operation",
-        )
+        error = MigrationError("Error", recoverable=True, suggested_action="Retry the operation")
         assert error.suggested_action == "Retry the operation"
 
     def test_full_str_representation(self) -> None:
-        migration_id = uuid4()
-        tenant_id = uuid4()
+        migration_id, tenant_id = uuid4(), uuid4()
         error = MigrationError(
             "Something went wrong",
             migration_id=migration_id,
@@ -64,50 +50,41 @@ class TestMigrationError:
             recoverable=True,
         )
         error_str = str(error)
-        assert "Something went wrong" in error_str
-        assert f"migration_id={migration_id}" in error_str
-        assert f"tenant_id={tenant_id}" in error_str
-        assert "(recoverable)" in error_str
+        for part in (
+            "Something went wrong",
+            f"migration_id={migration_id}",
+            f"tenant_id={tenant_id}",
+            "(recoverable)",
+        ):
+            assert part in error_str
 
 
 class TestMigrationNotFoundError:
-    """Tests for MigrationNotFoundError."""
-
     def test_creation(self) -> None:
         migration_id = uuid4()
         error = MigrationNotFoundError(migration_id)
         assert error.migration_id == migration_id
-        assert f"Migration not found: {migration_id}" in str(error)
-        assert error.recoverable is False
+        assert f"Migration not found: {migration_id}" in str(error) and error.recoverable is False
 
     def test_is_subclass_of_migration_error(self) -> None:
-        error = MigrationNotFoundError(uuid4())
-        assert isinstance(error, MigrationError)
+        assert isinstance(MigrationNotFoundError(uuid4()), MigrationError)
 
 
 class TestMigrationAlreadyExistsError:
-    """Tests for MigrationAlreadyExistsError."""
-
     def test_creation(self) -> None:
-        tenant_id = uuid4()
-        existing_migration_id = uuid4()
+        tenant_id, existing_migration_id = uuid4(), uuid4()
         error = MigrationAlreadyExistsError(tenant_id, existing_migration_id)
         assert error.tenant_id == tenant_id
         assert error.existing_migration_id == existing_migration_id
         assert error.migration_id == existing_migration_id
-        assert f"tenant {tenant_id}" in str(error)
-        assert str(existing_migration_id) in str(error)
-        assert error.recoverable is False
-        assert error.suggested_action is not None
+        assert f"tenant {tenant_id}" in str(error) and str(existing_migration_id) in str(error)
+        assert error.recoverable is False and error.suggested_action is not None
 
     def test_is_subclass_of_migration_error(self) -> None:
-        error = MigrationAlreadyExistsError(uuid4(), uuid4())
-        assert isinstance(error, MigrationError)
+        assert isinstance(MigrationAlreadyExistsError(uuid4(), uuid4()), MigrationError)
 
 
 class TestMigrationStateError:
-    """Tests for MigrationStateError."""
-
     def test_creation(self) -> None:
         migration_id = uuid4()
         error = MigrationStateError(
@@ -121,21 +98,16 @@ class TestMigrationStateError:
         assert error.migration_id == migration_id
         assert error.current_phase == MigrationPhase.PENDING
         assert error.expected_phases == [MigrationPhase.DUAL_WRITE]
-        assert error.operation == "cutover"
-        assert error.recoverable is False
+        assert error.operation == "cutover" and error.recoverable is False
 
     def test_is_subclass_of_migration_error(self) -> None:
         error = MigrationStateError(
-            "Invalid state",
-            migration_id=uuid4(),
-            current_phase=MigrationPhase.PENDING,
+            "Invalid state", migration_id=uuid4(), current_phase=MigrationPhase.PENDING
         )
         assert isinstance(error, MigrationError)
 
 
 class TestInvalidPhaseTransitionError:
-    """Tests for InvalidPhaseTransitionError."""
-
     def test_creation(self) -> None:
         migration_id = uuid4()
         error = InvalidPhaseTransitionError(
@@ -146,22 +118,16 @@ class TestInvalidPhaseTransitionError:
         assert error.migration_id == migration_id
         assert error.current_phase == MigrationPhase.PENDING
         assert error.target_phase == MigrationPhase.CUTOVER
-        assert "pending -> cutover" in str(error)
-        assert error.operation == "phase_transition"
+        assert "pending -> cutover" in str(error) and error.operation == "phase_transition"
 
     def test_is_subclass_of_migration_state_error(self) -> None:
         error = InvalidPhaseTransitionError(
-            uuid4(),
-            current_phase=MigrationPhase.PENDING,
-            target_phase=MigrationPhase.CUTOVER,
+            uuid4(), current_phase=MigrationPhase.PENDING, target_phase=MigrationPhase.CUTOVER
         )
-        assert isinstance(error, MigrationStateError)
-        assert isinstance(error, MigrationError)
+        assert isinstance(error, MigrationStateError) and isinstance(error, MigrationError)
 
 
 class TestCutoverError:
-    """Tests for CutoverError."""
-
     def test_creation(self) -> None:
         migration_id = uuid4()
         error = CutoverError(
@@ -170,57 +136,39 @@ class TestCutoverError:
             rollback_performed=True,
             reason="sync_lag_too_high",
         )
-        assert error.message == "Cutover failed"
-        assert error.migration_id == migration_id
-        assert error.rollback_performed is True
-        assert error.reason == "sync_lag_too_high"
-        assert error.recoverable is True
-        assert error.suggested_action is not None
+        assert error.message == "Cutover failed" and error.migration_id == migration_id
+        assert error.rollback_performed is True and error.reason == "sync_lag_too_high"
+        assert error.recoverable is True and error.suggested_action is not None
 
     def test_is_subclass_of_migration_error(self) -> None:
-        error = CutoverError("Failed", migration_id=uuid4())
-        assert isinstance(error, MigrationError)
+        assert isinstance(CutoverError("Failed", migration_id=uuid4()), MigrationError)
 
 
 class TestCutoverTimeoutError:
-    """Tests for CutoverTimeoutError."""
-
     def test_creation(self) -> None:
         migration_id = uuid4()
-        error = CutoverTimeoutError(
-            migration_id=migration_id,
-            elapsed_ms=150.5,
-            timeout_ms=100.0,
+        error = CutoverTimeoutError(migration_id=migration_id, elapsed_ms=150.5, timeout_ms=100.0)
+        assert (error.migration_id, error.elapsed_ms, error.timeout_ms) == (
+            migration_id,
+            150.5,
+            100.0,
         )
-        assert error.migration_id == migration_id
-        assert error.elapsed_ms == 150.5
-        assert error.timeout_ms == 100.0
-        assert "150.50ms" in str(error)
-        assert "100.00ms" in str(error)
-        assert error.rollback_performed is True
-        assert error.reason == "timeout"
+        assert "150.50ms" in str(error) and "100.00ms" in str(error)
+        assert error.rollback_performed is True and error.reason == "timeout"
 
     def test_is_subclass_of_cutover_error(self) -> None:
         error = CutoverTimeoutError(uuid4(), 150.0, 100.0)
-        assert isinstance(error, CutoverError)
-        assert isinstance(error, MigrationError)
+        assert isinstance(error, CutoverError) and isinstance(error, MigrationError)
 
 
 class TestCutoverLagError:
-    """Tests for CutoverLagError."""
-
     def test_creation(self) -> None:
         migration_id = uuid4()
         error = CutoverLagError(migration_id=migration_id, current_lag=500, max_lag=100)
-        assert error.migration_id == migration_id
-        assert error.current_lag == 500
-        assert error.max_lag == 100
-        assert "500 events" in str(error)
-        assert "max: 100" in str(error)
-        assert error.rollback_performed is False
-        assert error.reason == "lag_too_high"
+        assert (error.migration_id, error.current_lag, error.max_lag) == (migration_id, 500, 100)
+        assert "500 events" in str(error) and "max: 100" in str(error)
+        assert error.rollback_performed is False and error.reason == "lag_too_high"
 
     def test_is_subclass_of_cutover_error(self) -> None:
         error = CutoverLagError(uuid4(), 500, 100)
-        assert isinstance(error, CutoverError)
-        assert isinstance(error, MigrationError)
+        assert isinstance(error, CutoverError) and isinstance(error, MigrationError)

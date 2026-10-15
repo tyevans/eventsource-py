@@ -17,44 +17,36 @@ from tests.unit.application.migration.test_consistency_verifier._fixtures import
 )
 
 
+def _create_event(
+    tenant_id: UUID,
+    aggregate_id: UUID,
+    stream_version: int,
+    value: str = "test",
+) -> EventEnvelope:
+    event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, value=value)
+    return EventEnvelope(
+        event=event,
+        stream_id=StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
+        stream_version=stream_version,
+        position=None,
+        stored_at=datetime.now(UTC),
+    )
+
+
 class TestConsistencyVerifierHashVerification:
     """Tests for hash-based verification."""
 
     @pytest.fixture
     def tenant_id(self) -> UUID:
-        """Create a tenant ID for testing."""
         return uuid4()
 
     @pytest.fixture
     def source_store(self) -> AsyncMock:
-        """Create a mock source store."""
         return AsyncMock()
 
     @pytest.fixture
     def target_store(self) -> AsyncMock:
-        """Create a mock target store."""
         return AsyncMock()
-
-    def _create_event(
-        self,
-        tenant_id: UUID,
-        aggregate_id: UUID,
-        stream_version: int,
-        value: str = "test",
-    ) -> EventEnvelope:
-        """Create a single EventEnvelope."""
-        event = TestEvent(
-            aggregate_id=aggregate_id,
-            tenant_id=tenant_id,
-            value=value,
-        )
-        return EventEnvelope(
-            event=event,
-            stream_id=StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
-            stream_version=stream_version,
-            position=None,
-            stored_at=datetime.now(UTC),
-        )
 
     @pytest.mark.asyncio
     async def test_verify_hash_mismatch(
@@ -65,8 +57,8 @@ class TestConsistencyVerifierHashVerification:
     ) -> None:
         """Test detecting hash mismatch when event content differs."""
         agg_id = uuid4()
-        source_event = self._create_event(tenant_id, agg_id, 1, "source_value")
-        target_event = self._create_event(tenant_id, agg_id, 1, "different_value")
+        source_event = _create_event(tenant_id, agg_id, 1, "source_value")
+        target_event = _create_event(tenant_id, agg_id, 1, "different_value")
 
         async def source_generator(from_position, options):
             yield source_event
@@ -98,39 +90,15 @@ class TestConsistencyVerifierFullVerification:
 
     @pytest.fixture
     def tenant_id(self) -> UUID:
-        """Create a tenant ID for testing."""
         return uuid4()
 
     @pytest.fixture
     def source_store(self) -> AsyncMock:
-        """Create a mock source store."""
         return AsyncMock()
 
     @pytest.fixture
     def target_store(self) -> AsyncMock:
-        """Create a mock target store."""
         return AsyncMock()
-
-    def _create_event(
-        self,
-        tenant_id: UUID,
-        aggregate_id: UUID,
-        stream_version: int,
-        value: str = "test",
-    ) -> EventEnvelope:
-        """Create a single EventEnvelope."""
-        event = TestEvent(
-            aggregate_id=aggregate_id,
-            tenant_id=tenant_id,
-            value=value,
-        )
-        return EventEnvelope(
-            event=event,
-            stream_id=StreamId(aggregate_id=aggregate_id, category="TestAggregate"),
-            stream_version=stream_version,
-            position=None,
-            stored_at=datetime.now(UTC),
-        )
 
     @pytest.mark.asyncio
     async def test_full_verification_matches(
@@ -141,18 +109,13 @@ class TestConsistencyVerifierFullVerification:
     ) -> None:
         """Test full verification with matching events."""
         agg_id = uuid4()
-        # Use the SAME envelope for both source and target
-        # This simulates correctly migrated data
-        envelope = self._create_event(tenant_id, agg_id, 1, "value")
+        envelope = _create_event(tenant_id, agg_id, 1, "value")
 
-        async def source_generator(from_position, options):
+        async def generator(from_position, options):
             yield envelope
 
-        async def target_generator(from_position, options):
-            yield envelope
-
-        source_store.read_all = source_generator
-        target_store.read_all = target_generator
+        source_store.read_all = generator
+        target_store.read_all = generator
 
         verifier = ConsistencyVerifier(
             source_store=source_store,
@@ -173,17 +136,14 @@ class TestConsistencyVerifierChecksums:
 
     @pytest.fixture
     def tenant_id(self) -> UUID:
-        """Create a tenant ID for testing."""
         return uuid4()
 
     @pytest.fixture
     def source_store(self) -> AsyncMock:
-        """Create a mock source store."""
         return AsyncMock()
 
     @pytest.fixture
     def target_store(self) -> AsyncMock:
-        """Create a mock target store."""
         return AsyncMock()
 
     @pytest.mark.asyncio
@@ -194,19 +154,7 @@ class TestConsistencyVerifierChecksums:
         target_store: AsyncMock,
     ) -> None:
         """Test verify_event_checksums when all match."""
-        agg_id = uuid4()
-        event = TestEvent(
-            aggregate_id=agg_id,
-            tenant_id=tenant_id,
-            value="test",
-        )
-        envelope = EventEnvelope(
-            event=event,
-            stream_id=StreamId(aggregate_id=agg_id, category="TestAggregate"),
-            stream_version=1,
-            position=None,
-            stored_at=datetime.now(UTC),
-        )
+        envelope = _create_event(tenant_id, uuid4(), 1, "test")
 
         async def generator(from_position, options):
             yield envelope

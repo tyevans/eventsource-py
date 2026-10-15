@@ -15,6 +15,15 @@ from eventsource.application.migration.bulk_copier import (
 from tests.unit.application.migration.test_bulk_copier._fixtures import _pos
 
 
+def _make_copier(**kwargs) -> BulkCopier:
+    return BulkCopier(
+        source_store=kwargs.pop("source_store", MagicMock()),
+        target_store=kwargs.pop("target_store", MagicMock()),
+        migration_repo=kwargs.pop("migration_repo", MagicMock()),
+        **kwargs,
+    )
+
+
 class TestBulkCopyProgress:
     def test_progress_percent_with_events(self) -> None:
         progress = BulkCopyProgress(
@@ -139,54 +148,29 @@ class TestBulkCopierInit:
 
     def test_init_with_position_mapper(self) -> None:
         position_mapper = MagicMock()
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            position_mapper=position_mapper,
-        )
+        copier = _make_copier(position_mapper=position_mapper)
         assert copier._position_mapper == position_mapper
 
     def test_init_with_tracing_disabled(self) -> None:
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            enable_tracing=False,
-        )
+        copier = _make_copier(enable_tracing=False)
         assert copier._enable_tracing is False
 
 
 class TestBulkCopierPauseResumeCancel:
     def test_cancel(self) -> None:
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            enable_tracing=False,
-        )
+        copier = _make_copier(enable_tracing=False)
         assert copier.is_cancelled is False
         copier.cancel()
         assert copier.is_cancelled is True
 
     def test_pause(self) -> None:
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            enable_tracing=False,
-        )
+        copier = _make_copier(enable_tracing=False)
         assert copier.is_paused is False and copier._pause_event.is_set()
         copier.pause()
         assert copier.is_paused is True and not copier._pause_event.is_set()
 
     def test_resume(self) -> None:
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            enable_tracing=False,
-        )
+        copier = _make_copier(enable_tracing=False)
         copier.pause()
         assert copier.is_paused is True
         copier.resume()
@@ -196,24 +180,14 @@ class TestBulkCopierPauseResumeCancel:
 class TestBulkCopierWaitIfPaused:
     @pytest.mark.asyncio
     async def test_wait_if_paused_returns_immediately_when_not_paused(self) -> None:
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            enable_tracing=False,
-        )
+        copier = _make_copier(enable_tracing=False)
         start = asyncio.get_event_loop().time()
         await copier._wait_if_paused()
         assert asyncio.get_event_loop().time() - start < 0.1
 
     @pytest.mark.asyncio
     async def test_wait_if_paused_waits_when_paused(self) -> None:
-        copier = BulkCopier(
-            source_store=MagicMock(),
-            target_store=MagicMock(),
-            migration_repo=MagicMock(),
-            enable_tracing=False,
-        )
+        copier = _make_copier(enable_tracing=False)
         copier.pause()
 
         async def resume_after_delay() -> None:
