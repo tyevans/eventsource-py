@@ -162,3 +162,24 @@ class TestGivenEvents:
 
         assert len(envelopes1) == 1
         assert len(envelopes2) == 1
+
+    async def test_loads_variadic_events_and_returns_list(
+        self, harness: InMemoryTestHarness
+    ) -> None:
+        """Test loading variadic events and returning the flattened event list."""
+        agg_id = uuid4()
+        e1 = SampleCreated(
+            aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1, name="v-sample"
+        )
+        e2 = SampleUpdated(
+            aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2, new_value=99
+        )
+        returned = await given_events(harness, e1, e2)
+        assert returned == [e1, e2]
+        envelopes = [
+            e
+            async for e in harness.event_store.read_stream(
+                StreamId(aggregate_id=agg_id, category="Sample")
+            )
+        ]
+        assert [e.event for e in envelopes] == [e1, e2]

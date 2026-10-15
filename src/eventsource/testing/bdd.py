@@ -19,18 +19,20 @@ from eventsource.testing.scenario import DeciderScenario
 
 async def given_events(
     harness: InMemoryTestHarness,
-    events: Sequence[DomainEvent] | DomainEvent,
-    *,
+    *events: DomainEvent | Sequence[DomainEvent],
     expected_version: ExpectedVersion | None = None,
-) -> None:
+) -> list[DomainEvent]:
     """
     Set up the test scenario with pre-existing events.
 
     Establishes the "Given" part of the BDD scenario by grouping events by
     aggregate and appending them in order to the event store.
     """
-    event_list = [events] if isinstance(events, DomainEvent) else list(events)
+    event_list = [
+        item for arg in events for item in ((arg,) if isinstance(arg, DomainEvent) else arg)
+    ]
     await harness.append_events(*event_list, expected_version=expected_version)
+    return event_list
 
 
 def when_command[TAggregate: AggregateRoot[Any]](
@@ -65,11 +67,14 @@ def then_no_events_published(
 
 def then_event_sequence(
     harness: InMemoryTestHarness,
-    event_types: Sequence[type[DomainEvent]],
+    *event_types: type[DomainEvent] | Sequence[type[DomainEvent]],
 ) -> list[DomainEvent]:
     """Assert that events were published in the given sequence of types and return them."""
+    types_list = [
+        item for arg in event_types for item in ((arg,) if isinstance(arg, type) else arg)
+    ]
     assertions = harness.assertions
-    assertions.assert_event_sequence(event_types)
+    assertions.assert_event_sequence(types_list)
     return assertions.events
 
 
