@@ -73,10 +73,7 @@ class ShutdownSignalManager:
                 )
                 logger.debug("Registered signal handler", extra={"signal": sig.name})
             except NotImplementedError:
-                logger.warning(
-                    "Signal handling not fully supported on this platform",
-                    extra={"signal": sig.name},
-                )
+                logger.warning("Signal handling not fully supported on this platform", extra={"signal": sig.name})  # fmt: skip
         self._signal_handlers_registered = True
         logger.info("Shutdown signal handlers registered")
 
@@ -97,28 +94,19 @@ class ShutdownSignalManager:
     async def _handle_signal(self, sig: signal.Signals) -> None:
         """Handle received shutdown signal."""
         if self._shutdown_requested:
-            logger.warning(
-                "Received second shutdown signal, forcing shutdown",
-                extra={"signal": sig.name, "current_phase": self._phase.value},
-            )
+            logger.warning("Received second shutdown signal, forcing shutdown", extra={"signal": sig.name, "current_phase": self._phase.value})  # fmt: skip
             self._phase = ShutdownPhase.FORCED
             self._shutdown_reason = ShutdownReason.DOUBLE_SIGNAL
             self._shutdown_event.set()
             return
-
         if sig == signal.SIGTERM:
             self._shutdown_reason = ShutdownReason.SIGNAL_SIGTERM
         elif sig == signal.SIGINT:
             self._shutdown_reason = ShutdownReason.SIGNAL_SIGINT
-
         reason_val = self._shutdown_reason.value if self._shutdown_reason else None
-        logger.info(
-            "Received shutdown signal, initiating graceful shutdown",
-            extra={"signal": sig.name, "timeout": self.timeout, "reason": reason_val},
-        )
+        logger.info("Received shutdown signal, initiating graceful shutdown", extra={"signal": sig.name, "timeout": self.timeout, "reason": reason_val})  # fmt: skip
         self._shutdown_requested = True
         self._shutdown_event.set()
-
         for callback in self._on_shutdown_callbacks:
             try:
                 await callback()

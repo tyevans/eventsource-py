@@ -51,12 +51,10 @@ class RedisBusConsumeMixin:
             raise RuntimeError("Redis client not initialized")
         await self._ensure_consumer_group_exists()
         cfg = self._config
-        actual_consumer_name = consumer_name or cfg.consumer_name
-        if actual_consumer_name is None:
+        if (actual_consumer_name := consumer_name or cfg.consumer_name) is None:
             raise ValueError("Consumer name must be set")
         self._consuming = True
-        log_extra = {"consumer_name": actual_consumer_name, "stream": cfg.stream_name}
-        log_extra["consumer_group"] = cfg.consumer_group
+        log_extra = {"consumer_name": actual_consumer_name, "stream": cfg.stream_name, "consumer_group": cfg.consumer_group}  # fmt: skip
         logger.info(f"Starting Redis event consumer: {actual_consumer_name}", extra=log_extra)
         while self._consuming:
             try:
@@ -109,13 +107,7 @@ class RedisBusConsumeMixin:
         event_id = message_data.get("event_id", "unknown")
         processing_start = datetime.now(UTC)
         msg_meta = {"message_id": message_id, "event_type": event_type_name, "event_id": event_id}
-        span_attrs = {
-            attr.ATTR_EVENT_TYPE: event_type_name,
-            attr.ATTR_EVENT_ID: event_id,
-            attr.ATTR_MESSAGING_SYSTEM: "redis",
-            "message.id": message_id,
-            "consumer.name": consumer_name,
-        }
+        span_attrs = {attr.ATTR_EVENT_TYPE: event_type_name, attr.ATTR_EVENT_ID: event_id, attr.ATTR_MESSAGING_SYSTEM: "redis", "message.id": message_id, "consumer.name": consumer_name}  # fmt: skip
         stream, group = self._config.stream_name, self._config.consumer_group
         with self._tracer.span("eventsource.event_bus.process", span_attrs) as span:
             try:
@@ -130,9 +122,7 @@ class RedisBusConsumeMixin:
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Failed to calculate processing lag: {e}")
                 if (event := self._deserialize_event(event_type_name, message_data)) is None:
-                    logger.warning(
-                        f"Unknown event type: {event_type_name}, skipping", extra=msg_meta
-                    )
+                    logger.warning(f"Unknown event type: {event_type_name}, skipping", extra=msg_meta)  # fmt: skip
                     await self._redis.xack(stream, group, message_id)
                     return
                 await self._dispatch_event(event, message_id)
@@ -143,20 +133,14 @@ class RedisBusConsumeMixin:
                 if span:
                     span.set_attribute("processing.success", True)
                     span.set_attribute("processing.duration_ms", duration_ms)
-                logger.debug(
-                    f"Successfully processed {event_type_name}",
-                    extra={**msg_meta, "duration_ms": duration_ms},
-                )
+                logger.debug(f"Successfully processed {event_type_name}", extra={**msg_meta, "duration_ms": duration_ms})  # fmt: skip
             except Exception as e:
                 self._stats.events_processed_failed += 1
                 duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
                 if span:
                     span.set_attribute("processing.success", False)
                     span.record_exception(e)
-                err_extra = {**msg_meta, "error": str(e), "duration_ms": duration_ms}
-                logger.error(
-                    f"Failed to process message {message_id}: {e}", exc_info=True, extra=err_extra
-                )
+                logger.error(f"Failed to process message {message_id}: {e}", exc_info=True, extra={**msg_meta, "error": str(e), "duration_ms": duration_ms})  # fmt: skip
 
 
 __all__ = ["RedisBusConsumeMixin"]

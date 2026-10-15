@@ -12,10 +12,10 @@ from eventsource.adapters._bus.retry_scheduler import RetryScheduler
 from eventsource.adapters.rabbitmq.consumer_dispatch import RabbitMQConsumerDispatchMixin
 from eventsource.adapters.rabbitmq.consumer_retry import RabbitMQConsumerRetryMixin
 from eventsource.observability import OTEL_AVAILABLE
-from eventsource.observability.attributes import (
-    ATTR_AGGREGATE_ID,  # noqa: F401
-    ATTR_HANDLER_NAME,  # noqa: F401
-    ATTR_HANDLER_SUCCESS,  # noqa: F401
+from eventsource.observability.attributes import (  # noqa: F401
+    ATTR_AGGREGATE_ID,
+    ATTR_HANDLER_NAME,
+    ATTR_HANDLER_SUCCESS,
 )
 
 try:
@@ -25,8 +25,7 @@ try:
     PROPAGATION_AVAILABLE = OTEL_AVAILABLE
 except ImportError:
     extract = None  # type: ignore[assignment]
-    Status = None  # type: ignore[assignment, misc]
-    StatusCode = None  # type: ignore[assignment, misc]
+    Status = StatusCode = None  # type: ignore[assignment, misc]
     PROPAGATION_AVAILABLE = False
 
 if TYPE_CHECKING:
@@ -45,23 +44,11 @@ logger = logging.getLogger("eventsource.adapters.rabbitmq")
 class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin):
     """Owns the RabbitMQ consume loop (eventsource.event_bus.consume / eventsource.event_bus.handle)."""
 
-    def __init__(
-        self,
-        config: RabbitMQEventBusConfig,
-        connection: RabbitMQConnectionManager,
-        topology: RabbitMQTopology,
-        stats: RabbitMQEventBusStats,
-        retry_policy: RetryPolicy,
-        handlers_for: Callable[[type[DomainEvent]], tuple[HandlerAdapter, ...]],
-        resolve_event_class: Callable[[str], type[DomainEvent] | None],
-        tracer: Tracer | None,
-        enable_tracing: bool,
-    ) -> None:
+    def __init__(self, config: RabbitMQEventBusConfig, connection: RabbitMQConnectionManager, topology: RabbitMQTopology, stats: RabbitMQEventBusStats, retry_policy: RetryPolicy, handlers_for: Callable[[type[DomainEvent]], tuple[HandlerAdapter, ...]], resolve_event_class: Callable[[str], type[DomainEvent] | None], tracer: Tracer | None, enable_tracing: bool) -> None:  # fmt: skip
         self._config, self._connection, self._topology = config, connection, topology
         self._stats, self._retry_policy = stats, retry_policy
         self._handlers_for, self._resolve_event_class = handlers_for, resolve_event_class
-        self._tracer, self._enable_tracing = tracer, enable_tracing
-        self._consuming = False
+        self._tracer, self._enable_tracing, self._consuming = tracer, enable_tracing, False
         self._consumer_task: asyncio.Task[None] | None = None
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
         self._retry_scheduler = RetryScheduler(custom_logger=self._logger)
@@ -79,9 +66,8 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         if not self._topology.consumer_queue:
             raise RuntimeError("Consumer queue not initialized -- internal call-order bug: start() was reached without topology having been declared first")  # fmt: skip
         self._consuming = True
-        cname, qname = self._config.consumer_name, self._config.queue_name
-        base_extra = {"consumer_name": cname, "queue": qname}
-        self._logger.info(f"Starting RabbitMQ consumer: {cname}", extra={**base_extra, "prefetch_count": self._config.prefetch_count})  # fmt: skip
+        base_extra = {"consumer_name": self._config.consumer_name, "queue": self._config.queue_name}
+        self._logger.info(f"Starting RabbitMQ consumer: {self._config.consumer_name}", extra={**base_extra, "prefetch_count": self._config.prefetch_count})  # fmt: skip
         try:
             async with self._topology.consumer_queue.iterator() as queue_iter:
                 async for message in queue_iter:
@@ -91,12 +77,10 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         except asyncio.CancelledError:
             self._logger.info("Consumer loop cancelled", extra=base_extra)
         except Exception as e:
-            err_extra = {**base_extra, "error": str(e), "error_type": type(e).__name__}
-            self._logger.error(f"Error in consumer loop: {e}", exc_info=True, extra=err_extra)
+            self._logger.error(f"Error in consumer loop: {e}", exc_info=True, extra={**base_extra, "error": str(e), "error_type": type(e).__name__})  # fmt: skip
             raise
         finally:
-            self._consuming = False
-            s = self._stats
+            self._consuming, s = False, self._stats
             stop_extra = {**base_extra, "events_consumed": s.events_consumed, "events_processed_success": s.events_processed_success, "events_processed_failed": s.events_processed_failed}  # fmt: skip
             self._logger.info("Consumer loop stopped", extra=stop_extra)
 
@@ -105,16 +89,12 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         self._consuming = False
         self._logger.info("Stop consuming requested", extra={"consumer_name": self._config.consumer_name, "queue": self._config.queue_name})  # fmt: skip
 
-    def start_in_background(
-        self, runner: Callable[[], Coroutine[Any, Any, None]] | None = None
-    ) -> asyncio.Task[None]:
+    def start_in_background(self, runner: Callable[[], Coroutine[Any, Any, None]] | None = None) -> asyncio.Task[None]:  # fmt: skip
         """Start consuming in a background task."""
         if self._consumer_task is not None:
             raise RuntimeError("Consumer already running in background")
-        self._consumer_task = asyncio.create_task(
-            self.start() if runner is None else runner(),
-            name=f"rabbitmq-consumer-{self._config.consumer_name}",
-        )
+        coro = self.start() if runner is None else runner()
+        self._consumer_task = asyncio.create_task(coro, name=f"rabbitmq-consumer-{self._config.consumer_name}")  # fmt: skip
         return self._consumer_task
 
     async def resume_if_was_consuming(self) -> None:
@@ -128,8 +108,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
     async def stop_gracefully(self, timeout: float) -> None:
         """Stop consuming and wait for consumer task to finish."""
         if not self._consuming:
-            self._logger.debug("Not consuming, skipping consumer stop")
-            return
+            return self._logger.debug("Not consuming, skipping consumer stop")
         self._logger.debug("Stopping consumer...")
         self._consuming = False
         if self._consumer_task:

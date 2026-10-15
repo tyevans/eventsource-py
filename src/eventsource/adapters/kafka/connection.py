@@ -25,12 +25,7 @@ logger = logging.getLogger("eventsource.bus.kafka")
 class KafkaConnectionManager:
     """Owns the Kafka producer/consumer connection lifecycle."""
 
-    def __init__(
-        self,
-        config: KafkaEventBusConfig,
-        stats: KafkaEventBusStats,
-        metrics: KafkaEventBusMetrics | None,
-    ) -> None:
+    def __init__(self, config: KafkaEventBusConfig, stats: KafkaEventBusStats, metrics: KafkaEventBusMetrics | None) -> None:  # fmt: skip
         self._config, self._stats, self._metrics = config, stats, metrics
         self._producer: AIOKafkaProducer | None = None
         self._consumer: AIOKafkaConsumer | None = None
@@ -59,8 +54,7 @@ class KafkaConnectionManager:
 
     async def connect(self) -> None:
         if self._connected:
-            logger.warning("KafkaEventBus already connected")
-            return
+            return logger.warning("KafkaEventBus already connected")
         logger.info("Connecting to Kafka", extra=self._config.get_sanitized_config())
         try:
             cfg = self._config
@@ -70,10 +64,7 @@ class KafkaConnectionManager:
             await self._consumer.start()
             self._rebalance_listener = KafkaRebalanceListener(self)
             self._connected, self._stats.connected_at = True, datetime.now(UTC)
-            logger.info(
-                "Connected to Kafka",
-                extra={"topic": cfg.topic_name, "consumer_group": cfg.consumer_group},
-            )
+            logger.info("Connected to Kafka", extra={"topic": cfg.topic_name, "consumer_group": cfg.consumer_group})  # fmt: skip
         except Exception as e:
             if self._metrics:
                 self._metrics.connection_errors.add(1, attributes={"error.type": type(e).__name__})
@@ -83,8 +74,7 @@ class KafkaConnectionManager:
 
     async def disconnect(self) -> None:
         if not self._connected:
-            logger.debug("KafkaEventBus not connected, nothing to disconnect")
-            return
+            return logger.debug("KafkaEventBus not connected, nothing to disconnect")
         logger.info("Disconnecting from Kafka")
         await self.cleanup()
         self._connected = False
@@ -106,9 +96,7 @@ class KafkaConnectionManager:
                 await self._consumer.stop()
             except Exception as e:
                 logger.warning(f"Error stopping consumer during reconnect: {e}")
-        self._consumer = AIOKafkaConsumer(
-            self._config.topic_name, **self._config.get_consumer_config()
-        )
+        self._consumer = AIOKafkaConsumer(self._config.topic_name, **self._config.get_consumer_config())  # fmt: skip
         await self._consumer.start()
         logger.info("Consumer reconnected successfully")
 
@@ -139,8 +127,7 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
         if not revoked:
             return
         parts = [{"topic": tp.topic, "partition": tp.partition} for tp in revoked]
-        grp = self._manager._config.consumer_group
-        ex = {"revoked_partitions": parts, "consumer_group": grp}
+        ex = {"revoked_partitions": parts, "consumer_group": self._manager._config.consumer_group}
         logger.info("Partitions being revoked, committing offsets", extra=ex)
         if self._manager._consumer:
             try:
@@ -156,5 +143,4 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
         if not assigned:
             return
         parts = [{"topic": tp.topic, "partition": tp.partition} for tp in assigned]
-        ex = {"assigned_partitions": parts, "consumer_group": self._manager._config.consumer_group}
-        logger.info("New partitions assigned", extra=ex)
+        logger.info("New partitions assigned", extra={"assigned_partitions": parts, "consumer_group": self._manager._config.consumer_group})  # fmt: skip

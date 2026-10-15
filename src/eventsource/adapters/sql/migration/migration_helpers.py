@@ -1,9 +1,4 @@
-"""Helper functions and state machine definitions for migration repository.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Helper functions and state machine definitions for migration repository (ADR-0002, ADR-0007)."""
 
 from __future__ import annotations
 
@@ -30,12 +25,8 @@ def _position(token: Any) -> Position | None:
     return Position.from_str(token) if token else None
 
 
-# Valid phase transitions for the migration state machine
 VALID_TRANSITIONS: dict[MigrationPhase, set[MigrationPhase]] = {
-    MigrationPhase.PENDING: {
-        MigrationPhase.BULK_COPY,
-        MigrationPhase.ABORTED,
-    },
+    MigrationPhase.PENDING: {MigrationPhase.BULK_COPY, MigrationPhase.ABORTED},
     MigrationPhase.BULK_COPY: {
         MigrationPhase.DUAL_WRITE,
         MigrationPhase.ABORTED,
@@ -48,29 +39,18 @@ VALID_TRANSITIONS: dict[MigrationPhase, set[MigrationPhase]] = {
     },
     MigrationPhase.CUTOVER: {
         MigrationPhase.COMPLETED,
-        MigrationPhase.DUAL_WRITE,  # Rollback
+        MigrationPhase.DUAL_WRITE,
         MigrationPhase.FAILED,
     },
-    MigrationPhase.COMPLETED: set(),  # Terminal
-    MigrationPhase.ABORTED: set(),  # Terminal
-    MigrationPhase.FAILED: set(),  # Terminal
+    MigrationPhase.COMPLETED: set(),
+    MigrationPhase.ABORTED: set(),
+    MigrationPhase.FAILED: set(),
 }
 
 
 def row_to_migration(row: Sequence[Any]) -> Migration:
-    """Convert database row to Migration instance.
-
-    Handles JSON deserialization for the config field and converts
-    string phase values to MigrationPhase enum.
-
-    Args:
-        row: Database row tuple
-
-    Returns:
-        Migration instance
-    """
+    """Convert database row tuple to a Migration instance."""
     config_data = row[15] if isinstance(row[15], dict) else json_loads(row[15])
-
     return Migration(
         id=row[0],
         tenant_id=row[1],
@@ -101,19 +81,9 @@ def row_to_migration(row: Sequence[Any]) -> Migration:
 
 
 def get_phase_timestamp_updates(phase: MigrationPhase) -> str:
-    """Get SQL for updating phase-specific timestamps.
-
-    Different phases have different timestamp fields that need
-    to be updated when transitioning to that phase.
-
-    Args:
-        phase: The target phase
-
-    Returns:
-        SQL fragment for timestamp updates
-    """
+    """Get SQL fragment for updating phase-specific timestamps."""
     timestamp_map = {
-        MigrationPhase.BULK_COPY: ("started_at = :phase_time, bulk_copy_started_at = :phase_time,"),
+        MigrationPhase.BULK_COPY: "started_at = :phase_time, bulk_copy_started_at = :phase_time,",
         MigrationPhase.DUAL_WRITE: (
             "bulk_copy_completed_at = :phase_time, dual_write_started_at = :phase_time,"
         ),
@@ -125,19 +95,8 @@ def get_phase_timestamp_updates(phase: MigrationPhase) -> str:
     return timestamp_map.get(phase, "")
 
 
-def get_phase_timestamp_params(
-    phase: MigrationPhase,
-    now: datetime,
-) -> dict[str, Any]:
-    """Get params for phase-specific timestamps.
-
-    Args:
-        phase: The target phase
-        now: Current timestamp
-
-    Returns:
-        Dictionary of timestamp parameters
-    """
+def get_phase_timestamp_params(phase: MigrationPhase, now: datetime) -> dict[str, Any]:
+    """Get dictionary of timestamp parameters for phase transitions."""
     if phase in (
         MigrationPhase.BULK_COPY,
         MigrationPhase.DUAL_WRITE,
