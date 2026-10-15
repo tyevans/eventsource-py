@@ -21,7 +21,7 @@ modules):
 | `ReadModel` | class | Pydantic base for read model definitions, with `id`, timestamps, `version`, and `deleted_at` |
 | `ReadModelRepository` | protocol | Persistence contract: read, write, delete, and soft-delete operations |
 | `ReadModelProjection` | class | Projection base that routes events to a repository-backed read model |
-| `Query` / `Filter` | classes | Filter, ordering, and pagination specification passed to `find()` and `count()` |
+| `Query` / `Filter` | classes | Filter, ordering, and pagination specification passed to `find()`, `find_one()`, and `count()` |
 | `InMemoryReadModelRepository` | class | In-process repository for tests and development |
 | `PostgreSQLReadModelRepository` | class | Production repository over an asyncpg/SQLAlchemy async connection |
 | `SQLiteReadModelRepository` | class | Embedded repository over an `aiosqlite` connection |
@@ -56,8 +56,8 @@ The package divides into five concerns:
   backend-neutral way. Each repository translates them into its own dialect.
 - **Persistence contract.** `ReadModelRepository` is a `@runtime_checkable`
   `Protocol[TModel]` covering reads (`get`, `get_many`, `exists`, `find`,
-  `count`), writes (`save`, `save_many`, `save_with_version_check`), deletes
-  (`delete`, `soft_delete`, `restore`, `truncate`), and soft-delete reads
+  `find_one`, `count`), writes (`save`, `save_many`, `save_with_version_check`),
+  deletes (`delete`, `soft_delete`, `restore`, `truncate`), and soft-delete reads
   (`get_deleted`, `find_deleted`). Every method is async, per the library's
   async-first design.
 - **Projection integration.** `ReadModelProjection[TModel]` extends
@@ -81,8 +81,8 @@ A few behaviors are worth internalizing before reading the per-symbol sections:
 - `save()` is an **upsert** and increments `version` when a row already exists;
   `save_with_version_check()` is the concurrency-safe alternative and raises
   `OptimisticLockError` on a version mismatch.
-- `find()` and `count()` **exclude soft-deleted rows by default**. Set
-  `Query.include_deleted=True`, or use `find_deleted()` / `get_deleted()`, to
+- `find()`, `find_one()`, and `count()` **exclude soft-deleted rows by default**.
+  Set `Query.include_deleted=True`, or use `find_deleted()` / `get_deleted()`, to
   see them.
 - Filters combine with **AND only** — there is no `OR` in the query model. Push
   disjunctions into the projection's denormalized shape instead.
@@ -612,3 +612,154 @@ OrderSummary(id=UUID('3f2a49c8-...'), version=3,
 
 Neither includes custom fields, so neither leaks domain data into logs — but
 neither is a substitute for `to_dict()` when you actually need the contents.
+
+## Filter
+
+```python
+@dataclass(frozen=True)
+class Filter:
+    field: str
+    operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in"]
+    value: Any
+```
+
+Defined in `eventsource.ports.readmodels.query`. Immutable single-field filter
+condition. Construct instances via the factory classmethods:
+
+```python
+@classmethod
+def eq(cls, field: str, value: Any) -> Filter: ...
+
+@classmethod
+def ne(cls, field: str, value: Any) -> Filter: ...
+
+@classmethod
+def gt(cls, field: str, value: Any) -> Filter: ...
+
+@classmethod
+def gte(cls, field: str, value: Any) -> Filter: ...
+
+@classmethod
+def lt(cls, field: str, value: Any) -> Filter: ...
+
+@classmethod
+def lte(cls, field: str, value: Any) -> Filter: ...
+
+@classmethod
+def in_(cls, field: str, values: Iterable[Any]) -> Filter: ...
+
+@classmethod
+def not_in(cls, field: str, values: Iterable[Any]) -> Filter: ...
+```
+
+`Filter.in_` and `Filter.not_in` accept any `Iterable[Any]` (`list`, `set`,
+`tuple`, or generator) and materialize `values` into a `list` on the resulting
+`Filter` instance (`value=list(values)`).
+
+## Query
+
+```python
+@dataclass
+class Query:
+    filters: list[Filter] = field(default_factory=list)
+    order_by: str | None = None
+    order_direction: Literal["asc", "desc"] = "asc"
+    limit: int | None = None
+    offset: int = 0
+    include_deleted: bool = False
+```
+
+Defined in `eventsource.ports.readmodels.query`. Combines `Filter` conditions
+(evaluated with `AND`), ordering, pagination, and soft-delete visibility.
+
+### Builder and factory methods
+
+```python
+@classmethod
+def where(cls, *filters: Filter, **eq_filters: Any) -> Query: ...
+
+def with_filter(self, *filters: Filter, **eq_filters: Any) -> Query: ...
+
+def with_order(self, field: str, direction: Literal["asc", "desc"] = "asc") -> Query: ...
+
+def with_pagination(self, limit: int, offset: int = 0) -> Query: ...
+
+def with_deleted(self, include: bool = True) -> Query: ...
+```
+
+- **`Query.where(cls, *filters: Filter, **eq_filters: Any) -> Query`**:
+  Creates a new `Query` populated with any positional `Filter` instances
+  followed by `Filter.eq(field, value)` for each keyword argument in
+  `**eq_filters`.
+- **`query.with_filter(self, *filters: Filter, **eq_filters: Any) -> Query`**:
+  Returns a new `Query` with `*filters` and `**eq_filters` (converted to
+  `Filter.eq` conditions) appended to the existing `self.filters` list without
+  mutating the original `Query`.
+
+```python
+q1 = Query.where(status="shipped", customer_id=customer_id)
+q2 = Query.where(Filter.gt("total", Decimal("100")), status="shipped")
+q3 = q1.with_filter(Filter.gte("total_amount", Decimal("50")), priority=1)
+```
+
+## ReadModelRepository
+
+```python
+@runtime_checkable
+class ReadModelRepository(Protocol[TModel]): ...
+```
+
+Defined in `eventsource.ports.readmodels.repository` and implemented by
+`InMemoryReadModelRepository`, `SQLiteReadModelRepository`, and
+`PostgreSQLReadModelRepository`.
+
+### Protocol methods
+
+```python
+async def get(self, id: UUID) -> TModel | None: ...
+
+async def get_many(self, ids: Iterable[UUID]) -> list[TModel]: ...
+
+async def save(self, model: TModel) -> None: ...
+
+async def save_many(self, models: Iterable[TModel]) -> None: ...
+
+async def save_with_version_check(self, model: TModel) -> None: ...
+
+async def find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]: ...
+
+async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None: ...
+
+async def count(self, query: Query | None = None, **eq_filters: Any) -> int: ...
+
+async def exists(self, id: UUID) -> bool: ...
+
+async def delete(self, id: UUID) -> bool: ...
+
+async def soft_delete(self, id: UUID) -> bool: ...
+
+async def restore(self, id: UUID) -> bool: ...
+
+async def get_deleted(self, id: UUID) -> TModel | None: ...
+
+async def find_deleted(self, query: Query | None = None) -> list[TModel]: ...
+
+async def truncate(self) -> int: ...
+```
+
+- **`get_many(self, ids: Iterable[UUID]) -> list[TModel]`** and
+  **`save_many(self, models: Iterable[TModel]) -> None`**: Accept any
+  `Iterable` (`list`, `set`, `tuple`, or generator). Empty iterables short-circuit
+  cleanly without issuing database queries.
+- **`find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]`**:
+  Finds read models matching `query` and optional equality keyword filters. When
+  `**eq_filters` are supplied, they are merged into `query` via
+  `query.with_filter(**eq_filters)` (or `Query.where(**eq_filters)` when `query`
+  is `None`).
+- **`find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None`**:
+  Returns the first read model matching `query` and `**eq_filters`, or `None` if
+  no record matches. Preserves `order_by`, `order_direction`, `offset`, and
+  `include_deleted` from `query` while forcing `limit=1`.
+- **`count(self, query: Query | None = None, **eq_filters: Any) -> int`**:
+  Counts non-deleted read models (unless `include_deleted=True` on `query`)
+  matching `query` and any `**eq_filters` equality keyword shortcuts.

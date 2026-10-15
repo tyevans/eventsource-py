@@ -36,9 +36,9 @@ most surprises later:
   `deleted_at` on top of your domain fields, and the repository maintains the
   last four for you.
 - **Soft-deleted rows are invisible by default.** `get`, `get_many`, `find`,
-  `count`, and `exists` all skip rows whose `deleted_at` is set. That is
-  usually what you want, and it is the first thing to check when a row you
-  know you wrote does not come back.
+  `find_one`, `count`, and `exists` all skip rows whose `deleted_at` is set.
+  That is usually what you want, and it is the first thing to check when a row
+  you know you wrote does not come back.
 
 ## Before you start
 
@@ -88,7 +88,7 @@ the field default at construction time, so a model you rebuild from scratch and
 re-save will carry a new `created_at` unless you copy the old one across.
 
 **Soft-deleted rows are invisible by default.** `get`, `get_many`, `find`,
-`count`, and `exists` all skip rows whose `deleted_at` is set. Use
+`find_one`, `count`, and `exists` all skip rows whose `deleted_at` is set. Use
 `get_deleted` / `find_deleted` to see only the deleted set, or
 `Query(include_deleted=True)` to see both. When a row you are certain you wrote
 does not come back, check `deleted_at` first.
@@ -374,10 +374,10 @@ Three implementations ship with the library, all satisfying the same
 `ReadModelRepository` protocol: `InMemoryReadModelRepository`,
 `SQLiteReadModelRepository`, and `PostgreSQLReadModelRepository`. They expose an
 identical method set — `get`, `get_many`, `save`, `save_many`,
-`save_with_version_check`, `find`, `count`, `exists`, `delete`, `soft_delete`,
-`restore`, `get_deleted`, `find_deleted`, `truncate` — so projection code
-written against the protocol runs unchanged on any of them. Each is imported
-from its own adapter module.
+`save_with_version_check`, `find`, `find_one`, `count`, `exists`, `delete`,
+`soft_delete`, `restore`, `get_deleted`, `find_deleted`, `truncate` — so
+projection code written against the protocol runs unchanged on any of them.
+Each is imported from its own adapter module.
 
 ```python
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
@@ -442,7 +442,7 @@ from `save_with_version_check()`. Four differences matter when you write tests
 against it.
 
 **ID lookups are O(1); every query is O(n).** `get`, `get_many`, `exists`,
-`soft_delete`, and `restore` are dict lookups. `find`, `count`, and
+`soft_delete`, and `restore` are dict lookups. `find`, `find_one`, `count`, and
 `find_deleted` build a list of every stored model and then apply each `Filter`
 in Python, one pass per filter, before ordering and slicing. For the tens or
 hundreds of rows a test creates that is free; it is not a query engine, and a
@@ -597,3 +597,95 @@ A practical default: `InMemoryReadModelRepository` in unit tests,
 genuinely has nowhere to run a server. Because the in-memory backend differs on
 reference aliasing, `Decimal` handling, and O(n) queries, keep at least one
 integration test per read model running against the backend you actually ship.
+
+## Query, filter, and batch operations
+
+### Build queries with `Query.where()` and `with_filter()`
+
+`Query` and `Filter` (`from eventsource.ports.readmodels import Filter, Query`)
+specify filters, ordering, pagination, and soft-delete visibility in a
+backend-neutral way. Every condition in a `Query` combines with `AND`.
+
+Use `Query.where(*filters, **eq_filters)` as a concise factory for building a
+filtered query from explicit `Filter` objects, keyword equality arguments, or
+both at once:
+
+```python
+from decimal import Decimal
+from eventsource.ports.readmodels import Filter, Query
+
+# Keyword equality filters
+q1 = Query.where(status="shipped", customer_id=customer_id)
+
+# Combine positional Filter objects with keyword equality shortcuts
+q2 = Query.where(Filter.gt("total", Decimal("100")), status="shipped")
+```
+
+`query.with_filter(*filters, **eq_filters)` accepts the same variadic `Filter`
+arguments and keyword equality filters, returning a new `Query` with the
+additional conditions appended in order (positional `Filter`s first, then
+keyword equality filters):
+
+```python
+query = (
+    Query.where(status="shipped")
+    .with_filter(Filter.gte("total_amount", Decimal("50")), Filter.gt("item_count", 1), customer_id=customer_id)
+    .with_order("created_at", "desc")
+    .with_pagination(limit=20, offset=0)
+)
+```
+
+### Find, count, and fetch a single row with keyword shortcuts
+
+`find()`, `find_one()`, and `count()` each accept an optional `Query` alongside
+`**eq_filters` keyword shortcuts (which are appended as `Filter.eq(field, value)`
+conditions):
+
+```python
+# Keyword filter shortcuts directly on repository read methods
+shipped_orders = await repo.find(status="shipped")
+shipped_count = await repo.count(status="shipped")
+
+# Fetch a single matching read model (or None if no row matches)
+order = await repo.find_one(order_number="ORD-001")
+
+# Combine a Query (for ordering, non-equality filters, or offset) with keyword filters
+latest_high_value = await repo.find_one(
+    Query.where(Filter.gt("total_amount", Decimal("100"))).with_order("created_at", "desc"),
+    status="shipped",
+)
+```
+
+`await repo.find_one(query=None, **eq_filters)` returns the first matching
+`TModel` or `None` when nothing matches. When you pass a `Query`, `find_one()`
+preserves `order_by`, `order_direction`, `offset`, and `include_deleted` while
+forcing `limit=1`.
+
+### Pass any `Iterable` to batch and set-membership operations
+
+`get_many(ids)`, `save_many(models)`, `Filter.in_(field, values)`, and
+`Filter.not_in(field, values)` accept any `Iterable` — including `list`, `set`,
+`tuple`, dict key/value views, and generator expressions:
+
+```python
+# Set and generator inputs work without manual list(...) conversion
+target_ids = {order_a.id, order_b.id}
+found = await repo.get_many(target_ids)
+
+await repo.save_many(
+    OrderSummary(
+        id=item.id,
+        order_number=item.number,
+        customer_id=customer_id,
+        customer_name="Alice Smith",
+        status="pending",
+        total_amount=item.total,
+    )
+    for item in incoming_orders
+)
+
+active_query = Query.where(
+    Filter.in_("status", {"pending", "processing", "shipped"}),
+    Filter.not_in("order_number", (code for code in excluded_codes)),
+)
+```
