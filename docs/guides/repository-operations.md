@@ -521,3 +521,92 @@ await asyncio.gather(task, return_exceptions=True)
 If you would rather not own a long-lived task, `drain_once` is equally happy
 called from a scheduler -- see the maintenance job section at the end of this
 guide for cadences.
+
+## Aggregate and Tenant-Aware Repository Operations
+
+Beyond the infrastructure repositories (`OutboxRepository`, `DLQRepository`,
+`CheckpointRepository`), day-to-day domain command execution flows through
+`AggregateRepository` and its multi-tenant wrapper `TenantAwareRepository`.
+
+### Sequential multi-command execution with `AggregateRepository.execute`
+
+`AggregateRepository.execute(aggregate_id, command, *more_commands, create_if_missing=True)`
+accepts variadic commands or callables and applies them sequentially in a
+single load-apply-save cycle:
+
+```python
+from uuid import uuid4
+from eventsource import AggregateRepository, InMemoryEventStore
+
+async with InMemoryEventStore() as store:
+    repo = AggregateRepository(event_store=store, aggregate_factory=Account)
+    account_id = uuid4()
+
+    # Load (or create) once, apply all commands in order, and save once
+    account = await repo.execute(
+        account_id,
+        OpenAccount(account_id=account_id, owner="Alice"),
+        DepositMoney(account_id=account_id, amount=100.0),
+        DepositMoney(account_id=account_id, amount=50.0),
+    )
+    assert account.version == 3
+```
+
+You can also pass multiple callables `Callable[[TAggregate], Any]` (or mix
+command objects and callables on aggregates that support both) to invoke
+several domain methods before committing a single batch of events:
+
+```python
+order = await order_repo.execute(
+    order_id,
+    lambda agg: agg.create(customer_id=customer_id),
+    lambda agg: agg.ship("TRACK-123"),
+)
+```
+
+Pass `create_if_missing=False` when the stream must already exist; the
+repository calls `load(aggregate_id)` instead of `load_or_create(aggregate_id)`
+and raises `AggregateNotFoundError` before executing any command if the stream
+is missing.
+
+### Tenant-aware execution and queries with `TenantAwareRepository`
+
+`TenantAwareRepository` mirrors `AggregateRepository`'s command and query
+surface while enforcing write-path tenant consistency (`validate_on_save=True`)
+and optional read-path tenant scope checks (`require_tenant_context=True`):
+
+- **`TenantAwareRepository.execute(aggregate_id, command, *more_commands, create_if_missing=True) -> TAggregate`**:
+  Loads (or creates) the aggregate, applies `command` and any `*more_commands`
+  sequentially, and saves through `self.save(agg)` so all uncommitted events
+  are validated against `get_required_tenant()` before being appended.
+- **`TenantAwareRepository.get_version(aggregate_id) -> int`**:
+  Returns the current stream version (`0` if the aggregate stream does not
+  exist). When `require_tenant_context=True`, verifies that an active tenant
+  scope is set via `get_required_tenant()` before querying the underlying
+  repository.
+- **`TenantAwareRepository.get_or_raise(aggregate_id) -> TAggregate`**:
+  Intent-revealing alias for `await tenant_repo.load(aggregate_id)` that
+  enforces `get_required_tenant()` when `require_tenant_context=True` and
+  raises `AggregateNotFoundError` when the aggregate does not exist.
+
+```python
+from eventsource import tenant_scope
+from eventsource.application.aggregates.tenant_repository import (
+    TenantAwareRepository,
+)
+
+tenant_repo = TenantAwareRepository(
+    repo,
+    require_tenant_context=True,
+    validate_on_save=True,
+)
+
+async with tenant_scope(tenant_id):
+    await tenant_repo.execute(
+        order_id,
+        lambda agg: agg.create(customer_id=customer_id, tenant_id=tenant_id),
+        lambda agg: agg.ship("TRACK-123", tenant_id=tenant_id),
+    )
+    version = await tenant_repo.get_version(order_id)
+    loaded = await tenant_repo.get_or_raise(order_id)
+```
