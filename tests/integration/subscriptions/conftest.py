@@ -110,9 +110,7 @@ class CollectingProjection:
 
     def get_event_at_position(self, position: int) -> DomainEvent | None:
         """Get event at a specific position (0-indexed)."""
-        if 0 <= position < len(self.events):
-            return self.events[position]
-        return None
+        return self.events[position] if 0 <= position < len(self.events) else None
 
     def has_duplicates(self) -> bool:
         """Check if any duplicate events were received."""
@@ -190,8 +188,7 @@ class SlowProjection:
 @pytest_asyncio.fixture
 async def in_memory_event_store() -> AsyncGenerator[InMemoryEventStore]:
     """Create an in-memory event store for testing."""
-    store = InMemoryEventStore()
-    yield store
+    yield InMemoryEventStore()
 
 
 @pytest_asyncio.fixture
@@ -205,8 +202,7 @@ async def in_memory_event_bus() -> AsyncGenerator[InMemoryEventBus]:
 @pytest_asyncio.fixture
 async def in_memory_checkpoint_repo() -> AsyncGenerator[InMemoryCheckpointRepository]:
     """Create an in-memory checkpoint repository for testing."""
-    repo = InMemoryCheckpointRepository(enable_tracing=False)
-    yield repo
+    yield InMemoryCheckpointRepository(enable_tracing=False)
 
 
 @pytest_asyncio.fixture
@@ -237,10 +233,14 @@ def collecting_projection() -> CollectingProjection:
 # =============================================================================
 
 
+async def _append_event(store: InMemoryEventStore, event: DomainEvent) -> DomainEvent:
+    stream_id = StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder")
+    await store.append(stream_id, [event], ExpectedVersion.no_stream())
+    return event
+
+
 async def populate_event_store(
-    store: InMemoryEventStore,
-    count: int,
-    start_index: int = 0,
+    store: InMemoryEventStore, count: int, start_index: int = 0
 ) -> list[DomainEvent]:
     """
     Populate the event store with test events.
@@ -256,24 +256,14 @@ async def populate_event_store(
     events = []
     for i in range(count):
         event = SubTestOrderCreated(
-            aggregate_id=uuid4(),
-            order_number=f"ORD-{start_index + i:05d}",
-            amount=100.0 + i,
+            aggregate_id=uuid4(), order_number=f"ORD-{start_index + i:05d}", amount=100.0 + i
         )
-        await store.append(
-            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-            [event],
-            ExpectedVersion.no_stream(),
-        )
-        events.append(event)
+        events.append(await _append_event(store, event))
     return events
 
 
 async def populate_event_store_with_types(
-    store: InMemoryEventStore,
-    created_count: int,
-    shipped_count: int,
-    cancelled_count: int = 0,
+    store: InMemoryEventStore, created_count: int, shipped_count: int, cancelled_count: int = 0
 ) -> list[DomainEvent]:
     """
     Populate the event store with mixed event types.
@@ -288,56 +278,22 @@ async def populate_event_store_with_types(
         List of all created events
     """
     events: list[DomainEvent] = []
-    total = 0
-
     for i in range(created_count):
         event = SubTestOrderCreated(
-            aggregate_id=uuid4(),
-            order_number=f"ORD-{total:05d}",
-            amount=100.0 + i,
+            aggregate_id=uuid4(), order_number=f"ORD-{len(events):05d}", amount=100.0 + i
         )
-        await store.append(
-            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-            [event],
-            ExpectedVersion.no_stream(),
-        )
-        events.append(event)
-        total += 1
-
+        events.append(await _append_event(store, event))
     for _i in range(shipped_count):
-        event = SubTestOrderShipped(
-            aggregate_id=uuid4(),
-            tracking_number=f"TRK-{total:05d}",
-        )
-        await store.append(
-            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-            [event],
-            ExpectedVersion.no_stream(),
-        )
-        events.append(event)
-        total += 1
-
+        event = SubTestOrderShipped(aggregate_id=uuid4(), tracking_number=f"TRK-{len(events):05d}")
+        events.append(await _append_event(store, event))
     for _i in range(cancelled_count):
-        event = SubTestOrderCancelled(
-            aggregate_id=uuid4(),
-            reason=f"Reason {total}",
-        )
-        await store.append(
-            StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-            [event],
-            ExpectedVersion.no_stream(),
-        )
-        events.append(event)
-        total += 1
-
+        event = SubTestOrderCancelled(aggregate_id=uuid4(), reason=f"Reason {len(events)}")
+        events.append(await _append_event(store, event))
     return events
 
 
 async def publish_live_event(
-    store: InMemoryEventStore,
-    bus: InMemoryEventBus,
-    order_number: str,
-    amount: float = 100.0,
+    store: InMemoryEventStore, bus: InMemoryEventBus, order_number: str, amount: float = 100.0
 ) -> SubTestOrderCreated:
     """
     Publish a live event through both store and bus.
@@ -351,15 +307,7 @@ async def publish_live_event(
     Returns:
         The created event
     """
-    event = SubTestOrderCreated(
-        aggregate_id=uuid4(),
-        order_number=order_number,
-        amount=amount,
-    )
-    await store.append(
-        StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-        [event],
-        ExpectedVersion.no_stream(),
-    )
+    event = SubTestOrderCreated(aggregate_id=uuid4(), order_number=order_number, amount=amount)
+    await _append_event(store, event)
     await bus.publish([event])
     return event
