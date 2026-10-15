@@ -9,6 +9,7 @@ from eventsource.testing.recording import RecordingEventBus
 
 class RecordedEvent(DomainEvent):
     aggregate_type: str = "Recorded"
+    label: str = "default"
 
 
 async def test_records_published_events_and_forwards_them() -> None:
@@ -106,3 +107,21 @@ async def test_get_wildcard_subscriber_count_delegates_to_wrapped_bus() -> None:
     assert bus.get_wildcard_subscriber_count() == 0
     bus.subscribe_to_all_events(handler)
     assert bus.get_wildcard_subscriber_count() == 1
+
+
+async def test_assertions_property_binds_to_published_events() -> None:
+    bus = RecordingEventBus(InMemoryEventBus())
+    agg_id = uuid4()
+    event = RecordedEvent(aggregate_id=agg_id, label="custom")
+    await bus.publish([event])
+
+    bus.assertions.assert_event_count(1)
+    published = bus.assertions.assert_event_published(RecordedEvent)
+    assert published.event_id == event.event_id
+
+    matched = bus.assertions.assert_event_with_fields(
+        RecordedEvent,
+        aggregate_id=agg_id,
+        label="custom",
+    )
+    assert matched.event_id == event.event_id
