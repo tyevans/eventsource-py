@@ -14,8 +14,6 @@ class IntPositionCodec:
         return Position(store_id=self.store_id, key=(value,))
 
     def decode(self, raw: str) -> Position:
-        if raw.isdigit():  # legacy bare-int checkpoint value
-            return self.encode(int(raw))
         position = Position.from_str(raw)
         if position.store_id != self.store_id:
             raise PositionForeignError(

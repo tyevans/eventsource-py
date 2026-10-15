@@ -46,7 +46,6 @@ from eventsource.testing.bdd import (
     when_command,
 )
 from eventsource.testing.builder import EventBuilder
-from eventsource.testing.conformance import EventBusConformanceSuite
 
 # Re-export every port conformance suite. Starred deliberately: the suite roster
 # lives in exactly one place (conformance_ports.__all__), so a suite added there
@@ -70,8 +69,6 @@ __all__ = [
     "then_event_sequence",
     "then_event_count",
     "DeciderScenario",
-    # Conformance test suite
-    "EventBusConformanceSuite",
     # Port conformance suites are appended below, from the single roster in
     # conformance_ports.__all__ -- do not list them here.
     *conformance_ports.__all__,
