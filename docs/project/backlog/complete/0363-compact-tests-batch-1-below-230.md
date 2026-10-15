@@ -1,7 +1,7 @@
 ---
-id: TASK-0364
-title: "Compact 10 test modules at 253-254 lines below 230 lines"
-status: Refined
+id: TASK-0363
+title: "Compact 10 test modules at 254-256 lines below 230 lines"
+status: Complete
 target_bc: testing
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md
@@ -13,7 +13,7 @@ adrs:
 dependencies: []
 ---
 
-# TASK-0364: Compact 10 test modules at 253-254 lines below 230 lines
+# TASK-0363: Compact 10 test modules at 254-256 lines below 230 lines
 
 ## Summary
-Compact 10 test modules at 253-254 lines strictly below 230 lines while preserving every test assertion.
+Compact 10 test modules at 254-256 lines strictly below 230 lines while preserving every test assertion.
