@@ -1,7 +1,7 @@
 ---
 id: TASK-0320
 title: "Compact 8 test and example modules at 278-279 lines below 250 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

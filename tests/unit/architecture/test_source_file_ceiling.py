@@ -2,8 +2,8 @@
 
 Locks in module factoring gains (ADR-0002) by verifying that every Python
 source file under ``src/eventsource/`` contains strictly fewer than
-``MAX_SRC_LINES`` (255) lines, and every Python file under ``tests/`` and
-``examples/`` contains strictly fewer than ``MAX_TEST_EXAMPLE_LINES`` (282) lines.
+``MAX_SRC_LINES`` (244) lines, and every Python file under ``tests/`` and
+``examples/`` contains strictly fewer than ``MAX_TEST_EXAMPLE_LINES`` (275) lines.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 
 import eventsource
 
-MAX_SRC_LINES = 255
-MAX_TEST_EXAMPLE_LINES = 282
+MAX_SRC_LINES = 244
+MAX_TEST_EXAMPLE_LINES = 275
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_EVENTSOURCE_DIR = Path(eventsource.__file__).resolve().parent
@@ -55,8 +55,8 @@ def format_violation_report(
     return "\n".join(lines)
 
 
-def test_source_files_strictly_below_255_lines() -> None:
-    """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< 255`` lines."""
+def test_source_files_strictly_below_244_lines() -> None:
+    """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< 244`` lines."""
     py_files = list(SRC_EVENTSOURCE_DIR.rglob("*.py"))
     assert py_files, f"Expected Python files under {SRC_EVENTSOURCE_DIR}"
 
@@ -66,8 +66,8 @@ def test_source_files_strictly_below_255_lines() -> None:
     )
 
 
-def test_test_and_example_files_strictly_below_282_lines() -> None:
-    """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< 282`` lines."""
+def test_test_and_example_files_strictly_below_275_lines() -> None:
+    """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< 275`` lines."""
     violations: list[tuple[Path, int]] = []
     for directory in (TESTS_DIR, EXAMPLES_DIR):
         py_files = list(directory.rglob("*.py"))
@@ -82,12 +82,12 @@ def test_test_and_example_files_strictly_below_282_lines() -> None:
 @pytest.mark.parametrize(
     ("max_lines", "line_count", "expected_violation"),
     [
-        (MAX_SRC_LINES, 254, False),
-        (MAX_SRC_LINES, 255, True),
-        (MAX_SRC_LINES, 256, True),
-        (MAX_TEST_EXAMPLE_LINES, 281, False),
-        (MAX_TEST_EXAMPLE_LINES, 282, True),
-        (MAX_TEST_EXAMPLE_LINES, 283, True),
+        (MAX_SRC_LINES, 243, False),
+        (MAX_SRC_LINES, 244, True),
+        (MAX_SRC_LINES, 245, True),
+        (MAX_TEST_EXAMPLE_LINES, 274, False),
+        (MAX_TEST_EXAMPLE_LINES, 275, True),
+        (MAX_TEST_EXAMPLE_LINES, 276, True),
     ],
 )
 def test_find_ceiling_violations_boundary(
