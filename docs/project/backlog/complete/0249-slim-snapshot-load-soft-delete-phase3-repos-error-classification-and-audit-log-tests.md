@@ -1,7 +1,7 @@
 ---
 id: TASK-0249
 title: "Slim snapshot load, soft delete, phase3 repositories, error classification, and audit log query test modules below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

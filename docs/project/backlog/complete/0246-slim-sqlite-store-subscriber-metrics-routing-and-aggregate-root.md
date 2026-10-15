@@ -1,7 +1,7 @@
 ---
 id: TASK-0246
 title: "Slim sqlite/store.py, subscriber.py, metrics_subscription.py, routing_mutation.py, and aggregate_root.py below 300 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

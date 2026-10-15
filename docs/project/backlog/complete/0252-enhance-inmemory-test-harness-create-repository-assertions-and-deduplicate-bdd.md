@@ -1,7 +1,7 @@
 ---
 id: TASK-0252
 title: "Add create_repository, snapshot_store, and assertions to InMemoryTestHarness and deduplicate testing/bdd.py"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
