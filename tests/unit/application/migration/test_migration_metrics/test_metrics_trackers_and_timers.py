@@ -27,8 +27,7 @@ class TestActiveMigrationsTracker:
         tracker.register_migration("migration-1")
         tracker.register_migration("migration-2")
         assert tracker.active_count == 2
-        assert "migration-1" in tracker.active_migrations
-        assert "migration-2" in tracker.active_migrations
+        assert {"migration-1", "migration-2"}.issubset(tracker.active_migrations)
 
     def test_register_migration_idempotent(self):
         tracker = ActiveMigrationsTracker.get_instance()
@@ -61,20 +60,19 @@ class TestActiveMigrationsTracker:
 class TestMetricsRegistry:
     def test_get_migration_metrics_creates_new(self):
         metrics = get_migration_metrics("migration-123", "tenant-456")
-        assert metrics.migration_id == "migration-123"
-        assert metrics.tenant_id == "tenant-456"
+        assert (metrics.migration_id, metrics.tenant_id) == ("migration-123", "tenant-456")
         assert metrics.enable_metrics is True
 
     def test_get_migration_metrics_returns_same_instance(self):
-        metrics1 = get_migration_metrics("migration-123", "tenant-456")
-        metrics2 = get_migration_metrics("migration-123", "tenant-456")
-        assert metrics1 is metrics2
+        m1 = get_migration_metrics("migration-123", "tenant-456")
+        m2 = get_migration_metrics("migration-123", "tenant-456")
+        assert m1 is m2
 
     def test_get_migration_metrics_different_ids(self):
-        metrics1 = get_migration_metrics("migration-1", "tenant-1")
-        metrics2 = get_migration_metrics("migration-2", "tenant-2")
-        assert metrics1 is not metrics2
-        assert metrics1.migration_id == "migration-1" and metrics2.migration_id == "migration-2"
+        m1 = get_migration_metrics("migration-1", "tenant-1")
+        m2 = get_migration_metrics("migration-2", "tenant-2")
+        assert m1 is not m2
+        assert m1.migration_id == "migration-1" and m2.migration_id == "migration-2"
 
     def test_get_migration_metrics_registers_active(self):
         get_migration_metrics("migration-123", "tenant-456")
@@ -168,51 +166,32 @@ class TestObservableGaugeCallbacks:
 
 class TestImports:
     def test_import_from_migration_module(self):
-        from eventsource.application.migration import (
-            ActiveMigrationsTracker,
-            MigrationMetrics,
-            MigrationMetricSnapshot,
-            clear_metrics_registry,
-            get_migration_metrics,
-            release_migration_metrics,
-        )
+        import eventsource.application.migration as mod
 
-        exports = (
-            MigrationMetrics,
-            MigrationMetricSnapshot,
-            ActiveMigrationsTracker,
-            get_migration_metrics,
-            release_migration_metrics,
-            clear_metrics_registry,
+        names = (
+            "MigrationMetrics",
+            "MigrationMetricSnapshot",
+            "ActiveMigrationsTracker",
+            "get_migration_metrics",
+            "release_migration_metrics",
+            "clear_metrics_registry",
         )
-        assert all(x is not None for x in exports)
+        assert all(getattr(mod, name) is not None for name in names)
 
     def test_import_from_metrics_module(self):
-        from eventsource.application.migration.metrics import (
-            OTEL_METRICS_AVAILABLE,
-            ActiveMigrationsTracker,
-            MigrationMetrics,
-            MigrationMetricSnapshot,
-            NoOpCounter,
-            NoOpGauge,
-            NoOpHistogram,
-            clear_metrics_registry,
-            get_migration_metrics,
-            release_migration_metrics,
-            reset_meter,
-        )
+        from eventsource.application.migration import metrics as mod
 
-        exports = (
-            OTEL_METRICS_AVAILABLE,
-            MigrationMetrics,
-            MigrationMetricSnapshot,
-            ActiveMigrationsTracker,
-            NoOpCounter,
-            NoOpHistogram,
-            NoOpGauge,
-            get_migration_metrics,
-            release_migration_metrics,
-            clear_metrics_registry,
-            reset_meter,
+        names = (
+            "OTEL_METRICS_AVAILABLE",
+            "MigrationMetrics",
+            "MigrationMetricSnapshot",
+            "ActiveMigrationsTracker",
+            "NoOpCounter",
+            "NoOpHistogram",
+            "NoOpGauge",
+            "get_migration_metrics",
+            "release_migration_metrics",
+            "clear_metrics_registry",
+            "reset_meter",
         )
-        assert all(x is not None for x in exports)
+        assert all(getattr(mod, name) is not None for name in names)

@@ -8,46 +8,49 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+import sqlalchemy.ext.asyncio as sa_async
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+import eventsource as es
+from eventsource.adapters.postgresql import PostgreSQLEventStore
+from eventsource.adapters.sql.schemas import get_schema
+from eventsource.domain.event_registry import EventRegistry
 
 from . import domain as _domain
 from . import schemas as _schemas
 
+_EVENT_CLASSES = (
+    _domain.TestItemCreated,
+    _domain.TestItemUpdated,
+    _domain.TestItemDeleted,
+    _domain.TestOrderCreated,
+    _domain.TestOrderItemAdded,
+    _domain.TestOrderCompleted,
+)
+
 
 def _build_test_registry() -> Any:
-    from eventsource.domain.event_registry import EventRegistry
-
     registry = EventRegistry()
-    for cls in (
-        _domain.TestItemCreated,
-        _domain.TestItemUpdated,
-        _domain.TestItemDeleted,
-        _domain.TestOrderCreated,
-        _domain.TestOrderItemAdded,
-        _domain.TestOrderCompleted,
-    ):
+    for cls in _EVENT_CLASSES:
         registry.register(cls)
     return registry
 
 
 @pytest.fixture(scope="session")
 async def postgres_engine(postgres_connection_url: str) -> AsyncGenerator[AsyncEngine]:
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    from eventsource.adapters.sql.schemas import get_schema
-
-    engine = create_async_engine(postgres_connection_url, echo=False, pool_size=5, max_overflow=10)
+    engine = sa_async.create_async_engine(
+        postgres_connection_url, echo=False, pool_size=5, max_overflow=10
+    )
     async with engine.begin() as conn:
         raw = await conn.get_raw_connection()
         assert raw.driver_connection is not None
         await raw.driver_connection.execute(get_schema("events"))
-        stmts = (
+        for stmt in (
             *_schemas.CHECKPOINTS_SCHEMA_STATEMENTS,
             *_schemas.DLQ_SCHEMA_STATEMENTS,
             *_schemas.OUTBOX_SCHEMA_STATEMENTS,
-        )
-        for stmt in stmts:
+        ):
             await conn.execute(text(stmt))
     yield engine
     await engine.dispose()
@@ -62,8 +65,6 @@ async def postgres_session_factory(
 
 @pytest.fixture
 async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[None]:
-    from sqlalchemy import text
-
     async def truncate_tables() -> None:
         async with postgres_engine.begin() as conn:
             for tbl in ("events", "projection_checkpoints", "dead_letter_queue", "event_outbox"):
@@ -105,8 +106,6 @@ async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None]:
 async def postgres_event_store(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    from eventsource.adapters.postgresql import PostgreSQLEventStore
-
     yield PostgreSQLEventStore(
         postgres_engine, event_registry=_build_test_registry(), outbox_enabled=False
     )
@@ -116,8 +115,6 @@ async def postgres_event_store(
 async def postgres_event_store_with_outbox(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    from eventsource.adapters.postgresql import PostgreSQLEventStore
-
     yield PostgreSQLEventStore(
         postgres_engine, event_registry=_build_test_registry(), outbox_enabled=True
     )
@@ -125,13 +122,11 @@ async def postgres_event_store_with_outbox(
 
 @pytest.fixture
 def redis_event_bus_factory(redis_connection_url: str) -> Any:
-    from eventsource import REDIS_AVAILABLE, RedisEventBus, RedisEventBusConfig
-
-    if not REDIS_AVAILABLE:
+    if not es.REDIS_AVAILABLE:
         pytest.skip("Redis package not installed")
 
-    def create_bus() -> RedisEventBus:
-        cfg = RedisEventBusConfig(
+    def create_bus() -> es.RedisEventBus:
+        cfg = es.RedisEventBusConfig(
             redis_url=redis_connection_url,
             stream_prefix="test_events",
             consumer_group="test_group",
@@ -139,7 +134,7 @@ def redis_event_bus_factory(redis_connection_url: str) -> Any:
             block_ms=1000,
             single_connection_client=True,
         )
-        return RedisEventBus(config=cfg, event_registry=_build_test_registry())
+        return es.RedisEventBus(config=cfg, event_registry=_build_test_registry())
 
     return create_bus
 
@@ -157,27 +152,21 @@ async def redis_event_bus(redis_event_bus_factory: Any, clean_redis: None) -> As
 async def postgres_checkpoint_repo(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    from eventsource import SQLCheckpointRepository
-
-    yield SQLCheckpointRepository(postgres_engine)
+    yield es.SQLCheckpointRepository(postgres_engine)
 
 
 @pytest.fixture
 async def postgres_dlq_repo(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    from eventsource import SQLDLQRepository
-
-    yield SQLDLQRepository(postgres_engine)
+    yield es.SQLDLQRepository(postgres_engine)
 
 
 @pytest.fixture
 async def postgres_outbox_repo(
     postgres_engine: AsyncEngine, clean_postgres_tables: None
 ) -> AsyncGenerator[Any]:
-    from eventsource import PostgreSQLOutboxRepository
-
-    yield PostgreSQLOutboxRepository(postgres_engine)
+    yield es.PostgreSQLOutboxRepository(postgres_engine)
 
 
 @pytest.fixture
@@ -196,24 +185,16 @@ def sample_customer_id() -> UUID:
 
 
 @pytest.fixture
-def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> _domain.TestItemCreated:
-    return _domain.TestItemCreated(
-        aggregate_id=sample_aggregate_id,
-        tenant_id=sample_tenant_id,
-        aggregate_version=1,
-        name="Test Item",
-        quantity=5,
-    )
+def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> Any:
+    kw: dict[str, Any] = {"aggregate_id": sample_aggregate_id, "tenant_id": sample_tenant_id}
+    return _domain.TestItemCreated(**kw, aggregate_version=1, name="Test Item", quantity=5)
 
 
 @pytest.fixture
 def sample_order_event(
     sample_aggregate_id: UUID, sample_customer_id: UUID, sample_tenant_id: UUID
-) -> _domain.TestOrderCreated:
+) -> Any:
+    kw: dict[str, Any] = {"aggregate_id": sample_aggregate_id, "tenant_id": sample_tenant_id}
     return _domain.TestOrderCreated(
-        aggregate_id=sample_aggregate_id,
-        tenant_id=sample_tenant_id,
-        aggregate_version=1,
-        customer_id=sample_customer_id,
-        total_amount=0.0,
+        **kw, aggregate_version=1, customer_id=sample_customer_id, total_amount=0.0
     )

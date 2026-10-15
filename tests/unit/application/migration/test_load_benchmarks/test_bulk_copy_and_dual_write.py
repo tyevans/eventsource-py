@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -26,6 +26,17 @@ from tests.unit.application.migration.test_load_benchmarks._repositories import 
 )
 
 
+def _make_migration(tenant_id: UUID, batch_size: int) -> Migration:
+    return Migration(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        source_store_id="source",
+        target_store_id="target",
+        phase=MigrationPhase.BULK_COPY,
+        config=MigrationConfig(batch_size=batch_size, max_bulk_copy_rate=1_000_000),
+    )
+
+
 class TestBulkCopyThroughput:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -41,14 +52,7 @@ class TestBulkCopyThroughput:
         migration_repo = InMemoryMigrationRepository()
         await create_test_events(source_store, tenant_id, event_count)
 
-        migration = Migration(
-            id=uuid4(),
-            tenant_id=tenant_id,
-            source_store_id="source",
-            target_store_id="target",
-            phase=MigrationPhase.BULK_COPY,
-            config=MigrationConfig(batch_size=batch_size, max_bulk_copy_rate=1_000_000),
-        )
+        migration = _make_migration(tenant_id, batch_size)
         await migration_repo.create(migration)
         copier = BulkCopier(source_store, target_store, migration_repo, enable_tracing=False)
 
@@ -65,9 +69,7 @@ class TestBulkCopyThroughput:
             operations_count=events_copied,
             metadata={"batch_size": batch_size, "event_count": event_count},
         )
-        assert result.operations_per_second > 1_000, (
-            f"Throughput {result.operations_per_second:.0f} events/s below threshold"
-        )
+        assert result.operations_per_second > 1_000
         assert events_copied == event_count
 
     @pytest.mark.asyncio
@@ -79,14 +81,7 @@ class TestBulkCopyThroughput:
         event_count, payload_size = 5_000, 1_000
         await create_test_events(source_store, tenant_id, event_count, payload_size=payload_size)
 
-        migration = Migration(
-            id=uuid4(),
-            tenant_id=tenant_id,
-            source_store_id="source",
-            target_store_id="target",
-            phase=MigrationPhase.BULK_COPY,
-            config=MigrationConfig(batch_size=500, max_bulk_copy_rate=1_000_000),
-        )
+        migration = _make_migration(tenant_id, 500)
         await migration_repo.create(migration)
         copier = BulkCopier(source_store, target_store, migration_repo, enable_tracing=False)
 
@@ -111,18 +106,15 @@ class TestDualWriteOverhead:
     async def test_dual_write_overhead_comparison(self) -> None:
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
-        tenant_id = uuid4()
-        num_operations = 500
+        tenant_id, num_operations = uuid4(), 500
         single_write_times: list[float] = []
 
-        for _i in range(num_operations):
-            aggregate_id = uuid4()
-            event = BenchmarkEvent(
-                aggregate_id=aggregate_id, tenant_id=tenant_id, payload="test_payload"
-            )
+        for _ in range(num_operations):
+            aid = uuid4()
+            event = BenchmarkEvent(aggregate_id=aid, tenant_id=tenant_id, payload="test_payload")
             start = time.monotonic()
             await source_store.append(
-                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                StreamId(aggregate_id=aid, category="BenchmarkAggregate"),
                 [event],
                 ExpectedVersion.no_stream(),
             )
@@ -133,14 +125,12 @@ class TestDualWriteOverhead:
         )
         dual_write_times: list[float] = []
 
-        for _i in range(num_operations):
-            aggregate_id = uuid4()
-            event = BenchmarkEvent(
-                aggregate_id=aggregate_id, tenant_id=tenant_id, payload="test_payload"
-            )
+        for _ in range(num_operations):
+            aid = uuid4()
+            event = BenchmarkEvent(aggregate_id=aid, tenant_id=tenant_id, payload="test_payload")
             start = time.monotonic()
             await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                StreamId(aggregate_id=aid, category="BenchmarkAggregate"),
                 [event],
                 ExpectedVersion.no_stream(),
             )
@@ -148,32 +138,24 @@ class TestDualWriteOverhead:
 
         single_result = LatencyResult.from_samples("single_write", single_write_times)
         dual_result = LatencyResult.from_samples("dual_write", dual_write_times)
-        _ = ((dual_result.mean_ms - single_result.mean_ms) / single_result.mean_ms) * 100
-        _ = ((dual_result.p95_ms - single_result.p95_ms) / single_result.p95_ms) * 100
-
-        assert dual_result.mean_ms < 5.0, (
-            f"Dual-write mean latency {dual_result.mean_ms:.2f}ms too high"
-        )
-        assert dual_result.p95_ms < 10.0, (
-            f"Dual-write p95 latency {dual_result.p95_ms:.2f}ms too high"
-        )
+        assert single_result.mean_ms >= 0.0
+        assert dual_result.mean_ms < 5.0 and dual_result.p95_ms < 10.0
 
     @pytest.mark.asyncio
     async def test_dual_write_with_target_failure(self) -> None:
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
-        tenant_id = uuid4()
-        num_operations = 200
+        tenant_id, num_operations = uuid4(), 200
         interceptor = DualWriteInterceptor(
             source_store, RaisingTargetStore(), tenant_id, enable_tracing=False
         )
         latencies: list[float] = []
 
-        for _i in range(num_operations):
-            aggregate_id = uuid4()
-            event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        for _ in range(num_operations):
+            aid = uuid4()
+            event = BenchmarkEvent(aggregate_id=aid, tenant_id=tenant_id)
             start = time.monotonic()
             result = await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                StreamId(aggregate_id=aid, category="BenchmarkAggregate"),
                 [event],
                 ExpectedVersion.no_stream(),
             )
@@ -181,8 +163,7 @@ class TestDualWriteOverhead:
             latencies.append((time.monotonic() - start) * 1000)
 
         latency_result = LatencyResult.from_samples("dual_write_target_failure", latencies)
-        assert latency_result.mean_ms < 10.0
-        assert latency_result.p95_ms < 20.0
+        assert latency_result.mean_ms < 10.0 and latency_result.p95_ms < 20.0
         assert interceptor.get_failure_stats().total_failures == num_operations
 
     @pytest.mark.asyncio
@@ -198,14 +179,13 @@ class TestDualWriteOverhead:
         for batch_size in [1, 5, 10, 20]:
             latencies: list[float] = []
             for _ in range(100):
-                aggregate_id = uuid4()
+                aid = uuid4()
                 events = [
-                    BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
-                    for _ in range(batch_size)
+                    BenchmarkEvent(aggregate_id=aid, tenant_id=tenant_id) for _ in range(batch_size)
                 ]
                 start = time.monotonic()
                 await interceptor.append(
-                    StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+                    StreamId(aggregate_id=aid, category="BenchmarkAggregate"),
                     events,
                     ExpectedVersion.no_stream(),
                 )
