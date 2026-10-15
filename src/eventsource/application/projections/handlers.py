@@ -1,28 +1,5 @@
 """
-Handler registry for discovering and routing event handlers.
-
-This module provides the HandlerRegistry class which extracts handler
-discovery and routing logic from DeclarativeProjection, addressing
-the Single Responsibility Principle violation.
-
-The registry handles:
-- Discovering @handles decorated methods
-- Validating handler signatures
-- Routing events to appropriate handlers
-- Managing unregistered event handling
-
-Example:
-    >>> from eventsource.application.projections.handlers import HandlerRegistry
-    >>>
-    >>> class MyProjection:
-    ...     @handles(OrderCreated)
-    ...     async def _handle_created(self, event: OrderCreated) -> None:
-    ...         pass
-    >>>
-    >>> projection = MyProjection()
-    >>> registry = HandlerRegistry(projection)
-    >>> registry.get_subscribed_events()
-    [<class 'OrderCreated'>]
+Handler registry for discovering, validating, and routing @handles event handlers.
 """
 
 import inspect
@@ -37,24 +14,12 @@ from eventsource.domain.exceptions import HandlerSignatureError, UnhandledEventE
 
 logger = logging.getLogger(__name__)
 
-# Type alias for unregistered event handling mode
 UnregisteredEventHandling = Literal["ignore", "warn", "error"]
 
 
 @dataclass
 class HandlerInfo:
-    """
-    Metadata about a registered event handler.
-
-    Contains all the information needed to validate and invoke a handler.
-
-    Attributes:
-        event_type: The DomainEvent subclass this handler processes
-        handler_name: Name of the handler method
-        handler: The callable handler method
-        is_async: Whether the handler is an async coroutine function
-        param_count: Number of parameters (1 for event-only, 2 for conn+event)
-    """
+    """Metadata about a registered event handler."""
 
     event_type: type[DomainEvent]
     handler_name: str
@@ -65,41 +30,7 @@ class HandlerInfo:
 
 class HandlerRegistry:
     """
-    Registry for discovering, validating, and routing event handlers.
-
-    This class extracts handler management from DeclarativeProjection,
-    providing a reusable component for any class that uses @handles
-    decorated methods.
-
-    Responsibilities:
-    - Discover @handles decorated methods on an owner object
-    - Validate handler signatures (async, parameter count, types)
-    - Route events to appropriate handlers
-    - Handle unregistered events based on policy
-
-    Example:
-        >>> class OrderProjection:
-        ...     @handles(OrderCreated)
-        ...     async def _handle_created(self, event: OrderCreated) -> None:
-        ...         pass
-        ...
-        ...     @handles(OrderShipped)
-        ...     async def _handle_shipped(self, event: OrderShipped) -> None:
-        ...         pass
-        >>>
-        >>> projection = OrderProjection()
-        >>> registry = HandlerRegistry(
-        ...     projection,
-        ...     require_async=True,
-        ...     unregistered_event_handling="warn",
-        ... )
-        >>>
-        >>> # Get all subscribed event types
-        >>> registry.get_subscribed_events()
-        [<class 'OrderCreated'>, <class 'OrderShipped'>]
-        >>>
-        >>> # Dispatch an event
-        >>> await registry.dispatch(order_created_event)
+    Registry for discovering, validating, and routing @handles event handlers.
     """
 
     def __init__(
@@ -116,10 +47,7 @@ class HandlerRegistry:
         Args:
             owner: The object containing @handles decorated methods
             require_async: If True, all handlers must be async (default)
-            unregistered_event_handling: How to handle events with no handler:
-                - "ignore": Silently ignore (default)
-                - "warn": Log a warning
-                - "error": Raise UnhandledEventError
+            unregistered_event_handling: Policy for unregistered events ("ignore", "warn", "error")
             validate_on_init: If True, validate handlers during __init__
         """
         self._owner = owner
@@ -128,42 +56,29 @@ class HandlerRegistry:
         self._unregistered_event_handling = unregistered_event_handling
         self._handlers: dict[type[DomainEvent], HandlerInfo] = {}
 
-        # Discover handlers
         self._discover_handlers()
-
-        # Validate if requested
         if validate_on_init:
             self._validate_handlers()
 
     def _discover_handlers(self) -> None:
-        """
-        Scan the owner object for @handles decorated methods.
-
-        Discovers both private methods (starting with _) and public methods.
-        """
+        """Scan the owner object for @handles decorated methods."""
         for event_type, attr_name in discover_handlers(type(self._owner)).items():
             attr = getattr(self._owner, attr_name)
-
-            # Get handler info
             is_async = inspect.iscoroutinefunction(attr)
 
-            # Get parameter count (excluding self for bound methods)
             try:
                 sig = inspect.signature(attr)
                 param_count = len(list(sig.parameters.values()))
             except (ValueError, TypeError):
-                # Can't inspect signature - assume 1 parameter
                 param_count = 1
 
-            handler_info = HandlerInfo(
+            self._handlers[event_type] = HandlerInfo(
                 event_type=event_type,
                 handler_name=attr_name,
                 handler=attr,
                 is_async=is_async,
                 param_count=param_count,
             )
-
-            self._handlers[event_type] = handler_info
 
             logger.debug(
                 "Registered handler %s for %s",
@@ -179,41 +94,18 @@ class HandlerRegistry:
             )
 
     def _validate_handlers(self) -> None:
-        """
-        Validate all discovered handlers.
-
-        Checks:
-        1. Handler is async if require_async=True
-        2. Handler has correct parameter count (1 or 2)
-        3. Event type annotation matches @handles decorator (warning if mismatch)
-
-        Raises:
-            ValueError: If handler has invalid signature
-        """
+        """Validate all discovered handlers."""
         for handler_info in self._handlers.values():
             self._validate_handler(handler_info)
 
     def _validate_handler(self, handler_info: HandlerInfo) -> None:
         """
-        Validate a single handler's signature.
-
-        Checks that the handler:
-        1. Is async if require_async=True
-        2. Has correct parameter count (1 or 2 after self)
-        3. Has matching event type annotation (warning only)
-
-        Args:
-            handler_info: Handler metadata to validate
-
-        Raises:
-            HandlerSignatureError: If handler has invalid parameter count
-            ValueError: If handler is not async when required
+        Validate a single handler's signature (async requirement, parameter count, annotation).
         """
         handler = handler_info.handler
         handler_name = handler_info.handler_name
         event_type = handler_info.event_type
 
-        # Check async requirement
         if self._require_async and not handler_info.is_async:
             event_name = event_type.__name__
             raise ValueError(
@@ -224,7 +116,6 @@ class HandlerRegistry:
                 f"  async def {handler_name}(self, event: {event_name}) -> None"
             )
 
-        # Check parameter count (1 for event-only, 2 for context+event)
         if handler_info.param_count < 1 or handler_info.param_count > 2:
             raise HandlerSignatureError(
                 handler_name=handler_name,
@@ -234,12 +125,9 @@ class HandlerRegistry:
                 is_async_required=self._require_async,
             )
 
-        # Check event type annotation (warning only)
         try:
             sig = inspect.signature(handler)
-            params = list(sig.parameters.values())
-            event_param = params[-1]  # Last param is the event
-
+            event_param = list(sig.parameters.values())[-1]
             if (
                 event_param.annotation != inspect.Parameter.empty
                 and isinstance(event_param.annotation, type)
@@ -259,7 +147,7 @@ class HandlerRegistry:
                     },
                 )
         except (ValueError, TypeError):
-            pass  # Can't inspect - skip annotation check
+            pass
 
     def get_handler(self, event_type: type[DomainEvent]) -> HandlerInfo | None:
         """Get the handler info for a specific event type, or None if not found."""
@@ -285,36 +173,18 @@ class HandlerRegistry:
         """
         Dispatch an event to its registered handler.
 
-        Args:
-            event: The domain event to dispatch
-            context: Optional context to pass to 2-param handlers (e.g., db connection)
-
-        Returns:
-            True if handler was found and executed, False if no handler
-
-        Raises:
-            UnhandledEventError: If unregistered_event_handling="error" and no handler
+        Returns True if a handler was found and executed, False otherwise.
         """
-        event_type = type(event)
-        handler_info = self._handlers.get(event_type)
-
+        handler_info = self._handlers.get(type(event))
         if handler_info is None:
             self._handle_unregistered_event(event)
             return False
 
-        handler = handler_info.handler
-
-        if handler_info.param_count == 1:
-            if handler_info.is_async:
-                await handler(event)  # type: ignore[misc]
-            else:
-                handler(event)
+        args = (event,) if handler_info.param_count == 1 else (context, event)
+        if handler_info.is_async:
+            await handler_info.handler(*args)  # type: ignore[misc]
         else:
-            if handler_info.is_async:
-                await handler(context, event)  # type: ignore[misc]
-            else:
-                handler(context, event)
-
+            handler_info.handler(*args)
         return True
 
     def _handle_unregistered_event(self, event: DomainEvent) -> None:

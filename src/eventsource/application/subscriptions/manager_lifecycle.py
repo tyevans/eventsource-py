@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class ManagerLifecycleMixin:
-    """
-    Mixin providing start, stop, signal handling, and graceful shutdown for SubscriptionManager.
-    """
+    """Mixin providing start, stop, signal handling, and graceful shutdown for SubscriptionManager."""
 
     _running: bool
     _started_at: datetime | None
@@ -60,21 +58,17 @@ class ManagerLifecycleMixin:
         self._started_at = datetime.now(UTC)
         self._health_provider.set_started(self._started_at)
 
-        if subscription_names is None:
-            subscriptions_to_start = self._registry.get_all()
-        else:
-            subscriptions_to_start = [
-                sub for sub in self._registry.get_all() if sub.name in subscription_names
-            ]
+        all_subs = self._registry.get_all()
+        subscriptions_to_start = (
+            all_subs
+            if subscription_names is None
+            else [sub for sub in all_subs if sub.name in subscription_names]
+        )
 
         logger.info(
             "Starting subscription manager",
-            extra={
-                "subscription_count": len(subscriptions_to_start),
-                "concurrent": concurrent,
-            },
+            extra={"subscription_count": len(subscriptions_to_start), "concurrent": concurrent},
         )
-
         return await self._lifecycle.start_all(subscriptions_to_start, concurrent)
 
     async def stop(
@@ -87,23 +81,18 @@ class ManagerLifecycleMixin:
             if not self._running and subscription_names is None:
                 return
 
+            all_subs = self._registry.get_all()
             if subscription_names is None:
-                subscriptions_to_stop = self._registry.get_all()
+                subscriptions_to_stop = all_subs
                 self._running = False
                 self._health_provider.clear_started()
             else:
-                subscriptions_to_stop = [
-                    sub for sub in self._registry.get_all() if sub.name in subscription_names
-                ]
+                subscriptions_to_stop = [sub for sub in all_subs if sub.name in subscription_names]
 
             logger.info(
                 "Stopping subscription manager",
-                extra={
-                    "subscription_count": len(subscriptions_to_stop),
-                    "timeout": timeout,
-                },
+                extra={"subscription_count": len(subscriptions_to_stop), "timeout": timeout},
             )
-
             await self._lifecycle.stop_all(subscriptions_to_stop, timeout)
             logger.info("Subscription manager stopped")
 
@@ -140,23 +129,18 @@ class ManagerLifecycleMixin:
                 "shutdown_timeout": self._shutdown_coordinator.timeout,
             },
         )
-
         self.register_signals()
 
         try:
             await self.start()
-
             logger.info(
                 "Manager running, waiting for shutdown signal",
                 extra={"subscriptions": self._registry.get_names()},
             )
-
             await self._shutdown_coordinator.wait_for_shutdown()
-
             result = await self._execute_graceful_shutdown()
             self._last_shutdown_result = result
             return result
-
         except Exception as e:
             logger.error(
                 "Error during run_until_shutdown",
@@ -192,10 +176,7 @@ class ManagerLifecycleMixin:
         for name, coordinator in self._lifecycle.coordinators.items():
             flow_controller = coordinator.flow_controller
             if flow_controller is None:
-                logger.debug(
-                    "No flow controller for subscription",
-                    extra={"subscription": name},
-                )
+                logger.debug("No flow controller for subscription", extra={"subscription": name})
                 continue
 
             in_flight = flow_controller.in_flight
@@ -204,10 +185,7 @@ class ManagerLifecycleMixin:
             if in_flight > 0:
                 logger.info(
                     "Draining in-flight events for subscription",
-                    extra={
-                        "subscription": name,
-                        "in_flight_count": in_flight,
-                    },
+                    extra={"subscription": name, "in_flight_count": in_flight},
                 )
                 drain_task = asyncio.create_task(
                     flow_controller.wait_for_drain(self._shutdown_coordinator.drain_timeout),
@@ -222,7 +200,6 @@ class ManagerLifecycleMixin:
                 "subscriptions_with_events": len(drain_tasks),
             },
         )
-
         if not drain_tasks:
             return total_in_flight
 
@@ -231,25 +208,18 @@ class ManagerLifecycleMixin:
                 *(task for _, task in drain_tasks),
                 return_exceptions=True,
             )
-
             total_remaining = 0
             for (name, _), result in zip(drain_tasks, results, strict=True):
                 if isinstance(result, BaseException):
                     logger.error(
                         "Drain task failed",
-                        extra={
-                            "subscription": name,
-                            "error": str(result),
-                        },
+                        extra={"subscription": name, "error": str(result)},
                     )
                 elif result > 0:
                     total_remaining += result
                     logger.warning(
                         "Subscription did not fully drain",
-                        extra={
-                            "subscription": name,
-                            "remaining_events": result,
-                        },
+                        extra={"subscription": name, "remaining_events": result},
                     )
                 else:
                     logger.debug(
@@ -270,13 +240,8 @@ class ManagerLifecycleMixin:
                     "All events drained successfully",
                     extra={"total_drained": total_in_flight},
                 )
-
         except Exception as e:
-            logger.error(
-                "Error during drain phase",
-                extra={"error": str(e)},
-                exc_info=True,
-            )
+            logger.error("Error during drain phase", extra={"error": str(e)}, exc_info=True)
 
         return total_in_flight
 
@@ -309,24 +274,15 @@ class ManagerLifecycleMixin:
                 saved_count += 1
                 logger.debug(
                     "Checkpoint saved",
-                    extra={
-                        "subscription": name,
-                        "position": render_position(position),
-                    },
+                    extra={"subscription": name, "position": render_position(position)},
                 )
             except Exception as e:
                 logger.error(
                     "Failed to save checkpoint",
-                    extra={
-                        "subscription": name,
-                        "error": str(e),
-                    },
+                    extra={"subscription": name, "error": str(e)},
                 )
 
-        logger.info(
-            "Final checkpoints saved",
-            extra={"checkpoints_saved": saved_count},
-        )
+        logger.info("Final checkpoints saved", extra={"checkpoints_saved": saved_count})
         return saved_count
 
     def request_shutdown(self) -> None:
