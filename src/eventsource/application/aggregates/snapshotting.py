@@ -145,7 +145,9 @@ class ImmediateScheduler:
         try:
             return await write
         except Exception as e:
-            logger.warning(f"Snapshot failed: {aggregate_type}/{aggregate_id}: {e}", exc_info=True)
+            logger.warning(
+                f"Failed to create snapshot for {aggregate_type}/{aggregate_id}: {e}", exc_info=True
+            )
             return None
 
     async def await_pending(self) -> int:
@@ -167,7 +169,7 @@ class BackgroundScheduler:
             await write
             logger.debug(f"Background snapshot created for {target}")
         except Exception as e:
-            logger.warning(f"Background snapshot failed for {target}: {e}", exc_info=True)
+            logger.warning(f"Background snapshot creation failed for {target}: {e}", exc_info=True)
 
     @property
     def pending_count(self) -> int:
