@@ -330,6 +330,21 @@ class InMemorySnapshotStore:
         """
         return len(self._snapshots)
 
+    async def close(self) -> None:
+        """No-op resource release for lifecycle parity."""
+        return None
+
+    async def __aenter__(self) -> InMemorySnapshotStore:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
+        await self.close()
+
     def __repr__(self) -> str:
         """String representation for debugging."""
         return f"InMemorySnapshotStore(snapshots={len(self._snapshots)})"

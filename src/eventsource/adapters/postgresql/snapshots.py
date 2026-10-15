@@ -1,13 +1,7 @@
-"""
-PostgreSQL snapshot store implementation.
-
-Provides production-ready snapshot storage using PostgreSQL with
-async SQLAlchemy sessions and optional OpenTelemetry tracing.
-"""
+"""PostgreSQL snapshot store implementation using async SQLAlchemy sessions."""
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import cast
 from uuid import UUID
@@ -15,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
@@ -28,43 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 class PostgreSQLSnapshotStore:
-    """
-    PostgreSQL implementation of SnapshotStore.
+    """PostgreSQL implementation of `SnapshotStore`.
 
-    Uses SQLAlchemy async sessions for database operations.
-    Requires the snapshots table to be created (see migrations).
-
-    Features:
-    - Upsert semantics for save (INSERT ON CONFLICT UPDATE)
-    - Efficient single-row lookups
-    - Bulk delete by aggregate type
-    - Optional OpenTelemetry tracing via TracingMixin
-
-    Example:
-        >>> from sqlalchemy.ext.asyncio import (
-        ...     create_async_engine,
-        ...     async_sessionmaker,
-        ... )
-        >>> from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
-        >>>
-        >>> engine = create_async_engine("postgresql+asyncpg://...")
-        >>> session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        >>> store = PostgreSQLSnapshotStore(session_factory)
-        >>>
-        >>> # Use in repository
-        >>> repo = AggregateRepository(
-        ...     event_store=event_store,
-        ...     aggregate_factory=OrderAggregate,
-        ...     aggregate_type="Order",
-        ...     snapshot_store=store,
-        ... )
-
-        >>> # Disable tracing
-        >>> store = PostgreSQLSnapshotStore(session_factory, enable_tracing=False)
-
-    Note:
-        Ensure the snapshots table exists before using this store.
-        Use `get_schema("snapshots")` from migrations to create it.
+    Uses SQLAlchemy async sessions for upsert (`INSERT ... ON CONFLICT DO UPDATE`),
+    lookup, and bulk invalidation with optional OpenTelemetry tracing.
     """
 
     def __init__(
@@ -74,33 +36,29 @@ class PostgreSQLSnapshotStore:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the PostgreSQL snapshot store.
-
-        Args:
-            session_factory: SQLAlchemy async session factory.
-                           Should be configured with expire_on_commit=False
-                           for best performance.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
-                          Ignored if tracer is explicitly provided.
-        """
+        """Initialize the PostgreSQL snapshot store."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._session_factory = session_factory
         logger.debug("PostgreSQLSnapshotStore initialized")
 
+    async def close(self) -> None:
+        """No-op resource release: `session_factory` is caller-supplied and owned."""
+        return None
+
+    async def __aenter__(self) -> PostgreSQLSnapshotStore:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
+        await self.close()
+
     async def save_snapshot(self, snapshot: Snapshot) -> None:
-        """
-        Save or update a snapshot using upsert.
-
-        Uses INSERT ... ON CONFLICT DO UPDATE to atomically insert
-        or replace the snapshot for an aggregate.
-
-        Args:
-            snapshot: The snapshot to save
-        """
+        """Save or update a snapshot using INSERT ... ON CONFLICT DO UPDATE."""
         with self._tracer.span(
             "eventsource.snapshot.save",
             {
@@ -112,34 +70,26 @@ class PostgreSQLSnapshotStore:
             async with self._session_factory() as session, session.begin():
                 await session.execute(
                     text("""
-                            INSERT INTO snapshots (
-                                aggregate_id,
-                                aggregate_type,
-                                version,
-                                schema_version,
-                                state,
-                                created_at
-                            ) VALUES (
-                                :aggregate_id,
-                                :aggregate_type,
-                                :version,
-                                :schema_version,
-                                :state,
-                                :created_at
-                            )
-                            ON CONFLICT (aggregate_id, aggregate_type)
-                            DO UPDATE SET
-                                version = EXCLUDED.version,
-                                schema_version = EXCLUDED.schema_version,
-                                state = EXCLUDED.state,
-                                created_at = EXCLUDED.created_at
-                        """),
+                        INSERT INTO snapshots (
+                            aggregate_id, aggregate_type, version,
+                            schema_version, state, created_at
+                        ) VALUES (
+                            :aggregate_id, :aggregate_type, :version,
+                            :schema_version, :state, :created_at
+                        )
+                        ON CONFLICT (aggregate_id, aggregate_type)
+                        DO UPDATE SET
+                            version = EXCLUDED.version,
+                            schema_version = EXCLUDED.schema_version,
+                            state = EXCLUDED.state,
+                            created_at = EXCLUDED.created_at
+                    """),
                     {
                         "aggregate_id": snapshot.aggregate_id,
                         "aggregate_type": snapshot.aggregate_type,
                         "version": snapshot.version,
                         "schema_version": snapshot.schema_version,
-                        "state": json.dumps(snapshot.state),
+                        "state": json_dumps(snapshot.state),
                         "created_at": snapshot.created_at,
                     },
                 )
@@ -156,26 +106,7 @@ class PostgreSQLSnapshotStore:
         aggregate_id: UUID,
         aggregate_type: str,
     ) -> Snapshot | None:
-        """
-        Get the snapshot for an aggregate.
-
-        Args:
-            aggregate_id: Unique identifier of the aggregate
-            aggregate_type: Type name of the aggregate
-
-        Returns:
-            The snapshot if found, None otherwise
-
-        Raises:
-            SnapshotDeserializationError: If the stored ``state`` column
-                cannot be parsed as JSON. The ``snapshots.state`` column is
-                ``JSONB``, so PostgreSQL itself rejects malformed JSON at
-                write time -- this is defense-in-depth for the contract
-                (ADR 0017, ``domain/exceptions.py``) rather than a failure
-                mode reachable through this adapter's own write path; it
-                guards against state written outside ``save_snapshot()``
-                (an older schema revision, a hand-run migration, direct SQL).
-        """
+        """Get the snapshot for an aggregate, or None if not found."""
         with self._tracer.span(
             "eventsource.snapshot.get",
             {
@@ -186,13 +117,8 @@ class PostgreSQLSnapshotStore:
             async with self._session_factory() as session:
                 result = await session.execute(
                     text("""
-                        SELECT
-                            aggregate_id,
-                            aggregate_type,
-                            version,
-                            schema_version,
-                            state,
-                            created_at
+                        SELECT aggregate_id, aggregate_type, version,
+                               schema_version, state, created_at
                         FROM snapshots
                         WHERE aggregate_id = :aggregate_id
                           AND aggregate_type = :aggregate_type
@@ -205,19 +131,14 @@ class PostgreSQLSnapshotStore:
                 row = result.fetchone()
 
             if row is None:
-                logger.debug(
-                    "No snapshot found for %s/%s",
-                    aggregate_type,
-                    aggregate_id,
-                )
+                logger.debug("No snapshot found for %s/%s", aggregate_type, aggregate_id)
                 return None
 
-            # Parse state from JSON
             state = row.state
             if isinstance(state, str):
                 try:
-                    state = json.loads(state)
-                except (json.JSONDecodeError, TypeError) as e:
+                    state = json_loads(state)
+                except (ValueError, TypeError) as e:
                     raise SnapshotDeserializationError(
                         aggregate_id=row.aggregate_id,
                         aggregate_type=row.aggregate_type,
@@ -232,14 +153,12 @@ class PostgreSQLSnapshotStore:
                 state=state,
                 created_at=row.created_at,
             )
-
             logger.debug(
                 "Retrieved snapshot for %s/%s at version %d",
                 aggregate_type,
                 aggregate_id,
                 snapshot.version,
             )
-
             return snapshot
 
     async def delete_snapshot(
@@ -247,16 +166,7 @@ class PostgreSQLSnapshotStore:
         aggregate_id: UUID,
         aggregate_type: str,
     ) -> bool:
-        """
-        Delete the snapshot for an aggregate.
-
-        Args:
-            aggregate_id: Unique identifier of the aggregate
-            aggregate_type: Type name of the aggregate
-
-        Returns:
-            True if a snapshot was deleted, False otherwise
-        """
+        """Delete the snapshot for an aggregate; returns True if deleted."""
         with self._tracer.span(
             "eventsource.snapshot.delete",
             {
@@ -267,10 +177,10 @@ class PostgreSQLSnapshotStore:
             async with self._session_factory() as session, session.begin():
                 result = await session.execute(
                     text("""
-                            DELETE FROM snapshots
-                            WHERE aggregate_id = :aggregate_id
-                              AND aggregate_type = :aggregate_type
-                        """),
+                        DELETE FROM snapshots
+                        WHERE aggregate_id = :aggregate_id
+                          AND aggregate_type = :aggregate_type
+                    """),
                     {
                         "aggregate_id": aggregate_id,
                         "aggregate_type": aggregate_type,
@@ -278,19 +188,12 @@ class PostgreSQLSnapshotStore:
                 )
                 deleted = cast(int, result.rowcount) > 0  # type: ignore[attr-defined]
 
-            if deleted:
-                logger.debug(
-                    "Deleted snapshot for %s/%s",
-                    aggregate_type,
-                    aggregate_id,
-                )
-            else:
-                logger.debug(
-                    "No snapshot to delete for %s/%s",
-                    aggregate_type,
-                    aggregate_id,
-                )
-
+            logger.debug(
+                "%s snapshot for %s/%s",
+                "Deleted" if deleted else "No",
+                aggregate_type,
+                aggregate_id,
+            )
             return deleted
 
     async def snapshot_exists(
@@ -298,18 +201,7 @@ class PostgreSQLSnapshotStore:
         aggregate_id: UUID,
         aggregate_type: str,
     ) -> bool:
-        """
-        Check if a snapshot exists (optimized query).
-
-        Uses EXISTS for efficiency instead of fetching full row.
-
-        Args:
-            aggregate_id: Unique identifier of the aggregate
-            aggregate_type: Type name of the aggregate
-
-        Returns:
-            True if snapshot exists, False otherwise
-        """
+        """Check if a snapshot exists using EXISTS."""
         with self._tracer.span(
             "eventsource.snapshot.exists",
             {
@@ -331,28 +223,14 @@ class PostgreSQLSnapshotStore:
                         "aggregate_type": aggregate_type,
                     },
                 )
-                exists = result.scalar() or False
-
-            return exists
+                return bool(result.scalar() or False)
 
     async def delete_snapshots_by_type(
         self,
         aggregate_type: str,
         schema_version_below: int | None = None,
     ) -> int:
-        """
-        Delete all snapshots for a given aggregate type.
-
-        Useful for bulk invalidation during schema migrations.
-
-        Args:
-            aggregate_type: Type name of aggregates
-            schema_version_below: If provided, only delete snapshots with
-                                 schema_version < this value
-
-        Returns:
-            Number of snapshots deleted
-        """
+        """Delete all snapshots for a given aggregate type."""
         with self._tracer.span(
             "eventsource.snapshot.delete_by_type",
             {
@@ -363,10 +241,10 @@ class PostgreSQLSnapshotStore:
                 if schema_version_below is not None:
                     result = await session.execute(
                         text("""
-                                DELETE FROM snapshots
-                                WHERE aggregate_type = :aggregate_type
-                                  AND schema_version < :schema_version_below
-                            """),
+                            DELETE FROM snapshots
+                            WHERE aggregate_type = :aggregate_type
+                              AND schema_version < :schema_version_below
+                        """),
                         {
                             "aggregate_type": aggregate_type,
                             "schema_version_below": schema_version_below,
@@ -374,13 +252,8 @@ class PostgreSQLSnapshotStore:
                     )
                 else:
                     result = await session.execute(
-                        text("""
-                                DELETE FROM snapshots
-                                WHERE aggregate_type = :aggregate_type
-                            """),
-                        {
-                            "aggregate_type": aggregate_type,
-                        },
+                        text("DELETE FROM snapshots WHERE aggregate_type = :aggregate_type"),
+                        {"aggregate_type": aggregate_type},
                     )
                 count = cast(int, result.rowcount)  # type: ignore[attr-defined]
 
@@ -391,7 +264,6 @@ class PostgreSQLSnapshotStore:
                     aggregate_type,
                     f" (schema_version < {schema_version_below})" if schema_version_below else "",
                 )
-
             return count
 
     @property

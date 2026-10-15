@@ -5,11 +5,11 @@ Provides save, batch save, delete, truncate, and version-checked save operations
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.adapters.serialization import json_dumps
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
@@ -64,7 +64,7 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
                 value = updated_at.isoformat()
             elif isinstance(value, (dict, list)):
                 # Serialize complex types to JSON string
-                value = json.dumps(value)
+                value = json_dumps(value)
 
             values.append(value)
 
@@ -253,7 +253,7 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
                 value = data.get(f)
                 # Convert complex types to JSON for SQLite
                 if isinstance(value, (dict, list)):
-                    value = json.dumps(value)
+                    value = json_dumps(value)
                 values.append(value)
 
             # Add WHERE clause parameters

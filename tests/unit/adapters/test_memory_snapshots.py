@@ -327,3 +327,21 @@ class TestInMemorySnapshotStore:
 
         assert deleted == 1
         assert store.snapshot_count == 0
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager_support(self, store, sample_snapshot):
+        """Test InMemorySnapshotStore and InMemoryEventStore support async with."""
+        from eventsource.adapters.memory.store import InMemoryEventStore
+        from eventsource.ports.lifecycle import SupportsAsyncContextManager, SupportsClose
+
+        assert isinstance(store, SupportsClose)
+        assert isinstance(store, SupportsAsyncContextManager)
+        async with store as entered:
+            assert entered is store
+            await entered.save_snapshot(sample_snapshot)
+
+        event_store = InMemoryEventStore()
+        assert isinstance(event_store, SupportsClose)
+        assert isinstance(event_store, SupportsAsyncContextManager)
+        async with event_store as entered_event_store:
+            assert entered_event_store is event_store

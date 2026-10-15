@@ -63,26 +63,7 @@ logger = logging.getLogger(__name__)
 
 
 class SQLiteEventStore:
-    """SQLite implementation of `FullEventStore`.
-
-    Uses aiosqlite for async database operations. A single connection is
-    opened lazily on first use and reused for the store's lifetime --
-    required for `":memory:"` databases, whose contents live only as
-    long as the connection that created them stays open. A second
-    connection would see a different, empty database, which is why reads
-    are not given one.
-
-    Connection discipline: *every* statement on that shared connection
-    runs under `self._lock` -- reads as well as `append`. `append` is
-    multi-statement (per-event INSERTs, then `commit()`), and a
-    same-connection read scheduled between two of them would run inside
-    its open transaction and observe a torn batch. Readers therefore
-    never see an open append transaction. `asyncio.Lock` is
-    non-reentrant, so `append`'s internal SELECTs use the connection
-    directly and must never be routed through the public read helpers.
-
-    Structural conformance only -- no inheritance from the port protocols.
-    """
+    """SQLite implementation of `FullEventStore` (single shared aiosqlite connection under `_lock`)."""
 
     def __init__(
         self,
@@ -156,6 +137,25 @@ class SQLiteEventStore:
             await self._connection.close()
             self._connection = None
 
+    async def __aenter__(self) -> SQLiteEventStore:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        await self.close()
+
+    def __del__(self) -> None:
+        if getattr(self, "_connection", None) is not None:
+            import warnings
+
+            db = getattr(self, "_database", "<unknown>")
+            warnings.warn(
+                f"Unclosed {type(self).__name__} ({db!r}) {self!r}; "
+                "call 'await store.close()' or use 'async with'",
+                ResourceWarning,
+                stacklevel=2,
+                source=self,
+            )
+
     async def append(
         self,
         stream: StreamId,
@@ -172,11 +172,7 @@ class SQLiteEventStore:
         async with self._lock:
             try:
                 cursor = await conn.execute(
-                    """
-                    SELECT COALESCE(MAX(version), 0)
-                    FROM events
-                    WHERE aggregate_id = ? AND aggregate_type = ?
-                    """,
+                    "SELECT COALESCE(MAX(version), 0) FROM events WHERE aggregate_id = ? AND aggregate_type = ?",
                     (aggregate_id_str, category),
                 )
                 row = await cursor.fetchone()

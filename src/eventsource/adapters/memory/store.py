@@ -59,6 +59,21 @@ class InMemoryEventStore:
     def store_id(self) -> str:
         return self._store_id
 
+    async def close(self) -> None:
+        """No-op resource release for lifecycle parity."""
+        return None
+
+    async def __aenter__(self) -> "InMemoryEventStore":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
+        await self.close()
+
     def _position_of(self, index: int) -> Position:
         """1-based global position for the given 0-based `_events` index."""
         return Position(store_id=self._store_id, key=(index + 1,))
