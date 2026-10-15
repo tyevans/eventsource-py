@@ -27,14 +27,12 @@ class TestAutomaticRollback:
         mock_routing_repo,
         strict_config,
     ):
-        """Test rollback when lag check fails."""
         mock_lag_tracker.current_lag = SyncLag(
-            events=100,  # Exceeds strict threshold
+            events=100,
             source_position=Position(store_id="source", key=(200,)),
             target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -42,11 +40,8 @@ class TestAutomaticRollback:
             target_store_id=target_store_id,
             config=strict_config,
         )
-
         assert result.success is False
         assert result.rolled_back is True
-
-        # Verify rollback call
         mock_routing_repo.set_migration_state.assert_called_with(
             tenant_id,
             TenantMigrationState.DUAL_WRITE,
@@ -64,8 +59,6 @@ class TestAutomaticRollback:
         mock_router,
         mock_routing_repo,
     ):
-        """Test rollback when target store health check fails."""
-        # Make target store health check fail
         mock_store = MagicMock()
         mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
@@ -76,7 +69,6 @@ class TestAutomaticRollback:
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is False
         assert "health check failed" in result.error_message.lower()
         assert result.rolled_back is True
@@ -91,17 +83,13 @@ class TestAutomaticRollback:
         mock_lag_tracker,
         mock_routing_repo,
     ):
-        """Test rollback when routing update fails."""
-        # Make routing update fail
         mock_routing_repo.set_routing.side_effect = Exception("Database error")
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is False
         assert result.rolled_back is True
 
@@ -116,52 +104,41 @@ class TestAutomaticRollback:
         target_store_id,
         mock_lag_tracker,
     ):
-        """Test that rollback failure is handled gracefully."""
         create_lock_context_manager(mock_lock_manager)
-
-        # Set low lag so lag check passes
         mock_lag_tracker.current_lag = SyncLag(
             events=0,
             source_position=Position(store_id="source", key=(100,)),
             target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
-
-        # Make target store health check fail to trigger rollback
         mock_store = MagicMock()
         mock_store.current_position = AsyncMock(side_effect=Exception("Connection failed"))
         mock_router.get_store.return_value = mock_store
 
-        # Make rollback fail
         call_count = 0
 
         async def failing_set_state(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return  # First call (CUTOVER_PAUSED) succeeds
+                return
             raise Exception("Rollback failed")
 
         mock_routing_repo.set_migration_state.side_effect = failing_set_state
-
         manager = CutoverManager(
             lock_manager=mock_lock_manager,
             router=mock_router,
             routing_repo=mock_routing_repo,
             enable_tracing=False,
         )
-
         result = await manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is False
-        assert result.rolled_back is False  # Rollback failed
-
-        # Verify writes were still resumed
+        assert result.rolled_back is False
         mock_router.resume_writes.assert_called_once()
 
 
@@ -178,14 +155,12 @@ class TestWritePauseResume:
         mock_lag_tracker,
         mock_router,
     ):
-        """Test that writes are paused before cutover operations."""
         await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         mock_router.pause_writes.assert_called_once_with(tenant_id)
 
     @pytest.mark.asyncio
@@ -198,14 +173,12 @@ class TestWritePauseResume:
         mock_lag_tracker,
         mock_router,
     ):
-        """Test that writes are resumed after successful cutover."""
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is True
         mock_router.resume_writes.assert_called_once_with(tenant_id)
 
@@ -220,15 +193,12 @@ class TestWritePauseResume:
         mock_router,
         strict_config,
     ):
-        """Test that writes are resumed after failed cutover."""
-        # Set high lag to trigger failure
         mock_lag_tracker.current_lag = SyncLag(
             events=100,
             source_position=Position(store_id="source", key=(200,)),
             target_position=Position(store_id="target", key=(100,)),
             timestamp=datetime.now(UTC),
         )
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -236,7 +206,6 @@ class TestWritePauseResume:
             target_store_id=target_store_id,
             config=strict_config,
         )
-
         assert result.success is False
         mock_router.resume_writes.assert_called_once_with(tenant_id)
 
@@ -254,14 +223,12 @@ class TestTargetStoreVerification:
         mock_lag_tracker,
         mock_router,
     ):
-        """Test that target store health is verified during cutover."""
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id=target_store_id,
         )
-
         assert result.success is True
         mock_router.get_store.assert_called_with(target_store_id)
 
@@ -274,15 +241,11 @@ class TestTargetStoreVerification:
         mock_lag_tracker,
         mock_router,
     ):
-        """Test cutover handles missing target store gracefully."""
         mock_router.get_store.return_value = None
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=mock_lag_tracker,
             target_store_id="nonexistent-store",
         )
-
-        # Should still succeed (with warning logged)
         assert result.success is True

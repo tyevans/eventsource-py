@@ -26,13 +26,10 @@ from tests.unit.application.migration.test_phase3_integration._repositories impo
 
 
 class TestPositionMapperEdgeCases:
-    """Tests for position mapper edge cases."""
-
     @pytest.mark.asyncio
     async def test_empty_batch_mapping(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test recording empty batch returns 0."""
         count = await position_mapper.record_mappings_batch(migration_id=migration_id, mappings=[])
         assert count == 0
 
@@ -40,7 +37,6 @@ class TestPositionMapperEdgeCases:
     async def test_get_position_bounds_no_mappings(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test get_position_bounds returns None when no mappings."""
         bounds = await position_mapper.get_position_bounds(migration_id)
         assert bounds is None
 
@@ -48,7 +44,6 @@ class TestPositionMapperEdgeCases:
     async def test_get_position_bounds_with_mappings(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test get_position_bounds returns correct bounds."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
             source_position=source_pos(100),
@@ -61,7 +56,6 @@ class TestPositionMapperEdgeCases:
             target_position=target_pos(250),
             event_id=uuid4(),
         )
-
         bounds = await position_mapper.get_position_bounds(migration_id)
         assert bounds == (source_pos(100), source_pos(500))
 
@@ -69,7 +63,6 @@ class TestPositionMapperEdgeCases:
     async def test_clear_mappings(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test clearing all mappings for a migration."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
             source_position=source_pos(100),
@@ -82,7 +75,6 @@ class TestPositionMapperEdgeCases:
             target_position=target_pos(100),
             event_id=uuid4(),
         )
-
         count = await position_mapper.clear_mappings(migration_id)
         assert count == 2
         assert await position_mapper.get_mapping_count(migration_id) == 0
@@ -91,7 +83,6 @@ class TestPositionMapperEdgeCases:
     async def test_get_mapping_by_event_id(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test getting mapping by event ID."""
         event_id = uuid4()
         await position_mapper.record_mapping(
             migration_id=migration_id,
@@ -99,7 +90,6 @@ class TestPositionMapperEdgeCases:
             target_position=target_pos(50),
             event_id=event_id,
         )
-
         mapping = await position_mapper.get_mapping_by_event_id(migration_id, event_id)
         assert mapping is not None
         assert mapping.source_position == source_pos(100)
@@ -110,7 +100,6 @@ class TestPositionMapperEdgeCases:
     async def test_translate_empty_batch(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test translating empty batch returns empty list."""
         results = await position_mapper.translate_positions_batch(
             migration_id=migration_id, source_positions=[]
         )
@@ -118,13 +107,10 @@ class TestPositionMapperEdgeCases:
 
 
 class TestMissingMappingErrors:
-    """Tests for error scenarios with missing position mappings."""
-
     @pytest.mark.asyncio
     async def test_translation_fails_with_no_mappings(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test translation fails when no mappings exist."""
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id, source_position=source_pos(100)
@@ -134,14 +120,12 @@ class TestMissingMappingErrors:
     async def test_translation_fails_for_position_before_all_mappings(
         self, position_mapper: PositionMapper, migration_id: UUID
     ) -> None:
-        """Test translation fails when position is before all mappings."""
         await position_mapper.record_mapping(
             migration_id=migration_id,
             source_position=source_pos(100),
             target_position=target_pos(50),
             event_id=uuid4(),
         )
-
         with pytest.raises(PositionMappingError):
             await position_mapper.translate_position(
                 migration_id=migration_id, source_position=source_pos(50)
@@ -155,14 +139,12 @@ class TestMissingMappingErrors:
         migration_id: UUID,
         tenant_id: UUID,
     ) -> None:
-        """Test subscription migration records failure when no mapping exists."""
         await checkpoint_repo.save_position(
             subscription_id="OrderProjection",
             position=source_pos(100),
             event_id=uuid4(),
             event_type="OrderCreated",
         )
-
         migrator = SubscriptionMigrator(
             position_mapper=position_mapper,
             checkpoint_repo=checkpoint_repo,
@@ -173,15 +155,12 @@ class TestMissingMappingErrors:
             tenant_id=tenant_id,
             subscription_names=["OrderProjection"],
         )
-
         assert summary.all_successful is False
         assert summary.failed_count == 1
         assert summary.results[0].error_message is not None
 
 
 class TestCoordinatorErrorHandling:
-    """Tests for coordinator error handling with Phase 3 features."""
-
     @pytest.mark.asyncio
     async def test_verify_consistency_without_target_store(
         self,
@@ -192,7 +171,6 @@ class TestCoordinatorErrorHandling:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """Test verify_consistency fails gracefully without target store."""
         coordinator = MigrationCoordinator(
             source_store=source_store,
             migration_repo=migration_repo,
@@ -210,10 +188,8 @@ class TestCoordinatorErrorHandling:
             phase=MigrationPhase.BULK_COPY,
         )
         await migration_repo.create(migration)
-
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.verify_consistency(migration.id)
-
         assert "Target store not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -226,7 +202,6 @@ class TestCoordinatorErrorHandling:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """Test migrate_subscriptions fails without position_mapper."""
         coordinator = MigrationCoordinator(
             source_store=source_store,
             migration_repo=migration_repo,
@@ -244,10 +219,8 @@ class TestCoordinatorErrorHandling:
             phase=MigrationPhase.COMPLETED,
         )
         await migration_repo.create(migration)
-
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.migrate_subscriptions(migration.id)
-
         assert "position_mapper not provided" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -261,7 +234,6 @@ class TestCoordinatorErrorHandling:
         lock_manager: MockLockManager,
         tenant_id: UUID,
     ) -> None:
-        """Test migrate_subscriptions fails without checkpoint_repo."""
         position_mapper = PositionMapper(position_mapping_repo, enable_tracing=False)
         coordinator = MigrationCoordinator(
             source_store=source_store,
@@ -281,8 +253,6 @@ class TestCoordinatorErrorHandling:
             phase=MigrationPhase.COMPLETED,
         )
         await migration_repo.create(migration)
-
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.migrate_subscriptions(migration.id)
-
         assert "checkpoint_repo not provided" in str(exc_info.value)
