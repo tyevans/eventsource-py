@@ -130,9 +130,9 @@ class TestSchemaIdempotency:
             "migration_audit_log",
         ]
         for table in tables:
-            assert (
-                f"CREATE TABLE IF NOT EXISTS {table}" in schema
-            ), f"Table {table} should use IF NOT EXISTS"
+            assert f"CREATE TABLE IF NOT EXISTS {table}" in schema, (
+                f"Table {table} should use IF NOT EXISTS"
+            )
 
     def test_indexes_use_if_not_exists(self):
         schema = get_schema("migration")
@@ -140,12 +140,12 @@ class TestSchemaIdempotency:
         if_not_exists_count = schema.count("CREATE INDEX IF NOT EXISTS")
         create_unique_index_count = schema.count("CREATE UNIQUE INDEX")
         unique_if_not_exists_count = schema.count("CREATE UNIQUE INDEX IF NOT EXISTS")
-        assert (
-            create_index_count == if_not_exists_count
-        ), "All CREATE INDEX should use IF NOT EXISTS"
-        assert (
-            create_unique_index_count == unique_if_not_exists_count
-        ), "All CREATE UNIQUE INDEX should use IF NOT EXISTS"
+        assert create_index_count == if_not_exists_count, (
+            "All CREATE INDEX should use IF NOT EXISTS"
+        )
+        assert create_unique_index_count == unique_if_not_exists_count, (
+            "All CREATE UNIQUE INDEX should use IF NOT EXISTS"
+        )
 
 
 class TestSchemaTriggers:
@@ -196,9 +196,9 @@ class TestSchemaComments:
             "migration_audit_log.event_type",
         ]
         for column in key_columns:
-            assert (
-                f"COMMENT ON COLUMN {column}" in schema
-            ), f"Missing COMMENT ON COLUMN for {column}"
+            assert f"COMMENT ON COLUMN {column}" in schema, (
+                f"Missing COMMENT ON COLUMN for {column}"
+            )
 
 
 __all__ = [
