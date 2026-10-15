@@ -1,7 +1,7 @@
 ---
 id: TASK-0282
 title: "Slim manager_stats_and_metrics, subscription_migrator_migrate, sync/test_concurrency, migration test_updates, rabbitmq_consumption_dispatch, and sync_lag_tracker_calculate below 285 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

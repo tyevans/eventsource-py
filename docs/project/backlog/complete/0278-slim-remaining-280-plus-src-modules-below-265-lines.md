@@ -1,7 +1,7 @@
 ---
 id: TASK-0278
 title: "Slim conformance readmodels, ports snapshots/readmodels, shutdown, sqlite/store, subscription_migrator_execution, and transition_executor below 265 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

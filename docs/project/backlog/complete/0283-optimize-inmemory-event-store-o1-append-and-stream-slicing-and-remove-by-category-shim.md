@@ -1,7 +1,7 @@
 ---
 id: TASK-0283
 title: "Optimize InMemoryEventStore append and read_stream to O(1) and remove _by_category shim"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

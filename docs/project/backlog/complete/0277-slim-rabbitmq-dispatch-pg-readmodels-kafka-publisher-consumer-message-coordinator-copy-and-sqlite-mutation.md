@@ -1,7 +1,7 @@
 ---
 id: TASK-0277
 title: "Slim consumer_dispatch, postgresql/readmodels, kafka/publisher, consumer_message, coordinator_copy, and sqlite/readmodels_mutation below 265 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
