@@ -25,35 +25,20 @@ class TestErrorHandling:
         manager: SubscriptionManager,
         event_store: InMemoryEventStore,
     ):
-        """Test start handles subscriber failure with isolation.
-
-        With subscription isolation enabled (default), start() does not raise
-        exceptions but instead returns a dictionary of results indicating
-        which subscriptions failed. The manager remains running even if some
-        subscriptions fail.
-        """
+        """Test start handles subscriber failure with isolation."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         subscriber.fail_on_event_types.add("ManagerTestEvent")
-
         config = SubscriptionConfig(continue_on_error=False)
         await manager.subscribe(subscriber, config=config)
 
-        # start() no longer raises - it returns results dict with isolation
         results = await manager.start()
 
-        # Manager should be running (isolation keeps it running)
         assert manager.is_running is True
-
-        # Results should indicate failure
         assert results["MockSubscriber"] is not None
         assert isinstance(results["MockSubscriber"], Exception)
-
-        # Subscription should be in error state
         subscription = manager.get_subscription("MockSubscriber")
         assert subscription.state == SubscriptionState.ERROR
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -64,21 +49,16 @@ class TestErrorHandling:
     ):
         """Test continue_on_error allows processing to continue."""
         await add_events_to_store(event_store, 5)
-
         subscriber = MockSubscriber()
         subscriber.fail_on_event_types.add("ManagerTestEvent")
-
         config = SubscriptionConfig(continue_on_error=True)
         await manager.subscribe(subscriber, config=config)
 
         await manager.start()
 
-        # Should be running despite errors
         assert manager.is_running is True
-
         subscription = manager.get_subscription("MockSubscriber")
         assert subscription.events_failed == 5
-
         await manager.stop()
 
 
@@ -93,11 +73,7 @@ class TestSubscriptionIsolation:
     ):
         """Test that one subscription failing during start doesn't prevent others."""
         await add_events_to_store(event_store, 5)
-
-        # First subscriber works normally
         working_subscriber = OrderProjection()
-
-        # Second subscriber fails on all events
         failing_subscriber = MockSubscriber()
         failing_subscriber.fail_on_event_types.add("ManagerTestEvent")
 
@@ -108,27 +84,16 @@ class TestSubscriptionIsolation:
             name="FailingSubscriber",
         )
 
-        # Start should complete (not raise)
         results = await manager.start()
 
-        # Manager should be running
         assert manager.is_running is True
-
-        # Working subscriber should have processed events
         assert len(working_subscriber.handled_events) == 5
-
-        # Results should indicate which succeeded and which failed
-        assert results["OrderProjection"] is None  # Success
-        assert results["FailingSubscriber"] is not None  # Failed (Exception)
-
-        # Working subscription should be in LIVE state
+        assert results["OrderProjection"] is None
+        assert results["FailingSubscriber"] is not None
         order_sub = manager.get_subscription("OrderProjection")
         assert order_sub.state == SubscriptionState.LIVE
-
-        # Failed subscription should be in ERROR state
         failing_sub = manager.get_subscription("FailingSubscriber")
         assert failing_sub.state == SubscriptionState.ERROR
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -139,14 +104,9 @@ class TestSubscriptionIsolation:
     ):
         """Test multiple subscriptions failing independently."""
         await add_events_to_store(event_store, 5)
-
-        # Working subscriber
         working = OrderProjection()
-
-        # Two failing subscribers
         failing1 = MockSubscriber()
         failing1.fail_on_event_types.add("ManagerTestEvent")
-
         failing2 = MockSubscriber()
         failing2.fail_on_event_types.add("ManagerTestEvent")
 
@@ -164,17 +124,11 @@ class TestSubscriptionIsolation:
 
         results = await manager.start()
 
-        # Working subscriber should succeed
         assert results["OrderProjection"] is None
         assert len(working.handled_events) == 5
-
-        # Both failing subscribers should have errors
         assert results["Failing1"] is not None
         assert results["Failing2"] is not None
-
-        # Manager should still be running
         assert manager.is_running is True
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -185,7 +139,6 @@ class TestSubscriptionIsolation:
     ):
         """Test that failed subscriptions have proper error information."""
         await add_events_to_store(event_store, 5)
-
         failing_subscriber = MockSubscriber()
         failing_subscriber.fail_on_event_types.add("ManagerTestEvent")
 
@@ -194,16 +147,13 @@ class TestSubscriptionIsolation:
             config=SubscriptionConfig(continue_on_error=False),
             name="FailingSubscriber",
         )
-
         await manager.start()
 
-        # Get the subscription and check error details
         subscription = manager.get_subscription("FailingSubscriber")
         assert subscription is not None
         assert subscription.state == SubscriptionState.ERROR
         assert subscription.last_error is not None
         assert "Intentional failure" in str(subscription.last_error)
-
         await manager.stop()
 
 
@@ -218,13 +168,10 @@ class TestEdgeCases:
     ):
         """Test multiple start calls are idempotent."""
         await manager.subscribe(subscriber)
-
         await manager.start()
         await manager.start()
         await manager.start()
-
         assert manager.is_running is True
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -236,11 +183,9 @@ class TestEdgeCases:
         """Test multiple stop calls are idempotent."""
         await manager.subscribe(subscriber)
         await manager.start()
-
         await manager.stop()
         await manager.stop()
         await manager.stop()
-
         assert manager.is_running is False
 
     @pytest.mark.asyncio
@@ -251,9 +196,7 @@ class TestEdgeCases:
     ):
         """Test stop can be called without start."""
         await manager.subscribe(subscriber)
-
-        await manager.stop()  # Should not raise
-
+        await manager.stop()
         assert manager.is_running is False
 
     @pytest.mark.asyncio
@@ -264,19 +207,14 @@ class TestEdgeCases:
     ):
         """Test subscribing after start is allowed but doesn't auto-start."""
         await add_events_to_store(event_store, 5)
-
         subscriber1 = OrderProjection()
         await manager.subscribe(subscriber1)
         await manager.start()
 
-        # Subscribe a new subscriber after start
         subscriber2 = CustomerProjection()
         subscription = await manager.subscribe(subscriber2)
-
-        # New subscriber is registered but not started
         assert subscription.state == SubscriptionState.STARTING
         assert len(subscriber2.handled_events) == 0
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -288,13 +226,10 @@ class TestEdgeCases:
         """Test transition with empty event store."""
         await manager.subscribe(subscriber)
         await manager.start()
-
         assert manager.is_running is True
         assert len(subscriber.handled_events) == 0
-
         subscription = manager.get_subscription("MockSubscriber")
         assert subscription.state == SubscriptionState.LIVE
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -305,13 +240,9 @@ class TestEdgeCases:
     ):
         """Test manager handles large number of events."""
         await add_events_to_store(event_store, 500)
-
         subscriber = MockSubscriber()
         config = SubscriptionConfig(batch_size=50)
         await manager.subscribe(subscriber, config=config)
-
         await manager.start()
-
         assert len(subscriber.handled_events) == 500
-
         await manager.stop()

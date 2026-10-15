@@ -1,14 +1,6 @@
-"""
-Unit tests for leadership lease renewal verification before cluster operations.
+"""Unit tests for leadership lease renewal verification before cluster operations."""
 
-Verifies:
-- SubscriptionLifecycleManager re-verifies leadership lease prior to executing transitions.
-- Expired or lost leadership leases block unauthorized cluster transitions with TransitionError.
-- WorkRedistributionCoordinator re-verifies leadership lease prior to issuing work assignments.
-- initiate_leadership_handoff re-verifies leadership lease renewal before release.
-- Standalone verify_leadership_lease helper behavior.
-- All verification guards execute strictly through public interfaces without private backdoor mocks.
-"""
+from typing import Any
 
 import pytest
 
@@ -97,26 +89,19 @@ class ExpiringLeaseLeaderElector:
         self._callbacks.append(callback)
 
     def remove_leader_change_callback(self, callback: LeaderChangeCallback) -> bool:
-        try:
+        if callback in self._callbacks:
             self._callbacks.remove(callback)
             return True
-        except ValueError:
-            return False
+        return False
 
 
-@pytest.fixture
-def event_store() -> InMemoryEventStore:
-    return InMemoryEventStore(event_registry=_REGISTRY)
-
-
-@pytest.fixture
-def event_bus() -> InMemoryEventBus:
-    return InMemoryEventBus()
-
-
-@pytest.fixture
-def checkpoint_repo() -> InMemoryCheckpointRepository:
-    return InMemoryCheckpointRepository()
+def _make_lifecycle(leader_elector: Any = None) -> SubscriptionLifecycleManager:
+    return SubscriptionLifecycleManager(
+        InMemoryEventStore(event_registry=_REGISTRY),
+        InMemoryEventBus(),
+        InMemoryCheckpointRepository(),
+        leader_elector=leader_elector,
+    )
 
 
 @pytest.fixture
@@ -131,48 +116,28 @@ def test_subscription() -> Subscription:
 class TestSubscriptionLifecycleManagerLeadership:
     """Verifies that leadership lease renewal guards cluster transitions in lifecycle management."""
 
-    async def test_uncoordinated_lifecycle_succeeds(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
-    ) -> None:
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=None
-        )
+    async def test_uncoordinated_lifecycle_succeeds(self, test_subscription: Subscription) -> None:
+        lifecycle = _make_lifecycle(leader_elector=None)
         assert await lifecycle.verify_leadership_lease() is True
         await lifecycle.start_subscription(test_subscription)
         assert test_subscription.state == SubscriptionState.LIVE
         await lifecycle.stop_all([test_subscription])
 
     async def test_coordinated_start_with_active_leader_lease_succeeds(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
+        self, test_subscription: Subscription
     ) -> None:
         elector = InMemoryLeaderElector("instance-alpha")
         await elector.try_acquire()
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=elector
-        )
+        lifecycle = _make_lifecycle(leader_elector=elector)
         await lifecycle.start_subscription(test_subscription)
         assert test_subscription.state == SubscriptionState.LIVE
         await lifecycle.stop_all([test_subscription])
 
     async def test_coordinated_start_blocks_when_not_leader(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
+        self, test_subscription: Subscription
     ) -> None:
         elector = ExpiringLeaseLeaderElector("follower-node", initial_leader=False)
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=elector
-        )
+        lifecycle = _make_lifecycle(leader_elector=elector)
         with pytest.raises(TransitionError) as exc_info:
             await lifecycle.start_subscription(test_subscription)
         assert "unauthorized cluster transition blocked" in str(exc_info.value)
@@ -180,67 +145,43 @@ class TestSubscriptionLifecycleManagerLeadership:
         assert test_subscription.state == SubscriptionState.ERROR
 
     async def test_coordinated_start_blocks_when_lease_renewal_fails(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
+        self, test_subscription: Subscription
     ) -> None:
         elector = ExpiringLeaseLeaderElector("leader-expired", initial_leader=True)
         elector.expire_lease()
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=elector
-        )
+        lifecycle = _make_lifecycle(leader_elector=elector)
         with pytest.raises(TransitionError) as exc_info:
             await lifecycle.start_subscription(test_subscription)
         assert "unauthorized cluster transition blocked" in str(exc_info.value)
         assert test_subscription.state == SubscriptionState.ERROR
 
     async def test_coordinated_start_blocks_after_force_lose_leadership(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
+        self, test_subscription: Subscription
     ) -> None:
         elector = InMemoryLeaderElector("worker-1")
         await elector.try_acquire()
         await elector.force_lose_leadership()
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=elector
-        )
+        lifecycle = _make_lifecycle(leader_elector=elector)
         with pytest.raises(TransitionError):
             await lifecycle.start_subscription(test_subscription)
         assert test_subscription.state == SubscriptionState.ERROR
 
     async def test_start_all_captures_lease_expiration_error(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
+        self, test_subscription: Subscription
     ) -> None:
         elector = ExpiringLeaseLeaderElector("cluster-leader", initial_leader=True)
         elector.expire_lease()
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=elector
-        )
+        lifecycle = _make_lifecycle(leader_elector=elector)
         results = await lifecycle.start_all([test_subscription])
         assert test_subscription.name in results
         assert isinstance(results[test_subscription.name], TransitionError)
 
     async def test_verify_leadership_lease_handles_backend_exception(
-        self,
-        event_store: InMemoryEventStore,
-        event_bus: InMemoryEventBus,
-        checkpoint_repo: InMemoryCheckpointRepository,
-        test_subscription: Subscription,
+        self, test_subscription: Subscription
     ) -> None:
         elector = ExpiringLeaseLeaderElector("failing-backend", initial_leader=True)
         elector.simulate_backend_error(ConnectionError("Advisory lock lost connection to Postgres"))
-        lifecycle = SubscriptionLifecycleManager(
-            event_store, event_bus, checkpoint_repo, leader_elector=elector
-        )
+        lifecycle = _make_lifecycle(leader_elector=elector)
         assert await lifecycle.verify_leadership_lease() is False
         with pytest.raises(TransitionError):
             await lifecycle.start_subscription(test_subscription)
