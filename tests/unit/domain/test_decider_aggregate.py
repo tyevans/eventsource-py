@@ -1,16 +1,13 @@
 """Tests for DeciderAggregate."""
 
 import inspect
-from dataclasses import dataclass
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
-from eventsource.domain.aggregate import AggregateRoot
-from eventsource.domain.command import DomainCommand
-from eventsource.domain.decider import DeciderAggregate
-from eventsource.domain.event import DomainEvent
+from eventsource.domain import AggregateRoot, DeciderAggregate, DomainCommand, DomainEvent
 from eventsource.domain.exceptions import CommandRejectedError
 from eventsource.domain.tenant_context import tenant_scope_sync
 
@@ -47,27 +44,23 @@ class Account(DeciderAggregate[AccountState]):
 
     @staticmethod
     def decide(command: object, state: AccountState) -> list[DomainEvent]:
-        match command, state:
-            case OpenAccount(account_id=account_id, owner=owner), AccountState(is_open=False):
-                return [AccountOpened(aggregate_id=account_id, owner=owner)]
-            case OpenAccount(), _:
-                raise CommandRejectedError("account already open", command=command)
-            case DepositMoney(account_id=account_id, amount=amount), AccountState(is_open=True):
-                return [MoneyDeposited(aggregate_id=account_id, amount=amount)]
-            case DepositMoney(), _:
-                raise CommandRejectedError("account not open", command=command)
-            case _:
-                raise CommandRejectedError(f"unknown command: {command!r}", command=command)
+        if isinstance(command, OpenAccount):
+            if not state.is_open:
+                return [AccountOpened(aggregate_id=command.account_id, owner=command.owner)]
+            raise CommandRejectedError("account already open", command=command)
+        if isinstance(command, DepositMoney):
+            if state.is_open:
+                return [MoneyDeposited(aggregate_id=command.account_id, amount=command.amount)]
+            raise CommandRejectedError("account not open", command=command)
+        raise CommandRejectedError(f"unknown command: {command!r}", command=command)
 
     @staticmethod
     def evolve(state: AccountState, event: DomainEvent) -> AccountState:
-        match event:
-            case AccountOpened(owner=owner):
-                return state.model_copy(update={"owner": owner, "is_open": True})
-            case MoneyDeposited(amount=amount):
-                return state.model_copy(update={"balance": state.balance + amount})
-            case _:
-                return state
+        if isinstance(event, AccountOpened):
+            return state.model_copy(update={"owner": event.owner, "is_open": True})
+        if isinstance(event, MoneyDeposited):
+            return state.model_copy(update={"balance": state.balance + event.amount})
+        return state
 
 
 class TestEagerState:
@@ -96,14 +89,9 @@ class TestExecuteStamping:
         assert (ev.actor_id, ev.tenant_id) == ("user-1", cmd.tenant_id)
 
     def test_plain_object_command_gets_version_but_no_provenance(self) -> None:
-        @dataclass(frozen=True)
-        class PlainOpen:
-            account_id: UUID
-            owner: str
-
         ev = AccountOpened(aggregate_id=(aid := uuid4()), owner="alice")
         cls = type("PlainAccount", (Account,), {"decide": staticmethod(lambda c, s: [ev])})
-        (event,) = cls(aid).execute(PlainOpen(account_id=aid, owner="alice"))
+        (event,) = cls(aid).execute(SimpleNamespace(account_id=aid, owner="alice"))
         assert (event.aggregate_version, event.causation_id) == (1, None)
 
     def test_explicit_fields_win_over_stamping(self) -> None:
@@ -180,11 +168,8 @@ class TestCreateEventCommandProvenance:
         cmd = OpenAccount(account_id=acct.aggregate_id, owner="alice", actor_id="user-1")
         acct.open(cmd)
         (ev,) = acct.uncommitted_events
-        assert (ev.causation_id, ev.correlation_id, ev.actor_id) == (
-            cmd.command_id,
-            cmd.correlation_id,
-            "user-1",
-        )
+        assert (ev.causation_id, ev.correlation_id) == (cmd.command_id, cmd.correlation_id)
+        assert ev.actor_id == "user-1"
 
     def test_explicit_kwargs_beat_command_fields(self) -> None:
         acct, corr = _ImperativeAccount(uuid4()), uuid4()
@@ -195,45 +180,25 @@ class TestCreateEventCommandProvenance:
 
 class TestAmbientTenantStamping:
     def test_plain_command_gets_ambient_tenant(self) -> None:
-        @dataclass
-        class PlainShip:
-            order_id: UUID
-
-        class Shipped(DomainEvent):
-            aggregate_type: str = "Order"
-
-        class ShipDecider(DeciderAggregate[dict]):
-            aggregate_type, initial_state = "Order", staticmethod(dict)
-            evolve = staticmethod(lambda state, event: state)
-            decide = staticmethod(lambda cmd, st: [Shipped(aggregate_id=cmd.order_id)])
-
-        agg, tenant = ShipDecider(uuid4()), uuid4()
+        decide = staticmethod(lambda cmd, st: [AccountOpened(aggregate_id=cmd.order_id, owner="x")])
+        cls = type("ShipDecider", (Account,), {"decide": decide})
+        agg, tenant = cls(uuid4()), uuid4()
         with tenant_scope_sync(tenant):
-            assert agg.execute(PlainShip(order_id=agg.aggregate_id))[0].tenant_id == tenant
+            assert agg.execute(SimpleNamespace(order_id=agg.aggregate_id))[0].tenant_id == tenant
 
 
 class TestTypedDecider:
     def test_two_param_subscript_works_at_runtime(self) -> None:
-        @dataclass(frozen=True)
-        class Ping:
-            target: UUID
-
-        class PingState(BaseModel):
-            pinged: bool = False
-
-        class PingDecider(DeciderAggregate[PingState, Ping]):
-            aggregate_type, initial_state = "Ping", staticmethod(PingState)
+        class PingDecider(DeciderAggregate[AccountState, SimpleNamespace]):
+            aggregate_type, initial_state = "Ping", staticmethod(AccountState)
             decide, evolve = staticmethod(lambda c, s: []), staticmethod(lambda s, e: s)
 
         agg = PingDecider(uuid4())
-        assert agg.execute(Ping(target=agg.aggregate_id)) == []
+        assert agg.execute(SimpleNamespace(target=agg.aggregate_id)) == []
 
     def test_single_param_subscript_still_works(self) -> None:
-        class LegacyState(BaseModel):
-            seen: int = 0
-
-        class LegacyDecider(DeciderAggregate[LegacyState]):
-            aggregate_type, initial_state = "Legacy", staticmethod(LegacyState)
+        class LegacyDecider(DeciderAggregate[AccountState]):
+            aggregate_type, initial_state = "Legacy", staticmethod(AccountState)
             decide, evolve = staticmethod(lambda c, s: []), staticmethod(lambda s, e: s)
 
         assert LegacyDecider(uuid4()).execute(object()) == []

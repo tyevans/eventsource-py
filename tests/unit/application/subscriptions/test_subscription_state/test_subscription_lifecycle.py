@@ -10,24 +10,19 @@ from eventsource.application.subscriptions import (
     SubscriptionState,
     SubscriptionStateError,
 )
-from tests.unit.application.subscriptions.test_subscription_state._fixtures import (
-    MockSubscriber,
-)
+from tests.unit.application.subscriptions.test_subscription_state._fixtures import MockSubscriber
+
+S, Err = SubscriptionState, SubscriptionStateError
 
 
 class TestSubscriptionCreation:
-    """Tests for Subscription creation and initialization."""
-
     def test_create_subscription(self, mock_subscriber: MockSubscriber, config: SubscriptionConfig):
-        subscription = Subscription(
-            name="TestSubscription", config=config, subscriber=mock_subscriber
-        )
-        assert subscription.name == "TestSubscription"
-        assert subscription.config == config
-        assert subscription.subscriber == mock_subscriber
+        sub = Subscription(name="TestSubscription", config=config, subscriber=mock_subscriber)
+        assert (sub.name, sub.config) == ("TestSubscription", config)
+        assert sub.subscriber == mock_subscriber
 
     def test_initial_state_is_starting(self, subscription: Subscription):
-        assert subscription.state == SubscriptionState.STARTING
+        assert subscription.state == S.STARTING
 
     def test_initial_position_is_none(self, subscription: Subscription):
         assert subscription.last_processed_position is None
@@ -48,8 +43,7 @@ class TestSubscriptionCreation:
         assert subscription.last_processed_at is None
 
     def test_started_at_is_set(self, subscription: Subscription):
-        assert subscription.started_at is not None
-        assert isinstance(subscription.started_at, datetime)
+        assert subscription.started_at is not None and isinstance(subscription.started_at, datetime)
 
     def test_initial_last_error_is_none(self, subscription: Subscription):
         assert subscription.last_error is None
@@ -59,184 +53,162 @@ class TestSubscriptionCreation:
 
 
 class TestSubscriptionStateTransitions:
-    """Tests for state transitions."""
-
     @pytest.mark.asyncio
     async def test_transition_starting_to_catching_up(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        assert subscription.state == SubscriptionState.CATCHING_UP
+        await subscription.transition_to(S.CATCHING_UP)
+        assert subscription.state == S.CATCHING_UP
 
     @pytest.mark.asyncio
     async def test_transition_starting_to_live(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.LIVE)
-        assert subscription.state == SubscriptionState.LIVE
+        await subscription.transition_to(S.LIVE)
+        assert subscription.state == S.LIVE
 
     @pytest.mark.asyncio
     async def test_transition_starting_to_stopped(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.STOPPED)
-        assert subscription.state == SubscriptionState.STOPPED
+        await subscription.transition_to(S.STOPPED)
+        assert subscription.state == S.STOPPED
 
     @pytest.mark.asyncio
     async def test_transition_starting_to_error(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.ERROR)
-        assert subscription.state == SubscriptionState.ERROR
+        await subscription.transition_to(S.ERROR)
+        assert subscription.state == S.ERROR
 
     @pytest.mark.asyncio
     async def test_transition_catching_up_to_live(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        await subscription.transition_to(SubscriptionState.LIVE)
-        assert subscription.state == SubscriptionState.LIVE
+        await subscription.transition_to(S.CATCHING_UP)
+        await subscription.transition_to(S.LIVE)
+        assert subscription.state == S.LIVE
 
     @pytest.mark.asyncio
     async def test_transition_catching_up_to_paused(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        await subscription.transition_to(SubscriptionState.PAUSED)
-        assert subscription.state == SubscriptionState.PAUSED
+        await subscription.transition_to(S.CATCHING_UP)
+        await subscription.transition_to(S.PAUSED)
+        assert subscription.state == S.PAUSED
 
     @pytest.mark.asyncio
     async def test_transition_live_to_catching_up(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.LIVE)
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        assert subscription.state == SubscriptionState.CATCHING_UP
+        await subscription.transition_to(S.LIVE)
+        await subscription.transition_to(S.CATCHING_UP)
+        assert subscription.state == S.CATCHING_UP
 
     @pytest.mark.asyncio
     async def test_transition_live_to_paused(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.LIVE)
-        await subscription.transition_to(SubscriptionState.PAUSED)
-        assert subscription.state == SubscriptionState.PAUSED
+        await subscription.transition_to(S.LIVE)
+        await subscription.transition_to(S.PAUSED)
+        assert subscription.state == S.PAUSED
 
     @pytest.mark.asyncio
     async def test_transition_paused_to_live(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.LIVE)
-        await subscription.transition_to(SubscriptionState.PAUSED)
-        await subscription.transition_to(SubscriptionState.LIVE)
-        assert subscription.state == SubscriptionState.LIVE
+        for s in (S.LIVE, S.PAUSED, S.LIVE):
+            await subscription.transition_to(s)
+        assert subscription.state == S.LIVE
 
     @pytest.mark.asyncio
     async def test_transition_paused_to_catching_up(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        await subscription.transition_to(SubscriptionState.PAUSED)
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        assert subscription.state == SubscriptionState.CATCHING_UP
+        for s in (S.CATCHING_UP, S.PAUSED, S.CATCHING_UP):
+            await subscription.transition_to(s)
+        assert subscription.state == S.CATCHING_UP
 
     @pytest.mark.asyncio
     async def test_transition_error_to_starting(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.ERROR)
-        await subscription.transition_to(SubscriptionState.STARTING)
-        assert subscription.state == SubscriptionState.STARTING
+        await subscription.transition_to(S.ERROR)
+        await subscription.transition_to(S.STARTING)
+        assert subscription.state == S.STARTING
 
     @pytest.mark.asyncio
     async def test_previous_state_tracked(self, subscription: Subscription):
         assert subscription.previous_state is None
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        assert subscription.previous_state == SubscriptionState.STARTING
+        await subscription.transition_to(S.CATCHING_UP)
+        assert subscription.previous_state == S.STARTING
 
     @pytest.mark.asyncio
     async def test_previous_state_updated_on_each_transition(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        assert subscription.previous_state == SubscriptionState.STARTING
-        await subscription.transition_to(SubscriptionState.LIVE)
-        assert subscription.previous_state == SubscriptionState.CATCHING_UP
+        await subscription.transition_to(S.CATCHING_UP)
+        assert subscription.previous_state == S.STARTING
+        await subscription.transition_to(S.LIVE)
+        assert subscription.previous_state == S.CATCHING_UP
 
 
 class TestInvalidStateTransitions:
-    """Tests for invalid state transitions."""
-
     @pytest.mark.asyncio
     async def test_starting_to_paused_raises_error(self, subscription: Subscription):
-        with pytest.raises(SubscriptionStateError) as exc_info:
-            await subscription.transition_to(SubscriptionState.PAUSED)
-        assert "Cannot transition from starting to paused" in str(exc_info.value)
+        with pytest.raises(Err, match="Cannot transition from starting to paused"):
+            await subscription.transition_to(S.PAUSED)
 
     @pytest.mark.asyncio
     async def test_catching_up_to_starting_raises_error(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        with pytest.raises(SubscriptionStateError) as exc_info:
-            await subscription.transition_to(SubscriptionState.STARTING)
-        assert "Cannot transition from catching_up to starting" in str(exc_info.value)
+        await subscription.transition_to(S.CATCHING_UP)
+        with pytest.raises(Err, match="Cannot transition from catching_up to starting"):
+            await subscription.transition_to(S.STARTING)
 
     @pytest.mark.asyncio
     async def test_stopped_to_any_raises_error(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.STOPPED)
-        for state in SubscriptionState:
-            with pytest.raises(SubscriptionStateError) as exc_info:
+        await subscription.transition_to(S.STOPPED)
+        for state in S:
+            with pytest.raises(Err, match="Cannot transition from stopped"):
                 await subscription.transition_to(state)
-            assert "Cannot transition from stopped" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_error_to_non_starting_raises_error(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.ERROR)
-        for state in [
-            SubscriptionState.CATCHING_UP,
-            SubscriptionState.LIVE,
-            SubscriptionState.PAUSED,
-            SubscriptionState.STOPPED,
-            SubscriptionState.ERROR,
-        ]:
-            with pytest.raises(SubscriptionStateError) as exc_info:
+        await subscription.transition_to(S.ERROR)
+        for state in [s for s in S if s != S.STARTING]:
+            with pytest.raises(Err, match="Cannot transition from error"):
                 await subscription.transition_to(state)
-            assert "Cannot transition from error" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_error_message_includes_valid_transitions(self, subscription: Subscription):
-        with pytest.raises(SubscriptionStateError) as exc_info:
-            await subscription.transition_to(SubscriptionState.PAUSED)
-        assert "Valid transitions:" in str(exc_info.value)
+        with pytest.raises(Err, match="Valid transitions:"):
+            await subscription.transition_to(S.PAUSED)
 
 
 class TestSubscriptionProperties:
-    """Tests for subscription properties."""
-
     @pytest.mark.asyncio
     async def test_is_running_when_catching_up(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
+        await subscription.transition_to(S.CATCHING_UP)
         assert subscription.is_running is True
 
     @pytest.mark.asyncio
     async def test_is_running_when_live(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.LIVE)
+        await subscription.transition_to(S.LIVE)
         assert subscription.is_running is True
 
     @pytest.mark.asyncio
     async def test_is_running_when_paused(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.CATCHING_UP)
-        await subscription.transition_to(SubscriptionState.PAUSED)
+        await subscription.transition_to(S.CATCHING_UP)
+        await subscription.transition_to(S.PAUSED)
         assert subscription.is_running is False
 
     @pytest.mark.asyncio
     async def test_is_running_when_stopped(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.STOPPED)
+        await subscription.transition_to(S.STOPPED)
         assert subscription.is_running is False
 
     @pytest.mark.asyncio
     async def test_is_running_when_error(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.ERROR)
+        await subscription.transition_to(S.ERROR)
         assert subscription.is_running is False
 
     @pytest.mark.asyncio
     async def test_is_terminal_when_stopped(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.STOPPED)
+        await subscription.transition_to(S.STOPPED)
         assert subscription.is_terminal is True
 
     @pytest.mark.asyncio
     async def test_is_terminal_when_error(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.ERROR)
+        await subscription.transition_to(S.ERROR)
         assert subscription.is_terminal is True
 
     @pytest.mark.asyncio
     async def test_is_terminal_when_running(self, subscription: Subscription):
-        await subscription.transition_to(SubscriptionState.LIVE)
+        await subscription.transition_to(S.LIVE)
         assert subscription.is_terminal is False
 
     def test_uptime_seconds(self, subscription: Subscription):
         uptime = subscription.uptime_seconds
-        assert uptime >= 0
-        assert isinstance(uptime, float)
+        assert uptime >= 0 and isinstance(uptime, float)
 
 
 class TestSetError:
-    """Tests for set_error method."""
-
     @pytest.mark.asyncio
     async def test_set_error_records_error(self, subscription: Subscription):
         error = ValueError("Test error")
@@ -246,7 +218,7 @@ class TestSetError:
     @pytest.mark.asyncio
     async def test_set_error_transitions_to_error_state(self, subscription: Subscription):
         await subscription.set_error(ValueError("Test error"))
-        assert subscription.state == SubscriptionState.ERROR
+        assert subscription.state == S.ERROR
 
     @pytest.mark.asyncio
     async def test_set_error_increments_failed_counter(self, subscription: Subscription):
