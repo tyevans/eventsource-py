@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Self
 
 from eventsource.application.projections.base import EventHandlerBase, Projection
 from eventsource.application.projections.coordinator_registry import ProjectionRegistry
@@ -41,7 +41,18 @@ class ProjectionCoordinator:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
 
-    async def dispatch_events(self, events: list[DomainEvent]) -> int:
+    def register(self, *items: Projection | EventHandlerBase) -> Self:
+        """Register one or more projections or event handlers and return ``self``."""
+        self.registry.register(*items)
+        return self
+
+    def __len__(self) -> int:
+        return len(self.registry)
+
+    def __bool__(self) -> bool:
+        return True
+
+    async def dispatch_events(self, events: Sequence[DomainEvent]) -> int:
         """Dispatch events to all registered projections and return count dispatched."""
         with self._tracer.span(
             "eventsource.projection.coordinate",
@@ -53,7 +64,7 @@ class ProjectionCoordinator:
             await self.registry.dispatch_many(events)
             return len(events)
 
-    async def rebuild_all(self, events: list[DomainEvent]) -> int:
+    async def rebuild_all(self, events: Sequence[DomainEvent]) -> int:
         """Reset all registered projections and replay ``events`` in order."""
         logger.warning("Rebuilding all projections", extra={"event_count": len(events)})
         await self.registry.reset_all()
@@ -64,7 +75,7 @@ class ProjectionCoordinator:
     async def rebuild_projection(
         self,
         projection: Projection,
-        events: list[DomainEvent],
+        events: Sequence[DomainEvent],
     ) -> int:
         """Reset a single projection and replay ``events`` into it."""
         projection_name = projection.__class__.__name__
@@ -86,7 +97,7 @@ class ProjectionCoordinator:
     async def catchup(
         self,
         projection: Projection,
-        events: list[DomainEvent],
+        events: Sequence[DomainEvent],
     ) -> int:
         """Process ``events`` into ``projection`` without resetting it."""
         projection_name = projection.__class__.__name__

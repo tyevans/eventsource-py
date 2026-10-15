@@ -1,16 +1,43 @@
-"""Unit tests for ProjectionRegistry."""
+"""Unit tests for ProjectionRegistry and ProjectionCoordinator container helpers."""
 
 from uuid import uuid4
 
 import pytest
 
 from eventsource.application.projections.base import EventHandlerBase, Projection
-from eventsource.application.projections.coordinator import ProjectionRegistry
+from eventsource.application.projections.coordinator import (
+    ProjectionCoordinator,
+    ProjectionRegistry,
+)
 from eventsource.domain.event import DomainEvent
 from tests.unit.application.projections.test_projection_coordinator._fixtures import (
     OrderCreated,
     OrderShipped,
 )
+
+
+class _RecordingProjection(Projection):
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+        self.reset_called = False
+
+    async def handle(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+    async def reset(self) -> None:
+        self.events.clear()
+        self.reset_called = True
+
+
+class _SelectiveHandler(EventHandlerBase):
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def can_handle(self, event: DomainEvent) -> bool:
+        return isinstance(event, OrderCreated)
+
+    async def handle(self, event: DomainEvent) -> None:
+        self.events.append(event)
 
 
 class TestProjectionRegistry:
@@ -19,146 +46,95 @@ class TestProjectionRegistry:
         return ProjectionRegistry()
 
     def test_register_projection(self, registry: ProjectionRegistry) -> None:
-        class TestProjection(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-            async def reset(self) -> None:
-                pass
-
-        projection = TestProjection()
+        projection = _RecordingProjection()
         registry.register_projection(projection)
         assert projection in registry.projections
         assert registry.get_projection_count() == 1
 
     def test_register_multiple_projections(self, registry: ProjectionRegistry) -> None:
-        class Projection1(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-            async def reset(self) -> None:
-                pass
-
-        class Projection2(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-            async def reset(self) -> None:
-                pass
-
-        registry.register_projection(Projection1())
-        registry.register_projection(Projection2())
+        registry.register_projection(_RecordingProjection())
+        registry.register_projection(_RecordingProjection())
         assert registry.get_projection_count() == 2
 
     def test_register_handler(self, registry: ProjectionRegistry) -> None:
-        class TestHandler(EventHandlerBase):
-            def can_handle(self, event: DomainEvent) -> bool:
-                return True
-
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-        handler = TestHandler()
+        handler = _SelectiveHandler()
         registry.register_handler(handler)
         assert handler in registry.handlers
         assert registry.get_handler_count() == 1
 
     def test_unregister_projection(self, registry: ProjectionRegistry) -> None:
-        class TestProjection(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-            async def reset(self) -> None:
-                pass
-
-        projection = TestProjection()
+        projection = _RecordingProjection()
         registry.register_projection(projection)
         assert registry.get_projection_count() == 1
-        result = registry.unregister_projection(projection)
-        assert result is True
+        assert registry.unregister_projection(projection) is True
         assert registry.get_projection_count() == 0
 
     def test_unregister_nonexistent_projection(self, registry: ProjectionRegistry) -> None:
-        class TestProjection(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
+        assert registry.unregister_projection(_RecordingProjection()) is False
 
-            async def reset(self) -> None:
-                pass
+    def test_unregister_dispatches_projection_and_handler(
+        self, registry: ProjectionRegistry
+    ) -> None:
+        proj = _RecordingProjection()
+        handler = _SelectiveHandler()
+        registry.register(proj, handler)
+        assert registry.unregister(proj) is True
+        assert registry.unregister(proj) is False
+        assert registry.unregister(handler) is True
+        assert registry.unregister(handler) is False
+        with pytest.raises(TypeError, match="Expected Projection or EventHandlerBase"):
+            registry.unregister("not-a-projection")  # type: ignore[arg-type]
 
-        assert registry.unregister_projection(TestProjection()) is False
+    def test_clear_and_container_dunders(self, registry: ProjectionRegistry) -> None:
+        assert bool(registry) is True
+        assert len(registry) == 0
+        proj = _RecordingProjection()
+        handler = _SelectiveHandler()
+        assert proj not in registry
+        assert handler not in registry
+        registry.register(proj, handler)
+        assert len(registry) == 2
+        assert proj in registry
+        assert handler in registry
+        registry.clear()
+        assert len(registry) == 0
+        assert bool(registry) is True
+        assert proj not in registry
+        assert handler not in registry
 
     @pytest.mark.asyncio
     async def test_dispatch_to_all_projections(self, registry: ProjectionRegistry) -> None:
-        events1: list[DomainEvent] = []
-        events2: list[DomainEvent] = []
-
-        class Projection1(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                events1.append(event)
-
-            async def reset(self) -> None:
-                events1.clear()
-
-        class Projection2(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                events2.append(event)
-
-            async def reset(self) -> None:
-                events2.clear()
-
-        registry.register_projection(Projection1())
-        registry.register_projection(Projection2())
+        p1, p2 = _RecordingProjection(), _RecordingProjection()
+        registry.register_projection(p1)
+        registry.register_projection(p2)
         await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
-        assert len(events1) == 1
-        assert len(events2) == 1
+        assert len(p1.events) == 1
+        assert len(p2.events) == 1
 
     @pytest.mark.asyncio
     async def test_dispatch_to_handlers(self, registry: ProjectionRegistry) -> None:
-        handled_events: list[DomainEvent] = []
-
-        class SelectiveHandler(EventHandlerBase):
-            def can_handle(self, event: DomainEvent) -> bool:
-                return isinstance(event, OrderCreated)
-
-            async def handle(self, event: DomainEvent) -> None:
-                handled_events.append(event)
-
-        registry.register_handler(SelectiveHandler())
+        handler = _SelectiveHandler()
+        registry.register_handler(handler)
         created = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         shipped = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
         await registry.dispatch(created)
         await registry.dispatch(shipped)
-        assert len(handled_events) == 1
-        assert handled_events[0] == created
+        assert handler.events == [created]
 
     @pytest.mark.asyncio
     async def test_dispatch_many(self, registry: ProjectionRegistry) -> None:
-        events: list[DomainEvent] = []
-
-        class TestProjection(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                events.append(event)
-
-            async def reset(self) -> None:
-                events.clear()
-
-        registry.register_projection(TestProjection())
+        proj = _RecordingProjection()
+        registry.register_projection(proj)
         event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         event2 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-002")
         event3 = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-        await registry.dispatch_many([event1, event2, event3])
-        assert len(events) == 3
-        assert events[0] == event1
-        assert events[1] == event2
-        assert events[2] == event3
+        await registry.dispatch_many((event1, event2, event3))
+        assert proj.events == [event1, event2, event3]
 
     @pytest.mark.asyncio
     async def test_dispatch_handles_errors_gracefully(
         self, registry: ProjectionRegistry, caplog: pytest.LogCaptureFixture
     ) -> None:
-        good_events: list[DomainEvent] = []
-
         class FailingProjection(Projection):
             async def handle(self, event: DomainEvent) -> None:
                 raise ValueError("Projection failed")
@@ -166,39 +142,34 @@ class TestProjectionRegistry:
             async def reset(self) -> None:
                 pass
 
-        class GoodProjection(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                good_events.append(event)
-
-            async def reset(self) -> None:
-                good_events.clear()
-
+        good = _RecordingProjection()
         registry.register_projection(FailingProjection())
-        registry.register_projection(GoodProjection())
+        registry.register_projection(good)
         await registry.dispatch(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
-        assert len(good_events) == 1
+        assert len(good.events) == 1
         assert any("Error in projection" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_reset_all(self, registry: ProjectionRegistry) -> None:
-        reset_called = [False, False]
-
-        class Projection1(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-            async def reset(self) -> None:
-                reset_called[0] = True
-
-        class Projection2(Projection):
-            async def handle(self, event: DomainEvent) -> None:
-                pass
-
-            async def reset(self) -> None:
-                reset_called[1] = True
-
-        registry.register_projection(Projection1())
-        registry.register_projection(Projection2())
+        p1, p2 = _RecordingProjection(), _RecordingProjection()
+        registry.register_projection(p1)
+        registry.register_projection(p2)
         await registry.reset_all()
-        assert reset_called[0] is True
-        assert reset_called[1] is True
+        assert p1.reset_called is True
+        assert p2.reset_called is True
+
+    @pytest.mark.asyncio
+    async def test_coordinator_register_dunders_and_sequence_events(self) -> None:
+        coordinator = ProjectionCoordinator()
+        assert bool(coordinator) is True
+        assert len(coordinator) == 0
+        proj = _RecordingProjection()
+        handler = _SelectiveHandler()
+        assert coordinator.register(proj, handler) is coordinator
+        assert len(coordinator) == 2
+        ev = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        assert await coordinator.dispatch_events((ev,)) == 1
+        assert await coordinator.rebuild_all((ev,)) == 1
+        assert await coordinator.rebuild_projection(proj, (ev,)) == 1
+        assert await coordinator.catchup(proj, (ev,)) == 1
+        assert len(proj.events) == 2
