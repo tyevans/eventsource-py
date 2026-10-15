@@ -4,48 +4,15 @@ MigrationAuditLogRepository - Data access for migration audit logs.
 The MigrationAuditLogRepository provides append-only operations for
 recording migration lifecycle events for compliance and debugging purposes.
 
-This module implements the MigrationAuditLogRepository protocol and provides
-a PostgreSQL implementation for production use.
-
 Responsibilities:
     - Record migration lifecycle events (start, phase changes, completion)
     - Record operator actions (pause, resume, abort)
     - Record errors and cutover events
-    - Query audit history by migration ID
-    - Support filtering by event type and time range
-
-Database Table:
-    Uses the `migration_audit_log` table defined in PREREQ-002.
-
-Usage:
-    >>> from eventsource.adapters.sql.migration import (
-    ...     MigrationAuditLogRepository,
-    ...     PostgreSQLMigrationAuditLogRepository,
-    ... )
-    >>>
-    >>> repo = PostgreSQLMigrationAuditLogRepository(conn)
-    >>>
-    >>> # Record an audit event
-    >>> entry = MigrationAuditEntry.phase_change(
-    ...     migration_id=migration_id,
-    ...     old_phase=MigrationPhase.BULK_COPY,
-    ...     new_phase=MigrationPhase.DUAL_WRITE,
-    ...     occurred_at=datetime.now(UTC),
-    ...     operator="admin@example.com",
-    ... )
-    >>> entry_id = await repo.record(entry)
-    >>>
-    >>> # Query audit history
-    >>> entries = await repo.get_by_migration(migration_id)
-
-See Also:
-    - Task: P4-001-audit-log.md
-    - Schema: PREREQ-002-migration-schema.md
+    - Query audit history by migration ID with event type and time range filters
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -55,12 +22,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from eventsource.adapters._sql.connection import sql_connection
+from eventsource.adapters.serialization import json_dumps
+from eventsource.adapters.sql.migration.audit_log_helpers import row_to_audit_entry
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_DB_SYSTEM
 from eventsource.ports.migration.models import (
     AuditEventType,
     MigrationAuditEntry,
-    MigrationPhase,
 )
 
 
@@ -71,22 +39,6 @@ class PostgreSQLMigrationAuditLogRepository:
     Persists audit entries to the `migration_audit_log` table.
     Provides append-only write operations and flexible query
     capabilities with full observability through OpenTelemetry tracing.
-
-    Example:
-        >>> async with engine.begin() as conn:
-        ...     repo = PostgreSQLMigrationAuditLogRepository(conn)
-        ...     entry = MigrationAuditEntry.migration_started(
-        ...         migration_id=migration_id,
-        ...         occurred_at=datetime.now(UTC),
-        ...         operator="system",
-        ...         details={"config": config.to_dict()},
-        ...     )
-        ...     entry_id = await repo.record(entry)
-        ...
-        >>> # Query audit history
-        >>> entries = await repo.get_by_migration(migration_id)
-        >>> for e in entries:
-        ...     print(f"{e.occurred_at}: {e.event_type.value}")
     """
 
     def __init__(
@@ -103,7 +55,6 @@ class PostgreSQLMigrationAuditLogRepository:
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing
         """
-        # Composition-based tracing (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._conn = conn
@@ -145,7 +96,7 @@ class PostgreSQLMigrationAuditLogRepository:
                 "event_type": entry.event_type.value,
                 "old_phase": entry.old_phase.value if entry.old_phase else None,
                 "new_phase": entry.new_phase.value if entry.new_phase else None,
-                "details": json.dumps(entry.details) if entry.details else None,
+                "details": json_dumps(entry.details) if entry.details else None,
                 "operator": entry.operator,
                 "occurred_at": entry.occurred_at,
             }
@@ -189,7 +140,6 @@ class PostgreSQLMigrationAuditLogRepository:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            # Build dynamic query with filters
             conditions = ["migration_id = :migration_id"]
             params: dict[str, Any] = {"migration_id": migration_id}
 
@@ -208,7 +158,6 @@ class PostgreSQLMigrationAuditLogRepository:
             where_clause = " AND ".join(conditions)
             limit_clause = f"LIMIT {limit}" if limit else ""
 
-            # where_clause built from hardcoded conditions; limit_clause is an integer
             query = text(f"""
                 SELECT
                     id, migration_id, event_type, old_phase, new_phase,
@@ -266,8 +215,6 @@ class PostgreSQLMigrationAuditLogRepository:
     ) -> MigrationAuditEntry | None:
         """
         Get the most recent audit entry for a migration.
-
-        Useful for finding the last recorded state or event for a migration.
 
         Args:
             migration_id: The migration ID to query
@@ -327,8 +274,6 @@ class PostgreSQLMigrationAuditLogRepository:
         """
         Count audit entries for a migration.
 
-        Useful for metrics and progress tracking.
-
         Args:
             migration_id: The migration ID to query
             event_type: Optional filter by event type
@@ -370,45 +315,9 @@ class PostgreSQLMigrationAuditLogRepository:
                 return 0
             return int(row[0])
 
-    # =========================================================================
-    # Helper methods
-    # =========================================================================
-
     def _row_to_entry(self, row: Sequence[Any]) -> MigrationAuditEntry:
-        """
-        Convert database row to MigrationAuditEntry instance.
+        """Convert database row to MigrationAuditEntry instance."""
+        return row_to_audit_entry(row)
 
-        Handles JSON deserialization for the details field and converts
-        string values to enum types.
 
-        Args:
-            row: Database row tuple
-
-        Returns:
-            MigrationAuditEntry instance
-        """
-        # Parse details field (may be JSON string or dict or None)
-        details = row[5]
-        if details is not None and isinstance(details, str):
-            details = json.loads(details)
-
-        # Parse old_phase (may be None)
-        old_phase = None
-        if row[3]:
-            old_phase = MigrationPhase(row[3])
-
-        # Parse new_phase (may be None)
-        new_phase = None
-        if row[4]:
-            new_phase = MigrationPhase(row[4])
-
-        return MigrationAuditEntry(
-            id=row[0],
-            migration_id=row[1],
-            event_type=AuditEventType(row[2]),
-            old_phase=old_phase,
-            new_phase=new_phase,
-            details=details,
-            operator=row[6],
-            occurred_at=row[7],
-        )
+__all__ = ["PostgreSQLMigrationAuditLogRepository"]

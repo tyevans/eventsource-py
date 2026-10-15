@@ -275,20 +275,12 @@ class CutoverExecutionMixin:
                 ) from e
 
             # Step 9: Atomically switch routing to target and set state to MIGRATED.
-            if hasattr(self._routing_repo, "switch_routing"):
-                await self._routing_repo.switch_routing(
-                    tenant_id,
-                    target_store_id,
-                    state=TenantMigrationState.MIGRATED,
-                    migration_id=migration_id,
-                )
-            else:
-                await self._routing_repo.set_routing(tenant_id, target_store_id)
-                await self._routing_repo.set_migration_state(
-                    tenant_id,
-                    TenantMigrationState.MIGRATED,
-                    migration_id=migration_id,
-                )
+            await self._routing_repo.switch_routing(
+                tenant_id,
+                target_store_id,
+                state=TenantMigrationState.MIGRATED,
+                migration_id=migration_id,
+            )
 
             # Step 10: Clear the dual-write interceptor
             self._router.clear_dual_write_interceptor(tenant_id)

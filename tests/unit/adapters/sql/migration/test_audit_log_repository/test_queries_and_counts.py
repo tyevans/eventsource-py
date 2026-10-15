@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.migration.audit_log import (
     PostgreSQLMigrationAuditLogRepository,
 )
@@ -64,7 +64,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
                 "migration_started",  # event_type
                 None,  # old_phase
                 "pending",  # new_phase
-                json.dumps({"config": {}}),  # details
+                json_dumps({"config": {}}),  # details
                 "admin@example.com",  # operator
                 now,  # occurred_at
             ),
