@@ -33,19 +33,13 @@ pytestmark = [
 
 
 class TestKafkaEventBusStats:
-    """Tests for statistics tracking accuracy."""
-
     async def test_stats_tracking_publish(
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test that publishing updates statistics correctly."""
         initial_stats = kafka_event_bus.stats
-
-        # Verify initial state
         assert initial_stats.events_published == 0
 
-        # Publish events
         for i in range(5):
             event = TestItemCreated(
                 aggregate_id=uuid4(),
@@ -62,7 +56,6 @@ class TestKafkaEventBusStats:
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test that consuming updates statistics correctly."""
         received_events: list[DomainEvent] = []
 
         async def handler(event: DomainEvent) -> None:
@@ -70,7 +63,6 @@ class TestKafkaEventBusStats:
 
         kafka_event_bus.subscribe(TestItemCreated, handler)
 
-        # Publish events
         event_count = 3
         for i in range(event_count):
             event = TestItemCreated(
@@ -81,7 +73,6 @@ class TestKafkaEventBusStats:
             )
             await kafka_event_bus.publish([event])
 
-        # Consume events
         consume_task = asyncio.create_task(kafka_event_bus.start_consuming())
 
         async def wait_for_events() -> None:
@@ -97,7 +88,6 @@ class TestKafkaEventBusStats:
             except TimeoutError:
                 consume_task.cancel()
 
-        # Verify stats
         assert kafka_event_bus.stats.events_consumed == event_count
         assert kafka_event_bus.stats.events_processed_success == event_count
 
@@ -105,13 +95,10 @@ class TestKafkaEventBusStats:
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test that subscriber counts are tracked correctly."""
-        # Initially no subscribers
         kafka_event_bus.clear_subscribers()
         assert kafka_event_bus.get_subscriber_count() == 0
         assert kafka_event_bus.get_wildcard_subscriber_count() == 0
 
-        # Add subscribers
         async def handler1(e: DomainEvent) -> None:
             pass
 
@@ -126,11 +113,9 @@ class TestKafkaEventBusStats:
         assert kafka_event_bus.get_subscriber_count(TestItemCreated) == 2
         assert kafka_event_bus.get_subscriber_count(TestOrderCreated) == 1
 
-        # Add wildcard subscriber
         kafka_event_bus.subscribe_to_all_events(handler1)
         assert kafka_event_bus.get_wildcard_subscriber_count() == 1
 
-        # Clear all
         kafka_event_bus.clear_subscribers()
         assert kafka_event_bus.get_subscriber_count() == 0
         assert kafka_event_bus.get_wildcard_subscriber_count() == 0
@@ -139,9 +124,7 @@ class TestKafkaEventBusStats:
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test getting statistics as dictionary."""
         stats_dict = kafka_event_bus.get_stats_dict()
-
         assert "events_published" in stats_dict
         assert "events_consumed" in stats_dict
         assert "events_processed_success" in stats_dict
@@ -152,14 +135,10 @@ class TestKafkaEventBusStats:
 
 
 class TestKafkaEventBusTopicInfo:
-    """Tests for topic information retrieval."""
-
     async def test_get_topic_info(
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test getting topic information."""
-        # Publish some events first
         events: list[DomainEvent] = [
             TestItemCreated(
                 aggregate_id=uuid4(),
@@ -170,9 +149,7 @@ class TestKafkaEventBusTopicInfo:
             for i in range(3)
         ]
         await kafka_event_bus.publish(events)
-
         info = await kafka_event_bus.get_topic_info()
-
         assert info["connected"] is True
         assert "topic" in info
         assert "partitions" in info
@@ -180,18 +157,13 @@ class TestKafkaEventBusTopicInfo:
 
 
 class TestKafkaEventBusEdgeCases:
-    """Tests for edge cases and error handling."""
-
     async def test_consume_unknown_event_type(
         self,
         kafka_event_bus_factory: Any,
     ) -> None:
-        """Test that unknown event types are handled gracefully."""
         bus = kafka_event_bus_factory()
-        # Override registry to only include TestItemCreated
         bus._event_registry = EventRegistry()
         bus._event_registry.register(TestItemCreated)
-
         await bus.connect()
 
         try:
@@ -201,8 +173,6 @@ class TestKafkaEventBusEdgeCases:
                 received_events.append(event)
 
             bus.subscribe(TestItemCreated, handler)
-
-            # Publish a known event
             known_event = TestItemCreated(
                 aggregate_id=uuid4(),
                 aggregate_version=1,
@@ -210,11 +180,8 @@ class TestKafkaEventBusEdgeCases:
                 quantity=1,
             )
             await bus.publish([known_event])
-
-            # Start consuming
             consume_task = asyncio.create_task(bus.start_consuming())
 
-            # Wait for known event
             async def wait_for_event() -> None:
                 while len(received_events) < 1:
                     await asyncio.sleep(0.1)
@@ -228,10 +195,8 @@ class TestKafkaEventBusEdgeCases:
                 except TimeoutError:
                     consume_task.cancel()
 
-            # Should have received the known event
             assert len(received_events) == 1
             assert getattr(received_events[0], "name", None) == "Known Event"
-
         finally:
             await bus.disconnect()
 
@@ -239,16 +204,14 @@ class TestKafkaEventBusEdgeCases:
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test handling of slow event processing."""
         received_events: list[DomainEvent] = []
 
         async def slow_handler(event: DomainEvent) -> None:
-            await asyncio.sleep(0.5)  # Simulate slow processing
+            await asyncio.sleep(0.5)
             received_events.append(event)
 
         kafka_event_bus.subscribe(TestItemCreated, slow_handler)
 
-        # Publish multiple events
         for i in range(3):
             event = TestItemCreated(
                 aggregate_id=uuid4(),
@@ -258,10 +221,8 @@ class TestKafkaEventBusEdgeCases:
             )
             await kafka_event_bus.publish([event])
 
-        # Start consuming
         consume_task = asyncio.create_task(kafka_event_bus.start_consuming())
 
-        # Wait for events to be processed (should take about 1.5 seconds)
         async def wait_for_events() -> None:
             while len(received_events) < 3:
                 await asyncio.sleep(0.1)
@@ -281,8 +242,6 @@ class TestKafkaEventBusEdgeCases:
         self,
         kafka_event_bus: KafkaEventBus,
     ) -> None:
-        """Test clearing all subscribers."""
-        # Add some subscribers
         kafka_event_bus.subscribe(TestItemCreated, lambda e: None)
         kafka_event_bus.subscribe(TestItemUpdated, lambda e: None)
         kafka_event_bus.subscribe_to_all_events(lambda e: None)
@@ -290,8 +249,6 @@ class TestKafkaEventBusEdgeCases:
         assert kafka_event_bus.get_subscriber_count() > 0
         assert kafka_event_bus.get_wildcard_subscriber_count() > 0
 
-        # Clear
         kafka_event_bus.clear_subscribers()
-
         assert kafka_event_bus.get_subscriber_count() == 0
         assert kafka_event_bus.get_wildcard_subscriber_count() == 0
