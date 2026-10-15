@@ -1,13 +1,4 @@
-"""Conformance suite for the `ReadModelRepository` port.
-
-Subclass and provide a `store` fixture yielding a repository already bound
-to `ConformanceReadModel` with its table provisioned.
-
-**Not pinned here:** ordering of `get_many` results, `updated_at` resolution,
-and dialect-specific type coercion (covered in per-backend test modules).
-**Pinned here:** the repository owns its stored models -- reads return
-unaliased copies and writes do not adopt or mutate the caller's object.
-"""
+"""Conformance suite for the `ReadModelRepository` port."""
 
 import asyncio
 from abc import ABC, abstractmethod
@@ -34,7 +25,6 @@ def _model(
 
 
 def _bad_filter(field: str, operator: str, value: object) -> Filter:
-    """A `Filter` with an operator outside the `Literal` -- reachable at runtime."""
     return Filter(field=field, operator=operator, value=value)  # type: ignore[arg-type]
 
 
@@ -67,8 +57,7 @@ class ReadModelRepositoryConformance(ABC):
         await store.save(first)
         second = await store.get(model.id)
         assert second is not None and second.name == "after"
-        assert second.updated_at >= first.updated_at
-        assert await store.count() == 1
+        assert second.updated_at >= first.updated_at and await store.count() == 1
 
     async def test_get_many_skips_missing_ids(self, store: Repo) -> None:
         present = _model(name="present")
@@ -92,14 +81,12 @@ class ReadModelRepositoryConformance(ABC):
         model = _model()
         await store.save(model)
         assert await store.delete(model.id) is True
-        assert await store.get(model.id) is None
-        assert await store.delete(model.id) is False
+        assert await store.get(model.id) is None and await store.delete(model.id) is False
 
     async def test_soft_delete_hides_from_get_but_not_from_get_deleted(self, store: Repo) -> None:
         model = _model()
         await store.save(model)
-        assert await store.soft_delete(model.id) is True
-        assert await store.get(model.id) is None
+        assert await store.soft_delete(model.id) is True and await store.get(model.id) is None
         recovered = await store.get_deleted(model.id)
         assert recovered is not None and recovered.id == model.id
 
@@ -107,8 +94,7 @@ class ReadModelRepositoryConformance(ABC):
         model = _model()
         await store.save(model)
         await store.soft_delete(model.id)
-        assert await store.restore(model.id) is True
-        assert await store.get(model.id) is not None
+        assert await store.restore(model.id) is True and await store.get(model.id) is not None
 
     async def test_find_deleted_returns_only_soft_deleted_models(self, store: Repo) -> None:
         live, gone = _model(name="live"), _model(name="gone")
@@ -123,7 +109,6 @@ class ReadModelRepositoryConformance(ABC):
         assert [m.id for m in found] == [alpha.id]
 
     async def test_find_supports_every_comparison_operator(self, store: Repo) -> None:
-        """All eight operators, against a field that has a value in every row."""
         await store.save_many([_model(name=f"m{i}", count=i) for i in (1, 2, 3)])
 
         async def counts(filter_: Filter) -> list[int]:
@@ -139,21 +124,15 @@ class ReadModelRepositoryConformance(ABC):
         assert await counts(Filter.not_in("count", [1, 3])) == [2]
 
     async def test_a_null_field_is_distinct_from_every_value(self, store: Repo) -> None:
-        """NULL means 'no value': `ne`/`not_in` match NULL; ordering and `eq`/`in` do not."""
         await store.save_many([_model(name="present", note="set"), _model(name="absent")])
 
         async def names(filter_: Filter) -> list[str]:
             return sorted(m.name for m in await store.find(Query(filters=[filter_])))
 
-        present_filters = (
-            Filter.eq("note", "set"),
-            Filter.in_("note", ["set"]),
-            Filter.gt("note", "a"),
-            Filter.gte("note", "a"),
-            Filter.lt("note", "zzz"),
-            Filter.lte("note", "zzz"),
-        )
-        for f in present_filters:
+        f_eq, f_in = Filter.eq("note", "set"), Filter.in_("note", ["set"])
+        f_gt, f_gte = Filter.gt("note", "a"), Filter.gte("note", "a")
+        f_lt, f_lte = Filter.lt("note", "zzz"), Filter.lte("note", "zzz")
+        for f in (f_eq, f_in, f_gt, f_gte, f_lt, f_lte):
             assert await names(f) == ["present"]
         assert await names(Filter.ne("note", "set")) == ["absent"]
         assert await names(Filter.not_in("note", ["set"])) == ["absent"]
@@ -162,10 +141,10 @@ class ReadModelRepositoryConformance(ABC):
         self, store: Repo
     ) -> None:
         await store.save_many([_model(name="a"), _model(name="b")])
-        assert await store.find(Query(filters=[Filter.in_("name", [])])) == []
-        assert len(await store.find(Query(filters=[Filter.not_in("name", [])]))) == 2
-        assert await store.count(Query(filters=[Filter.in_("name", [])])) == 0
-        assert await store.count(Query(filters=[Filter.not_in("name", [])])) == 2
+        q_in = Query(filters=[Filter.in_("name", [])])
+        q_not_in = Query(filters=[Filter.not_in("name", [])])
+        assert await store.find(q_in) == [] and await store.count(q_in) == 0
+        assert len(await store.find(q_not_in)) == 2 and await store.count(q_not_in) == 2
 
     async def test_filtering_on_an_unknown_field_raises(self, store: Repo) -> None:
         bogus = Query(filters=[Filter.eq("no_such_field", "x")])
@@ -203,10 +182,8 @@ class ReadModelRepositoryConformance(ABC):
         everything = await store.find(Query(include_deleted=True))
         assert sorted(m.name for m in everything) == ["gone", "live"]
         assert await store.count(Query(include_deleted=True)) == 2
-        filtered = await store.find(
-            Query(filters=[Filter.eq("name", "gone")], include_deleted=True)
-        )
-        assert [m.id for m in filtered] == [gone.id]
+        q_gone = Query(filters=[Filter.eq("name", "gone")], include_deleted=True)
+        assert [m.id for m in await store.find(q_gone)] == [gone.id]
 
     async def test_find_orders_and_limits(self, store: Repo) -> None:
         await store.save_many([_model(name=f"m{i}", count=i) for i in range(3)])
@@ -236,8 +213,7 @@ class ReadModelRepositoryConformance(ABC):
         await store.save(model)
         loaded = await store.get(model.id)
         assert loaded is not None
-        before = loaded.version
-        loaded.name = "bumped"
+        before, loaded.name = loaded.version, "bumped"
         await store.save_with_version_check(loaded)
         after = await store.get(model.id)
         assert after is not None and after.version == before + 1
@@ -264,15 +240,13 @@ class ReadModelRepositoryConformance(ABC):
         loaded.name = "mutated locally"
         again = await store.get(model.id)
         assert again is not None and again.name == "stored"
-        [from_many] = await store.get_many([model.id])
-        [from_find] = await store.find()
+        [from_many], [from_find] = await store.get_many([model.id]), await store.find()
         assert (from_many.name, from_find.name) == ("stored", "stored")
 
     async def test_writes_do_not_mutate_the_callers_model(self, store: Repo) -> None:
         model = _model(name="first")
         await store.save(model)
-        version_after_save = model.version
-        update = await store.get(model.id)
+        version_after_save, update = model.version, await store.get(model.id)
         assert update is not None
         update.name = "second"
         await store.save(update)

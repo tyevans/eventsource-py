@@ -7,6 +7,7 @@ import logging
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from typing import Any
 
 from eventsource.application.subscriptions.shutdown_deadlines import ShutdownDeadlineManager
 from eventsource.application.subscriptions.shutdown_hooks import (
@@ -40,12 +41,15 @@ from eventsource.application.subscriptions.shutdown_signals import ShutdownSigna
 logger = logging.getLogger(__name__)
 
 
+def _delegate(mgr_attr: str, target_attr: str) -> Any:
+    return property(
+        lambda self: getattr(getattr(self, mgr_attr), target_attr),
+        lambda self, val: setattr(getattr(self, mgr_attr), target_attr, val),
+    )
+
+
 class ShutdownCoordinator:
-    """
-    Coordinates Kubernetes-friendly graceful shutdown of subscriptions:
-    traps SIGTERM/SIGINT, stops accepting new events, drains in-flight events,
-    saves final checkpoints, and closes connections cleanly.
-    """
+    """Coordinates Kubernetes-friendly graceful shutdown of subscriptions."""
 
     def __init__(
         self,
@@ -54,20 +58,15 @@ class ShutdownCoordinator:
         checkpoint_timeout: float = 5.0,
         checkpoint_interval: float = 5.0,
     ) -> None:
-        self.timeout = timeout
-        self.drain_timeout = drain_timeout
-        self.checkpoint_timeout = checkpoint_timeout
-        self.checkpoint_interval = checkpoint_interval
-
+        self.timeout, self.drain_timeout = timeout, drain_timeout
+        self.checkpoint_timeout, self.checkpoint_interval = checkpoint_timeout, checkpoint_interval
         self._signal_manager = ShutdownSignalManager(timeout=timeout)
         self._hook_manager = ShutdownHookManager()
         self._deadline_manager = ShutdownDeadlineManager(timeout=timeout)
         self._periodic_manager = PeriodicCheckpointManager(checkpoint_interval=checkpoint_interval)
-
         self._last_metrics_snapshot: ShutdownMetricsSnapshot | None = None
         self._in_flight_at_start: int = 0
-        self._drain_start_time: float = 0.0
-        self._drain_duration_seconds: float = 0.0
+        self._drain_start_time = self._drain_duration_seconds = 0.0
 
     @property
     def _phase(self) -> ShutdownPhase:
@@ -77,69 +76,16 @@ class ShutdownCoordinator:
     def _phase(self, value: ShutdownPhase) -> None:
         self._signal_manager.phase = value
 
-    @property
-    def _shutdown_event(self) -> asyncio.Event:
-        return self._signal_manager.shutdown_event
-
-    @property
-    def _shutdown_requested(self) -> bool:
-        return self._signal_manager.shutdown_requested
-
-    @_shutdown_requested.setter
-    def _shutdown_requested(self, value: bool) -> None:
-        self._signal_manager.shutdown_requested = value
-
-    @property
-    def _shutdown_reason(self) -> ShutdownReason | None:
-        return self._signal_manager.shutdown_reason
-
-    @_shutdown_reason.setter
-    def _shutdown_reason(self, value: ShutdownReason | None) -> None:
-        self._signal_manager.shutdown_reason = value
-
-    @property
-    def _signal_handlers_registered(self) -> bool:
-        return self._signal_manager._signal_handlers_registered
-
-    @_signal_handlers_registered.setter
-    def _signal_handlers_registered(self, value: bool) -> None:
-        self._signal_manager._signal_handlers_registered = value
-
-    @property
-    def _on_shutdown_callbacks(self) -> list[Callable[[], Awaitable[None]]]:
-        return self._signal_manager.callbacks
-
-    @property
-    def _pre_shutdown_hooks(self) -> list[tuple[PreShutdownHook, float]]:
-        return self._hook_manager._pre_shutdown_hooks
-
-    @property
-    def _post_shutdown_hooks(self) -> list[PostShutdownHook]:
-        return self._hook_manager._post_shutdown_hooks
-
-    @property
-    def _periodic_checkpoint_task(self) -> asyncio.Task[None] | None:
-        return self._periodic_manager._periodic_checkpoint_task
-
-    @_periodic_checkpoint_task.setter
-    def _periodic_checkpoint_task(self, task: asyncio.Task[None] | None) -> None:
-        self._periodic_manager._periodic_checkpoint_task = task
-
-    @property
-    def _periodic_checkpoints_saved(self) -> int:
-        return self._periodic_manager.periodic_checkpoints_saved
-
-    @_periodic_checkpoints_saved.setter
-    def _periodic_checkpoints_saved(self, count: int) -> None:
-        self._periodic_manager._periodic_checkpoints_saved = count
-
-    @property
-    def _shutdown_deadline(self) -> datetime | None:
-        return self._deadline_manager.deadline
-
-    @_shutdown_deadline.setter
-    def _shutdown_deadline(self, deadline: datetime | None) -> None:
-        self._deadline_manager._shutdown_deadline = deadline
+    _shutdown_event = _delegate("_signal_manager", "shutdown_event")
+    _shutdown_requested = _delegate("_signal_manager", "shutdown_requested")
+    _shutdown_reason = _delegate("_signal_manager", "shutdown_reason")
+    _signal_handlers_registered = _delegate("_signal_manager", "_signal_handlers_registered")
+    _on_shutdown_callbacks = _delegate("_signal_manager", "callbacks")
+    _pre_shutdown_hooks = _delegate("_hook_manager", "_pre_shutdown_hooks")
+    _post_shutdown_hooks = _delegate("_hook_manager", "_post_shutdown_hooks")
+    _periodic_checkpoint_task = _delegate("_periodic_manager", "_periodic_checkpoint_task")
+    _periodic_checkpoints_saved = _delegate("_periodic_manager", "_periodic_checkpoints_saved")
+    _shutdown_deadline = _delegate("_deadline_manager", "_shutdown_deadline")
 
     def register_signals(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._signal_manager.register_signals(loop)
@@ -227,15 +173,8 @@ class ShutdownCoordinator:
         forced: bool,
         error_msg: str | None,
     ) -> ShutdownResult:
-        return create_shutdown_result(
-            self,
-            start_time,
-            subscriptions_stopped,
-            events_drained,
-            checkpoints_saved,
-            forced,
-            error_msg,
-        )
+        args = (start_time, subscriptions_stopped, events_drained, checkpoints_saved)
+        return create_shutdown_result(self, *args, forced, error_msg)
 
     async def shutdown(
         self,
@@ -256,10 +195,8 @@ class ShutdownCoordinator:
         self._hook_manager.clear()
         self._periodic_manager.reset()
         self._deadline_manager.reset()
-        self._last_metrics_snapshot = None
-        self._in_flight_at_start = 0
-        self._drain_start_time = 0.0
-        self._drain_duration_seconds = 0.0
+        self._last_metrics_snapshot, self._in_flight_at_start = None, 0
+        self._drain_start_time = self._drain_duration_seconds = 0.0
         logger.debug("Shutdown coordinator reset")
 
 
