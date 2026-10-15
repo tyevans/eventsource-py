@@ -21,9 +21,9 @@ from eventsource import (
 )
 
 pytestmark = pytest.mark.timeout(60)
-
 _POOL = [uuid4() for _ in range(5)]
 tenant_id_strategy = st.sampled_from(_POOL)
+_SUPPRESS = [HealthCheck.function_scoped_fixture]
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +34,7 @@ def _clear_context() -> None:
 
 
 @given(tenant_ids=st.lists(tenant_id_strategy, min_size=0, max_size=8))
-@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=200, suppress_health_check=_SUPPRESS)
 def test_sync_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
     clear_tenant_context()
 
@@ -53,7 +53,7 @@ def test_sync_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
 
 
 @given(tenant_ids=st.lists(tenant_id_strategy, min_size=0, max_size=8))
-@settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=200, suppress_health_check=_SUPPRESS)
 async def test_async_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
     clear_tenant_context()
 
@@ -72,11 +72,7 @@ async def test_async_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
 
 
 @given(tenant_ids=st.lists(tenant_id_strategy, min_size=2, max_size=12))
-@settings(
-    max_examples=50,
-    suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
-    deadline=None,
-)
+@settings(max_examples=50, suppress_health_check=[*_SUPPRESS, HealthCheck.too_slow], deadline=None)
 async def test_concurrent_tasks_never_observe_others_tenant(tenant_ids: list[UUID]) -> None:
     clear_tenant_context()
     observed: dict[int, list[UUID | None]] = {}
@@ -84,11 +80,9 @@ async def test_concurrent_tasks_never_observe_others_tenant(tenant_ids: list[UUI
     async def worker(idx: int, tenant_id: UUID) -> None:
         samples: list[UUID | None] = []
         async with tenant_scope(tenant_id):
-            samples.append(get_current_tenant())
-            await asyncio.sleep(0)
-            samples.append(get_current_tenant())
-            await asyncio.sleep(0)
-            samples.append(get_current_tenant())
+            for _ in range(3):
+                samples.append(get_current_tenant())
+                await asyncio.sleep(0)
         observed[idx] = samples
 
     await asyncio.gather(*(worker(i, t) for i, t in enumerate(tenant_ids)))
@@ -99,25 +93,19 @@ async def test_concurrent_tasks_never_observe_others_tenant(tenant_ids: list[UUI
 
 async def test_concurrency_isolation_test_actually_detects_breakage() -> None:
     shared_state: dict[str, UUID | None] = {"tenant": None}
+    samples: dict[int, list[UUID | None]] = {}
 
-    async def broken_worker(
-        idx: int, tenant_id: UUID, samples: dict[int, list[UUID | None]]
-    ) -> None:
+    async def broken_worker(idx: int, tenant_id: UUID) -> None:
         shared_state["tenant"] = tenant_id
-        collected: list[UUID | None] = [shared_state["tenant"]]
-        await asyncio.sleep(0)
-        collected.append(shared_state["tenant"])
-        await asyncio.sleep(0)
-        collected.append(shared_state["tenant"])
+        collected: list[UUID | None] = []
+        for _ in range(3):
+            collected.append(shared_state["tenant"])
+            await asyncio.sleep(0)
         samples[idx] = collected
 
     tenant_ids = [uuid4() for _ in range(6)]
-    samples: dict[int, list[UUID | None]] = {}
-    await asyncio.gather(*(broken_worker(i, t, samples) for i, t in enumerate(tenant_ids)))
-
-    assert any(
-        any(sample != tenant_ids[idx] for sample in samples[idx]) for idx in range(len(tenant_ids))
-    )
+    await asyncio.gather(*(broken_worker(i, t) for i, t in enumerate(tenant_ids)))
+    assert any(any(s != tenant_ids[i] for s in samples[i]) for i in range(len(tenant_ids)))
 
 
 class _BoomError(Exception):
@@ -125,11 +113,10 @@ class _BoomError(Exception):
 
 
 @given(depth=st.integers(min_value=1, max_value=6), fail_at=st.integers(min_value=0))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=100, suppress_health_check=_SUPPRESS)
 def test_sync_exception_at_any_depth_restores_context(depth: int, fail_at: int) -> None:
     clear_tenant_context()
-    fail_at = fail_at % depth
-    tenant_ids = [uuid4() for _ in range(depth)]
+    fail_at, tenant_ids = fail_at % depth, [uuid4() for _ in range(depth)]
 
     def recurse(level: int) -> None:
         with tenant_scope_sync(tenant_ids[level]):
@@ -144,11 +131,10 @@ def test_sync_exception_at_any_depth_restores_context(depth: int, fail_at: int) 
 
 
 @given(depth=st.integers(min_value=1, max_value=6), fail_at=st.integers(min_value=0))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=100, suppress_health_check=_SUPPRESS)
 async def test_async_exception_at_any_depth_restores_context(depth: int, fail_at: int) -> None:
     clear_tenant_context()
-    fail_at = fail_at % depth
-    tenant_ids = [uuid4() for _ in range(depth)]
+    fail_at, tenant_ids = fail_at % depth, [uuid4() for _ in range(depth)]
 
     async def recurse(level: int) -> None:
         async with tenant_scope(tenant_ids[level]):
@@ -174,8 +160,7 @@ def test_get_required_tenant_raises_documented_exception_type_and_message() -> N
 
 async def test_abandoned_async_scope_mid_await_still_restores_on_cancellation() -> None:
     clear_tenant_context()
-    tenant_id = uuid4()
-    saw_tenant_before_cancel = None
+    tenant_id, saw_tenant_before_cancel = uuid4(), None
 
     async def scoped_worker() -> None:
         nonlocal saw_tenant_before_cancel
@@ -188,9 +173,7 @@ async def test_abandoned_async_scope_mid_await_still_restores_on_cancellation() 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-
-    assert saw_tenant_before_cancel == tenant_id
-    assert get_current_tenant() is None
+    assert saw_tenant_before_cancel == tenant_id and get_current_tenant() is None
 
 
 def test_copy_context_run_is_isolated_from_caller() -> None:
@@ -203,6 +186,5 @@ def test_copy_context_run_is_isolated_from_caller() -> None:
         set_current_tenant(uuid4())
         return get_current_tenant()
 
-    assert ctx.run(mutate_in_copy) is not None
-    assert get_current_tenant() == caller_tenant
+    assert ctx.run(mutate_in_copy) is not None and get_current_tenant() == caller_tenant
     clear_tenant_context()

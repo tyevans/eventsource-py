@@ -18,14 +18,12 @@ class TestWritePausedError:
     def test_error_attributes(self) -> None:
         tenant_id = uuid4()
         error = WritePausedError(tenant_id=tenant_id, timeout=5.0)
-        assert error.tenant_id == tenant_id
-        assert error.timeout == 5.0
+        assert error.tenant_id == tenant_id and error.timeout == 5.0
 
     def test_error_message(self) -> None:
         tenant_id = uuid4()
         error = WritePausedError(tenant_id=tenant_id, timeout=5.0)
-        assert str(tenant_id) in str(error)
-        assert "5.0" in str(error)
+        assert str(tenant_id) in str(error) and "5.0" in str(error)
 
 
 class TestDualWriteInterceptorManagement:
@@ -72,8 +70,7 @@ class TestWritePauseManagement:
         tenant_id = uuid4()
         await router.pause_writes(tenant_id)
         metrics = await router.resume_writes(tenant_id)
-        assert metrics is not None
-        assert router.is_paused(tenant_id) is False
+        assert metrics is not None and router.is_paused(tenant_id) is False
 
     async def test_resume_writes_signals_waiters(self, router: TenantStoreRouter) -> None:
         tenant_id = uuid4()
@@ -113,10 +110,7 @@ class TestWaitIfPaused:
         self, mock_default_store: MagicMock, mock_routing_repo: AsyncMock
     ) -> None:
         router = TenantStoreRouter(
-            default_store=mock_default_store,
-            routing_repo=mock_routing_repo,
-            write_pause_timeout=0.01,
-            enable_tracing=False,
+            mock_default_store, mock_routing_repo, write_pause_timeout=0.01, enable_tracing=False
         )
         tenant_id = uuid4()
         await router.pause_writes(tenant_id)
@@ -146,7 +140,6 @@ class TestMigrationStateRouting:
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
         stores = {"source": mock_default_store, "target": mock_dedicated_store}
-
         mock_routing_repo.get_routing.return_value = TenantRouting(
             tenant_id=tenant_id,
             store_id="source",
@@ -154,8 +147,8 @@ class TestMigrationStateRouting:
             target_store_id="target",
         )
         router = TenantStoreRouter(
-            default_store=mock_default_store,
-            routing_repo=mock_routing_repo,
+            mock_default_store,
+            mock_routing_repo,
             stores=stores,
             default_store_id="source",
             enable_tracing=False,
@@ -169,17 +162,13 @@ class TestMigrationStateRouting:
         tenant_id, aggregate_id = uuid4(), uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-
         mock_routing_repo.get_routing.return_value = TenantRouting(
             tenant_id=tenant_id,
             store_id="default",
             migration_state=TenantMigrationState.CUTOVER_PAUSED,
         )
         router = TenantStoreRouter(
-            default_store=mock_default_store,
-            routing_repo=mock_routing_repo,
-            write_pause_timeout=0.01,
-            enable_tracing=False,
+            mock_default_store, mock_routing_repo, write_pause_timeout=0.01, enable_tracing=False
         )
         await router.pause_writes(tenant_id)
         with pytest.raises(WritePausedError):
@@ -193,16 +182,11 @@ class TestDualWriteStateWithoutInterceptor:
         tenant_id, aggregate_id = uuid4(), uuid4()
         event = TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
         stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-
         mock_routing_repo.get_routing.return_value = TenantRouting(
             tenant_id=tenant_id,
             store_id="default",
             migration_state=TenantMigrationState.DUAL_WRITE,
         )
-        router = TenantStoreRouter(
-            default_store=mock_default_store,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
-        )
+        router = TenantStoreRouter(mock_default_store, mock_routing_repo, enable_tracing=False)
         await router.append(stream, [event], ExpectedVersion.no_stream())
         mock_default_store.append.assert_called_once()

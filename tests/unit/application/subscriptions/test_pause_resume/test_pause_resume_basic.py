@@ -34,56 +34,48 @@ class TestPauseReasonEnum:
         )
 
 
+@pytest.mark.asyncio
 class TestSubscriptionPause:
-    @pytest.mark.asyncio
     async def test_pause_from_catching_up(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.CATCHING_UP)
         await subscription.pause()
         assert subscription.state == SubscriptionState.PAUSED
 
-    @pytest.mark.asyncio
     async def test_pause_from_live(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
         assert subscription.state == SubscriptionState.PAUSED
 
-    @pytest.mark.asyncio
     async def test_pause_stores_previous_state_catching_up(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.CATCHING_UP)
         await subscription.pause()
         assert subscription.state_before_pause == SubscriptionState.CATCHING_UP
 
-    @pytest.mark.asyncio
     async def test_pause_stores_previous_state_live(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
         assert subscription.state_before_pause == SubscriptionState.LIVE
 
-    @pytest.mark.asyncio
     async def test_pause_with_manual_reason(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause(reason=PauseReason.MANUAL)
         assert subscription.pause_reason == PauseReason.MANUAL
 
-    @pytest.mark.asyncio
     async def test_pause_with_backpressure_reason(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause(reason=PauseReason.BACKPRESSURE)
         assert subscription.pause_reason == PauseReason.BACKPRESSURE
 
-    @pytest.mark.asyncio
     async def test_pause_with_maintenance_reason(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause(reason=PauseReason.MAINTENANCE)
         assert subscription.pause_reason == PauseReason.MAINTENANCE
 
-    @pytest.mark.asyncio
     async def test_pause_default_reason_is_manual(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
         assert subscription.pause_reason == PauseReason.MANUAL
 
-    @pytest.mark.asyncio
     async def test_pause_sets_paused_at_timestamp(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         before = datetime.now(UTC)
@@ -91,14 +83,12 @@ class TestSubscriptionPause:
         after = datetime.now(UTC)
         assert subscription.paused_at is not None and before <= subscription.paused_at <= after
 
-    @pytest.mark.asyncio
     async def test_pause_clears_pause_event(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         assert subscription._pause_event.is_set()
         await subscription.pause()
         assert not subscription._pause_event.is_set()
 
-    @pytest.mark.asyncio
     async def test_pause_maintains_position(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.record_event_processed(
@@ -108,22 +98,20 @@ class TestSubscriptionPause:
         assert subscription.last_processed_position == pos(42)
 
 
+@pytest.mark.asyncio
 class TestSubscriptionResume:
-    @pytest.mark.asyncio
     async def test_resume_from_paused_to_catching_up(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.CATCHING_UP)
         await subscription.pause()
         await subscription.resume()
         assert subscription.state == SubscriptionState.CATCHING_UP
 
-    @pytest.mark.asyncio
     async def test_resume_from_paused_to_live(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
         await subscription.resume()
         assert subscription.state == SubscriptionState.LIVE
 
-    @pytest.mark.asyncio
     async def test_resume_clears_pause_reason(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause(reason=PauseReason.MAINTENANCE)
@@ -131,7 +119,6 @@ class TestSubscriptionResume:
         await subscription.resume()
         assert subscription.pause_reason is None
 
-    @pytest.mark.asyncio
     async def test_resume_clears_paused_at(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
@@ -139,7 +126,6 @@ class TestSubscriptionResume:
         await subscription.resume()
         assert subscription.paused_at is None
 
-    @pytest.mark.asyncio
     async def test_resume_sets_pause_event(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
@@ -147,7 +133,6 @@ class TestSubscriptionResume:
         await subscription.resume()
         assert subscription._pause_event.is_set()
 
-    @pytest.mark.asyncio
     async def test_resume_maintains_position(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.record_event_processed(
@@ -158,19 +143,17 @@ class TestSubscriptionResume:
         assert subscription.last_processed_position == pos(42)
 
 
+@pytest.mark.asyncio
 class TestPauseProperties:
-    @pytest.mark.asyncio
     async def test_is_paused_true_when_paused(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
         assert subscription.is_paused is True
 
-    @pytest.mark.asyncio
     async def test_is_paused_false_when_not_paused(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         assert subscription.is_paused is False
 
-    @pytest.mark.asyncio
     async def test_pause_duration_seconds_during_pause(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         await subscription.pause()
@@ -178,16 +161,13 @@ class TestPauseProperties:
         duration = subscription.pause_duration_seconds
         assert duration is not None and duration >= 0.1
 
-    @pytest.mark.asyncio
     async def test_pause_duration_seconds_none_when_not_paused(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         assert subscription.pause_duration_seconds is None
 
-    @pytest.mark.asyncio
     async def test_state_before_pause_none_when_not_paused(self, subscription: Subscription):
         assert subscription.state_before_pause is None
 
-    @pytest.mark.asyncio
     async def test_pause_reason_none_when_not_paused(self, subscription: Subscription):
         await subscription.transition_to(SubscriptionState.LIVE)
         assert subscription.pause_reason is None

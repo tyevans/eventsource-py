@@ -1,10 +1,4 @@
-"""Unit and integration tests for non-blocking backoff in Kafka consumer (TASK-0009).
-
-Verifies:
-1. Exponential retry scheduling uses non-blocking async timers.
-2. Concurrent partition messages continue processing while a failed message backs off.
-3. High throughput is maintained during transient error injection.
-"""
+"""Unit and integration tests for non-blocking backoff in Kafka consumer (TASK-0009)."""
 
 from __future__ import annotations
 
@@ -36,10 +30,7 @@ class NonBlockingTestEvent(DomainEvent):
 
 
 def _make_msg(
-    event: DomainEvent,
-    partition: int,
-    offset: int,
-    retry_after: float | None = None,
+    event: DomainEvent, partition: int, offset: int, retry_after: float | None = None
 ) -> Any:
     headers: list[tuple[str, bytes]] = [
         ("event_type", event.event_type.encode("utf-8")),
@@ -60,11 +51,7 @@ def _make_msg(
 class AsyncMessageStream:
     """Mock asynchronous consumer that yields messages from an in-memory queue."""
 
-    def __init__(
-        self,
-        messages: list[Any],
-        on_exhausted: Any | None = None,
-    ) -> None:
+    def __init__(self, messages: list[Any], on_exhausted: Any | None = None) -> None:
         self._messages = list(messages)
         self.committed: list[Any] = []
         self.on_exhausted = on_exhausted
@@ -84,17 +71,12 @@ class AsyncMessageStream:
 
 
 def _make_consumer_loop(
-    stream: AsyncMessageStream,
-    handler: HandlerAdapter,
+    stream: AsyncMessageStream, handler: HandlerAdapter
 ) -> tuple[KafkaConsumerLoop, AsyncMock]:
     with patch.object(KafkaEventBusConfig, "_validate_security_config"):
-        config = KafkaEventBusConfig(  # type: ignore[arg-type]
-            bootstrap_servers="localhost:9092",
-            max_retries=3,
-        )
+        config = KafkaEventBusConfig(bootstrap_servers="localhost:9092", max_retries=3)  # type: ignore[arg-type]
     stats = KafkaEventBusStats()
     producer = AsyncMock()
-
     connection = KafkaConnectionManager(config=config, stats=stats, metrics=None)
     connection._producer = producer
     connection._consumer = stream  # type: ignore[assignment]
@@ -119,54 +101,36 @@ def _make_consumer_loop(
 
 @pytest.mark.asyncio
 async def test_concurrent_partition_messages_processed_while_message_backs_off() -> None:
-    """Verifies that while a retried message on partition 0 backs off,
-    messages on partition 1 and partition 2 are processed immediately
-    without being blocked by partition 0's delay.
-    """
-    processed_order: list[tuple[str, int]] = []
+    """Verify other partitions process immediately while a retried message backs off."""
+    processed_order: list[tuple[str, float]] = []
 
     async def handle_event(event: DomainEvent) -> None:
         if isinstance(event, NonBlockingTestEvent):
             processed_order.append((event.data, datetime.now(UTC).timestamp()))
 
-    # Message 1 on partition 0 has a backoff delay of 0.2s into the future
-    future_delay = 0.2
-    event1 = NonBlockingTestEvent(aggregate_id=uuid4(), data="p0-delayed")
     msg1 = _make_msg(
-        event1,
+        NonBlockingTestEvent(aggregate_id=uuid4(), data="p0-delayed"),
         partition=0,
         offset=10,
-        retry_after=datetime.now(UTC).timestamp() + future_delay,
+        retry_after=datetime.now(UTC).timestamp() + 0.2,
     )
-
-    # Message 2 on partition 1 has no delay
-    event2 = NonBlockingTestEvent(aggregate_id=uuid4(), data="p1-immediate")
-    msg2 = _make_msg(event2, partition=1, offset=20)
-
-    # Message 3 on partition 2 has no delay
-    event3 = NonBlockingTestEvent(aggregate_id=uuid4(), data="p2-immediate")
-    msg3 = _make_msg(event3, partition=2, offset=30)
+    msg2 = _make_msg(
+        NonBlockingTestEvent(aggregate_id=uuid4(), data="p1-immediate"), partition=1, offset=20
+    )
+    msg3 = _make_msg(
+        NonBlockingTestEvent(aggregate_id=uuid4(), data="p2-immediate"), partition=2, offset=30
+    )
 
     stream = AsyncMessageStream([msg1, msg2, msg3])
     loop, _ = _make_consumer_loop(stream, HandlerAdapter(handle_event))
-
-    # Run start() which consumes all 3 messages
     await loop.start(auto_reconnect=False)
 
-    # At this point, the consume loop has yielded all messages.
-    # msg2 and msg3 should be processed immediately, while msg1 is scheduled on the timer.
     processed_names = [name for name, _ in processed_order]
-    assert "p1-immediate" in processed_names
-    assert "p2-immediate" in processed_names
-    # p0-delayed should NOT have been processed yet if non-blocking!
+    assert "p1-immediate" in processed_names and "p2-immediate" in processed_names
     assert "p0-delayed" not in processed_names
 
-    # Now drain retries (awaits the non-blocking timer)
     await loop.drain_retries(timeout=1.0)
-
-    # Now all 3 have been processed
-    final_names = [name for name, _ in processed_order]
-    assert final_names == ["p1-immediate", "p2-immediate", "p0-delayed"]
+    assert [name for name, _ in processed_order] == ["p1-immediate", "p2-immediate", "p0-delayed"]
 
 
 @pytest.mark.asyncio
@@ -178,21 +142,22 @@ async def test_throughput_during_transient_error_injection() -> None:
         if isinstance(event, NonBlockingTestEvent) and event.data.startswith("p1"):
             processed_p1.append(event.data)
 
-    # 1 delayed message on partition 0 and 10 fast messages on partition 1
-    messages: list[Any] = []
-    p0_event = NonBlockingTestEvent(aggregate_id=uuid4(), data="p0-backoff")
-    messages.append(
+    messages: list[Any] = [
         _make_msg(
-            p0_event,
+            NonBlockingTestEvent(aggregate_id=uuid4(), data="p0-backoff"),
             partition=0,
             offset=1,
             retry_after=datetime.now(UTC).timestamp() + 0.5,
-        )
-    )
-
-    for i in range(10):
-        p1_event = NonBlockingTestEvent(aggregate_id=uuid4(), data=f"p1-msg-{i}")
-        messages.append(_make_msg(p1_event, partition=1, offset=100 + i))
+        ),
+        *[
+            _make_msg(
+                NonBlockingTestEvent(aggregate_id=uuid4(), data=f"p1-msg-{i}"),
+                partition=1,
+                offset=100 + i,
+            )
+            for i in range(10)
+        ],
+    ]
 
     stream = AsyncMessageStream(messages)
     loop, _ = _make_consumer_loop(stream, HandlerAdapter(handle_event))
@@ -201,8 +166,6 @@ async def test_throughput_during_transient_error_injection() -> None:
     await loop.start(auto_reconnect=False)
     elapsed_before_drain = asyncio.get_running_loop().time() - start_time
 
-    # All 10 partition 1 messages processed almost instantaneously (well under 0.5s)
     assert len(processed_p1) == 10
     assert elapsed_before_drain < 0.3, "Loop was blocked by partition 0 backoff!"
-
     await loop.drain_retries(timeout=1.0)

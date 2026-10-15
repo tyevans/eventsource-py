@@ -88,10 +88,8 @@ class InMemoryMigrationRepository:
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
         migration = await self._require(migration_id)
         now = datetime.now(UTC)
-        migration.is_paused = paused
-        migration.paused_at = now if paused else None
-        migration.pause_reason = reason if paused else None
-        migration.updated_at = now
+        migration.is_paused, migration.updated_at = paused, now
+        migration.paused_at, migration.pause_reason = (now, reason) if paused else (None, None)
 
     async def list_active(self) -> list[Migration]:
         return [m for m in self._migrations.values() if not m.phase.is_terminal]
@@ -166,17 +164,16 @@ class InMemoryRoutingRepository:
 class _CheckpointData:
     projection_name: str
     position: int
-    last_event_id: UUID | None
-    last_event_type: str | None
+    last_event_id: UUID | None = None
+    last_event_type: str | None = None
 
 
 class InMemoryCheckpointRepository:
     def __init__(self) -> None:
-        self._checkpoints: dict[str, dict[str, Any]] = {}
+        self._checkpoints: dict[str, _CheckpointData] = {}
 
     async def get_position(self, subscription_id: str) -> int | None:
-        checkpoint = self._checkpoints.get(subscription_id)
-        return checkpoint.get("position") if checkpoint else None
+        return cp.position if (cp := self._checkpoints.get(subscription_id)) else None
 
     async def save_position(
         self,
@@ -185,24 +182,9 @@ class InMemoryCheckpointRepository:
         event_id: UUID | None = None,
         event_type: str | None = None,
     ) -> None:
-        self._checkpoints[subscription_id] = {
-            "projection_name": subscription_id,
-            "position": position,
-            "last_event_id": event_id,
-            "last_event_type": event_type,
-            "updated_at": datetime.now(UTC),
-        }
+        self._checkpoints[subscription_id] = _CheckpointData(
+            subscription_id, position, event_id, event_type
+        )
 
     async def get_all_checkpoints(self) -> list[Any]:
-        return [
-            _CheckpointData(
-                d["projection_name"],
-                d["position"],
-                d.get("last_event_id"),
-                d.get("last_event_type"),
-            )  # fmt: skip
-            for d in self._checkpoints.values()
-        ]
-
-
-__all__ = ["InMemoryCheckpointRepository", "InMemoryMigrationRepository", "InMemoryRoutingRepository"]  # pragma: allowlist secret  # fmt: skip
+        return list(self._checkpoints.values())

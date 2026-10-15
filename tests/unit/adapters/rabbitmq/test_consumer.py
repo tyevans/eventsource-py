@@ -93,29 +93,21 @@ async def _boom(event: DomainEvent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_all_handlers_run_when_first_fails_and_message_not_acked(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_all_handlers_run_when_first_fails_and_message_not_acked(config, stats) -> None:
     calls: list[str] = []
 
     async def failing(event: DomainEvent) -> None:
         calls.append("failing")
         raise ValueError("boom")
 
-    consumer = _consumer(
-        config,
-        stats,
-        handlers=(HandlerAdapter(failing), HandlerAdapter(lambda _e: calls.append("succeeding"))),
-    )
-    await consumer._process_message(_message())
+    handlers = (HandlerAdapter(failing), HandlerAdapter(lambda _e: calls.append("succeeding")))
+    await _consumer(config, stats, handlers=handlers)._process_message(_message())
     assert calls == ["failing", "succeeding"]
     assert (stats.events_processed_failed, stats.events_processed_success) == (1, 0)
 
 
 @pytest.mark.asyncio
-async def test_dispatch_event_raises_aggregate_error(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_dispatch_event_raises_aggregate_error(config, stats) -> None:
     async def failing_b(event: DomainEvent) -> None:
         raise RuntimeError("b")
 
@@ -126,9 +118,7 @@ async def test_dispatch_event_raises_aggregate_error(
 
 
 @pytest.mark.asyncio
-async def test_success_path_acks(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_success_path_acks(config, stats) -> None:
     seen: list[DomainEvent] = []
     consumer = _consumer(config, stats, handlers=(HandlerAdapter(seen.append),))
     message = _message()
@@ -138,9 +128,7 @@ async def test_success_path_acks(
 
 
 @pytest.mark.asyncio
-async def test_failure_below_max_retries_republishes_with_incremented_count(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_failure_below_max_retries_republishes_with_incremented_count(config, stats) -> None:
     exchange = mock.AsyncMock()
     consumer = _consumer(config, stats, handlers=(HandlerAdapter(_boom),), exchange=exchange)
     message = _message({"event_type": "ConsumerTestEvent", "x-retry-count": 1})
@@ -153,9 +141,7 @@ async def test_failure_below_max_retries_republishes_with_incremented_count(
 
 
 @pytest.mark.asyncio
-async def test_failure_at_max_retries_goes_to_dlq_with_single_failure_unwrap(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_failure_at_max_retries_goes_to_dlq_with_single_failure_unwrap(config, stats) -> None:
     dlq_exchange = mock.AsyncMock()
     consumer = _consumer(
         config, stats, handlers=(HandlerAdapter(_boom),), dlq_exchange=dlq_exchange
@@ -171,9 +157,7 @@ async def test_failure_at_max_retries_goes_to_dlq_with_single_failure_unwrap(
 
 
 @pytest.mark.asyncio
-async def test_unknown_event_type_is_acked(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_unknown_event_type_is_acked(config, stats) -> None:
     consumer = _consumer(config, stats)
     consumer._resolve_event_class = lambda _name: None  # type: ignore[assignment]
     message = _message()
@@ -182,9 +166,7 @@ async def test_unknown_event_type_is_acked(
 
 
 @pytest.mark.asyncio
-async def test_resume_if_was_consuming_restarts_only_when_previously_active(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_resume_if_was_consuming_restarts_only_when_previously_active(config, stats) -> None:
     connection = mock.MagicMock(_was_consuming=False)
     consumer = _consumer(config, stats, connection=connection)
     consumer.start = mock.AsyncMock()  # type: ignore[method-assign]
@@ -198,9 +180,7 @@ async def test_resume_if_was_consuming_restarts_only_when_previously_active(
 
 
 @pytest.mark.asyncio
-async def test_stop_sets_is_consuming_false(
-    config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats
-) -> None:
+async def test_stop_sets_is_consuming_false(config, stats) -> None:
     consumer = _consumer(config, stats)
     consumer._consuming = True
     assert consumer.is_consuming is True
