@@ -1,8 +1,4 @@
-"""Transition coordinator module for catch-up to live event transition.
-
-Backward-compatible facade re-exporting TransitionCoordinator, TransitionPhase,
-TransitionResult, and StartFromResolver.
-"""
+"""Catch-up to live transition coordinator, phase, result, and position resolver."""
 
 from __future__ import annotations
 

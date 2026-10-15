@@ -1,7 +1,4 @@
-"""Live runner module for real-time event processing.
-
-Backward-compatible facade exporting LiveRunner and related models.
-"""
+"""Real-time event processing runner and live statistics re-export surface."""
 
 from __future__ import annotations
 
