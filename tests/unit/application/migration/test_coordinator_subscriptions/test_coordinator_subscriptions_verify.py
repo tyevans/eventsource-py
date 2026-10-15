@@ -5,19 +5,10 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.application.migration.consistency import (
-    ConsistencyViolation,
-    VerificationLevel,
-)
+from eventsource.application.migration.consistency import ConsistencyViolation, VerificationLevel
 from eventsource.application.migration.coordinator import MigrationCoordinator
-from eventsource.application.migration.exceptions import (
-    MigrationError,
-    MigrationNotFoundError,
-)
-from eventsource.application.migration.metrics import (
-    clear_metrics_registry,
-    get_migration_metrics,
-)
+from eventsource.application.migration.exceptions import MigrationError, MigrationNotFoundError
+from eventsource.application.migration.metrics import clear_metrics_registry, get_migration_metrics
 from eventsource.ports.migration.models import Migration, MigrationPhase
 from tests.unit.application.migration.test_coordinator_subscriptions._fixtures import (
     create_coordinator,
@@ -31,12 +22,10 @@ class TestVerifyConsistency:
 
     @pytest.fixture
     def coordinator_deps(self) -> dict:
-        """Create coordinator dependencies."""
         return create_coordinator_deps()
 
     @pytest.mark.asyncio
     async def test_verify_consistency_success(self, coordinator_deps: dict) -> None:
-        """Test verify_consistency returns report on success."""
         migration_id, tenant_id = uuid4(), uuid4()
         target_store = AsyncMock()
         migration = Migration(
@@ -58,14 +47,12 @@ class TestVerifyConsistency:
             streams_verified=10,
             is_consistent=True,
         )
-
         with patch(
             "eventsource.application.migration.coordinator.ConsistencyVerifier"
         ) as mock_verifier_cls:
             mock_verifier = MagicMock()
             mock_verifier.verify_tenant_consistency = AsyncMock(return_value=expected_report)
             mock_verifier_cls.return_value = mock_verifier
-
             report = await coordinator.verify_consistency(
                 migration_id, level=VerificationLevel.HASH, sample_percentage=100.0
             )
@@ -78,7 +65,6 @@ class TestVerifyConsistency:
 
     @pytest.mark.asyncio
     async def test_verify_consistency_with_violations(self, coordinator_deps: dict) -> None:
-        """Test verify_consistency handles violations correctly."""
         migration_id, tenant_id = uuid4(), uuid4()
         target_store = AsyncMock()
         migration = Migration(
@@ -109,14 +95,12 @@ class TestVerifyConsistency:
             is_consistent=False,
             violations=violations,
         )
-
         with patch(
             "eventsource.application.migration.coordinator.ConsistencyVerifier"
         ) as mock_verifier_cls:
             mock_verifier = MagicMock()
             mock_verifier.verify_tenant_consistency = AsyncMock(return_value=expected_report)
             mock_verifier_cls.return_value = mock_verifier
-
             report = await coordinator.verify_consistency(migration_id)
 
         assert report.is_consistent is False
@@ -126,9 +110,6 @@ class TestVerifyConsistency:
     async def test_verify_consistency_with_violations_records_metric(
         self, coordinator_deps: dict
     ) -> None:
-        """verify_consistency() reports each violation through the real
-        MigrationMetrics instance for this migration -- not a standalone
-        metrics object the test constructs and calls directly."""
         clear_metrics_registry()
         migration_id, tenant_id = uuid4(), uuid4()
         target_store = AsyncMock()
@@ -166,14 +147,12 @@ class TestVerifyConsistency:
             is_consistent=False,
             violations=violations,
         )
-
         with patch(
             "eventsource.application.migration.coordinator.ConsistencyVerifier"
         ) as mock_verifier_cls:
             mock_verifier = MagicMock()
             mock_verifier.verify_tenant_consistency = AsyncMock(return_value=expected_report)
             mock_verifier_cls.return_value = mock_verifier
-
             await coordinator.verify_consistency(migration_id)
 
         snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
@@ -182,17 +161,14 @@ class TestVerifyConsistency:
 
     @pytest.mark.asyncio
     async def test_verify_consistency_migration_not_found(self, coordinator_deps: dict) -> None:
-        """Test verify_consistency raises MigrationNotFoundError."""
         migration_id = uuid4()
         coordinator_deps["migration_repo"].get = AsyncMock(return_value=None)
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-
         with pytest.raises(MigrationNotFoundError):
             await coordinator.verify_consistency(migration_id)
 
     @pytest.mark.asyncio
     async def test_verify_consistency_no_target_store(self, coordinator_deps: dict) -> None:
-        """Test verify_consistency raises if no target store found."""
         migration_id = uuid4()
         migration = Migration(
             id=migration_id,
@@ -203,10 +179,8 @@ class TestVerifyConsistency:
         )
         coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.verify_consistency(migration_id)
-
         assert "Target store not found" in str(exc_info.value)
 
 
@@ -214,7 +188,6 @@ class TestGetConsistencyReport:
     """Tests for MigrationCoordinator.get_consistency_report() method."""
 
     def test_get_consistency_report_returns_stored_report(self) -> None:
-        """Test get_consistency_report returns stored report."""
         migration_id, tenant_id = uuid4(), uuid4()
         coordinator = create_coordinator()
         report = make_verification_report(
@@ -225,12 +198,10 @@ class TestGetConsistencyReport:
             streams_verified=5,
         )
         coordinator._consistency_reports[migration_id] = report
-
         result = coordinator.get_consistency_report(migration_id)
         assert result is report
 
     def test_get_consistency_report_returns_none_if_not_found(self) -> None:
-        """Test get_consistency_report returns None if no report exists."""
         coordinator = create_coordinator()
         assert coordinator.get_consistency_report(uuid4()) is None
 
@@ -240,7 +211,6 @@ class TestVerificationLevel:
 
     @pytest.mark.asyncio
     async def test_verify_consistency_with_count_level(self) -> None:
-        """Test verify_consistency with COUNT level."""
         migration_id, tenant_id = uuid4(), uuid4()
         coordinator = create_coordinator(migration_repo=AsyncMock())
         migration = Migration(
@@ -252,7 +222,6 @@ class TestVerificationLevel:
         )
         coordinator._migration_repo.get = AsyncMock(return_value=migration)
         coordinator._target_stores[migration_id] = AsyncMock()
-
         report = make_verification_report(
             tenant_id=tenant_id,
             level=VerificationLevel.COUNT,
@@ -260,23 +229,19 @@ class TestVerificationLevel:
             target_event_count=100,
             streams_verified=5,
         )
-
         with patch(
             "eventsource.application.migration.coordinator.ConsistencyVerifier"
         ) as mock_verifier_cls:
             mock_verifier = MagicMock()
             mock_verifier.verify_tenant_consistency = AsyncMock(return_value=report)
             mock_verifier_cls.return_value = mock_verifier
-
             await coordinator.verify_consistency(migration_id, level=VerificationLevel.COUNT)
-
             mock_verifier.verify_tenant_consistency.assert_called_once()
             call_kwargs = mock_verifier.verify_tenant_consistency.call_args[1]
             assert call_kwargs["level"] == VerificationLevel.COUNT
 
     @pytest.mark.asyncio
     async def test_verify_consistency_with_full_level(self) -> None:
-        """Test verify_consistency with FULL level."""
         migration_id, tenant_id = uuid4(), uuid4()
         coordinator = create_coordinator(migration_repo=AsyncMock())
         migration = Migration(
@@ -288,7 +253,6 @@ class TestVerificationLevel:
         )
         coordinator._migration_repo.get = AsyncMock(return_value=migration)
         coordinator._target_stores[migration_id] = AsyncMock()
-
         report = make_verification_report(
             tenant_id=tenant_id,
             level=VerificationLevel.FULL,
@@ -296,18 +260,15 @@ class TestVerificationLevel:
             target_event_count=100,
             streams_verified=5,
         )
-
         with patch(
             "eventsource.application.migration.coordinator.ConsistencyVerifier"
         ) as mock_verifier_cls:
             mock_verifier = MagicMock()
             mock_verifier.verify_tenant_consistency = AsyncMock(return_value=report)
             mock_verifier_cls.return_value = mock_verifier
-
             await coordinator.verify_consistency(
                 migration_id, level=VerificationLevel.FULL, sample_percentage=50.0
             )
-
             mock_verifier.verify_tenant_consistency.assert_called_once()
             call_kwargs = mock_verifier.verify_tenant_consistency.call_args[1]
             assert call_kwargs["level"] == VerificationLevel.FULL

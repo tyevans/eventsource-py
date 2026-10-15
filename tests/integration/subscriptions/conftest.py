@@ -1,8 +1,4 @@
-"""
-Integration test fixtures for subscription management.
-
-Provides reusable fixtures and test utilities for subscription integration tests.
-"""
+"""Integration test fixtures for subscription management."""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -20,11 +16,6 @@ from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import register_event
 from eventsource.ports.positions import ExpectedVersion
-
-# =============================================================================
-# Test Events
-# These use unique names to avoid conflict with parent conftest events
-# =============================================================================
 
 
 @register_event
@@ -52,29 +43,18 @@ class SubTestOrderCancelled(DomainEvent):
     reason: str = ""
 
 
-# Aliases for cleaner imports in test files
 TestOrderCreated = SubTestOrderCreated
 TestOrderShipped = SubTestOrderShipped
 TestOrderCancelled = SubTestOrderCancelled
 
 
-# =============================================================================
-# Test Projections
-# =============================================================================
-
-
 class CollectingProjection:
-    """
-    Projection that collects events for verification.
-
-    Used in integration tests to verify event delivery, ordering,
-    and completeness.
-    """
+    """Projection that collects events for verification."""
 
     def __init__(self, name: str | None = None) -> None:
         self.events: list[DomainEvent] = []
         self.event_count = 0
-        self.event_ids: set[str] = set()  # Track event IDs for duplicate detection
+        self.event_ids: set[str] = set()
         self._lock = asyncio.Lock()
         self._name = name
 
@@ -91,16 +71,7 @@ class CollectingProjection:
                 self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 5.0) -> bool:
-        """
-        Wait until the specified number of events are collected.
-
-        Args:
-            count: Number of events to wait for
-            timeout: Maximum seconds to wait
-
-        Returns:
-            True if the count was reached, False if timeout occurred
-        """
+        """Wait until the specified number of events are collected."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -114,17 +85,11 @@ class CollectingProjection:
 
     def has_duplicates(self) -> bool:
         """Check if any duplicate events were received."""
-        # Since we track event_ids in a set, if events list is larger
-        # than event_ids set, we have duplicates (though our handle prevents this)
         return len(self.events) != len(self.event_ids)
 
 
 class FailingProjection:
-    """
-    Projection that fails on specified event types.
-
-    Used for testing error handling scenarios.
-    """
+    """Projection that fails on specified event types."""
 
     def __init__(self, fail_on_event_types: set[str] | None = None) -> None:
         self.events: list[DomainEvent] = []
@@ -148,11 +113,7 @@ class FailingProjection:
 
 
 class SlowProjection:
-    """
-    Projection that processes events slowly.
-
-    Used for testing concurrent scenarios and backpressure.
-    """
+    """Projection that processes events slowly."""
 
     def __init__(self, delay: float = 0.1) -> None:
         self.events: list[DomainEvent] = []
@@ -178,11 +139,6 @@ class SlowProjection:
                 return False
             await asyncio.sleep(0.1)
         return True
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
 
 
 @pytest_asyncio.fixture
@@ -228,11 +184,6 @@ def collecting_projection() -> CollectingProjection:
     return CollectingProjection()
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
 async def _append_event(store: InMemoryEventStore, event: DomainEvent) -> DomainEvent:
     stream_id = StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder")
     await store.append(stream_id, [event], ExpectedVersion.no_stream())
@@ -242,17 +193,7 @@ async def _append_event(store: InMemoryEventStore, event: DomainEvent) -> Domain
 async def populate_event_store(
     store: InMemoryEventStore, count: int, start_index: int = 0
 ) -> list[DomainEvent]:
-    """
-    Populate the event store with test events.
-
-    Args:
-        store: Event store to populate
-        count: Number of events to create
-        start_index: Starting index for order numbers
-
-    Returns:
-        List of created events in order
-    """
+    """Populate the event store with test events."""
     events = []
     for i in range(count):
         event = SubTestOrderCreated(
@@ -265,18 +206,7 @@ async def populate_event_store(
 async def populate_event_store_with_types(
     store: InMemoryEventStore, created_count: int, shipped_count: int, cancelled_count: int = 0
 ) -> list[DomainEvent]:
-    """
-    Populate the event store with mixed event types.
-
-    Args:
-        store: Event store to populate
-        created_count: Number of OrderCreated events
-        shipped_count: Number of OrderShipped events
-        cancelled_count: Number of OrderCancelled events
-
-    Returns:
-        List of all created events
-    """
+    """Populate the event store with mixed event types."""
     events: list[DomainEvent] = []
     for i in range(created_count):
         event = SubTestOrderCreated(
@@ -295,18 +225,7 @@ async def populate_event_store_with_types(
 async def publish_live_event(
     store: InMemoryEventStore, bus: InMemoryEventBus, order_number: str, amount: float = 100.0
 ) -> SubTestOrderCreated:
-    """
-    Publish a live event through both store and bus.
-
-    Args:
-        store: Event store to persist the event
-        bus: Event bus to publish the event
-        order_number: Order number for the event
-        amount: Order amount
-
-    Returns:
-        The created event
-    """
+    """Publish a live event through both store and bus."""
     event = SubTestOrderCreated(aggregate_id=uuid4(), order_number=order_number, amount=amount)
     await _append_event(store, event)
     await bus.publish([event])

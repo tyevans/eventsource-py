@@ -19,32 +19,20 @@ class TestSQLiteReadModelRepositoryConstruction:
     """Tests for repository construction and initialization."""
 
     def test_constructor_with_model_class(self) -> None:
-        """Test repository construction stores model class."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo._model_class == OrderSummary
         assert repo.model_class == OrderSummary
 
     def test_constructor_derives_table_name(self) -> None:
-        """Test table name is derived from model class."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo._table_name == "order_summaries"
 
     def test_constructor_custom_table_name(self) -> None:
-        """Test custom table name is respected."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, CustomTableModel, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), CustomTableModel, enable_tracing=False)
         assert repo._table_name == "custom_orders"
 
     def test_constructor_stores_field_names(self) -> None:
-        """Test field names are extracted from model."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         expected_fields = [
             "id",
             "created_at",
@@ -58,10 +46,7 @@ class TestSQLiteReadModelRepositoryConstruction:
         assert repo._field_names == expected_fields
 
     def test_repr(self) -> None:
-        """Test string representation."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         repr_str = repr(repo)
         assert "SQLiteReadModelRepository" in repr_str
         assert "OrderSummary" in repr_str
@@ -69,30 +54,16 @@ class TestSQLiteReadModelRepositoryConstruction:
         assert "disabled" in repr_str
 
     def test_repr_with_tracing(self) -> None:
-        """Test string representation with tracing enabled."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=True)
-
-        repr_str = repr(repo)
-        assert "enabled" in repr_str
+        repo = SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=True)
+        assert "enabled" in repr(repo)
 
 
 class TestFilterToSQL:
-    """SQLite's rendering of a filter.
-
-    The *semantics* -- which operators exist, how they treat NULL, and that
-    an unknown field or operator raises -- are pinned once for every backend
-    in `ReadModelRepositoryConformance`. What stays here is only what makes
-    this dialect different: positional parameters, an expanded placeholder
-    list for `IN`, and UUID values coerced to text because that is how
-    SQLite stores them.
-    """
+    """SQLite's rendering of a filter (dialect-specific placeholders and UUID coercion)."""
 
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
-        """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_scalar_operators_bind_positional_parameters(
         self, repo: SQLiteReadModelRepository[OrderSummary]
@@ -108,7 +79,6 @@ class TestFilterToSQL:
     def test_null_tolerant_operators_say_so_explicitly(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        """SQL would drop NULL rows from `!=`; the contract keeps them."""
         clause, params = repo._filter_to_sql(Filter.ne("status", "cancelled"))
         assert clause == "(status IS NULL OR status != ?)"
         assert params == ["cancelled"]
@@ -149,31 +119,23 @@ class TestRowToModel:
 
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
-        """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_row_to_model_with_string_types(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        """Test converting database row with SQLite TEXT types to model."""
-        model_id = uuid4()
-        now = datetime.now(UTC)
-
-        # SQLite stores UUID and datetime as TEXT
+        model_id, now = uuid4(), datetime.now(UTC)
         row = (
-            str(model_id),  # id as TEXT
-            now.isoformat(),  # created_at as TEXT
-            now.isoformat(),  # updated_at as TEXT
-            1,  # version
-            None,  # deleted_at
-            "ORD-001",  # order_number
-            "pending",  # status
-            Decimal("99.99"),  # total_amount (stored as REAL/NUMERIC)
+            str(model_id),
+            now.isoformat(),
+            now.isoformat(),
+            1,
+            None,
+            "ORD-001",
+            "pending",
+            Decimal("99.99"),
         )
-
         model = repo._row_to_model(row)
-
         assert model.id == model_id
         assert model.created_at.replace(microsecond=0) == now.replace(microsecond=0)
         assert model.updated_at.replace(microsecond=0) == now.replace(microsecond=0)
@@ -181,42 +143,33 @@ class TestRowToModel:
         assert model.deleted_at is None
         assert model.order_number == "ORD-001"
         assert model.status == "pending"
-        # Decimal comparison - SQLite may store as float
         assert abs(model.total_amount - Decimal("99.99")) < Decimal("0.01")
 
     def test_row_to_model_with_deleted_at(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        """Test converting row with deleted_at timestamp."""
-        model_id = uuid4()
-        now = datetime.now(UTC)
-        deleted = datetime.now(UTC)
-
+        model_id, now, deleted = uuid4(), datetime.now(UTC), datetime.now(UTC)
         row = (
             str(model_id),
             now.isoformat(),
             now.isoformat(),
             1,
-            deleted.isoformat(),  # deleted_at as TEXT
+            deleted.isoformat(),
             "ORD-001",
             "cancelled",
             Decimal("99.99"),
         )
-
         model = repo._row_to_model(row)
-
         assert model.deleted_at is not None
         assert model.is_deleted()
 
     def test_row_to_model_with_z_suffix(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        """Test converting timestamps with Z suffix (common in SQLite)."""
         model_id = uuid4()
-
         row = (
             str(model_id),
-            "2024-01-15T10:30:00Z",  # Z suffix instead of +00:00
+            "2024-01-15T10:30:00Z",
             "2024-01-15T10:30:00Z",
             1,
             None,
@@ -224,9 +177,7 @@ class TestRowToModel:
             "pending",
             Decimal("50.00"),
         )
-
         model = repo._row_to_model(row)
-
         assert model.created_at is not None
         assert model.updated_at is not None
 
@@ -236,12 +187,9 @@ class TestModelToValues:
 
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
-        """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_model_to_values(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        """Test converting model to SQL values tuple."""
         model_id = uuid4()
         model = OrderSummary(
             id=model_id,
@@ -249,56 +197,36 @@ class TestModelToValues:
             status="pending",
             total_amount=Decimal("99.99"),
         )
-
         now = datetime.now(UTC)
         values = repo._model_to_values(model, now)
-
-        # Should be tuple with values in field_names order
         assert isinstance(values, tuple)
         assert len(values) == len(repo._field_names)
-
-        # Check that id is converted to string
         assert values[0] == str(model_id)
-
-        # Check that updated_at is overridden
         assert values[2] == now.isoformat()
 
     def test_model_to_values_preserves_order(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        """Test that values are in correct field order."""
         model = OrderSummary(
             id=uuid4(),
             order_number="ORD-001",
             status="pending",
             total_amount=Decimal("99.99"),
         )
-
-        now = datetime.now(UTC)
-        values = repo._model_to_values(model, now)
-
-        # Values should be in field_names order
-        # ['id', 'created_at', 'updated_at', 'version', 'deleted_at',
-        #  'order_number', 'status', 'total_amount']
-        assert values[5] == "ORD-001"  # order_number
-        assert values[6] == "pending"  # status
+        values = repo._model_to_values(model, datetime.now(UTC))
+        assert values[5] == "ORD-001"
+        assert values[6] == "pending"
 
 
 class TestModelClassProperty:
     """Tests for model_class property."""
 
     def test_model_class_returns_correct_class(self) -> None:
-        """Test model_class property returns the model class."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
         assert repo.model_class is OrderSummary
 
     def test_model_class_custom_model(self) -> None:
-        """Test model_class property with custom model."""
-        mock_conn = MagicMock()
-        repo = SQLiteReadModelRepository(mock_conn, CustomTableModel, enable_tracing=False)
-
+        repo = SQLiteReadModelRepository(MagicMock(), CustomTableModel, enable_tracing=False)
         assert repo.model_class is CustomTableModel
 
 

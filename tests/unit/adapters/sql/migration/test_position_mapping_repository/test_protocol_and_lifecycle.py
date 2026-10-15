@@ -24,13 +24,10 @@ class TestPositionMappingRepositoryProtocol:
         """Test PostgreSQLPositionMappingRepository implements the protocol."""
         mock_conn = MagicMock()
         repo = PostgreSQLPositionMappingRepository(mock_conn)
-
-        # The protocol is runtime checkable
         assert isinstance(repo, PositionMappingRepository)
 
     def test_protocol_has_required_methods(self) -> None:
         """Test protocol defines all required methods."""
-        # Verify protocol methods exist
         assert hasattr(PositionMappingRepository, "create")
         assert hasattr(PositionMappingRepository, "create_batch")
         assert hasattr(PositionMappingRepository, "get")
@@ -72,17 +69,14 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLPositionMappingRepository:
-        """Create a repository with mock connection."""
         return PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=False)
 
     @pytest.fixture
     def sample_mapping(self) -> PositionMapping:
-        """Create a sample position mapping."""
         return PositionMapping(
             migration_id=uuid4(),
             source_position=pos(1000, "src"),
@@ -93,9 +87,7 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
 
     @pytest.mark.asyncio
     async def test_create_returns_id(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
-        sample_mapping: PositionMapping,
+        self, repo: PostgreSQLPositionMappingRepository, sample_mapping: PositionMapping
     ) -> None:
         """Test create returns the database ID."""
         with patch(
@@ -103,19 +95,15 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
         ) as mock_ctx:
             mock_conn = AsyncMock()
             mock_result = MagicMock()
-            mock_result.fetchone.return_value = (42,)  # Database ID
+            mock_result.fetchone.return_value = (42,)
             mock_conn.execute.return_value = mock_result
             mock_ctx.return_value.__aenter__.return_value = mock_conn
-
             result = await repo.create(sample_mapping)
-
             assert result == 42
 
     @pytest.mark.asyncio
     async def test_create_executes_insert_with_tokens(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
-        sample_mapping: PositionMapping,
+        self, repo: PostgreSQLPositionMappingRepository, sample_mapping: PositionMapping
     ) -> None:
         """Test create executes INSERT query with token params, not legacy int columns."""
         with patch(
@@ -149,18 +137,15 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLPositionMappingRepository:
-        """Create a repository with mock connection."""
         return PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=False)
 
     @pytest.mark.asyncio
     async def test_create_batch_with_empty_list(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
+        self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
         """Test create_batch returns 0 for empty list."""
         result = await repo.create_batch([])
@@ -168,13 +153,10 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
 
     @pytest.mark.asyncio
     async def test_create_batch_returns_count(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
+        self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
         """Test create_batch returns number of created mappings."""
-        migration_id = uuid4()
-        now = datetime.now(UTC)
-
+        migration_id, now = uuid4(), datetime.now(UTC)
         mappings = [
             PositionMapping(
                 migration_id=migration_id,
@@ -185,7 +167,6 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
             )
             for i in range(5)
         ]
-
         with patch(
             "eventsource.adapters.sql.migration.position_mapping.sql_connection"
         ) as mock_ctx:
@@ -194,20 +175,15 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
             mock_result.rowcount = 5
             mock_conn.execute.return_value = mock_result
             mock_ctx.return_value.__aenter__.return_value = mock_conn
-
             result = await repo.create_batch(mappings)
-
             assert result == 5
 
     @pytest.mark.asyncio
     async def test_create_batch_uses_multi_row_insert_with_tokens(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
+        self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
         """Test create_batch builds multi-row INSERT query keyed by tokens."""
-        migration_id = uuid4()
-        now = datetime.now(UTC)
-
+        migration_id, now = uuid4(), datetime.now(UTC)
         mappings = [
             PositionMapping(
                 migration_id=migration_id,
@@ -218,7 +194,6 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
             )
             for i in range(3)
         ]
-
         with patch(
             "eventsource.adapters.sql.migration.position_mapping.sql_connection"
         ) as mock_ctx:
@@ -233,8 +208,6 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
             mock_conn.execute.assert_called_once()
             call_args = mock_conn.execute.call_args
             params = call_args[0][1]
-
-            # Should have token params for each mapping
             assert "migration_id_0" in params
             assert "migration_id_1" in params
             assert "migration_id_2" in params
@@ -248,18 +221,15 @@ class TestPostgreSQLPositionMappingRepositoryGet:
 
     @pytest.fixture
     def mock_conn(self) -> MagicMock:
-        """Create a mock connection."""
         return MagicMock()
 
     @pytest.fixture
     def repo(self, mock_conn: MagicMock) -> PostgreSQLPositionMappingRepository:
-        """Create a repository with mock connection."""
         return PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=False)
 
     @pytest.mark.asyncio
     async def test_get_returns_none_when_not_found(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
+        self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
         """Test get returns None when mapping not found."""
         with patch(
@@ -270,32 +240,24 @@ class TestPostgreSQLPositionMappingRepositoryGet:
             mock_result.fetchone.return_value = None
             mock_conn.execute.return_value = mock_result
             mock_ctx.return_value.__aenter__.return_value = mock_conn
-
             result = await repo.get(999)
-
             assert result is None
 
     @pytest.mark.asyncio
     async def test_get_returns_mapping_when_found(
-        self,
-        repo: PostgreSQLPositionMappingRepository,
+        self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
         """Test get returns mapping when found."""
-        migration_id = uuid4()
-        event_id = uuid4()
-        now = datetime.now(UTC)
-        source_position = pos(1000, "src")
-        target_position = pos(500, "tgt")
-
+        migration_id, event_id, now = uuid4(), uuid4(), datetime.now(UTC)
+        source_position, target_position = pos(1000, "src"), pos(500, "tgt")
         row = (
-            1,  # id
-            migration_id,  # migration_id
-            source_position.to_str(),  # source_position_token
-            target_position.to_str(),  # target_position_token
-            event_id,  # event_id
-            now,  # mapped_at
+            1,
+            migration_id,
+            source_position.to_str(),
+            target_position.to_str(),
+            event_id,
+            now,
         )
-
         with patch(
             "eventsource.adapters.sql.migration.position_mapping.sql_connection"
         ) as mock_ctx:
@@ -306,7 +268,6 @@ class TestPostgreSQLPositionMappingRepositoryGet:
             mock_ctx.return_value.__aenter__.return_value = mock_conn
 
             result = await repo.get(1)
-
             assert result is not None
             assert result.migration_id == migration_id
             assert result.source_position == source_position
