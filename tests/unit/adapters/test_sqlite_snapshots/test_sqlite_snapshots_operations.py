@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -16,6 +16,24 @@ if AIOSQLITE_AVAILABLE:
     from eventsource.ports.snapshots import Snapshot
 
 pytestmark = [pytest.mark.sqlite, skip_if_no_aiosqlite]
+
+
+def _make_snapshot(
+    aggregate_id: UUID | None = None,
+    aggregate_type: str = "Order",
+    version: int = 1,
+    state: dict | None = None,
+    schema_version: int = 1,
+    created_at: datetime | None = None,
+) -> Snapshot:
+    return Snapshot(
+        aggregate_id=aggregate_id or uuid4(),
+        aggregate_type=aggregate_type,
+        version=version,
+        state=state if state is not None else {},
+        schema_version=schema_version,
+        created_at=created_at or datetime.now(UTC),
+    )
 
 
 class TestSQLiteSnapshotStoreOperations:
@@ -37,25 +55,18 @@ class TestSQLiteSnapshotStoreOperations:
     @pytest.fixture
     def sample_snapshot(self):
         """Create a sample snapshot for testing."""
-        return Snapshot(
-            aggregate_id=uuid4(),
-            aggregate_type="Order",
+        return _make_snapshot(
             version=100,
             state={"status": "shipped", "items": ["item1", "item2"]},
-            schema_version=1,
-            created_at=datetime.now(UTC),
         )
 
     @pytest.mark.asyncio
     async def test_save_and_get_snapshot(self, store, sample_snapshot):
         """Test basic save and retrieve cycle."""
         await store.save_snapshot(sample_snapshot)
-
         loaded = await store.get_snapshot(
-            sample_snapshot.aggregate_id,
-            sample_snapshot.aggregate_type,
+            sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
         )
-
         assert loaded is not None
         assert loaded.aggregate_id == sample_snapshot.aggregate_id
         assert loaded.aggregate_type == sample_snapshot.aggregate_type
@@ -66,31 +77,14 @@ class TestSQLiteSnapshotStoreOperations:
     @pytest.mark.asyncio
     async def test_get_nonexistent_snapshot_returns_none(self, store):
         """Test that getting missing snapshot returns None."""
-        result = await store.get_snapshot(uuid4(), "Order")
-        assert result is None
+        assert await store.get_snapshot(uuid4(), "Order") is None
 
     @pytest.mark.asyncio
     async def test_save_overwrites_existing_snapshot(self, store):
         """Test upsert behavior - new snapshot replaces old."""
         aggregate_id = uuid4()
-
-        snapshot_v1 = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=50,
-            state={"status": "pending"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-
-        snapshot_v2 = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=100,
-            state={"status": "shipped"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
+        snapshot_v1 = _make_snapshot(aggregate_id, "Order", 50, {"status": "pending"})
+        snapshot_v2 = _make_snapshot(aggregate_id, "Order", 100, {"status": "shipped"})
 
         await store.save_snapshot(snapshot_v1)
         await store.save_snapshot(snapshot_v2)
@@ -104,36 +98,27 @@ class TestSQLiteSnapshotStoreOperations:
     async def test_delete_snapshot_returns_true_when_exists(self, store, sample_snapshot):
         """Test delete returns True when snapshot exists."""
         await store.save_snapshot(sample_snapshot)
-
         result = await store.delete_snapshot(
-            sample_snapshot.aggregate_id,
-            sample_snapshot.aggregate_type,
+            sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
         )
-
         assert result is True
         assert (
-            await store.get_snapshot(
-                sample_snapshot.aggregate_id,
-                sample_snapshot.aggregate_type,
-            )
+            await store.get_snapshot(sample_snapshot.aggregate_id, sample_snapshot.aggregate_type)
             is None
         )
 
     @pytest.mark.asyncio
     async def test_delete_snapshot_returns_false_when_missing(self, store):
         """Test delete returns False when no snapshot."""
-        result = await store.delete_snapshot(uuid4(), "Order")
-        assert result is False
+        assert await store.delete_snapshot(uuid4(), "Order") is False
 
     @pytest.mark.asyncio
     async def test_snapshot_exists_returns_true(self, store, sample_snapshot):
         """Test snapshot_exists returns True when present."""
         await store.save_snapshot(sample_snapshot)
-
         assert (
             await store.snapshot_exists(
-                sample_snapshot.aggregate_id,
-                sample_snapshot.aggregate_type,
+                sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
             )
             is True
         )
@@ -146,118 +131,47 @@ class TestSQLiteSnapshotStoreOperations:
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type(self, store):
         """Test bulk deletion by aggregate type."""
-        # Create snapshots for different types
         order_ids = [uuid4() for _ in range(3)]
         user_ids = [uuid4() for _ in range(2)]
 
         for agg_id in order_ids:
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=agg_id,
-                    aggregate_type="Order",
-                    version=1,
-                    state={},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-            )
-
+            await store.save_snapshot(_make_snapshot(agg_id, "Order"))
         for agg_id in user_ids:
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=agg_id,
-                    aggregate_type="User",
-                    version=1,
-                    state={},
-                    schema_version=1,
-                    created_at=datetime.now(UTC),
-                )
-            )
+            await store.save_snapshot(_make_snapshot(agg_id, "User"))
 
-        # Delete Order snapshots
         deleted = await store.delete_snapshots_by_type("Order")
-
         assert deleted == 3
-        # Verify User snapshots remain
         for agg_id in user_ids:
             assert await store.snapshot_exists(agg_id, "User") is True
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type_with_schema_version_filter(self, store):
         """Test bulk deletion with schema version filter."""
-        # Create snapshots with different schema versions
         agg_ids = []
         for schema_v in [1, 2, 3]:
             agg_id = uuid4()
             agg_ids.append((agg_id, schema_v))
-            await store.save_snapshot(
-                Snapshot(
-                    aggregate_id=agg_id,
-                    aggregate_type="Order",
-                    version=1,
-                    state={},
-                    schema_version=schema_v,
-                    created_at=datetime.now(UTC),
-                )
-            )
+            await store.save_snapshot(_make_snapshot(agg_id, "Order", schema_version=schema_v))
 
-        # Delete only schema_version < 3
         deleted = await store.delete_snapshots_by_type("Order", schema_version_below=3)
-
         assert deleted == 2
-        # Verify schema_version=3 snapshot remains
         for agg_id, schema_v in agg_ids:
             exists = await store.snapshot_exists(agg_id, "Order")
-            if schema_v < 3:
-                assert exists is False
-            else:
-                assert exists is True
+            assert exists is (schema_v >= 3)
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type_no_matches(self, store):
         """Test bulk deletion when no snapshots match."""
-        # Create snapshots for Order type
-        await store.save_snapshot(
-            Snapshot(
-                aggregate_id=uuid4(),
-                aggregate_type="Order",
-                version=1,
-                state={},
-                schema_version=1,
-                created_at=datetime.now(UTC),
-            )
-        )
-
-        # Try to delete User snapshots (none exist)
+        await store.save_snapshot(_make_snapshot(aggregate_type="Order"))
         deleted = await store.delete_snapshots_by_type("User")
-
         assert deleted == 0
 
     @pytest.mark.asyncio
     async def test_different_aggregate_types_are_separate(self, store):
         """Test that same ID with different types are separate."""
         aggregate_id = uuid4()
-
-        order_snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=10,
-            state={"type": "order"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-
-        user_snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="User",
-            version=20,
-            state={"type": "user"},
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-
-        await store.save_snapshot(order_snapshot)
-        await store.save_snapshot(user_snapshot)
+        await store.save_snapshot(_make_snapshot(aggregate_id, "Order", 10, {"type": "order"}))
+        await store.save_snapshot(_make_snapshot(aggregate_id, "User", 20, {"type": "user"}))
 
         order_loaded = await store.get_snapshot(aggregate_id, "Order")
         user_loaded = await store.get_snapshot(aggregate_id, "User")
@@ -271,7 +185,6 @@ class TestSQLiteSnapshotStoreOperations:
     async def test_complex_state_serialization(self, store):
         """Test that complex nested state is properly serialized/deserialized."""
         aggregate_id = uuid4()
-
         complex_state = {
             "string": "value",
             "number": 42,
@@ -281,19 +194,8 @@ class TestSQLiteSnapshotStoreOperations:
             "list": [1, 2, 3],
             "nested": {"deep": {"value": "found"}},
         }
-
-        snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Complex",
-            version=1,
-            state=complex_state,
-            schema_version=1,
-            created_at=datetime.now(UTC),
-        )
-
-        await store.save_snapshot(snapshot)
+        await store.save_snapshot(_make_snapshot(aggregate_id, "Complex", 1, complex_state))
         loaded = await store.get_snapshot(aggregate_id, "Complex")
-
         assert loaded is not None
         assert loaded.state == complex_state
 
@@ -302,18 +204,7 @@ class TestSQLiteSnapshotStoreOperations:
         """Test that datetime is properly serialized/deserialized."""
         aggregate_id = uuid4()
         created_time = datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
-
-        snapshot = Snapshot(
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            version=1,
-            state={},
-            schema_version=1,
-            created_at=created_time,
-        )
-
-        await store.save_snapshot(snapshot)
+        await store.save_snapshot(_make_snapshot(aggregate_id, "Order", created_at=created_time))
         loaded = await store.get_snapshot(aggregate_id, "Order")
-
         assert loaded is not None
         assert loaded.created_at == created_time

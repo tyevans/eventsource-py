@@ -27,14 +27,13 @@ class TestSubscriptionMigrationResultDataclass:
     """Tests for SubscriptionMigrationResult dataclass."""
 
     def test_result_success(self) -> None:
-        now = datetime.now(UTC)
         result = SubscriptionMigrationResult(
-            subscription_name="OrderProjection",
-            success=True,
-            source_position=source_pos(1000),
-            target_position=target_pos(500),
-            is_exact_translation=True,
-            migrated_at=now,
+            "OrderProjection",
+            True,
+            source_pos(1000),
+            target_pos(500),
+            True,
+            migrated_at=datetime.now(UTC),
         )
         assert result.subscription_name == "OrderProjection"
         assert result.success is True
@@ -45,10 +44,7 @@ class TestSubscriptionMigrationResultDataclass:
 
     def test_result_failure(self) -> None:
         result = SubscriptionMigrationResult(
-            subscription_name="OrderProjection",
-            success=False,
-            source_position=source_pos(1000),
-            error_message="Translation failed",
+            "OrderProjection", False, source_pos(1000), error_message="Translation failed"
         )
         assert result.success is False
         assert result.error_message == "Translation failed"
@@ -57,11 +53,7 @@ class TestSubscriptionMigrationResultDataclass:
     def test_result_to_dict(self) -> None:
         now = datetime.now(UTC)
         result = SubscriptionMigrationResult(
-            subscription_name="OrderProjection",
-            success=True,
-            source_position=source_pos(1000),
-            target_position=target_pos(500),
-            migrated_at=now,
+            "OrderProjection", True, source_pos(1000), target_pos(500), migrated_at=now
         )
         d = result.to_dict()
         assert d["subscription_name"] == "OrderProjection"
@@ -71,11 +63,7 @@ class TestSubscriptionMigrationResultDataclass:
         assert d["migrated_at"] == now.isoformat()
 
     def test_result_frozen(self) -> None:
-        result = SubscriptionMigrationResult(
-            subscription_name="OrderProjection",
-            success=True,
-            source_position=source_pos(1000),
-        )
+        result = SubscriptionMigrationResult("OrderProjection", True, source_pos(1000))
         with pytest.raises(AttributeError):
             result.success = False  # type: ignore[misc]
 
@@ -84,12 +72,7 @@ class TestPlannedMigrationDataclass:
     """Tests for PlannedMigration dataclass."""
 
     def test_planned_migration_exact(self) -> None:
-        planned = PlannedMigration(
-            subscription_name="OrderProjection",
-            current_position=source_pos(1000),
-            planned_target_position=target_pos(500),
-            is_exact_translation=True,
-        )
+        planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500), True)
         assert planned.subscription_name == "OrderProjection"
         assert planned.current_position == source_pos(1000)
         assert planned.planned_target_position == target_pos(500)
@@ -98,23 +81,19 @@ class TestPlannedMigrationDataclass:
 
     def test_planned_migration_with_warning(self) -> None:
         planned = PlannedMigration(
-            subscription_name="OrderProjection",
-            current_position=source_pos(1050),
-            planned_target_position=target_pos(500),
-            is_exact_translation=False,
-            nearest_source_position=source_pos(1000),
-            warning="Using nearest position mapping",
+            "OrderProjection",
+            source_pos(1050),
+            target_pos(500),
+            False,
+            source_pos(1000),
+            "Using nearest position mapping",
         )
         assert planned.is_exact_translation is False
         assert planned.nearest_source_position == source_pos(1000)
         assert planned.warning is not None
 
     def test_planned_migration_to_dict(self) -> None:
-        planned = PlannedMigration(
-            subscription_name="OrderProjection",
-            current_position=source_pos(1000),
-            planned_target_position=target_pos(500),
-        )
+        planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500))
         d = planned.to_dict()
         assert d["subscription_name"] == "OrderProjection"
         assert d["current_position"] == source_pos(1000).to_str()
@@ -126,11 +105,7 @@ class TestMigrationPlanDataclass:
 
     def test_migration_plan_creation(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
-        planned = PlannedMigration(
-            subscription_name="OrderProjection",
-            current_position=source_pos(1000),
-            planned_target_position=target_pos(500),
-        )
+        planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500))
         plan = MigrationPlan(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -146,13 +121,7 @@ class TestMigrationPlanDataclass:
 
     def test_migration_plan_to_dict(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
-        plan = MigrationPlan(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            planned_migrations=[],
-            total_subscriptions=0,
-            migratable_count=0,
-        )
+        plan = MigrationPlan(migration_id, tenant_id, [], 0, 0)
         d = plan.to_dict()
         assert d["migration_id"] == str(migration_id)
         assert d["tenant_id"] == str(tenant_id)
@@ -165,40 +134,18 @@ class TestMigrationSummaryDataclass:
     def test_migration_summary_creation(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
         result = SubscriptionMigrationResult(
-            subscription_name="OrderProjection",
-            success=True,
-            source_position=source_pos(1000),
-            target_position=target_pos(500),
+            "OrderProjection", True, source_pos(1000), target_pos(500)
         )
-        summary = MigrationSummary(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            results=[result],
-            successful_count=1,
-            failed_count=0,
-            duration_ms=100.0,
-        )
+        summary = MigrationSummary(migration_id, tenant_id, [result], 1, 0, duration_ms=100.0)
         assert summary.migration_id == migration_id
         assert summary.all_successful is True
 
     def test_migration_summary_not_all_successful(self) -> None:
-        summary = MigrationSummary(
-            migration_id=uuid4(),
-            tenant_id=uuid4(),
-            results=[],
-            successful_count=1,
-            failed_count=1,
-        )
+        summary = MigrationSummary(uuid4(), uuid4(), [], 1, 1)
         assert summary.all_successful is False
 
     def test_migration_summary_empty(self) -> None:
-        summary = MigrationSummary(
-            migration_id=uuid4(),
-            tenant_id=uuid4(),
-            results=[],
-            successful_count=0,
-            failed_count=0,
-        )
+        summary = MigrationSummary(uuid4(), uuid4(), [], 0, 0)
         assert summary.all_successful is False
 
     def test_migration_summary_to_dict(self) -> None:
@@ -225,10 +172,7 @@ class TestSubscriptionMigrationErrorException:
     def test_exception_creation(self) -> None:
         migration_id = uuid4()
         error = SubscriptionMigrationError(
-            message="Migration failed",
-            migration_id=migration_id,
-            subscription_name="OrderProjection",
-            reason="translation_failed",
+            "Migration failed", migration_id, "OrderProjection", "translation_failed"
         )
         assert error.subscription_name == "OrderProjection"
         assert error.reason == "translation_failed"
@@ -237,11 +181,7 @@ class TestSubscriptionMigrationErrorException:
 
     def test_exception_str(self) -> None:
         migration_id = uuid4()
-        error = SubscriptionMigrationError(
-            message="Migration failed",
-            migration_id=migration_id,
-            subscription_name="OrderProjection",
-        )
+        error = SubscriptionMigrationError("Migration failed", migration_id, "OrderProjection")
         assert "Migration failed" in str(error)
         assert str(migration_id) in str(error)
 
@@ -310,9 +250,7 @@ class TestSubscriptionMigratorWorkflows:
 
         mock_position_mapper.translate_position = AsyncMock(side_effect=translate_position_effect)
         summary = await migrator.migrate_subscriptions(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            subscription_names=["OrderProjection", "FailingProjection"],
+            migration_id, tenant_id, ["OrderProjection", "FailingProjection"]
         )
         assert summary.successful_count == 1
         assert summary.failed_count == 1
