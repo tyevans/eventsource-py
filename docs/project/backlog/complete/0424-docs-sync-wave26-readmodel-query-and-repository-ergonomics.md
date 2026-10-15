@@ -1,7 +1,7 @@
 ---
 id: TASK-0424
 title: "Sync Diataxis readmodel documentation for Wave 26 query and repository ergonomics"
-status: Refined
+status: Complete
 target_bc: documentation
 dependencies: [TASK-0414]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0424: Sync Diataxis readmodel documentation for Wave 26 query and repository ergonomics
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `documentation`
 
 ## Objective
