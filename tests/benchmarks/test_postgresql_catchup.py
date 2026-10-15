@@ -273,9 +273,7 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
         throughput = events_read / elapsed
         median_batch_time_ms = (sorted(batch_times)[len(batch_times) // 2]) * 1000.0
         assert throughput > 5000, f"Expected throughput > 5000 events/s, got {throughput:.1f}"
-        assert (
-            median_batch_time_ms < 50.0
-        ), f"Expected median batch time < 50ms, got {median_batch_time_ms:.2f}ms"
+        assert median_batch_time_ms < 50.0, f"Median batch >= 50ms: {median_batch_time_ms:.2f}ms"
 
     async def test_catchup_monotonic_ordering(
         self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
