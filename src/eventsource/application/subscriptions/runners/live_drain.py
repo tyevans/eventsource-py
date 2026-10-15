@@ -61,12 +61,9 @@ class LiveDrainMixin:
         for event_type in event_types:
             self._handlers[event_type] = handler = self._create_event_handler()
             self.event_bus.subscribe(event_type, handler)
-        self._subscribed = True
-        names = [et.__name__ for et in event_types]
-        logger.debug(
-            "Subscribed to event types",
-            extra={"subscription": self.subscription.name, "event_types": names},
-        )
+        self._subscribed, names = True, [et.__name__ for et in event_types]
+        extra = {"subscription": self.subscription.name, "event_types": names}
+        logger.debug("Subscribed to event types", extra=extra)
 
     def _create_event_handler(self) -> _LiveEventHandler:
         return _LiveEventHandler(self)
@@ -76,18 +73,13 @@ class LiveDrainMixin:
         sub = self.subscription.name
         if self._buffer_enabled:
             self._buffered_wakes += 1
-            logger.debug(
-                "Wake-up buffered", extra={"subscription": sub, "buffer_size": self._buffered_wakes}
-            )
+            extra = {"subscription": sub, "buffer_size": self._buffered_wakes}
+            logger.debug("Wake-up buffered", extra=extra)
         elif self.subscription.is_paused:
-            self._paused_wakes, self._events_buffered_during_pause = (
-                self._paused_wakes + 1,
-                self._events_buffered_during_pause + 1,
-            )
-            logger.debug(
-                "Wake-up buffered during pause",
-                extra={"subscription": sub, "pause_buffer_size": self._paused_wakes},
-            )
+            self._paused_wakes += 1
+            self._events_buffered_during_pause += 1
+            extra = {"subscription": sub, "pause_buffer_size": self._paused_wakes}
+            logger.debug("Wake-up buffered during pause", extra=extra)
         else:
             await self._drain_feed()
 
@@ -108,7 +100,8 @@ class LiveDrainMixin:
                 self._stats.events_received += 1
                 await self.subscription.record_events_seen(1)
                 await self._process_live_event(envelope)
-                processed, envelopes_in_batch = processed + 1, envelopes_in_batch + 1
+                processed += 1
+                envelopes_in_batch += 1
             if stopped or envelopes_in_batch < self.config.batch_size:
                 break
         return processed
@@ -139,13 +132,11 @@ class LiveDrainMixin:
         sub = self.subscription.name
         attrs = {ATTR_SUBSCRIPTION_NAME: sub, ATTR_BUFFER_SIZE: self._buffered_wakes}
         with self._tracer.span("eventsource.live_runner.process_buffer", attrs) as span:
-            self._buffered_wakes = 0
-            processed = await self._drain_feed()
+            self._buffered_wakes, processed = 0, await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            logger.info(
-                "Buffer processed", extra={"subscription": sub, "events_processed": processed}
-            )
+            extra = {"subscription": sub, "events_processed": processed}
+            logger.info("Buffer processed", extra=extra)
             return processed
 
     async def disable_buffer(self) -> None:
@@ -153,25 +144,20 @@ class LiveDrainMixin:
         await self.subscription.transition_to(SubscriptionState.LIVE)
         if self._metrics:
             self._metrics.record_state("live")
-        logger.info(
-            "Buffer disabled, now processing live", extra={"subscription": self.subscription.name}
-        )
+        extra = {"subscription": self.subscription.name}
+        logger.info("Buffer disabled, now processing live", extra=extra)
 
     async def process_pause_buffer(self) -> int:
         sub = self.subscription.name
         attrs = {ATTR_SUBSCRIPTION_NAME: sub, ATTR_BUFFER_SIZE: self._paused_wakes}
         with self._tracer.span("eventsource.live_runner.process_pause_buffer", attrs) as span:
-            logger.info(
-                "Processing pause buffer",
-                extra={"subscription": sub, "pause_buffer_size": self._paused_wakes},
-            )
-            self._paused_wakes = 0
-            processed = await self._drain_feed()
+            extra_start = {"subscription": sub, "pause_buffer_size": self._paused_wakes}
+            logger.info("Processing pause buffer", extra=extra_start)
+            self._paused_wakes, processed = 0, await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            logger.info(
-                "Pause buffer processed", extra={"subscription": sub, "events_processed": processed}
-            )
+            extra_done = {"subscription": sub, "events_processed": processed}
+            logger.info("Pause buffer processed", extra=extra_done)
             self._events_buffered_during_pause = 0
             return processed
 
