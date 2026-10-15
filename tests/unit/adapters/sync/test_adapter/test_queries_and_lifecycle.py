@@ -21,16 +21,18 @@ class SampleEvent(DomainEvent):
     data: str = "test"
 
 
+@pytest.fixture
+def async_store() -> InMemoryEventStore:
+    return InMemoryEventStore()
+
+
+@pytest.fixture
+def sync_store(async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
+    return SyncEventStoreAdapter(async_store, timeout=5.0)
+
+
 class TestSyncEventStoreAdapterEventExists:
     """Tests for event_exists method."""
-
-    @pytest.fixture
-    def async_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
-
-    @pytest.fixture
-    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
-        return SyncEventStoreAdapter(async_store, timeout=5.0)
 
     def test_event_exists_returns_false_for_nonexistent(
         self, sync_store: SyncEventStoreAdapter
@@ -49,14 +51,6 @@ class TestSyncEventStoreAdapterEventExists:
 
 class TestSyncEventStoreAdapterReadAll:
     """Tests for read_all method."""
-
-    @pytest.fixture
-    def async_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
-
-    @pytest.fixture
-    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
-        return SyncEventStoreAdapter(async_store, timeout=5.0)
 
     def test_read_all_returns_empty_list(self, sync_store: SyncEventStoreAdapter) -> None:
         envelopes = sync_store.read_all()
@@ -89,14 +83,6 @@ class TestSyncEventStoreAdapterReadAll:
 
 class TestSyncEventStoreAdapterCurrentPosition:
     """Tests for current_position method."""
-
-    @pytest.fixture
-    def async_store(self) -> InMemoryEventStore:
-        return InMemoryEventStore()
-
-    @pytest.fixture
-    def sync_store(self, async_store: InMemoryEventStore) -> SyncEventStoreAdapter:
-        return SyncEventStoreAdapter(async_store, timeout=5.0)
 
     def test_current_position_returns_none_for_empty_store(
         self, sync_store: SyncEventStoreAdapter

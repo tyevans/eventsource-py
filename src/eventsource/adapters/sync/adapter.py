@@ -1,9 +1,4 @@
-"""
-Synchronous adapter for async EventStore implementations.
-
-This module provides SyncEventStoreAdapter, which wraps any async EventStore
-implementation and provides synchronous versions of all its methods.
-"""
+"""Synchronous adapter for async EventStore implementations."""
 
 from __future__ import annotations
 
@@ -29,40 +24,20 @@ from eventsource.ports import (
 from eventsource.ports.lifecycle import SupportsClose
 
 logger = logging.getLogger(__name__)
-
 T = TypeVar("T")
+_ANY = ExpectedVersion.any_()
 
 
 class SyncEventStoreAdapter:
-    """
-    Synchronous adapter for async EventStore implementations.
+    """Synchronous adapter for async EventStore implementations.
 
-    Provides sync versions of all EventStore methods for use in synchronous
-    contexts like Celery tasks, Django management commands, or RQ workers.
-
-    There is exactly one supported calling context: a thread with no running
-    event loop. Each call gets a fresh loop via asyncio.run(). Calling from a
-    thread that already has a running loop raises RuntimeError.
-
-    Thread Safety:
-        Thread-safe for concurrent calls from multiple threads.
-
-    Warning:
-        Calling this adapter from a thread that already runs an event loop
-        raises RuntimeError. Await the async EventStore directly instead,
-        or move the sync call to a worker thread (asyncio.to_thread).
-
-    Related:
-        `eventsource.testing.sync_facade.SyncStoreFacade` is the test-machinery
-        counterpart. This adapter is for production sync callers: per-call
-        `asyncio.run` and a timeout on every operation.
+    Provides sync versions of EventStore methods for synchronous contexts like
+    Celery tasks, Django management commands, or RQ workers. Each call runs on a
+    fresh event loop via ``asyncio.run()``. Thread-safe across threads; raises
+    ``RuntimeError`` if called from a thread with a running event loop.
     """
 
-    def __init__(
-        self,
-        store: FullEventStore,
-        timeout: float = 30.0,
-    ) -> None:
+    def __init__(self, store: FullEventStore, timeout: float = 30.0) -> None:
         """Initialize the sync adapter with the wrapped async store and default timeout."""
         self._store = store
         self._timeout = timeout
@@ -70,7 +45,6 @@ class SyncEventStoreAdapter:
     def _run_sync(self, coro: Coroutine[Any, Any, T], timeout: float | None = None) -> T:
         """Execute a coroutine synchronously on a fresh event loop."""
         effective_timeout = timeout if timeout is not None else self._timeout
-
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -92,51 +66,51 @@ class SyncEventStoreAdapter:
     def append(
         self,
         stream: StreamId,
-        events: Sequence[DomainEvent],
-        expected: ExpectedVersion,
+        events: DomainEvent | Sequence[DomainEvent],
+        expected: ExpectedVersion | None = _ANY,
         *,
         timeout: float | None = None,
     ) -> AppendResult:
-        """Synchronously append events to a stream."""
-        return self._run_sync(self._store.append(stream, events, expected), timeout=timeout)
+        """Synchronously append one or more events to a stream."""
+        batch = [events] if isinstance(events, DomainEvent) else events
+        ver = _ANY if expected is None else expected
+        return self._run_sync(self._store.append(stream, batch, ver), timeout=timeout)
 
     def read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> list[EventEnvelope]:
-        """Synchronously read events from a stream."""
+        self, stream: StreamId, options: StreamReadOptions | None = None, *, timeout: float | None = None
+    ) -> list[EventEnvelope]:  # fmt: skip
+        """Synchronously read event envelopes from a stream."""
         return self._run_sync(collect(self._store.read_stream(stream, options)), timeout=timeout)
+
+    def read_events(
+        self, stream: StreamId, options: StreamReadOptions | None = None, *, timeout: float | None = None
+    ) -> list[DomainEvent]:  # fmt: skip
+        """Synchronously read unwrapped DomainEvent instances from a stream."""
+        return [env.event for env in self.read_stream(stream, options, timeout=timeout)]
 
     def get_stream_version(self, stream: StreamId, *, timeout: float | None = None) -> int:
         """Synchronously get the current version of a stream (0 if no events)."""
         return self._run_sync(self._store.get_stream_version(stream), timeout=timeout)
+
+    def stream_exists(self, stream: StreamId, *, timeout: float | None = None) -> bool:
+        """Synchronously check whether a stream has at least one event."""
+        return self.get_stream_version(stream, timeout=timeout) > 0
 
     def event_exists(self, event_id: UUID, *, timeout: float | None = None) -> bool:
         """Synchronously check if an event exists."""
         return self._run_sync(self._store.event_exists(event_id), timeout=timeout)
 
     def read_all(
-        self,
-        from_position: Position | None = None,
-        options: FeedReadOptions | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> list[EventEnvelope]:
+        self, from_position: Position | None = None, options: FeedReadOptions | None = None, *, timeout: float | None = None
+    ) -> list[EventEnvelope]:  # fmt: skip
         """Synchronously read events across the global feed into a list."""
         return self._run_sync(
             collect(self._store.read_all(from_position, options)), timeout=timeout
         )
 
     def read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> list[EventEnvelope]:
+        self, category: str, options: CategoryReadOptions | None = None, *, timeout: float | None = None
+    ) -> list[EventEnvelope]:  # fmt: skip
         """Synchronously read events for a category (all aggregates of a type)."""
         return self._run_sync(
             collect(self._store.read_category(category, options)), timeout=timeout
@@ -148,9 +122,8 @@ class SyncEventStoreAdapter:
 
     def close(self, *, timeout: float | None = None) -> None:
         """Synchronously release the wrapped store's resources if it implements SupportsClose."""
-        store = self._store
-        if isinstance(store, SupportsClose):
-            self._run_sync(store.close(), timeout=timeout)
+        if isinstance(self._store, SupportsClose):
+            self._run_sync(self._store.close(), timeout=timeout)
 
     def __enter__(self) -> SyncEventStoreAdapter:
         """Enter a context manager that closes the store on exit."""
