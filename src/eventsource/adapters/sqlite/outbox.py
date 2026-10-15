@@ -30,14 +30,12 @@ class SQLiteOutboxRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """Initialize the outbox repository with an `aiosqlite` connection."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._connection = connection
 
     @staticmethod
     def _parse_datetime(value: str | None) -> datetime:
-        """Parse ISO 8601 timestamp string to datetime."""
         if value is None:
             return datetime.now(UTC)
         try:
@@ -48,43 +46,36 @@ class SQLiteOutboxRepository:
     async def add_event(self, event: DomainEvent) -> UUID:
         """Add an event to the outbox for publishing and return its outbox UUID."""
         attrs = {
-            ATTR_EVENT_ID: str(event.event_id),
-            ATTR_EVENT_TYPE: event.event_type,
-            ATTR_AGGREGATE_ID: str(event.aggregate_id),
-            ATTR_AGGREGATE_TYPE: event.aggregate_type,
+            ATTR_EVENT_ID: str(event.event_id), ATTR_EVENT_TYPE: event.event_type,
+            ATTR_AGGREGATE_ID: str(event.aggregate_id), ATTR_AGGREGATE_TYPE: event.aggregate_type,
             ATTR_DB_SYSTEM: "sqlite",
-        }
+        }  # fmt: skip
         with self._tracer.span("eventsource.outbox.add", attrs):
             outbox_id = uuid4()
             params = (
-                str(outbox_id),
-                str(event.event_id),
-                event.event_type,
-                str(event.aggregate_id),
-                event.aggregate_type,
+                str(outbox_id), str(event.event_id), event.event_type,
+                str(event.aggregate_id), event.aggregate_type,
                 str(event.tenant_id) if event.tenant_id else None,
-                json_dumps(outbox_event_data(event)),
-                datetime.now(UTC).isoformat(),
-            )
-            await self._connection.execute(
+                json_dumps(outbox_event_data(event)), datetime.now(UTC).isoformat(),
+            )  # fmt: skip
+            sql = (
                 "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
-                "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-                params,
+                "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')"
             )
+            await self._connection.execute(sql, params)
             await self._connection.commit()
             return outbox_id
 
     async def get_pending_events(self, limit: int = 100) -> list[OutboxEntry]:
         """Return up to `limit` pending outbox entries ordered by creation time."""
-        with self._tracer.span(
-            "eventsource.outbox.get_pending", {"limit": limit, ATTR_DB_SYSTEM: "sqlite"}
-        ) as span:
-            cursor = await self._connection.execute(
+        attrs = {"limit": limit, ATTR_DB_SYSTEM: "sqlite"}
+        with self._tracer.span("eventsource.outbox.get_pending", attrs) as span:
+            sql = (
                 "SELECT id, event_id, event_type, aggregate_id, aggregate_type, "
                 "tenant_id, event_data, created_at, retry_count FROM event_outbox "
-                "WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
-                (limit,),
+                "WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?"
             )
+            cursor = await self._connection.execute(sql, (limit,))
             entries = [
                 OutboxEntry(
                     UUID(r[0]),
@@ -108,30 +99,26 @@ class SQLiteOutboxRepository:
         """Mark an outbox event as successfully published."""
         attrs = {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "sqlite"}
         with self._tracer.span("eventsource.outbox.mark_published", attrs):
-            await self._connection.execute(
-                "UPDATE event_outbox SET status = 'published', published_at = ? WHERE id = ?",
-                (datetime.now(UTC).isoformat(), str(outbox_id)),
-            )
+            sql = "UPDATE event_outbox SET status = 'published', published_at = ? WHERE id = ?"
+            await self._connection.execute(sql, (datetime.now(UTC).isoformat(), str(outbox_id)))
             await self._connection.commit()
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """Increment retry count for a failed publishing attempt."""
         attrs = {"outbox.id": str(outbox_id), "error": error[:100] if error else None, ATTR_DB_SYSTEM: "sqlite"}  # fmt: skip
         with self._tracer.span("eventsource.outbox.increment_retry", attrs):
-            await self._connection.execute(
-                "UPDATE event_outbox SET retry_count = retry_count + 1, last_error = ? WHERE id = ?",
-                (error, str(outbox_id)),
+            sql = (
+                "UPDATE event_outbox SET retry_count = retry_count + 1, last_error = ? WHERE id = ?"
             )
+            await self._connection.execute(sql, (error, str(outbox_id)))
             await self._connection.commit()
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """Mark an outbox event as permanently failed."""
         attrs = {"outbox.id": str(outbox_id), "error": error[:100] if error else None, ATTR_DB_SYSTEM: "sqlite"}  # fmt: skip
         with self._tracer.span("eventsource.outbox.mark_failed", attrs):
-            await self._connection.execute(
-                "UPDATE event_outbox SET status = 'failed', last_error = ? WHERE id = ?",
-                (error, str(outbox_id)),
-            )
+            sql = "UPDATE event_outbox SET status = 'failed', last_error = ? WHERE id = ?"
+            await self._connection.execute(sql, (error, str(outbox_id)))
             await self._connection.commit()
 
     async def cleanup_published(self, days: int = 7) -> int:
@@ -139,10 +126,8 @@ class SQLiteOutboxRepository:
         attrs = {"older_than_days": days, ATTR_DB_SYSTEM: "sqlite"}
         with self._tracer.span("eventsource.outbox.cleanup", attrs) as span:
             cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-            cursor = await self._connection.execute(
-                "DELETE FROM event_outbox WHERE status = 'published' AND published_at < ?",
-                (cutoff,),
-            )
+            sql = "DELETE FROM event_outbox WHERE status = 'published' AND published_at < ?"
+            cursor = await self._connection.execute(sql, (cutoff,))
             await self._connection.commit()
             deleted = cursor.rowcount if cursor.rowcount is not None else 0
             if span:

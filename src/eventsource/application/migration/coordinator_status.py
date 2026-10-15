@@ -53,10 +53,7 @@ class CoordinatorStatusMixin:
                 entry.migration_id,
             )
 
-    def create_status_streamer(
-        self,
-        migration_id: UUID,
-    ) -> StatusStreamer:
+    def create_status_streamer(self, migration_id: UUID) -> StatusStreamer:
         """Create a StatusStreamer for real-time migration status streaming."""
         from eventsource.application.migration.status_streamer import StatusStreamer
 
@@ -74,18 +71,12 @@ class CoordinatorStatusMixin:
         include_initial: bool = True,
     ) -> AsyncIterator[MigrationStatus]:
         """Stream migration status updates as an async iterator."""
-        with self._tracer.span(
-            "eventsource.coordinator.stream_status",
-            {
-                ATTR_MIGRATION_ID: str(migration_id),
-                "update_interval": update_interval,
-            },
-        ):
+        attrs = {ATTR_MIGRATION_ID: str(migration_id), "update_interval": update_interval}
+        with self._tracer.span("eventsource.coordinator.stream_status", attrs):
             streamer = self.create_status_streamer(migration_id)
             try:
                 async for status in streamer.stream_status(
-                    update_interval=update_interval,
-                    include_initial=include_initial,
+                    update_interval=update_interval, include_initial=include_initial
                 ):
                     yield status
             finally:
@@ -93,13 +84,12 @@ class CoordinatorStatusMixin:
 
     def _build_status(self, migration: Migration) -> MigrationStatus:
         """Build MigrationStatus from Migration with derived rate and lag metrics."""
-        phase_started_at = None
-        if migration.phase == MigrationPhase.BULK_COPY:
-            phase_started_at = migration.bulk_copy_started_at
-        elif migration.phase == MigrationPhase.DUAL_WRITE:
-            phase_started_at = migration.dual_write_started_at
-        elif migration.phase == MigrationPhase.CUTOVER:
-            phase_started_at = migration.cutover_started_at
+        phase_map = {
+            MigrationPhase.BULK_COPY: migration.bulk_copy_started_at,
+            MigrationPhase.DUAL_WRITE: migration.dual_write_started_at,
+            MigrationPhase.CUTOVER: migration.cutover_started_at,
+        }
+        phase_started_at = phase_map.get(migration.phase)
 
         rate = 0.0
         if migration.started_at and migration.events_copied > 0:
@@ -109,16 +99,12 @@ class CoordinatorStatusMixin:
 
         estimated_completion = None
         if rate > 0 and migration.events_remaining > 0:
-            remaining_seconds = migration.events_remaining / rate
-            estimated_completion = datetime.now(UTC) + timedelta(seconds=remaining_seconds)
+            estimated_completion = datetime.now(UTC) + timedelta(
+                seconds=migration.events_remaining / rate
+            )
 
-        sync_lag_events = 0
-        sync_lag_ms = 0.0
         lag_tracker = self._lag_trackers.get(migration.id)
-        if lag_tracker and lag_tracker.current_lag:
-            sync_lag_events = lag_tracker.current_lag.events
-            sync_lag_ms = lag_tracker.current_lag.lag_ms
-
+        lag = lag_tracker.current_lag if lag_tracker else None
         return MigrationStatus(
             migration_id=migration.id,
             tenant_id=migration.tenant_id,
@@ -127,8 +113,8 @@ class CoordinatorStatusMixin:
             events_total=migration.events_total,
             events_copied=migration.events_copied,
             events_remaining=migration.events_remaining,
-            sync_lag_events=sync_lag_events,
-            sync_lag_ms=sync_lag_ms,
+            sync_lag_events=lag.events if lag else 0,
+            sync_lag_ms=lag.lag_ms if lag else 0.0,
             error_count=migration.error_count,
             started_at=migration.started_at,
             phase_started_at=phase_started_at,
@@ -141,13 +127,13 @@ class CoordinatorStatusMixin:
         """Calculate migration duration in seconds, or 0.0 if None or not started."""
         if migration is None or migration.started_at is None:
             return 0.0
-        end = migration.completed_at or datetime.now(UTC)
-        return (end - migration.started_at).total_seconds()
+        return (
+            (migration.completed_at or datetime.now(UTC)) - migration.started_at
+        ).total_seconds()
 
     async def _notify_status_update(self, migration_id: UUID) -> None:
         """Notify registered observer queues of a status update."""
-        queues = self._status_queues.get(migration_id, [])
-        for queue in queues:
+        for queue in self._status_queues.get(migration_id, []):
             with contextlib.suppress(asyncio.QueueFull):
                 queue.put_nowait(migration_id)
 
@@ -157,9 +143,7 @@ class CoordinatorStatusMixin:
 
     def register_status_queue(self, migration_id: UUID, queue: asyncio.Queue[UUID]) -> None:
         """Register a queue for status updates."""
-        if migration_id not in self._status_queues:
-            self._status_queues[migration_id] = []
-        self._status_queues[migration_id].append(queue)
+        self._status_queues.setdefault(migration_id, []).append(queue)
 
     def unregister_status_queue(self, migration_id: UUID, queue: asyncio.Queue[UUID]) -> None:
         """Unregister a queue from status updates."""
@@ -168,6 +152,4 @@ class CoordinatorStatusMixin:
             queues.remove(queue)
 
 
-__all__ = [
-    "CoordinatorStatusMixin",
-]
+__all__ = ["CoordinatorStatusMixin"]

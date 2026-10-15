@@ -54,8 +54,7 @@ class RedisBusDLQMixin:
             if not pending_info or not isinstance(pending_info, dict):
                 logger.debug("No pending messages found")
                 return stats
-            p_cnt = pending_info.get("pending", 0)
-            if p_cnt == 0:
+            if (p_cnt := pending_info.get("pending", 0)) == 0:
                 logger.debug("No pending messages to recover")
                 return stats
             stats["checked"] = p_cnt
@@ -66,27 +65,19 @@ class RedisBusDLQMixin:
                 delivered = pending_msg["times_delivered"]
                 if idle_ms < min_idle:
                     continue
-                p_ex = {"message_id": msg_id, "idle_time_ms": idle_ms, "times_delivered": delivered}
-                logger.info(f"Processing pending message {msg_id}", extra=p_ex)
+                logger.info(f"Processing pending message {msg_id}", extra={"message_id": msg_id, "idle_time_ms": idle_ms, "times_delivered": delivered})  # fmt: skip
                 retry_key = cfg.get_retry_key(msg_id)
                 retry_str = await redis.get(retry_key)
                 retry_cnt = int(retry_str) if retry_str else delivered - 1
                 try:
-                    raw_claimed = await redis.xclaim(
-                        stream, group, "recovery-worker", min_idle, [msg_id]
-                    )
-                    claimed = cast(list[DecodedEntry], raw_claimed)
-                    if not claimed:
+                    raw_claimed = await redis.xclaim(stream, group, "recovery-worker", min_idle, [msg_id])  # fmt: skip
+                    if not (claimed := cast(list[DecodedEntry], raw_claimed)):
                         logger.warning(f"Failed to claim message {msg_id}")
                         continue
                     stats["claimed"] += 1
                     msg_data = claimed[0][1]
                     ev_type = msg_data.get("event_type", "unknown")
-                    ex_info = {
-                        "message_id": msg_id,
-                        "event_type": ev_type,
-                        "retry_count": retry_cnt,
-                    }
+                    ex_info = {"message_id": msg_id, "event_type": ev_type, "retry_count": retry_cnt}  # fmt: skip
                     if retry_cnt >= max_ret:
                         if cfg.enable_dlq:
                             await self._send_to_dlq(msg_id, msg_data, retry_cnt)
@@ -94,8 +85,7 @@ class RedisBusDLQMixin:
                             self._stats.messages_sent_to_dlq += 1
                         await redis.xack(stream, group, msg_id)
                         await redis.delete(retry_key)
-                        msg = f"Message {msg_id} sent to DLQ after {retry_cnt} retries"
-                        logger.warning(msg, extra=ex_info)
+                        logger.warning(f"Message {msg_id} sent to DLQ after {retry_cnt} retries", extra=ex_info)  # fmt: skip
                     else:
                         try:
                             await self._process_message(msg_id, msg_data, "recovery-worker")
@@ -107,15 +97,11 @@ class RedisBusDLQMixin:
                             new_ret = retry_cnt + 1
                             await redis.setex(retry_key, cfg.retry_key_expiry_seconds, new_ret)
                             stats["failed"] += 1
-                            err_ex = {**ex_info, "retry_count": new_ret}
-                            msg = f"Failed to reprocess message {msg_id}: {e}"
-                            logger.error(msg, exc_info=True, extra=err_ex)
+                            logger.error(f"Failed to reprocess message {msg_id}: {e}", exc_info=True, extra={**ex_info, "retry_count": new_ret})  # fmt: skip
                 except Exception as e:
                     stats["failed"] += 1
-                    msg = f"Error recovering message {msg_id}: {e}"
-                    logger.error(msg, exc_info=True, extra={"message_id": msg_id})
-            summary = f"Pending message recovery completed: {stats['reprocessed']} reprocessed, {stats['dlq']} sent to DLQ, {stats['failed']} failed"
-            logger.info(summary, extra=stats)
+                    logger.error(f"Error recovering message {msg_id}: {e}", exc_info=True, extra={"message_id": msg_id})  # fmt: skip
+            logger.info(f"Pending message recovery completed: {stats['reprocessed']} reprocessed, {stats['dlq']} sent to DLQ, {stats['failed']} failed", extra=stats)  # fmt: skip
         except Exception as e:
             logger.error(f"Pending message recovery failed: {e}", exc_info=True)
             stats["failed"] += 1
@@ -130,8 +116,7 @@ class RedisBusDLQMixin:
         dlq_meta = {"original_message_id": message_id, "retry_count": str(retry_count)}
         dlq_data = {**message_data, **dlq_meta, "dlq_timestamp": now_iso}
         await self._redis.xadd(name=dlq_stream, fields=dlq_data)  # type: ignore[arg-type]
-        dlq_extra = {"message_id": message_id, "dlq_stream": dlq_stream, "retry_count": retry_count}
-        logger.info(f"Sent message {message_id} to DLQ", extra=dlq_extra)
+        logger.info(f"Sent message {message_id} to DLQ", extra={"message_id": message_id, "dlq_stream": dlq_stream, "retry_count": retry_count})  # fmt: skip
 
     async def get_dlq_messages(
         self, count: int = 100, start: str = "-", end: str = "+"
@@ -141,8 +126,7 @@ class RedisBusDLQMixin:
         try:
             dlq_stream = self._config.dlq_stream_name
             raw = await self._redis.xrange(name=dlq_stream, min=start, max=end, count=count)
-            entries = cast(list[DecodedEntry], raw)
-            return [{"message_id": mid, "data": data} for mid, data in entries]
+            return [{"message_id": mid, "data": data} for mid, data in cast(list[DecodedEntry], raw)]  # fmt: skip
         except Exception as e:
             logger.error(f"Failed to get DLQ messages: {e}", exc_info=True)
             return []
@@ -153,8 +137,7 @@ class RedisBusDLQMixin:
         try:
             dlq_stream = self._config.dlq_stream_name
             raw = await self._redis.xrange(name=dlq_stream, min=message_id, max=message_id, count=1)
-            messages = cast(list[DecodedEntry], raw)
-            if not messages:
+            if not (messages := cast(list[DecodedEntry], raw)):
                 logger.warning(f"DLQ message {message_id} not found")
                 return False
             dlq_keys = ("original_message_id", "retry_count", "dlq_timestamp")
@@ -162,8 +145,7 @@ class RedisBusDLQMixin:
             fields = cast("dict[Any, Any]", replay)
             new_id = cast(str, await self._redis.xadd(name=self._config.stream_name, fields=fields))
             await self._redis.xdel(dlq_stream, message_id)
-            extra = {"original_message_id": message_id, "new_message_id": new_id}
-            logger.info(f"Replayed DLQ message {message_id} as {new_id}", extra=extra)
+            logger.info(f"Replayed DLQ message {message_id} as {new_id}", extra={"original_message_id": message_id, "new_message_id": new_id})  # fmt: skip
             return True
         except Exception as e:
             logger.error(f"Failed to replay DLQ message {message_id}: {e}", exc_info=True)

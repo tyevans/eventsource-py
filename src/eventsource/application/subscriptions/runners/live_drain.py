@@ -51,7 +51,6 @@ class LiveDrainMixin:
 
         @property
         def _stop_requested(self) -> bool: ...
-
         def _passes_filter(self, envelope: EventEnvelope) -> bool: ...
         async def _deliver_page(self, included: list[tuple[EventEnvelope, bool]]) -> None: ...
         async def _process_live_event(self, envelope: EventEnvelope) -> None: ...
@@ -62,8 +61,7 @@ class LiveDrainMixin:
             self._handlers[event_type] = handler = self._create_event_handler()
             self.event_bus.subscribe(event_type, handler)
         self._subscribed, names = True, [et.__name__ for et in event_types]
-        extra = {"subscription": self.subscription.name, "event_types": names}
-        logger.debug("Subscribed to event types", extra=extra)
+        logger.debug("Subscribed to event types", extra={"subscription": self.subscription.name, "event_types": names})  # fmt: skip
 
     def _create_event_handler(self) -> _LiveEventHandler:
         return _LiveEventHandler(self)
@@ -73,13 +71,11 @@ class LiveDrainMixin:
         sub = self.subscription.name
         if self._buffer_enabled:
             self._buffered_wakes += 1
-            extra = {"subscription": sub, "buffer_size": self._buffered_wakes}
-            logger.debug("Wake-up buffered", extra=extra)
+            logger.debug("Wake-up buffered", extra={"subscription": sub, "buffer_size": self._buffered_wakes})  # fmt: skip
         elif self.subscription.is_paused:
             self._paused_wakes += 1
             self._events_buffered_during_pause += 1
-            extra = {"subscription": sub, "pause_buffer_size": self._paused_wakes}
-            logger.debug("Wake-up buffered during pause", extra=extra)
+            logger.debug("Wake-up buffered during pause", extra={"subscription": sub, "pause_buffer_size": self._paused_wakes})  # fmt: skip
         else:
             await self._drain_feed()
 
@@ -89,19 +85,16 @@ class LiveDrainMixin:
             return await self._drain_feed_grouped(options)
         processed = 0
         while not self._stop_requested:
-            pos = self.subscription.last_processed_position
-            envelopes_in_batch, stopped = 0, False
+            pos, envelopes_in_batch, stopped = self.subscription.last_processed_position, 0, False
             async for envelope in self.event_feed.read_all(from_position=pos, options=options):
                 if not self._stop_requested:
                     await self.subscription.wait_if_paused(self._stop_event)
-                if self._stop_requested:
-                    stopped = True
+                if stopped := self._stop_requested:
                     break
                 self._stats.events_received += 1
                 await self.subscription.record_events_seen(1)
                 await self._process_live_event(envelope)
-                processed += 1
-                envelopes_in_batch += 1
+                processed, envelopes_in_batch = processed + 1, envelopes_in_batch + 1
             if stopped or envelopes_in_batch < self.config.batch_size:
                 break
         return processed
@@ -110,8 +103,7 @@ class LiveDrainMixin:
         processed = 0
         while not self._stop_requested:
             pos = self.subscription.last_processed_position
-            page = [e async for e in self.event_feed.read_all(from_position=pos, options=options)]
-            if not page:
+            if not (page := [e async for e in self.event_feed.read_all(from_position=pos, options=options)]):  # fmt: skip
                 break
             included: list[tuple[EventEnvelope, bool]] = []
             for envelope in page:
@@ -135,8 +127,7 @@ class LiveDrainMixin:
             self._buffered_wakes, processed = 0, await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            extra = {"subscription": sub, "events_processed": processed}
-            logger.info("Buffer processed", extra=extra)
+            logger.info("Buffer processed", extra={"subscription": sub, "events_processed": processed})  # fmt: skip
             return processed
 
     async def disable_buffer(self) -> None:
@@ -144,27 +135,23 @@ class LiveDrainMixin:
         await self.subscription.transition_to(SubscriptionState.LIVE)
         if self._metrics:
             self._metrics.record_state("live")
-        extra = {"subscription": self.subscription.name}
-        logger.info("Buffer disabled, now processing live", extra=extra)
+        logger.info("Buffer disabled, now processing live", extra={"subscription": self.subscription.name})  # fmt: skip
 
     async def process_pause_buffer(self) -> int:
         sub = self.subscription.name
         attrs = {ATTR_SUBSCRIPTION_NAME: sub, ATTR_BUFFER_SIZE: self._paused_wakes}
         with self._tracer.span("eventsource.live_runner.process_pause_buffer", attrs) as span:
-            extra_start = {"subscription": sub, "pause_buffer_size": self._paused_wakes}
-            logger.info("Processing pause buffer", extra=extra_start)
+            logger.info("Processing pause buffer", extra={"subscription": sub, "pause_buffer_size": self._paused_wakes})  # fmt: skip
             self._paused_wakes, processed = 0, await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            extra_done = {"subscription": sub, "events_processed": processed}
-            logger.info("Pause buffer processed", extra=extra_done)
+            logger.info("Pause buffer processed", extra={"subscription": sub, "events_processed": processed})  # fmt: skip
             self._events_buffered_during_pause = 0
             return processed
 
     async def clear_buffer(self) -> int:
-        dropped = self._buffered_wakes + self._paused_wakes
+        dropped, self._buffer_enabled = self._buffered_wakes + self._paused_wakes, False
         self._buffered_wakes = self._paused_wakes = self._events_buffered_during_pause = 0
-        self._buffer_enabled = False
         await self.subscription.reconcile_lag(0)
         return dropped
 

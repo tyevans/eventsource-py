@@ -55,7 +55,6 @@ class KafkaConsumerLoop(
         shutdown_event: asyncio.Event,
         on_start: Callable[[], None] | None = None,
     ) -> None:
-        """Initialize the consume loop."""
         self._config, self._connection = config, connection
         self._serializer, self._stats = serializer, stats
         self._metrics, self._retry_policy = metrics, retry_policy
@@ -68,24 +67,20 @@ class KafkaConsumerLoop(
 
     @property
     def is_consuming(self) -> bool:
-        """Check if actively consuming messages."""
         return self._consuming
 
     @property
     def _consumer(self) -> Any:
-        """The active aiokafka consumer, or None."""
         return self._connection.consumer
 
     @property
     def _producer(self) -> Any:
-        """The active aiokafka producer, or None."""
         return self._connection.producer
 
     async def start(self, auto_reconnect: bool = True) -> None:
         """Start consuming events from Kafka until stopped or disconnected."""
         if not self._connection.is_connected or not self._consumer:
             raise EventBusConnectionError("Not connected to Kafka. Call connect() first.")
-
         if self._consuming:
             logger.warning("Already consuming events")
             return
@@ -95,14 +90,11 @@ class KafkaConsumerLoop(
         if self._on_start is not None:
             self._on_start()
 
-        logger.info(
-            "Starting Kafka consumer",
-            extra={
-                "topic": self._config.topic_name,
-                "consumer_group": self._config.consumer_group,
-                "auto_reconnect": auto_reconnect,
-            },
-        )
+        start_extra = {
+            "topic": self._config.topic_name, "consumer_group": self._config.consumer_group,
+            "auto_reconnect": auto_reconnect,
+        }  # fmt: skip
+        logger.info("Starting Kafka consumer", extra=start_extra)
 
         reconnect_delay, max_reconnect_delay = 1.0, 60.0
         while self._consuming and not self._shutdown_event.is_set():
@@ -119,31 +111,19 @@ class KafkaConsumerLoop(
                 raise
             except Exception as e:
                 if self._metrics:
-                    self._metrics.connection_errors.add(
-                        1, attributes={"error.type": type(e).__name__}
-                    )
-                logger.error(
-                    "Consumer error",
-                    extra={"error": str(e), "auto_reconnect": auto_reconnect},
-                    exc_info=True,
-                )
+                    self._metrics.connection_errors.add(1, attributes={"error.type": type(e).__name__})  # fmt: skip
+                err_extra = {"error": str(e), "auto_reconnect": auto_reconnect}
+                logger.error("Consumer error", extra=err_extra, exc_info=True)
                 if not auto_reconnect or not self._consuming:
                     raise
-
-                logger.info(
-                    "Attempting to reconnect consumer", extra={"delay_seconds": reconnect_delay}
-                )
+                logger.info("Attempting to reconnect consumer", extra={"delay_seconds": reconnect_delay})  # fmt: skip
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
                 self._connection.record_reconnection()
                 try:
                     await self._connection.reconnect_consumer()
                 except Exception as reconnect_error:
-                    logger.error(
-                        "Failed to reconnect consumer",
-                        extra={"error": str(reconnect_error)},
-                        exc_info=True,
-                    )
+                    logger.error("Failed to reconnect consumer", extra={"error": str(reconnect_error)}, exc_info=True)  # fmt: skip
 
         self._consuming = False
         logger.info("Consumer stopped")

@@ -1,10 +1,4 @@
-"""
-In-memory outbox repository for testing.
-
-The outbox pattern ensures events are reliably published even if the event bus
-is temporarily unavailable. Events are persisted transactionally with the
-aggregate changes, then published asynchronously by a background worker.
-"""
+"""In-memory outbox repository for testing."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -52,8 +46,7 @@ class InMemoryOutboxRepository:
             ATTR_DB_SYSTEM: "memory",
         }
         with self._tracer.span("eventsource.outbox.add", attrs):
-            outbox_id = uuid4()
-            now = datetime.now(UTC)
+            outbox_id, now = uuid4(), datetime.now(UTC)
             event_data = outbox_event_data(event)
             async with self._lock:
                 self._entries[outbox_id] = OutboxEntry(
@@ -84,26 +77,21 @@ class InMemoryOutboxRepository:
 
     async def mark_published(self, outbox_id: UUID) -> None:
         """Mark an outbox event as successfully published."""
-        with self._tracer.span(
-            "eventsource.outbox.mark_published",
-            {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "memory"},
-        ):
+        attrs = {"outbox.id": str(outbox_id), ATTR_DB_SYSTEM: "memory"}
+        with self._tracer.span("eventsource.outbox.mark_published", attrs):
             now = datetime.now(UTC)
             async with self._lock:
                 if (entry := self._entries.get(outbox_id)) is not None:
-                    entry.status = "published"
-                    entry.published_at = now
+                    entry.status, entry.published_at = "published", now
 
     async def increment_retry(self, outbox_id: UUID, error: str | None = None) -> None:
         """Increment retry count for a failed publishing attempt."""
-        with self._tracer.span(
-            "eventsource.outbox.increment_retry",
-            {
-                "outbox.id": str(outbox_id),
-                "error": error[:100] if error else None,
-                ATTR_DB_SYSTEM: "memory",
-            },
-        ):
+        attrs = {
+            "outbox.id": str(outbox_id),
+            "error": error[:100] if error else None,
+            ATTR_DB_SYSTEM: "memory",
+        }
+        with self._tracer.span("eventsource.outbox.increment_retry", attrs):
             async with self._lock:
                 if (entry := self._entries.get(outbox_id)) is not None:
                     entry.retry_count += 1
@@ -111,18 +99,15 @@ class InMemoryOutboxRepository:
 
     async def mark_failed(self, outbox_id: UUID, error: str) -> None:
         """Mark an outbox event as permanently failed."""
-        with self._tracer.span(
-            "eventsource.outbox.mark_failed",
-            {
-                "outbox.id": str(outbox_id),
-                "error": error[:100] if error else None,
-                ATTR_DB_SYSTEM: "memory",
-            },
-        ):
+        attrs = {
+            "outbox.id": str(outbox_id),
+            "error": error[:100] if error else None,
+            ATTR_DB_SYSTEM: "memory",
+        }
+        with self._tracer.span("eventsource.outbox.mark_failed", attrs):
             async with self._lock:
                 if (entry := self._entries.get(outbox_id)) is not None:
-                    entry.status = "failed"
-                    entry.last_error = error
+                    entry.status, entry.last_error = "failed", error
 
     async def cleanup_published(self, days: int = 7) -> int:
         """Clean up published events older than specified days and return count deleted."""
@@ -152,14 +137,14 @@ class InMemoryOutboxRepository:
                 pending = [e for e in entries if e.status == "pending"]
                 published = [e for e in entries if e.status == "published"]
                 failed = [e for e in entries if e.status == "failed"]
-                oldest_pending = min((e.created_at for e in pending), default=None)
-                avg_retries = sum(e.retry_count for e in pending) / len(pending) if pending else 0.0
                 return OutboxStats(
                     pending_count=len(pending),
                     published_count=len(published),
                     failed_count=len(failed),
-                    oldest_pending=oldest_pending,
-                    avg_retries=avg_retries,
+                    oldest_pending=min((e.created_at for e in pending), default=None),
+                    avg_retries=sum(e.retry_count for e in pending) / len(pending)
+                    if pending
+                    else 0.0,
                 )
 
     async def clear(self) -> None:
