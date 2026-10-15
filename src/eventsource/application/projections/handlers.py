@@ -262,45 +262,19 @@ class HandlerRegistry:
             pass  # Can't inspect - skip annotation check
 
     def get_handler(self, event_type: type[DomainEvent]) -> HandlerInfo | None:
-        """
-        Get the handler info for a specific event type.
-
-        Args:
-            event_type: The event type to get handler for
-
-        Returns:
-            HandlerInfo if found, None otherwise
-        """
+        """Get the handler info for a specific event type, or None if not found."""
         return self._handlers.get(event_type)
 
     def has_handler(self, event_type: type[DomainEvent]) -> bool:
-        """
-        Check if a handler exists for the given event type.
-
-        Args:
-            event_type: Event type to check
-
-        Returns:
-            True if handler exists, False otherwise
-        """
+        """Check if a handler exists for the given event type."""
         return event_type in self._handlers
 
     def get_subscribed_events(self) -> list[type[DomainEvent]]:
-        """
-        Get list of event types that have handlers.
-
-        Returns:
-            List of DomainEvent subclasses
-        """
+        """Get list of event types that have handlers."""
         return list(self._handlers.keys())
 
     def get_all_handlers(self) -> dict[type[DomainEvent], HandlerInfo]:
-        """
-        Get all registered handlers.
-
-        Returns:
-            Dictionary mapping event types to handler info
-        """
+        """Get dictionary mapping event types to handler info."""
         return dict(self._handlers)
 
     async def dispatch(
@@ -310,9 +284,6 @@ class HandlerRegistry:
     ) -> bool:
         """
         Dispatch an event to its registered handler.
-
-        Routes the event to the appropriate handler based on event type.
-        If no handler is found, behavior depends on unregistered_event_handling.
 
         Args:
             event: The domain event to dispatch
@@ -333,18 +304,13 @@ class HandlerRegistry:
 
         handler = handler_info.handler
 
-        # Invoke handler based on parameter count
         if handler_info.param_count == 1:
-            # Single parameter: just event
             if handler_info.is_async:
-                # is_async guarantees handler returns a coroutine
                 await handler(event)  # type: ignore[misc]
             else:
                 handler(event)
         else:
-            # Two parameters: context + event
             if handler_info.is_async:
-                # is_async guarantees handler returns a coroutine
                 await handler(context, event)  # type: ignore[misc]
             else:
                 handler(context, event)
@@ -352,17 +318,7 @@ class HandlerRegistry:
         return True
 
     def _handle_unregistered_event(self, event: DomainEvent) -> None:
-        """
-        Handle an event that has no registered handler.
-
-        Behavior depends on unregistered_event_handling setting.
-
-        Args:
-            event: The unhandled event
-
-        Raises:
-            UnhandledEventError: If unregistered_event_handling="error"
-        """
+        """Handle an event that has no registered handler according to configured policy."""
         event_type = type(event)
         available_handlers = [et.__name__ for et in self._handlers]
 
@@ -389,7 +345,6 @@ class HandlerRegistry:
                     "available_handlers": available_handlers,
                 },
             )
-        # "ignore" mode: do nothing
 
     @property
     def owner(self) -> Any:

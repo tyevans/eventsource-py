@@ -298,24 +298,8 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         """
         Load an existing aggregate or create a new one.
 
-        Delegates to the underlying repository's load_or_create method. If
-        require_tenant_context=True, raises first when no tenant scope is
+        If require_tenant_context=True, raises first when no tenant scope is
         active; as with load(), nothing is filtered by tenant.
-
-        Args:
-            aggregate_id: ID of the aggregate
-
-        Returns:
-            Existing aggregate if found, or new empty aggregate
-
-        Raises:
-            TenantContextNotSetError: If require_tenant_context=True and no context
-
-        Example:
-            >>> async with tenant_scope(tenant_id):
-            ...     order = await tenant_repo.load_or_create(order_id)
-            ...     if order.version == 0:
-            ...         order.create(customer_id=customer_id)
         """
         if self._require_tenant_context:
             get_required_tenant()
@@ -323,25 +307,47 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         return await self._repository.load_or_create(aggregate_id)
 
     def create_new(self, aggregate_id: UUID) -> TAggregate:
-        """
-        Create a new, empty aggregate instance.
+        """Create a new, empty in-memory aggregate instance."""
+        return self._repository.create_new(aggregate_id)
 
-        This does not persist anything - it just creates an in-memory
-        aggregate. Delegates directly to the underlying repository.
+    async def execute(
+        self,
+        aggregate_id: UUID,
+        command: Any,
+        *,
+        create_if_missing: bool = True,
+    ) -> TAggregate:
+        """
+        Load (or create) an aggregate, execute a command on it, and save with
+        tenant validation.
 
         Args:
-            aggregate_id: ID for the new aggregate
+            aggregate_id: ID of the aggregate to target
+            command: Command to execute against the aggregate
+            create_if_missing: If True (default), uses ``load_or_create``;
+                if False, uses ``load``.
 
         Returns:
-            New aggregate instance with version 0
-
-        Example:
-            >>> order = tenant_repo.create_new(uuid4())
-            >>> async with tenant_scope(tenant_id):
-            ...     order.create(customer_id=customer_id, tenant_id=tenant_id)
-            ...     await tenant_repo.save(order)
+            The aggregate after command execution and persistence
         """
-        return self._repository.create_new(aggregate_id)
+        if create_if_missing:
+            aggregate = await self.load_or_create(aggregate_id)
+        else:
+            aggregate = await self.load(aggregate_id)
+
+        runner = getattr(aggregate, "execute", None)
+        if not callable(runner):
+            runner = getattr(aggregate, "apply_command", None)
+        if not callable(runner):
+            raise TypeError(
+                f"{type(aggregate).__name__} does not support execute(); "
+                "execute() requires an aggregate supporting execute(command) "
+                "or apply_command(command), such as DeciderAggregate."
+            )
+
+        runner(command)
+        await self.save(aggregate)
+        return aggregate
 
     def __repr__(self) -> str:
         """Return string representation."""

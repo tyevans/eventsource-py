@@ -289,6 +289,51 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         """Get the event publisher, if configured."""
         return self._event_publisher
 
+    async def execute(
+        self,
+        aggregate_id: UUID,
+        command: Any,
+        *,
+        create_if_missing: bool = True,
+    ) -> TAggregate:
+        """
+        Load (or create) an aggregate, execute a command on it, and save.
+
+        Args:
+            aggregate_id: ID of the aggregate to target
+            command: Command to execute against the aggregate
+            create_if_missing: If True (default), uses ``load_or_create``;
+                if False, uses ``load`` (raising ``AggregateNotFoundError``
+                when missing).
+
+        Returns:
+            The aggregate after command execution and persistence
+
+        Raises:
+            AggregateNotFoundError: If ``create_if_missing=False`` and the
+                aggregate does not exist
+            TypeError: If the aggregate does not define ``execute(command)``
+                or ``apply_command(command)``
+        """
+        if create_if_missing:
+            aggregate = await self.load_or_create(aggregate_id)
+        else:
+            aggregate = await self.load(aggregate_id)
+
+        runner = getattr(aggregate, "execute", None)
+        if not callable(runner):
+            runner = getattr(aggregate, "apply_command", None)
+        if not callable(runner):
+            raise TypeError(
+                f"{type(aggregate).__name__} does not support execute(); "
+                "execute() requires an aggregate supporting execute(command) "
+                "or apply_command(command), such as DeciderAggregate."
+            )
+
+        runner(command)
+        await self.save(aggregate)
+        return aggregate
+
 
 __all__ = [
     "ATTR_AGGREGATE_ID",

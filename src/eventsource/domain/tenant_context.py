@@ -113,24 +113,7 @@ def get_current_tenant() -> UUID | None:
     Get the current tenant ID from context.
 
     Returns the current tenant UUID if set, or None if no tenant context
-    has been established. This function is safe to call at any time and
-    will never raise an exception.
-
-    Returns:
-        The current tenant UUID, or None if not set
-
-    Example:
-        >>> from uuid import uuid4
-        >>> from eventsource import (
-        ...     set_current_tenant,
-        ...     get_current_tenant,
-        ...     clear_tenant_context,
-        ... )
-        >>> tenant_id = uuid4()
-        >>> set_current_tenant(tenant_id)
-        >>> assert get_current_tenant() == tenant_id
-        >>> clear_tenant_context()
-        >>> assert get_current_tenant() is None
+    has been established. Safe to call at any time and never raises.
     """
     return tenant_context.get()
 
@@ -139,32 +122,11 @@ def get_required_tenant() -> UUID:
     """
     Get the current tenant ID, raising if not set.
 
-    Use this function when tenant context is required for an operation.
-    It provides clear error messaging when the context is missing.
-
     Returns:
         The current tenant UUID
 
     Raises:
         TenantContextNotSetError: If no tenant context is set
-
-    Example:
-        >>> from uuid import uuid4
-        >>> from eventsource import (
-        ...     set_current_tenant,
-        ...     get_required_tenant,
-        ...     clear_tenant_context,
-        ...     TenantContextNotSetError,
-        ... )
-        >>> tenant_id = uuid4()
-        >>> set_current_tenant(tenant_id)
-        >>> assert get_required_tenant() == tenant_id
-        >>> clear_tenant_context()
-        >>> try:
-        ...     get_required_tenant()
-        ... except TenantContextNotSetError:
-        ...     print("Tenant required but not set")
-        Tenant required but not set
     """
     tenant_id = tenant_context.get()
     if tenant_id is None:
@@ -176,9 +138,9 @@ def set_current_tenant(tenant_id: UUID) -> TenantContextToken:
     """
     Set the current tenant ID in context.
 
-    This sets the tenant context for the current execution context.
-    The returned token must be passed to reset_tenant_context() to restore
-    the previous context.
+    The returned token must be passed to reset_tenant_context() in strict
+    LIFO order to restore the previous context. Prefer tenant_scope() or
+    tenant_scope_sync() for automatic, structurally-LIFO cleanup.
 
     Args:
         tenant_id: The tenant UUID to set
@@ -186,50 +148,6 @@ def set_current_tenant(tenant_id: UUID) -> TenantContextToken:
     Returns:
         Token that can be used to restore previous context via
         reset_tenant_context()
-
-    Example:
-        >>> from uuid import uuid4
-        >>> from eventsource import (
-        ...     set_current_tenant,
-        ...     get_current_tenant,
-        ...     clear_tenant_context,
-        ... )
-        >>> from eventsource.domain.tenant_context import reset_tenant_context
-        >>> tenant_id = uuid4()
-        >>> token = set_current_tenant(tenant_id)
-        >>> assert get_current_tenant() == tenant_id
-        >>> # Manual restoration -- must be strict LIFO (see Warning below).
-        >>> # Prefer tenant_scope() for automatic, structurally-LIFO cleanup
-        >>> # instead of doing this.
-        >>> reset_tenant_context(token)
-
-    Note:
-        For scoped tenant context with automatic cleanup, prefer using
-        tenant_scope() or tenant_scope_sync() context managers instead.
-
-    Warning:
-        Manual set/reset is the UNSAFE-BY-CONVENTION path. The Token
-        returned here MUST be passed to reset_tenant_context() in strict
-        LIFO order relative to any other outstanding token in the same
-        context (i.e. reset the most-recently-created token first, and
-        reset each token at most once) -- exactly the order
-        tenant_scope()/tenant_scope_sync() already guarantee via
-        `with`/`async with` block nesting.
-
-        Unlike raw contextvars.Token.reset() (which enforces nothing and
-        would silently resurrect a stale tenant on out-of-order reset),
-        reset_tenant_context() actively checks ordering and raises
-        TenantContextResetError if you get it wrong:
-
-            token_a = set_current_tenant(tenant_a)
-            token_b = set_current_tenant(tenant_b)
-            reset_tenant_context(token_a)  # raises TenantContextResetError:
-                                            # token_b is still on top
-            reset_tenant_context(token_b)  # correct: -> tenant_a
-            reset_tenant_context(token_a)  # correct: -> None
-
-        Prefer tenant_scope() / tenant_scope_sync() so LIFO ordering is
-        enforced structurally and you never have to think about this.
     """
     logger.debug("Tenant context set: %s", tenant_id)
     raw_token = tenant_context.set(tenant_id)
@@ -243,28 +161,12 @@ def reset_tenant_context(token: TenantContextToken) -> None:
     Restore the tenant context to what it was before the matching
     set_current_tenant() call, enforcing strict LIFO ordering.
 
-    This is the required counterpart to set_current_tenant() for manual
-    (non-scope) usage. tenant_scope() and tenant_scope_sync() call this
-    internally, so scoped and manual usage can never disagree about
-    ordering rules.
-
     Args:
         token: The token returned by the matching set_current_tenant() call
 
     Raises:
         TenantContextResetError: If token is not the most-recently-set,
-            still-active token in the current context -- i.e. it was
-            already reset, or a token set after it hasn't been reset yet.
-
-    Example:
-        >>> from uuid import uuid4
-        >>> from eventsource.domain.tenant_context import (
-        ...     set_current_tenant,
-        ...     reset_tenant_context,
-        ... )
-        >>> tenant_id = uuid4()
-        >>> token = set_current_tenant(tenant_id)
-        >>> reset_tenant_context(token)
+            still-active token in the current context.
     """
     stack = _token_stack.get()
     if not stack or stack[-1] is not token:
@@ -285,31 +187,9 @@ def clear_tenant_context() -> None:
     Unconditionally clear the tenant context for the current execution
     context, invalidating ALL outstanding TenantContextTokens.
 
-    This is the hard-reset escape hatch for request/task boundaries
-    ("no tenant may survive past this point"). After calling it,
-    get_current_tenant() returns None and any reset_tenant_context()
-    call with a previously issued token raises TenantContextResetError
-    — including the implicit reset performed when an enclosing
-    tenant_scope()/tenant_scope_sync() exits. Never call this inside a
-    tenant scope unless you want that scope's exit to fail loudly.
-
-    Example:
-        >>> from uuid import uuid4
-        >>> from eventsource import (
-        ...     set_current_tenant,
-        ...     clear_tenant_context,
-        ...     get_current_tenant,
-        ... )
-        >>> tenant_id = uuid4()
-        >>> set_current_tenant(tenant_id)  # doctest: +ELLIPSIS
-        <...TenantContextToken...>
-        >>> clear_tenant_context()
-        >>> assert get_current_tenant() is None
-
-    Warning:
-        In async code with multiple concurrent tasks, be careful with
-        clear_tenant_context() as it only affects the current execution
-        context. Use tenant_scope() for proper context isolation.
+    After calling it, get_current_tenant() returns None and any
+    reset_tenant_context() call with a previously issued token raises
+    TenantContextResetError.
     """
     logger.debug("Tenant context cleared")
     tenant_context.set(None)
@@ -323,46 +203,12 @@ async def tenant_scope(tenant_id: UUID) -> AsyncGenerator[UUID]:
 
     Automatically sets tenant context on entry and restores the previous
     context on exit, ensuring proper cleanup even if exceptions occur.
-    This is the recommended way to manage tenant context in async code.
 
     Args:
         tenant_id: The tenant UUID to set for this scope
 
     Yields:
         The tenant ID
-
-    Example:
-        >>> import asyncio
-        >>> from uuid import uuid4
-        >>> from eventsource import tenant_scope, get_current_tenant
-        >>>
-        >>> async def process_tenant_request():
-        ...     tenant_id = uuid4()
-        ...     async with tenant_scope(tenant_id):
-        ...         # All code here runs with tenant_id as context
-        ...         current = get_current_tenant()
-        ...         assert current == tenant_id
-        ...     # Context automatically restored here
-        >>>
-        >>> asyncio.run(process_tenant_request())
-
-    Note:
-        This properly handles nested async contexts and task propagation
-        through Python's contextvars mechanism. The token-based reset
-        ensures that nested scopes work correctly.
-
-    Example with nesting:
-        >>> async def nested_example():
-        ...     tenant1 = uuid4()
-        ...     tenant2 = uuid4()
-        ...     async with tenant_scope(tenant1):
-        ...         assert get_current_tenant() == tenant1
-        ...         async with tenant_scope(tenant2):
-        ...             assert get_current_tenant() == tenant2
-        ...         # tenant1 is restored
-        ...         assert get_current_tenant() == tenant1
-        >>>
-        >>> asyncio.run(nested_example())
     """
     token = set_current_tenant(tenant_id)
     logger.debug("Tenant scope entered: %s", tenant_id)
@@ -378,28 +224,14 @@ def tenant_scope_sync(tenant_id: UUID) -> Generator[UUID]:
     """
     Sync context manager for scoped tenant context.
 
-    Same as tenant_scope but for synchronous code. Automatically sets
-    tenant context on entry and restores the previous context on exit.
+    Automatically sets tenant context on entry and restores the previous
+    context on exit.
 
     Args:
         tenant_id: The tenant UUID to set for this scope
 
     Yields:
         The tenant ID
-
-    Example:
-        >>> from uuid import uuid4
-        >>> from eventsource import (
-        ...     tenant_scope_sync,
-        ...     get_current_tenant,
-        ... )
-        >>> tenant_id = uuid4()
-        >>> with tenant_scope_sync(tenant_id):
-        ...     assert get_current_tenant() == tenant_id
-        >>> assert get_current_tenant() is None
-
-    Note:
-        For async code, use tenant_scope() instead.
     """
     token = set_current_tenant(tenant_id)
     logger.debug("Tenant scope (sync) entered: %s", tenant_id)
