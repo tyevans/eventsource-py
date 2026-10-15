@@ -14,7 +14,7 @@ from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.domain.exceptions import TenantMismatchError
+from eventsource.domain.exceptions import AggregateNotFoundError, TenantMismatchError
 from eventsource.domain.tenant_context import get_required_tenant
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,13 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             )
 
         return await self._repository.load(aggregate_id)
+
+    async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
+        """Get aggregate if it exists, or return None if not found."""
+        try:
+            return await self.load(aggregate_id)
+        except AggregateNotFoundError:
+            return None
 
     async def exists(self, aggregate_id: UUID) -> bool:
         """Check if aggregate exists, optionally requiring an active tenant scope."""
