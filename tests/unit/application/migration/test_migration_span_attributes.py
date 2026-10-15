@@ -1,15 +1,4 @@
-"""
-Unit tests confirming the ATTR_MIGRATION_* telemetry constants are actually
-set on real spans emitted by application/migration/ code, not merely
-imported and left inert (recurring-defects.md #3).
-
-Each test builds a fully isolated OpenTelemetry TracerProvider (never
-touching the process-global provider, so these tests are immune to
-pytest-randomly reordering across the suite) and passes it explicitly as
-the component's `tracer=`, then inspects finished spans via an in-memory
-exporter -- exercising the real method that opens the span, not a
-standalone Span/Tracer double asserted against directly.
-"""
+"""Unit tests confirming ATTR_MIGRATION_* telemetry constants are set on real spans."""
 
 from __future__ import annotations
 
@@ -40,13 +29,7 @@ pytestmark = pytest.mark.asyncio
 
 
 class _IsolatedOtelTracer:
-    """A `Tracer` bound to a private, per-test TracerProvider.
-
-    Never touches `opentelemetry.trace`'s process-global provider, so
-    these tests are immune to ordering effects from other tests in the
-    session (pytest-randomly reshuffles test order, and OpenTelemetry's
-    global provider can only meaningfully be set once per process).
-    """
+    """A `Tracer` bound to a private, per-test TracerProvider."""
 
     def __init__(self, otel_tracer: Any) -> None:
         self._tracer = otel_tracer
@@ -61,7 +44,6 @@ class _IsolatedOtelTracer:
 
 @pytest.fixture
 def isolated_tracer() -> tuple[Any, Any]:
-    """A (tracer, exporter) pair backed by a fresh, private TracerProvider."""
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -82,8 +64,6 @@ class TestSyncLagTrackerSpanAttributes:
     async def test_calculate_lag_sets_sync_lag_events_attribute(
         self, isolated_tracer: tuple[Any, Any]
     ) -> None:
-        """calculate_lag() records ATTR_MIGRATION_SYNC_LAG_EVENTS on its
-        real span -- not a standalone span object the test constructs."""
         tracer, exporter = isolated_tracer
         from eventsource.adapters.memory import InMemoryEventStore
         from eventsource.domain import StreamId
@@ -113,7 +93,6 @@ class TestSyncLagTrackerSpanAttributes:
             migration_id=uuid4(),
             tracer=tracer,
         )
-
         await lag_tracker.calculate_lag()
 
         spans = exporter.get_finished_spans()
@@ -123,8 +102,6 @@ class TestSyncLagTrackerSpanAttributes:
 
 
 class _AcquireCtx:
-    """Minimal async context manager standing in for a held lock."""
-
     async def __aenter__(self) -> None:
         return None
 
@@ -136,20 +113,8 @@ class TestCutoverManagerSpanAttributes:
     async def test_execute_cutover_sets_both_migration_id_attributes(
         self, isolated_tracer: tuple[Any, Any]
     ) -> None:
-        """execute_cutover() records the migration id under BOTH
-        cutover.py's own ATTR_CUTOVER_MIGRATION_ID ("eventsource.cutover.
-        migration_id", emitted since the migration system's first commit)
-        AND the canonical eventsource.observability.attributes.
-        ATTR_MIGRATION_ID ("eventsource.migration.id"). These used to be
-        two constants sharing the Python name ATTR_MIGRATION_ID with
-        different wire strings -- a query filtering on the canonical
-        attribute silently missed every cutover span. Fixed additively
-        (emit both) rather than by unifying on one string, since removing
-        the cutover-local one would break any dashboard already filtering
-        on it (architecture.md's telemetry schema stability rule)."""
-        from eventsource.application.migration.cutover import (
-            ATTR_CUTOVER_MIGRATION_ID,
-        )
+        """execute_cutover() records both ATTR_CUTOVER_MIGRATION_ID and ATTR_MIGRATION_ID."""
+        from eventsource.application.migration.cutover import ATTR_CUTOVER_MIGRATION_ID
 
         tracer, exporter = isolated_tracer
         migration_id = uuid4()
@@ -178,7 +143,6 @@ class TestCutoverManagerSpanAttributes:
             lock_manager=lock_manager,
             tracer=tracer,
         )
-
         await manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -198,9 +162,6 @@ class TestCoordinatorSpanAttributes:
     async def test_transition_to_dual_write_sets_phase_and_ids(
         self, isolated_tracer: tuple[Any, Any]
     ) -> None:
-        """_transition_to_dual_write() records ATTR_MIGRATION_ID,
-        ATTR_MIGRATION_TENANT_ID, and ATTR_MIGRATION_PHASE on its real
-        span."""
         tracer, exporter = isolated_tracer
         migration_id = uuid4()
         tenant_id = uuid4()
@@ -213,7 +174,6 @@ class TestCoordinatorSpanAttributes:
             target_store_id="dedicated",
             phase=MigrationPhase.BULK_COPY,
         )
-
         migration_repo = AsyncMock()
         migration_repo.update_phase = AsyncMock()
         routing_repo = AsyncMock()
@@ -226,7 +186,6 @@ class TestCoordinatorSpanAttributes:
             router=MagicMock(),
             tracer=tracer,
         )
-
         await coordinator._transition_to_dual_write(migration, target_store)
 
         spans = exporter.get_finished_spans()
@@ -242,8 +201,6 @@ class TestCoordinatorSpanAttributes:
     async def test_start_migration_sets_source_and_target_store(
         self, isolated_tracer: tuple[Any, Any]
     ) -> None:
-        """start_migration() records ATTR_MIGRATION_SOURCE_STORE and
-        ATTR_MIGRATION_TARGET_STORE on its real span."""
         tracer, exporter = isolated_tracer
         tenant_id = uuid4()
         migration_repo = AsyncMock()
@@ -262,7 +219,6 @@ class TestCoordinatorSpanAttributes:
             source_store_id="default",
             tracer=tracer,
         )
-        # Prevent the background bulk-copy task from actually running.
         coordinator._run_bulk_copy = AsyncMock()  # type: ignore[method-assign]
 
         await coordinator.start_migration(

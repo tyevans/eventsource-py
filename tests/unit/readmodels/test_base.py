@@ -10,8 +10,6 @@ from eventsource.ports.readmodels.model import ReadModel, _camel_to_snake, _plur
 
 
 class TestCamelToSnake:
-    """Tests for _camel_to_snake helper function."""
-
     def test_simple_conversion(self) -> None:
         assert _camel_to_snake("OrderSummary") == "order_summary"
 
@@ -38,8 +36,6 @@ class TestCamelToSnake:
 
 
 class TestPluralize:
-    """Tests for _pluralize helper function."""
-
     def test_regular_plural(self) -> None:
         assert _pluralize("order") == "orders"
         assert _pluralize("user") == "users"
@@ -79,11 +75,7 @@ class TestPluralize:
 
 
 class TestReadModel:
-    """Tests for ReadModel base class."""
-
     def test_create_with_required_fields(self) -> None:
-        """Test creating read model with only required fields."""
-
         class SimpleModel(ReadModel):
             name: str
 
@@ -97,24 +89,18 @@ class TestReadModel:
         assert isinstance(model.updated_at, datetime)
 
     def test_table_name_derivation(self) -> None:
-        """Test automatic table name derivation."""
-
         class OrderSummary(ReadModel):
             status: str
 
         assert OrderSummary.table_name() == "order_summaries"
 
     def test_table_name_with_multiple_words(self) -> None:
-        """Test table name for multi-word class names."""
-
         class UserProfileView(ReadModel):
             email: str
 
         assert UserProfileView.table_name() == "user_profile_views"
 
     def test_table_name_override(self) -> None:
-        """Test explicit table name override."""
-
         class CustomModel(ReadModel):
             __table_name__ = "my_custom_table"
             value: int
@@ -122,8 +108,6 @@ class TestReadModel:
         assert CustomModel.table_name() == "my_custom_table"
 
     def test_field_names(self) -> None:
-        """Test field name extraction."""
-
         class ProductView(ReadModel):
             sku: str
             price: Decimal
@@ -133,8 +117,6 @@ class TestReadModel:
             assert expected in names
 
     def test_custom_field_names(self) -> None:
-        """Test custom field name extraction (excluding base fields)."""
-
         class ProductView(ReadModel):
             sku: str
             price: Decimal
@@ -146,8 +128,6 @@ class TestReadModel:
             assert base_field not in custom_names
 
     def test_is_deleted_false(self) -> None:
-        """Test is_deleted when not deleted."""
-
         class SimpleModel(ReadModel):
             name: str
 
@@ -155,8 +135,6 @@ class TestReadModel:
         assert model.is_deleted() is False
 
     def test_is_deleted_true(self) -> None:
-        """Test is_deleted when deleted."""
-
         class SimpleModel(ReadModel):
             name: str
 
@@ -164,8 +142,6 @@ class TestReadModel:
         assert model.is_deleted() is True
 
     def test_model_is_mutable(self) -> None:
-        """Test that read models are mutable (not frozen)."""
-
         class SimpleModel(ReadModel):
             status: str
 
@@ -174,8 +150,6 @@ class TestReadModel:
         assert model.status == "completed"
 
     def test_str_representation(self) -> None:
-        """Test string representation."""
-
         class OrderModel(ReadModel):
             number: str
 
@@ -186,8 +160,6 @@ class TestReadModel:
         assert "version=1" in result
 
     def test_repr_representation(self) -> None:
-        """Test repr for debugging."""
-
         class OrderModel(ReadModel):
             number: str
 
@@ -196,8 +168,6 @@ class TestReadModel:
             assert expected in result
 
     def test_repr_with_deleted(self) -> None:
-        """Test repr includes deleted_at when set."""
-
         class OrderModel(ReadModel):
             number: str
 
@@ -205,8 +175,6 @@ class TestReadModel:
         assert "deleted_at=" in repr(model)
 
     def test_from_attributes(self) -> None:
-        """Test construction from object with attributes."""
-
         class SourceObject:
             def __init__(self) -> None:
                 self.id = uuid4()
@@ -225,8 +193,6 @@ class TestReadModel:
         assert model.id == source.id
 
     def test_to_dict(self) -> None:
-        """Test to_dict serialization."""
-
         class SimpleModel(ReadModel):
             name: str
             amount: Decimal
@@ -239,8 +205,6 @@ class TestReadModel:
         assert data["version"] == 1
 
     def test_json_serialization(self) -> None:
-        """Test JSON serialization via model_dump."""
-
         class SimpleModel(ReadModel):
             name: str
             amount: Decimal
@@ -252,16 +216,12 @@ class TestReadModel:
         assert data["name"] == "test"
 
     def test_version_default_value(self) -> None:
-        """Test that version defaults to 1."""
-
         class SimpleModel(ReadModel):
             name: str
 
         assert SimpleModel(id=uuid4(), name="test").version == 1
 
     def test_version_validation(self) -> None:
-        """Test that version must be >= 1."""
-
         class SimpleModel(ReadModel):
             name: str
 
@@ -269,8 +229,6 @@ class TestReadModel:
             SimpleModel(id=uuid4(), name="test", version=0)
 
     def test_timestamps_are_utc(self) -> None:
-        """Test that default timestamps are UTC."""
-
         class SimpleModel(ReadModel):
             name: str
 

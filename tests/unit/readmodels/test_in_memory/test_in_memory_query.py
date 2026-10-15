@@ -10,21 +10,20 @@ from eventsource.ports.readmodels.query import Filter, Query
 from tests.unit.readmodels.test_in_memory._fixtures import OrderSummary
 
 
-class TestInMemoryReadModelQuery:
-    """Query and filtering tests for InMemoryReadModelRepository."""
+def _order(number: str, status: str, amount: str) -> OrderSummary:
+    return OrderSummary(
+        id=uuid4(),
+        order_number=number,
+        status=status,
+        total_amount=Decimal(amount),
+    )
 
+
+class TestInMemoryReadModelQuery:
     @pytest.mark.asyncio
     async def test_find_all(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test find with no query returns all non-deleted records."""
         for i in range(5):
-            await repo.save(
-                OrderSummary(
-                    id=uuid4(),
-                    order_number=f"ORD-{i}",
-                    status="pending",
-                    total_amount=Decimal(str(i)),
-                )
-            )
+            await repo.save(_order(f"ORD-{i}", "pending", str(i)))
 
         results = await repo.find()
         assert len(results) == 5
@@ -33,26 +32,10 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_filter_ne(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with not-equal filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("20"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "10"))
+        await repo.save(_order("ORD-002", "shipped", "20"))
 
         results = await repo.find(Query(filters=[Filter.ne("status", "pending")]))
-
         assert len(results) == 1
         assert results[0].status == "shipped"
 
@@ -60,26 +43,10 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_filter_gt(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with greater-than filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("100"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "10"))
+        await repo.save(_order("ORD-002", "shipped", "100"))
 
         results = await repo.find(Query(filters=[Filter.gt("total_amount", Decimal("50"))]))
-
         assert len(results) == 1
         assert results[0].total_amount == Decimal("100")
 
@@ -87,52 +54,20 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_filter_gte(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with greater-than-or-equal filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("50"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("100"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "50"))
+        await repo.save(_order("ORD-002", "shipped", "100"))
 
         results = await repo.find(Query(filters=[Filter.gte("total_amount", Decimal("50"))]))
-
         assert len(results) == 2
 
     @pytest.mark.asyncio
     async def test_find_with_filter_lt(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with less-than filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("100"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "10"))
+        await repo.save(_order("ORD-002", "shipped", "100"))
 
         results = await repo.find(Query(filters=[Filter.lt("total_amount", Decimal("50"))]))
-
         assert len(results) == 1
         assert results[0].total_amount == Decimal("10")
 
@@ -140,26 +75,10 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_filter_lte(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with less-than-or-equal filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("50"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("100"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "50"))
+        await repo.save(_order("ORD-002", "shipped", "100"))
 
         results = await repo.find(Query(filters=[Filter.lte("total_amount", Decimal("50"))]))
-
         assert len(results) == 1
         assert results[0].total_amount == Decimal("50")
 
@@ -167,34 +86,11 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_filter_in(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with in-list filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("20"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-003",
-                status="cancelled",
-                total_amount=Decimal("30"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "10"))
+        await repo.save(_order("ORD-002", "shipped", "20"))
+        await repo.save(_order("ORD-003", "cancelled", "30"))
 
         results = await repo.find(Query(filters=[Filter.in_("status", ["pending", "shipped"])]))
-
         assert len(results) == 2
         assert {r.status for r in results} == {"pending", "shipped"}
 
@@ -202,36 +98,13 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_filter_not_in(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with not-in-list filter."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="pending",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("20"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-003",
-                status="cancelled",
-                total_amount=Decimal("30"),
-            )
-        )
+        await repo.save(_order("ORD-001", "pending", "10"))
+        await repo.save(_order("ORD-002", "shipped", "20"))
+        await repo.save(_order("ORD-003", "cancelled", "30"))
 
         results = await repo.find(
             Query(filters=[Filter.not_in("status", ["cancelled", "refunded"])])
         )
-
         assert len(results) == 2
         assert {r.status for r in results} == {"pending", "shipped"}
 
@@ -239,31 +112,9 @@ class TestInMemoryReadModelQuery:
     async def test_find_with_multiple_filters(
         self, repo: InMemoryReadModelRepository[OrderSummary]
     ) -> None:
-        """Test find with multiple filters (AND logic)."""
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-001",
-                status="shipped",
-                total_amount=Decimal("10"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-002",
-                status="shipped",
-                total_amount=Decimal("100"),
-            )
-        )
-        await repo.save(
-            OrderSummary(
-                id=uuid4(),
-                order_number="ORD-003",
-                status="pending",
-                total_amount=Decimal("100"),
-            )
-        )
+        await repo.save(_order("ORD-001", "shipped", "10"))
+        await repo.save(_order("ORD-002", "shipped", "100"))
+        await repo.save(_order("ORD-003", "pending", "100"))
 
         results = await repo.find(
             Query(
@@ -273,6 +124,5 @@ class TestInMemoryReadModelQuery:
                 ]
             )
         )
-
         assert len(results) == 1
         assert results[0].order_number == "ORD-002"
