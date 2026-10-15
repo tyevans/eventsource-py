@@ -16,14 +16,11 @@ class TestBuildSelectQuery:
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
         """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_basic_select(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test basic SELECT query building."""
-        query = Query()
-        sql, params = repo._build_select_query(query)
-
+        sql, params = repo._build_select_query(Query())
         assert "SELECT" in sql
         assert "FROM order_summaries" in sql
         assert "WHERE" in sql
@@ -32,9 +29,7 @@ class TestBuildSelectQuery:
 
     def test_select_with_filter(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with filter using positional parameters."""
-        query = Query(filters=[Filter.eq("status", "active")])
-        sql, params = repo._build_select_query(query)
-
+        sql, params = repo._build_select_query(Query(filters=[Filter.eq("status", "active")]))
         assert "WHERE" in sql
         assert "deleted_at IS NULL" in sql
         assert "status = ?" in sql
@@ -45,13 +40,9 @@ class TestBuildSelectQuery:
     ) -> None:
         """Test SELECT with multiple filters."""
         query = Query(
-            filters=[
-                Filter.eq("status", "active"),
-                Filter.gt("total_amount", Decimal("100")),
-            ]
+            filters=[Filter.eq("status", "active"), Filter.gt("total_amount", Decimal("100"))]
         )
         sql, params = repo._build_select_query(query)
-
         assert "status = ?" in sql
         assert "total_amount > ?" in sql
         assert " AND " in sql
@@ -60,46 +51,33 @@ class TestBuildSelectQuery:
 
     def test_select_with_ordering(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with ordering."""
-        query = Query(order_by="created_at", order_direction="desc")
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query(order_by="created_at", order_direction="desc"))
         assert "ORDER BY created_at DESC" in sql
 
     def test_select_with_ordering_asc(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with ascending ordering."""
-        query = Query(order_by="order_number", order_direction="asc")
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query(order_by="order_number", order_direction="asc"))
         assert "ORDER BY order_number ASC" in sql
 
     def test_select_with_limit(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with limit."""
-        query = Query(limit=10)
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query(limit=10))
         assert "LIMIT 10" in sql
 
     def test_select_with_offset(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with offset."""
-        query = Query(offset=5)
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query(offset=5))
         assert "OFFSET 5" in sql
 
     def test_select_with_pagination(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with pagination (limit and offset)."""
-        query = Query(limit=10, offset=20)
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query(limit=10, offset=20))
         assert "LIMIT 10" in sql
         assert "OFFSET 20" in sql
 
     def test_select_include_deleted(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test SELECT with include_deleted excludes soft-delete filter."""
-        query = Query(include_deleted=True)
-        sql, params = repo._build_select_query(query)
-
-        # Should not have deleted_at filter since include_deleted=True
+        sql, _ = repo._build_select_query(Query(include_deleted=True))
         assert "deleted_at IS NULL" not in sql
 
     def test_select_full_query(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
@@ -112,7 +90,6 @@ class TestBuildSelectQuery:
             offset=0,
         )
         sql, params = repo._build_select_query(query)
-
         assert "SELECT" in sql
         assert "FROM order_summaries" in sql
         assert "WHERE" in sql
@@ -129,14 +106,11 @@ class TestBuildCountQuery:
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
         """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_basic_count(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test basic COUNT query building."""
-        query = Query()
-        sql, params = repo._build_count_query(query)
-
+        sql, params = repo._build_count_query(Query())
         assert "SELECT COUNT(*)" in sql
         assert "FROM order_summaries" in sql
         assert "deleted_at IS NULL" in sql
@@ -144,18 +118,14 @@ class TestBuildCountQuery:
 
     def test_count_with_filter(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test COUNT with filter."""
-        query = Query(filters=[Filter.eq("status", "shipped")])
-        sql, params = repo._build_count_query(query)
-
+        sql, params = repo._build_count_query(Query(filters=[Filter.eq("status", "shipped")]))
         assert "SELECT COUNT(*)" in sql
         assert "status = ?" in sql
         assert "shipped" in params
 
     def test_count_include_deleted(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test COUNT with include_deleted."""
-        query = Query(include_deleted=True)
-        sql, params = repo._build_count_query(query)
-
+        sql, _ = repo._build_count_query(Query(include_deleted=True))
         assert "deleted_at IS NULL" not in sql
 
 
@@ -165,45 +135,32 @@ class TestQueryBuilderIntegration:
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
         """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_query_with_filter_method(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test Query with_filter method integration."""
-        base_query = Query(limit=100)
-        filtered = base_query.with_filter(Filter.eq("status", "active"))
-
+        filtered = Query(limit=100).with_filter(Filter.eq("status", "active"))
         sql, params = repo._build_select_query(filtered)
-
         assert "status = ?" in sql
         assert "LIMIT 100" in sql
         assert "active" in params
 
     def test_query_with_order_method(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test Query with_order method integration."""
-        query = Query().with_order("created_at", "desc")
-
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query().with_order("created_at", "desc"))
         assert "ORDER BY created_at DESC" in sql
 
     def test_query_with_pagination_method(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
         """Test Query with_pagination method integration."""
-        query = Query().with_pagination(limit=20, offset=40)
-
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query().with_pagination(limit=20, offset=40))
         assert "LIMIT 20" in sql
         assert "OFFSET 40" in sql
 
     def test_query_with_deleted_method(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         """Test Query with_deleted method integration."""
-        query = Query().with_deleted(True)
-
-        sql, params = repo._build_select_query(query)
-
+        sql, _ = repo._build_select_query(Query().with_deleted(True))
         assert "deleted_at IS NULL" not in sql
 
     def test_chained_query_methods(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
@@ -215,9 +172,7 @@ class TestQueryBuilderIntegration:
             .with_order("created_at", "desc")
             .with_pagination(limit=10, offset=0)
         )
-
         sql, params = repo._build_select_query(query)
-
         assert "status = ?" in sql
         assert "total_amount > ?" in sql
         assert "ORDER BY created_at DESC" in sql
@@ -232,17 +187,13 @@ class TestSQLiteSyntaxDifferences:
     @pytest.fixture
     def repo(self) -> SQLiteReadModelRepository[OrderSummary]:
         """Create repository for testing."""
-        mock_conn = MagicMock()
-        return SQLiteReadModelRepository(mock_conn, OrderSummary, enable_tracing=False)
+        return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_uses_positional_parameters(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
         """Test that SQLite uses ? positional parameters, not :named."""
-        query = Query(filters=[Filter.eq("status", "active")])
-        sql, params = repo._build_select_query(query)
-
-        # Should use ? not :param
+        sql, _ = repo._build_select_query(Query(filters=[Filter.eq("status", "active")]))
         assert "?" in sql
         assert ":p0" not in sql
         assert ":status" not in sql
@@ -251,10 +202,9 @@ class TestSQLiteSyntaxDifferences:
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
         """Test IN operator uses multiple ? placeholders, not ANY()."""
-        query = Query(filters=[Filter.in_("status", ["a", "b", "c"])])
-        sql, params = repo._build_select_query(query)
-
-        # SQLite uses IN (?,?,?) not ANY(:param)
+        sql, params = repo._build_select_query(
+            Query(filters=[Filter.in_("status", ["a", "b", "c"])])
+        )
         assert "IN (?,?,?)" in sql
         assert "ANY" not in sql
         assert params == ("a", "b", "c")
@@ -263,10 +213,7 @@ class TestSQLiteSyntaxDifferences:
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
         """Test NOT IN operator uses multiple ? placeholders, not ALL()."""
-        query = Query(filters=[Filter.not_in("status", ["x", "y"])])
-        sql, params = repo._build_select_query(query)
-
-        # SQLite uses NOT IN (?,?) not != ALL(:param)
+        sql, params = repo._build_select_query(Query(filters=[Filter.not_in("status", ["x", "y"])]))
         assert "NOT IN (?,?)" in sql
         assert "ALL" not in sql
         assert params == ("x", "y")
