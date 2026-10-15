@@ -222,3 +222,25 @@ class TestThenEventCount:
 
         assert "SampleCreated" in str(exc_info.value)
         assert "SampleUpdated" in str(exc_info.value)
+
+    async def test_event_type_count_passes_and_fails(self, harness: InMemoryTestHarness) -> None:
+        """then_event_count(..., event_type=...) checks count of specific event type."""
+        events = [
+            SampleCreated(
+                aggregate_id=uuid4(), aggregate_type="Sample", aggregate_version=1, name="t"
+            ),
+            SampleUpdated(
+                aggregate_id=uuid4(), aggregate_type="Sample", aggregate_version=2, new_value=42
+            ),
+            SampleUpdated(
+                aggregate_id=uuid4(), aggregate_type="Sample", aggregate_version=3, new_value=99
+            ),
+        ]
+        await harness.event_bus.publish(events)
+
+        then_event_count(harness, 1, event_type=SampleCreated)
+        then_event_count(harness, 2, event_type=SampleUpdated)
+        then_event_count(harness, 0, event_type=SampleDeleted)
+
+        with pytest.raises(AssertionError, match=r"Expected 3 SampleUpdated event\(s\), got 2"):
+            then_event_count(harness, 3, event_type=SampleUpdated)
