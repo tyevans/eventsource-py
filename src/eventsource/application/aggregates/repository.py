@@ -26,6 +26,7 @@ from eventsource.application.aggregates.snapshotting import (
 )
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
+from eventsource.domain.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -180,6 +181,21 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
     def event_publisher(self) -> EventPublisher | None:
         """Get the event publisher, if configured."""
         return self._event_publisher
+
+    async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
+        """
+        Get an aggregate if it exists, or return None if not found.
+
+        Args:
+            aggregate_id: ID of the aggregate
+
+        Returns:
+            The loaded aggregate if events exist, or None if not found.
+        """
+        try:
+            return await self.load(aggregate_id)
+        except AggregateNotFoundError:
+            return None
 
     async def execute(
         self,

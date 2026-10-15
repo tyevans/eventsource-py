@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource import EventRegistry, TenantDomainEvent, tenant_scope
+from eventsource import (
+    EventRegistry,
+    TenantContextNotSetError,
+    TenantDomainEvent,
+    clear_tenant_context,
+    tenant_scope,
+)
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.application.aggregates.tenant_repository import TenantAwareRepository
@@ -147,3 +154,90 @@ class TestTenantAwareRepositoryExecute:
                     agg_id,
                     OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=wrong_tenant),
                 )
+
+
+class TestAggregateRepositoryGetOrNone:
+    @pytest.mark.asyncio
+    async def test_get_or_none_returns_existing_aggregate(self) -> None:
+        store = _make_store()
+        repo = AggregateRepository(event_store=store, aggregate_factory=Account)
+        agg_id = uuid4()
+        await repo.execute(agg_id, OpenAccount(account_id=agg_id, owner="alice"))
+
+        found = await repo.get_or_none(agg_id)
+
+        assert found is not None
+        assert found.aggregate_id == agg_id
+        assert found.version == 1
+        assert found.state.owner == "alice"
+
+    @pytest.mark.asyncio
+    async def test_get_or_none_returns_none_when_not_found(self) -> None:
+        store = _make_store()
+        repo = AggregateRepository(event_store=store, aggregate_factory=Account)
+
+        assert await repo.get_or_none(uuid4()) is None
+
+
+class TestTenantAwareRepositoryGetOrNone:
+    def setup_method(self) -> None:
+        clear_tenant_context()
+
+    def teardown_method(self) -> None:
+        clear_tenant_context()
+
+    @pytest.mark.asyncio
+    async def test_get_or_none_returns_existing_aggregate(self) -> None:
+        store = _make_store()
+        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_id = uuid4()
+        agg_id = uuid4()
+
+        async with tenant_scope(tenant_id):
+            await tenant_repo.execute(
+                agg_id,
+                OpenTenantAccount(account_id=agg_id, owner="alice", tenant_id=tenant_id),
+            )
+            found = await tenant_repo.get_or_none(agg_id)
+
+        assert found is not None
+        assert found.aggregate_id == agg_id
+        assert found.version == 1
+        assert found.state.owner == "alice"
+
+    @pytest.mark.asyncio
+    async def test_get_or_none_returns_none_when_not_found(self) -> None:
+        store = _make_store()
+        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+        tenant_id = uuid4()
+
+        async with tenant_scope(tenant_id):
+            assert await tenant_repo.get_or_none(uuid4()) is None
+
+    @pytest.mark.asyncio
+    async def test_get_or_none_propagates_missing_tenant_context(self) -> None:
+        store = _make_store()
+        base_repo = AggregateRepository(event_store=store, aggregate_factory=TenantAccount)
+        tenant_repo = TenantAwareRepository(base_repo, require_tenant_context=True)
+
+        with pytest.raises(TenantContextNotSetError):
+            await tenant_repo.get_or_none(uuid4())
+
+    @pytest.mark.asyncio
+    async def test_get_or_none_propagates_tenant_mismatch_error(self) -> None:
+        expected_tenant = uuid4()
+        actual_tenant = uuid4()
+        mock_repo = MagicMock()
+        mock_repo.load = AsyncMock(
+            side_effect=TenantMismatchError(
+                expected=expected_tenant,
+                actual=actual_tenant,
+                event_ids=[uuid4()],
+            )
+        )
+        tenant_repo: TenantAwareRepository[TenantAccount] = TenantAwareRepository(mock_repo)
+
+        with pytest.raises(TenantMismatchError):
+            await tenant_repo.get_or_none(uuid4())
