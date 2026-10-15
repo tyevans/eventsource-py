@@ -241,3 +241,32 @@ class TestTheFailureListIsBoundedAndSaysSo:
             )
 
         assert [f.event_id for f in streamed] == [poison.event_id]
+
+
+class TestSingleProjectionAndSucceededReport:
+    """Callers with a single projection can pass it directly without wrapping
+    in a list, and `report.succeeded` summarizes whether zero failures occurred."""
+
+    async def test_replay_accepts_a_bare_single_projection(self) -> None:
+        first = OrderPlaced(aggregate_id=uuid4())
+        second = OrderPlaced(aggregate_id=uuid4())
+        store = await _store_with(first, second)
+        projection = Collecting()
+
+        report = await replay(store, projection)
+
+        assert [e.event_id for e in projection.seen] == [first.event_id, second.event_id]
+        assert report.applied == 2
+        assert report.succeeded is True
+
+    async def test_succeeded_is_false_when_a_failure_is_retained_or_truncated(self) -> None:
+        poison = OrderPlaced(aggregate_id=uuid4())
+        store = await _store_with(poison)
+
+        failed_report = await replay(store, RejectsOne(poison.event_id))
+        truncated_report = await replay(store, RejectsOne(poison.event_id), max_failures=0)
+
+        assert failed_report.succeeded is False
+        assert truncated_report.failures == ()
+        assert truncated_report.failures_truncated == 1
+        assert truncated_report.succeeded is False
