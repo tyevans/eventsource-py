@@ -1,7 +1,7 @@
 ---
 id: TASK-0435
 title: "Sync Diataxis documentation for Wave 27 HandlerRegistry, EventFilter, and SyncEventStoreAdapter ergonomics"
-status: Refined
+status: Complete
 target_bc: documentation
 dependencies: [TASK-0425]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md

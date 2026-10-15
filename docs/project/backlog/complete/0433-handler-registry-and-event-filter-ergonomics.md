@@ -1,7 +1,7 @@
 ---
 id: TASK-0433
 title: "Add HandlerRegistry container dunders and EventFilter callable/filter() ergonomics"
-status: Refined
+status: Complete
 target_bc: application
 dependencies: [TASK-0425]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md

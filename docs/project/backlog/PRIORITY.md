@@ -447,3 +447,14 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0433 (Refined)**: [`0433-handler-registry-and-event-filter-ergonomics`](refined/0433-handler-registry-and-event-filter-ergonomics.md)
 - **TASK-0434 (Refined)**: [`0434-sync-event-store-adapter-ergonomics`](refined/0434-sync-event-store-adapter-ergonomics.md)
 - **TASK-0435 (Refined)**: [`0435-docs-sync-wave27-handler-filter-and-sync-adapter-ergonomics`](refined/0435-docs-sync-wave27-handler-filter-and-sync-adapter-ergonomics.md)
+| [TASK-0426](complete/0426-compact-src-176-178-batch-1.md) | Compact 11 src/ modules (176-178 lines) below 160 lines (Batch 1) | Complete |
+| [TASK-0427](complete/0427-compact-src-173-176-batch-2.md) | Compact 12 src/ modules (173-176 lines) below 160 lines (Batch 2) | Complete |
+| [TASK-0428](complete/0428-compact-src-172-173-batch-3.md) | Compact 11 src/ modules (172-173 lines) below 160 lines (Batch 3) | Complete |
+| [TASK-0429](complete/0429-compact-tests-216-217-batch-1.md) | Compact 15 test modules (216-217 lines) below 200 lines (Batch 1) | Complete |
+| [TASK-0430](complete/0430-compact-tests-215-216-batch-2.md) | Compact 14 test modules (215-216 lines) below 200 lines (Batch 2) | Complete |
+| [TASK-0431](complete/0431-compact-tests-214-215-batch-3.md) | Compact 13 test modules (214-215 lines) below 200 lines (Batch 3) | Complete |
+| [TASK-0432](complete/0432-compact-tests-213-batch-4.md) | Compact 14 test & example modules (213 lines) below 200 lines (Batch 4) | Complete |
+| [TASK-0433](complete/0433-handler-registry-and-event-filter-ergonomics.md) | Add HandlerRegistry container dunders and EventFilter call/filter/Iterable ergonomics | Complete |
+| [TASK-0434](complete/0434-sync-event-store-adapter-ergonomics.md) | Add stream_exists, read_events, and single-event/default-expected append to SyncEventStoreAdapter | Complete |
+| [TASK-0435](complete/0435-docs-sync-wave-27.md) | Sync Diataxis documentation for Wave 27 HandlerRegistry, EventFilter, and SyncEventStoreAdapter ergonomics | Complete |
+| [TASK-0436](complete/0436-sync-wave-27-and-enforce-172-213-ceiling.md) | Sync Wave 27 backlog and tighten architectural line ceiling to 172/213 | Complete |
