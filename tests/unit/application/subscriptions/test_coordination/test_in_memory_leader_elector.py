@@ -8,9 +8,7 @@ from eventsource.adapters.memory.coordination import (
     InMemoryLeaderElector,
     SharedLeaderState,
 )
-from eventsource.ports.coordination import (
-    LeaderElector,
-)
+from eventsource.ports.coordination import LeaderElector
 
 
 class TestInMemoryLeaderElector:
@@ -20,9 +18,7 @@ class TestInMemoryLeaderElector:
     async def test_single_instance_becomes_leader(self) -> None:
         """Test single instance always becomes leader."""
         elector = InMemoryLeaderElector(_identity="worker-1")
-
         result = await elector.try_acquire()
-
         assert result is True
         assert elector.is_leader is True
         assert elector.current_leader == "worker-1"
@@ -32,9 +28,7 @@ class TestInMemoryLeaderElector:
         """Test releasing leadership."""
         elector = InMemoryLeaderElector(_identity="worker-1")
         await elector.try_acquire()
-
         await elector.release()
-
         assert elector.is_leader is False
 
     @pytest.mark.asyncio
@@ -43,10 +37,8 @@ class TestInMemoryLeaderElector:
         state = SharedLeaderState()
         elector1 = InMemoryLeaderElector(_identity="worker-1", shared_state=state)
         elector2 = InMemoryLeaderElector(_identity="worker-2", shared_state=state)
-
         result1 = await elector1.try_acquire()
         result2 = await elector2.try_acquire()
-
         assert result1 is True
         assert result2 is False
         assert elector1.is_leader is True
@@ -59,11 +51,9 @@ class TestInMemoryLeaderElector:
         state = SharedLeaderState()
         elector1 = InMemoryLeaderElector(_identity="worker-1", shared_state=state)
         elector2 = InMemoryLeaderElector(_identity="worker-2", shared_state=state)
-
         await elector1.try_acquire()
         await elector1.release()
         result2 = await elector2.try_acquire()
-
         assert result2 is True
         assert elector1.is_leader is False
         assert elector2.is_leader is True
@@ -80,7 +70,6 @@ class TestInMemoryLeaderElector:
 
         elector.on_leader_change(callback)
         await elector.try_acquire()
-
         assert callback_values == [True]
 
     @pytest.mark.asyncio
@@ -95,7 +84,6 @@ class TestInMemoryLeaderElector:
         elector.on_leader_change(callback)
         await elector.try_acquire()
         await elector.release()
-
         assert callback_values == [True, False]
 
     @pytest.mark.asyncio
@@ -114,7 +102,6 @@ class TestInMemoryLeaderElector:
         elector.on_leader_change(failing_callback)
         elector.on_leader_change(success_callback)
         await elector.try_acquire()
-
         assert elector.is_leader is True
         assert callback_invoked is True
 
@@ -123,9 +110,7 @@ class TestInMemoryLeaderElector:
         """Test forcing leadership loss for testing."""
         elector = InMemoryLeaderElector(_identity="worker-1")
         await elector.try_acquire()
-
         await elector.force_lose_leadership()
-
         assert elector.is_leader is False
 
     @pytest.mark.asyncio
@@ -140,7 +125,6 @@ class TestInMemoryLeaderElector:
         elector.on_leader_change(callback)
         removed = elector.remove_leader_change_callback(callback)
         await elector.try_acquire()
-
         assert removed is True
         assert callback_values == []
 
@@ -151,10 +135,7 @@ class TestInMemoryLeaderElector:
         electors = [
             InMemoryLeaderElector(_identity=f"worker-{i}", shared_state=state) for i in range(10)
         ]
-
         results = await asyncio.gather(*(e.try_acquire() for e in electors))
-
-        # Exactly one should succeed
         assert sum(results) == 1
         assert sum(e.is_leader for e in electors) == 1
 
@@ -168,18 +149,14 @@ class TestInMemoryLeaderElector:
         """Test that renew returns True when currently the leader."""
         elector = InMemoryLeaderElector(_identity="worker-1")
         await elector.try_acquire()
-
         result = await elector.renew()
-
         assert result is True
 
     @pytest.mark.asyncio
     async def test_renew_returns_false_when_not_leader(self) -> None:
         """Test that renew returns False when not the leader."""
         elector = InMemoryLeaderElector(_identity="worker-1")
-
         result = await elector.renew()
-
         assert result is False
 
     @pytest.mark.asyncio
@@ -189,9 +166,7 @@ class TestInMemoryLeaderElector:
         assert elector.identity == "my-instance"
 
     @pytest.mark.asyncio
-    async def test_current_leader_returns_none_when_no_leader_single_instance(
-        self,
-    ) -> None:
+    async def test_current_leader_returns_none_when_no_leader_single_instance(self) -> None:
         """Test current_leader returns None when not leader in single-instance mode."""
         elector = InMemoryLeaderElector(_identity="worker-1")
         assert elector.current_leader is None
@@ -202,10 +177,7 @@ class TestInMemoryLeaderElector:
         state = SharedLeaderState()
         elector1 = InMemoryLeaderElector(_identity="worker-1", shared_state=state)
         elector2 = InMemoryLeaderElector(_identity="worker-2", shared_state=state)
-
         await elector1.try_acquire()
-
-        # Both should report the same current leader
         assert elector1.current_leader == "worker-1"
         assert elector2.current_leader == "worker-1"
 
@@ -213,10 +185,8 @@ class TestInMemoryLeaderElector:
     async def test_try_acquire_returns_true_when_already_leader(self) -> None:
         """Test try_acquire returns True when already the leader."""
         elector = InMemoryLeaderElector(_identity="worker-1")
-
         result1 = await elector.try_acquire()
         result2 = await elector.try_acquire()
-
         assert result1 is True
         assert result2 is True
         assert elector.is_leader is True
@@ -225,10 +195,7 @@ class TestInMemoryLeaderElector:
     async def test_release_when_not_leader_is_safe(self) -> None:
         """Test that release is safe to call when not the leader."""
         elector = InMemoryLeaderElector(_identity="worker-1")
-
-        # Should not raise
         await elector.release()
-
         assert elector.is_leader is False
 
     @pytest.mark.asyncio
@@ -237,16 +204,11 @@ class TestInMemoryLeaderElector:
         state = SharedLeaderState()
         elector1 = InMemoryLeaderElector(_identity="worker-1", shared_state=state)
         elector2 = InMemoryLeaderElector(_identity="worker-2", shared_state=state)
-
         await elector1.try_acquire()
         assert state.current_leader == "worker-1"
-
         await elector1.force_lose_leadership()
-
         assert elector1.is_leader is False
         assert state.current_leader is None
-
-        # Now elector2 can acquire
         result = await elector2.try_acquire()
         assert result is True
         assert elector2.is_leader is True
@@ -264,7 +226,6 @@ class TestInMemoryLeaderElector:
         elector.on_leader_change(callback)
         await elector.try_acquire()
         await elector.force_lose_leadership()
-
         assert callback_values == [True, False]
 
     @pytest.mark.asyncio
@@ -294,7 +255,6 @@ class TestInMemoryLeaderElector:
         elector.on_leader_change(callback1)
         elector.on_leader_change(callback2)
         await elector.try_acquire()
-
         assert callback1_values == [True]
         assert callback2_values == [True]
 
@@ -322,23 +282,13 @@ class TestSharedLeaderState:
 
 
 class TestModuleExportsWithInMemory:
-    """Tests for InMemoryLeaderElector/SharedLeaderState's relocated home (ADR 0032).
-
-    They no longer live in (or re-export from) eventsource.application.subscriptions --
-    their canonical home is eventsource.adapters.memory.coordination, because
-    eventsource.application.subscriptions (soon eventsource.application.subscriptions)
-    may not import adapters.memory.
-    """
+    """Tests for InMemoryLeaderElector/SharedLeaderState's relocated home (ADR 0032)."""
 
     def test_all_exports_include_inmemory(self) -> None:
         """Test that adapters.memory.coordination.__all__ contains both names."""
         from eventsource.adapters.memory import coordination
 
-        core_expected = {
-            "InMemoryLeaderElector",
-            "SharedLeaderState",
-        }
-        for symbol in core_expected:
+        for symbol in {"InMemoryLeaderElector", "SharedLeaderState"}:
             assert symbol in coordination.__all__, f"Missing core export: {symbol}"
 
     def test_not_exported_from_subscriptions_package(self) -> None:
@@ -350,11 +300,7 @@ class TestModuleExportsWithInMemory:
 
     def test_exports_from_adapters_memory_package(self) -> None:
         """Test that InMemoryLeaderElector is exported from adapters.memory package."""
-        from eventsource.adapters.memory import (
-            InMemoryLeaderElector,
-            SharedLeaderState,
-        )
+        from eventsource.adapters.memory import InMemoryLeaderElector, SharedLeaderState
 
-        # Just verify imports work
         assert InMemoryLeaderElector is not None
         assert SharedLeaderState is not None
