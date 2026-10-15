@@ -1,10 +1,4 @@
-"""
-Exceptions for read model repositories.
-
-This module provides exception classes for error handling in read model
-repository operations, including optimistic locking conflicts and
-model lookup failures.
-"""
+"""Exceptions for read model repositories."""
 
 from uuid import UUID
 
@@ -12,54 +6,11 @@ from eventsource.domain.exceptions import EventSourceError
 
 
 class ReadModelError(EventSourceError):
-    """
-    Base exception for read model operations.
-
-    All read model repository exceptions inherit from this class,
-    allowing callers to catch all read model errors with a single
-    except clause if desired.
-
-    Example:
-        >>> try:
-        ...     await repo.save_with_version_check(model)
-        ... except ReadModelError as e:
-        ...     print(f"Read model error: {e}")
-    """
-
-    pass
+    """Base exception for read model repository operations."""
 
 
 class ReadModelVersionConflictError(ReadModelError):
-    """
-    Raised when optimistic locking fails due to version mismatch.
-
-    This occurs when attempting to save a read model whose version
-    in the database has changed since it was loaded. This indicates
-    a concurrent modification conflict.
-
-    The optimistic locking pattern:
-    1. Read model with current version N
-    2. When saving, check that DB version is still N
-    3. If match, save with version N+1
-    4. If mismatch, raise ReadModelVersionConflictError
-
-    Attributes:
-        model_id: ID of the read model
-        expected_version: Version the client expected (from loaded model)
-        actual_version: Version currently in the database (None if unknown)
-
-    Example:
-        >>> summary = await repo.get(order_id)
-        >>> summary.status = "shipped"
-        >>> try:
-        ...     await repo.save_with_version_check(summary)
-        ... except ReadModelVersionConflictError as e:
-        ...     # Handle conflict - reload and retry or fail
-        ...     print(f"Conflict: expected v{e.expected_version}, found v{e.actual_version}")
-        ...     # Option 1: Reload and retry
-        ...     fresh_summary = await repo.get(order_id)
-        ...     # Option 2: Return conflict error to caller
-    """
+    """Raised when optimistic locking fails due to version mismatch."""
 
     def __init__(
         self,
@@ -67,15 +18,7 @@ class ReadModelVersionConflictError(ReadModelError):
         expected_version: int,
         actual_version: int | None = None,
     ) -> None:
-        """
-        Initialize ReadModelVersionConflictError.
-
-        Args:
-            model_id: ID of the read model that had the conflict
-            expected_version: Version the client expected based on loaded model
-            actual_version: Version currently in the database, or None if
-                the model was not found during the check
-        """
+        """Initialize ReadModelVersionConflictError."""
         self.model_id = model_id
         self.expected_version = expected_version
         self.actual_version = actual_version
@@ -97,68 +40,19 @@ class ReadModelVersionConflictError(ReadModelError):
 
 
 class ReadModelNotFoundError(ReadModelError):
-    """
-    Raised when a read model is not found but was expected to exist.
-
-    This is typically raised by operations that require an existing
-    model, such as `save_with_version_check()`.
-
-    Attributes:
-        model_id: ID of the missing read model
-
-    Example:
-        >>> model = OrderSummary(id=uuid4(), ...)  # New model, not in DB
-        >>> try:
-        ...     await repo.save_with_version_check(model)
-        ... except ReadModelNotFoundError as e:
-        ...     print(f"Model {e.model_id} not found - use save() for new models")
-    """
+    """Raised when a read model is not found but was expected to exist."""
 
     def __init__(self, model_id: UUID) -> None:
-        """
-        Initialize ReadModelNotFoundError.
-
-        Args:
-            model_id: ID of the read model that was not found
-        """
+        """Initialize ReadModelNotFoundError."""
         self.model_id = model_id
         super().__init__(f"Read model {model_id} not found")
 
 
 class ReadModelSchemaMismatchError(ReadModelError):
-    """
-    Raised when a read model's table cannot be reconciled with the model.
-
-    Schema reconciliation is additive: it adds columns a model declares and
-    the table lacks. Two situations it cannot resolve by adding a column,
-    and so refuses rather than emitting SQL the database will reject:
-
-    - The added field is required with no default, and the table may already
-      have rows to fill in for.
-    - The table has no primary key column, so it is not this model's table
-      (or does not exist and wants creating rather than reconciling).
-
-    Attributes:
-        table_name: Table that could not be reconciled
-        column: Column the reconciliation stopped on
-        reason: What cannot be done, and what to do instead
-
-    Example:
-        >>> try:
-        ...     await reconcile_read_model_schema(conn, OrderSummary)
-        ... except ReadModelSchemaMismatchError as e:
-        ...     print(f"{e.table_name}.{e.column} needs a real migration")
-    """
+    """Raised when a read model's table cannot be reconciled with the model."""
 
     def __init__(self, table_name: str, column: str, reason: str) -> None:
-        """
-        Initialize ReadModelSchemaMismatchError.
-
-        Args:
-            table_name: Table that could not be reconciled
-            column: Column the reconciliation stopped on
-            reason: What cannot be done, and what to do instead
-        """
+        """Initialize ReadModelSchemaMismatchError."""
         self.table_name = table_name
         self.column = column
         self.reason = reason

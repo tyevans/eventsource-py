@@ -1,10 +1,4 @@
-"""
-SyncLagTracker - Monitor synchronization lag between source and target stores.
-
-Counts how many source events the target has not yet copied during the
-dual-write phase of migration, tracks lag metrics over time, and determines
-when synchronization is close enough for cutover.
-"""
+"""SyncLagTracker - Monitor synchronization lag between source and target stores."""
 
 from __future__ import annotations
 
@@ -20,11 +14,7 @@ from eventsource.application.migration.sync_lag_tracker_types import (
     LagSample,
     LagStats,
 )
-from eventsource.observability import (
-    ATTR_TENANT_ID,
-    Tracer,
-    create_tracer,
-)
+from eventsource.observability import ATTR_TENANT_ID, Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_MIGRATION_SYNC_LAG_EVENTS
 from eventsource.ports import FeedReadOptions, FullEventStore, Position
 from eventsource.ports.migration.models import MigrationConfig, SyncLag
@@ -33,13 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class SyncLagTracker(SyncLagAnalysisMixin):
-    """
-    Tracks synchronization lag between source and target stores.
-
-    Counts source events not yet copied during the dual-write phase of
-    migration and maintains a sliding window of lag samples for convergence
-    detection and cutover eligibility checks.
-    """
+    """Tracks synchronization lag between source and target stores during migration."""
 
     def __init__(
         self,
@@ -62,7 +46,6 @@ class SyncLagTracker(SyncLagAnalysisMixin):
         self._tenant_id = tenant_id
         self._migration_id = migration_id
         self._max_sample_history = max_sample_history
-
         self._lag_samples: deque[LagSample] = deque(maxlen=max_sample_history)
         self._current_lag: SyncLag | None = None
 
@@ -97,12 +80,7 @@ class SyncLagTracker(SyncLagAnalysisMixin):
         return self._config.cutover_max_lag_events
 
     async def calculate_lag(self, *, since: Position | None = None) -> SyncLag:
-        """Count source events not yet copied, bounded by the sync threshold.
-
-        `since` is the last source position the target has copied (or None
-        to count from the head of the source feed). The count is exact up to
-        `cutover_max_lag_events + 1` and bounded beyond that.
-        """
+        """Count source events not yet copied since `since`, bounded by the sync threshold."""
         with self._tracer.span(
             "eventsource.sync_lag.calculate_lag",
             {
@@ -111,9 +89,6 @@ class SyncLagTracker(SyncLagAnalysisMixin):
             },
         ) as span:
             threshold = self._config.cutover_max_lag_events
-
-            # Read one past the bound so "at the bound" and "over the
-            # bound" are distinguishable, then stop.
             lag_events = 0
             async for _ in self._source.read_all(
                 since,
@@ -125,8 +100,6 @@ class SyncLagTracker(SyncLagAnalysisMixin):
                 span.set_attribute(ATTR_MIGRATION_SYNC_LAG_EVENTS, lag_events)
 
             count_is_bounded = lag_events > threshold
-
-            # Reporting only: each store's own head position.
             source_position = await self._source.current_position()
             target_position = await self._target.current_position()
 
@@ -137,8 +110,6 @@ class SyncLagTracker(SyncLagAnalysisMixin):
                 timestamp=datetime.now(UTC),
                 count_is_bounded=count_is_bounded,
             )
-
-            # Store and sample
             self._current_lag = lag
             self._add_sample(lag)
 
@@ -148,28 +119,16 @@ class SyncLagTracker(SyncLagAnalysisMixin):
                     str(self._tenant_id) if self._tenant_id else "unknown",
                 ).record_sync_lag(lag_events)
 
-            # Log the measurement
             logger.debug(
                 f"Sync lag calculated: {lag_events} events behind"
                 + (" (bounded)" if count_is_bounded else "")
                 + (f" for tenant {self._tenant_id}" if self._tenant_id else "")
             )
-
             return lag
 
     def _add_sample(self, lag: SyncLag) -> None:
-        """
-        Add a lag measurement to the sample history.
-
-        Args:
-            lag: The lag measurement to record.
-        """
-        sample = LagSample(lag=lag, sampled_at=datetime.now(UTC))
-        self._lag_samples.append(sample)
+        """Add a lag measurement to the sample history."""
+        self._lag_samples.append(LagSample(lag=lag, sampled_at=datetime.now(UTC)))
 
 
-__all__ = [
-    "LagSample",
-    "LagStats",
-    "SyncLagTracker",
-]
+__all__ = ["LagSample", "LagStats", "SyncLagTracker"]

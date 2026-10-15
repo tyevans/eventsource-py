@@ -33,7 +33,6 @@ class SubscriptionMetrics:
     _lag_value: int = field(default=0, init=False, repr=False)
     _state_value: int = field(default=StateValue.UNKNOWN, init=False, repr=False)
     _state_name: str = field(default="unknown", init=False, repr=False)
-
     _processed_count: int = field(default=0, init=False, repr=False)
     _failed_count: int = field(default=0, init=False, repr=False)
     _total_duration_ms: float = field(default=0.0, init=False, repr=False)
@@ -65,18 +64,18 @@ class SubscriptionMetrics:
             unit="ms",
             description="Event processing duration in milliseconds",
         )
-        self._meter.create_observable_gauge(
-            name="subscription.lag",
-            callbacks=[self._observe_lag],
-            unit="events",
-            description="Current event lag (events behind)",
-        )
-        self._meter.create_observable_gauge(
-            name="subscription.state",
-            callbacks=[self._observe_state],
-            unit="1",
-            description="Current subscription state (numeric)",
-        )
+        for name, cb, unit, desc in (
+            ("subscription.lag", self._observe_lag, "events", "Current event lag (events behind)"),
+            (
+                "subscription.state",
+                self._observe_state,
+                "1",
+                "Current subscription state (numeric)",
+            ),
+        ):
+            self._meter.create_observable_gauge(
+                name=name, callbacks=[cb], unit=unit, description=desc
+            )
 
     def _setup_noop(self) -> None:
         self._events_processed_counter = NoOpCounter()
@@ -87,26 +86,20 @@ class SubscriptionMetrics:
         if OTEL_METRICS_AVAILABLE:
             from opentelemetry.metrics import Observation
 
-            yield Observation(
-                value=self._lag_value, attributes={"subscription": self.subscription_name}
-            )
+            yield Observation(self._lag_value, {"subscription": self.subscription_name})
 
     def _observe_state(self, options: Any) -> Any:
         if OTEL_METRICS_AVAILABLE:
             from opentelemetry.metrics import Observation
 
             attrs = {"subscription": self.subscription_name, "state_name": self._state_name}
-            yield Observation(value=self._state_value, attributes=attrs)
+            yield Observation(self._state_value, attrs)
 
     def record_event_processed(
         self, event_type: str, duration_ms: float, status: str = "success"
     ) -> None:
         """Record a successfully processed event."""
-        attrs = {
-            "subscription": self.subscription_name,
-            "event.type": event_type,
-            "status": status,
-        }
+        attrs = {"subscription": self.subscription_name, "event.type": event_type, "status": status}
         self._events_processed_counter.add(1, attrs)
         self._processing_duration_histogram.record(duration_ms, attrs)
         self._processed_count += 1
@@ -116,19 +109,10 @@ class SubscriptionMetrics:
         self, event_type: str, error_type: str, duration_ms: float | None = None
     ) -> None:
         """Record a failed event."""
-        attrs = {
-            "subscription": self.subscription_name,
-            "event.type": event_type,
-            "error.type": error_type,
-        }
-        self._events_failed_counter.add(1, attrs)
+        base = {"subscription": self.subscription_name, "event.type": event_type}
+        self._events_failed_counter.add(1, {**base, "error.type": error_type})
         if duration_ms is not None:
-            failure_attrs = {
-                "subscription": self.subscription_name,
-                "event.type": event_type,
-                "status": "failed",
-            }
-            self._processing_duration_histogram.record(duration_ms, failure_attrs)
+            self._processing_duration_histogram.record(duration_ms, {**base, "status": "failed"})
             self._total_duration_ms += duration_ms
         self._failed_count += 1
 

@@ -15,9 +15,6 @@ from eventsource.application.subscriptions.models import (
 from eventsource.ports.exceptions import SubscriptionStateError
 from eventsource.ports.positions import Position
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,19 +33,8 @@ class SubscriptionPauseMixin:
 
         async def transition_to(self, new_state: SubscriptionState) -> None: ...
 
-    async def pause(
-        self,
-        reason: PauseReason = PauseReason.MANUAL,
-    ) -> None:
-        """
-        Pause event processing.
-
-        Args:
-            reason: The reason for pausing (defaults to MANUAL)
-
-        Raises:
-            SubscriptionStateError: If not in a pausable state (CATCHING_UP or LIVE)
-        """
+    async def pause(self, reason: PauseReason = PauseReason.MANUAL) -> None:
+        """Pause event processing; raises SubscriptionStateError if not CATCHING_UP or LIVE."""
         async with self._lock:
             if self.state not in (SubscriptionState.CATCHING_UP, SubscriptionState.LIVE):
                 raise SubscriptionStateError(
@@ -76,12 +62,7 @@ class SubscriptionPauseMixin:
         )
 
     async def resume(self) -> None:
-        """
-        Resume event processing.
-
-        Raises:
-            SubscriptionStateError: If not in PAUSED state
-        """
+        """Resume event processing; raises SubscriptionStateError if not PAUSED."""
         async with self._lock:
             if self.state != SubscriptionState.PAUSED:
                 raise SubscriptionStateError(
@@ -89,11 +70,10 @@ class SubscriptionPauseMixin:
                 )
 
             target_state = self._state_before_pause or SubscriptionState.CATCHING_UP
-
             pause_reason = self._pause_reason
-            pause_duration = None
-            if self._paused_at:
-                pause_duration = (datetime.now(UTC) - self._paused_at).total_seconds()
+            pause_duration = (
+                (datetime.now(UTC) - self._paused_at).total_seconds() if self._paused_at else None
+            )
 
             self._pause_reason = None
             self._paused_at = None
@@ -113,22 +93,12 @@ class SubscriptionPauseMixin:
         )
 
     async def wait_if_paused(self, stop_signal: asyncio.Event | None = None) -> bool:
-        """
-        Wait if the subscription is paused.
-
-        Args:
-            stop_signal: Optional event that also ends the wait when set.
-
-        Returns:
-            True if the wait actually blocked, False if not paused.
-        """
+        """Wait if the subscription is paused; returns True if it blocked, False otherwise."""
         if self._pause_event.is_set():
             return False
-
         if stop_signal is None:
             await self._pause_event.wait()
             return True
-
         if stop_signal.is_set():
             return True
 
