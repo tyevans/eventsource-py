@@ -41,7 +41,6 @@ class LiveDrainMixin:
         _metrics: SubscriptionMetrics | None
         _stats: LiveRunnerStats
         _stop_event: asyncio.Event
-        _running: bool
         _subscribed: bool
         _buffer_enabled: bool
         _buffered_wakes: int
@@ -49,19 +48,16 @@ class LiveDrainMixin:
         _events_buffered_during_pause: int
         _batch_capable: bool
         _handlers: dict[type[DomainEvent], _LiveEventHandler]
+        _stop_requested: bool
 
-        @property
-        def _stop_requested(self) -> bool: ...
         def _passes_filter(self, envelope: EventEnvelope) -> bool: ...
         async def _deliver_page(self, included: list[tuple[EventEnvelope, bool]]) -> None: ...
         async def _process_live_event(self, envelope: EventEnvelope) -> None: ...
 
     def _subscribe_to_bus(self) -> None:
-        """Subscribe to the event bus with our internal handler."""
         event_types = get_subscribed_event_types(self.subscription.subscriber)
         for event_type in event_types:
-            handler = self._create_event_handler()
-            self._handlers[event_type] = handler
+            self._handlers[event_type] = handler = self._create_event_handler()
             self.event_bus.subscribe(event_type, handler)
         self._subscribed = True
         names = [et.__name__ for et in event_types]
@@ -69,29 +65,24 @@ class LiveDrainMixin:
         logger.debug("Subscribed to event types", extra=extra)
 
     def _create_event_handler(self) -> _LiveEventHandler:
-        """Create a handler wrapper that routes events to our processing method."""
         return _LiveEventHandler(self)
 
     async def _handle_live_event(self, event: DomainEvent) -> None:
-        """Handle a wake-up notification from the event bus by draining the global feed."""
         del event
+        sub = self.subscription.name
         if self._buffer_enabled:
             self._buffered_wakes += 1
-            extra = {"subscription": self.subscription.name, "buffer_size": self._buffered_wakes}
+            extra = {"subscription": sub, "buffer_size": self._buffered_wakes}
             logger.debug("Wake-up buffered", extra=extra)
         elif self.subscription.is_paused:
             self._paused_wakes += 1
             self._events_buffered_during_pause += 1
-            extra = {
-                "subscription": self.subscription.name,
-                "pause_buffer_size": self._paused_wakes,
-            }
+            extra = {"subscription": sub, "pause_buffer_size": self._paused_wakes}
             logger.debug("Wake-up buffered during pause", extra=extra)
         else:
             await self._drain_feed()
 
     async def _drain_feed(self) -> int:
-        """Read and process every envelope on the global feed past our checkpoint."""
         options = FeedReadOptions(tenant_id=self.config.tenant_id, limit=self.config.batch_size)
         if self._batch_capable:
             return await self._drain_feed_grouped(options)
@@ -115,7 +106,6 @@ class LiveDrainMixin:
         return processed
 
     async def _drain_feed_grouped(self, options: FeedReadOptions) -> int:
-        """Drain the feed delivering each read's envelopes through `handle_batch()`."""
         processed = 0
         while not self._stop_requested:
             pos = self.subscription.last_processed_position
@@ -138,22 +128,18 @@ class LiveDrainMixin:
         return processed
 
     async def process_buffer(self) -> int:
-        """Drain the global feed to deliver whatever arrived during buffering."""
-        attrs = {
-            ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-            ATTR_BUFFER_SIZE: self._buffered_wakes,
-        }
+        sub = self.subscription.name
+        attrs = {ATTR_SUBSCRIPTION_NAME: sub, ATTR_BUFFER_SIZE: self._buffered_wakes}
         with self._tracer.span("eventsource.live_runner.process_buffer", attrs) as span:
             self._buffered_wakes = 0
             processed = await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            extra = {"subscription": self.subscription.name, "events_processed": processed}
+            extra = {"subscription": sub, "events_processed": processed}
             logger.info("Buffer processed", extra=extra)
             return processed
 
     async def disable_buffer(self) -> None:
-        """Disable buffering and switch to direct processing."""
         self._buffer_enabled = False
         await self.subscription.transition_to(SubscriptionState.LIVE)
         if self._metrics:
@@ -162,28 +148,21 @@ class LiveDrainMixin:
         logger.info("Buffer disabled, now processing live", extra=extra)
 
     async def process_pause_buffer(self) -> int:
-        """Drain the global feed to deliver whatever arrived during pause."""
-        attrs = {
-            ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-            ATTR_BUFFER_SIZE: self._paused_wakes,
-        }
+        sub = self.subscription.name
+        attrs = {ATTR_SUBSCRIPTION_NAME: sub, ATTR_BUFFER_SIZE: self._paused_wakes}
         with self._tracer.span("eventsource.live_runner.process_pause_buffer", attrs) as span:
-            extra_start = {
-                "subscription": self.subscription.name,
-                "pause_buffer_size": self._paused_wakes,
-            }
+            extra_start = {"subscription": sub, "pause_buffer_size": self._paused_wakes}
             logger.info("Processing pause buffer", extra=extra_start)
             self._paused_wakes = 0
             processed = await self._drain_feed()
             if span:
                 span.set_attribute(ATTR_EVENTS_PROCESSED, processed)
-            extra_done = {"subscription": self.subscription.name, "events_processed": processed}
+            extra_done = {"subscription": sub, "events_processed": processed}
             logger.info("Pause buffer processed", extra=extra_done)
             self._events_buffered_during_pause = 0
             return processed
 
     async def clear_buffer(self) -> int:
-        """Clear buffered wakes and pause buffer, reconciling subscription lag."""
         dropped = self._buffered_wakes + self._paused_wakes
         self._buffered_wakes = self._paused_wakes = self._events_buffered_during_pause = 0
         self._buffer_enabled = False

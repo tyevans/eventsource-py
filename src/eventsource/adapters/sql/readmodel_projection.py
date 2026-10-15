@@ -55,36 +55,27 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         )
         self._model_class = model_class
         self._current_repository: ReadModelRepository[TModel] | None = None
-
-        logger.info(
-            "ReadModelProjection %s initialized for %s",
-            self._projection_name,
-            model_class.__name__,
-            extra={
-                ATTR_PROJECTION_NAME: self._projection_name,
-                ATTR_READMODEL_TYPE: model_class.__name__,
-                "table_name": model_class.table_name(),
-            },
-        )
+        extra = {
+            ATTR_PROJECTION_NAME: self._projection_name,
+            ATTR_READMODEL_TYPE: model_class.__name__,
+            "table_name": model_class.table_name(),
+        }
+        msg = "ReadModelProjection %s initialized for %s"
+        logger.info(msg, self._projection_name, model_class.__name__, extra=extra)
 
     async def handle(self, event: DomainEvent) -> None:
         """Handle event within a database transaction with a scoped repository."""
-        logger.debug(
-            "ReadModelProjection %s handling event %s",
-            self._projection_name,
-            event.event_id,
-            extra={
-                ATTR_PROJECTION_NAME: self._projection_name,
-                "event_id": str(event.event_id),
-                ATTR_EVENT_TYPE: event.event_type,
-            },
-        )
-
+        extra = {
+            ATTR_PROJECTION_NAME: self._projection_name,
+            "event_id": str(event.event_id),
+            ATTR_EVENT_TYPE: event.event_type,
+        }
+        msg = "ReadModelProjection %s handling event %s"
+        logger.debug(msg, self._projection_name, event.event_id, extra=extra)
         async with self._session_factory() as session, session.begin():
             conn = await session.connection()
             self._current_connection = conn
             self._current_repository = await self._create_repository(conn)
-
             try:
                 await super(DatabaseProjection, self).handle(event)
             finally:
@@ -106,24 +97,17 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             if driver_conn is None or not isinstance(driver_conn, AiosqliteConnection):
                 raise RuntimeError(f"Expected aiosqlite Connection but got {type(driver_conn)}")
             return SQLiteReadModelRepository(
-                driver_conn,
-                self._model_class,
-                enable_tracing=self._enable_tracing,
+                driver_conn, self._model_class, enable_tracing=self._enable_tracing
             )
 
         if dialect_name != "postgresql":
             logger.warning(
                 "Unknown dialect %s, using PostgreSQL repository",
                 dialect_name,
-                extra={
-                    ATTR_PROJECTION_NAME: self._projection_name,
-                    "dialect": dialect_name,
-                },
+                extra={ATTR_PROJECTION_NAME: self._projection_name, "dialect": dialect_name},
             )
         return PostgreSQLReadModelRepository(
-            conn,
-            self._model_class,
-            enable_tracing=self._enable_tracing,
+            conn, self._model_class, enable_tracing=self._enable_tracing
         )
 
     async def _process_event(self, event: DomainEvent) -> None:
@@ -134,19 +118,16 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             return
 
         handler_name = handler_info.handler_name
-        with self._tracer.span(
-            "eventsource.projection.handler",
-            {
-                ATTR_PROJECTION_NAME: self._projection_name,
-                ATTR_EVENT_TYPE: type(event).__name__,
-                ATTR_HANDLER_NAME: handler_name,
-            },
-        ):
+        span_attrs = {
+            ATTR_PROJECTION_NAME: self._projection_name,
+            ATTR_EVENT_TYPE: type(event).__name__,
+            ATTR_HANDLER_NAME: handler_name,
+        }
+        with self._tracer.span("eventsource.projection.handler", span_attrs):
             if handler_info.param_count == 1:
                 await self._handler_registry.dispatch(event, context=None)
             else:
-                repo = self._current_repository
-                if repo is None:
+                if (repo := self._current_repository) is None:
                     raise RuntimeError(
                         f"Handler {handler_name} requires repository but none available. "
                         f"Ensure you call handle() rather than _process_event() directly."
@@ -159,18 +140,14 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             conn = await session.connection()
             repo = await self._create_repository(conn)
             count = await repo.truncate()
-
-            logger.info(
-                "ReadModelProjection %s truncated %d records from %s",
-                self._projection_name,
-                count,
-                self._model_class.table_name(),
-                extra={
-                    ATTR_PROJECTION_NAME: self._projection_name,
-                    "table": self._model_class.table_name(),
-                    "records_deleted": count,
-                },
-            )
+            table = self._model_class.table_name()
+            extra = {
+                ATTR_PROJECTION_NAME: self._projection_name,
+                "table": table,
+                "records_deleted": count,
+            }
+            msg = "ReadModelProjection %s truncated %d records from %s"
+            logger.info(msg, self._projection_name, count, table, extra=extra)
 
     @property
     def model_class(self) -> type[TModel]:
@@ -184,9 +161,8 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
 
     def __repr__(self) -> str:
         """Return string representation for debugging."""
+        tracing = "enabled" if self._enable_tracing else "disabled"
         return (
-            f"{self.__class__.__name__}("
-            f"model={self._model_class.__name__}, "
-            f"table={self._model_class.table_name()}, "
-            f"tracing={'enabled' if self._enable_tracing else 'disabled'})"
+            f"{self.__class__.__name__}(model={self._model_class.__name__}, "
+            f"table={self._model_class.table_name()}, tracing={tracing})"
         )

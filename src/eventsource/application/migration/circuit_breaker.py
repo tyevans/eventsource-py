@@ -1,11 +1,4 @@
-"""
-Circuit breaker for migration operations.
-
-Trips after a configured number of consecutive failures and rejects calls
-while open, preventing a struggling backend from being hammered during a
-migration. `CircuitBreakerOpenError` lives with the rest of the migration
-exception taxonomy in `exceptions.py` (ADR 0044); this module imports it.
-"""
+"""Circuit breaker for migration operations (see ADR-0044)."""
 
 from __future__ import annotations
 
@@ -48,12 +41,7 @@ class CircuitBreakerConfig:
 
 
 class CircuitBreaker:
-    """
-    Circuit breaker implementation for migration operations.
-
-    Tracks failures and opens the circuit when a threshold is reached,
-    preventing cascading failures during system instability.
-    """
+    """Circuit breaker tracking failures and opening when threshold is reached."""
 
     def __init__(
         self,
@@ -118,8 +106,7 @@ class CircuitBreaker:
 
             if self._state == CircuitState.HALF_OPEN:
                 logger.warning(
-                    "Circuit breaker '%s' opening from half-open after failure",
-                    self.name,
+                    "Circuit breaker '%s' opening from half-open after failure", self.name
                 )
                 self._state = CircuitState.OPEN
             elif (
@@ -127,9 +114,7 @@ class CircuitBreaker:
                 and self._failure_count >= self.config.failure_threshold
             ):
                 logger.warning(
-                    "Circuit breaker '%s' opening after %d failures",
-                    self.name,
-                    self._failure_count,
+                    "Circuit breaker '%s' opening after %d failures", self.name, self._failure_count
                 )
                 self._state = CircuitState.OPEN
 
@@ -153,27 +138,19 @@ class CircuitBreaker:
                 time_until_retry=self.get_time_until_retry(),
                 migration_id=migration_id,
             )
-        return CircuitBreakerContext(
-            circuit_breaker=self,
-            operation_name=operation_name,
-        )
+        return CircuitBreakerContext(circuit_breaker=self, operation_name=operation_name)
 
     def reset(self) -> None:
         """Reset the circuit breaker to closed state."""
         self._state = CircuitState.CLOSED
-        self._failure_count = 0
-        self._success_count = 0
+        self._failure_count = self._success_count = 0
         self._last_failure_time = None
 
 
 class CircuitBreakerContext:
     """Context manager for circuit breaker protected operations."""
 
-    def __init__(
-        self,
-        circuit_breaker: CircuitBreaker,
-        operation_name: str,
-    ) -> None:
+    def __init__(self, circuit_breaker: CircuitBreaker, operation_name: str) -> None:
         self._cb = circuit_breaker
         self._operation_name = operation_name
 
@@ -190,4 +167,4 @@ class CircuitBreakerContext:
             await self._cb._record_success()
         elif isinstance(exc_val, Exception):
             await self._cb._record_failure(exc_val)
-        return False  # Don't suppress exceptions
+        return False
