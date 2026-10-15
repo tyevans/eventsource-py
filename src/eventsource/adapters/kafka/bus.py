@@ -49,7 +49,7 @@ except ImportError:
 try:
     from opentelemetry import metrics as otel_metrics
 except ImportError:
-    otel_metrics = None
+    otel_metrics = None  # type: ignore[assignment]
 
 logger = logging.getLogger("eventsource.bus.kafka")
 _meter: Any = None
