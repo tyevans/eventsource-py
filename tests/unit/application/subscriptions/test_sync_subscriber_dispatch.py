@@ -1,27 +1,4 @@
-"""
-Unit tests for `SyncSubscriber` dispatch in both runners.
-
-Covers task #28. `SyncSubscriber` is a published Protocol whose `handle()` is
-declared **not** async:
-
-    def handle(self, event: DomainEvent) -> None: ...
-
-Both runners awaited the result of `subscriber.handle(event)` unconditionally.
-A sync handler returns `None`, and `await None` raises
-`TypeError: object NoneType can't be used in 'await' expression`.
-
-That `TypeError` was raised *inside* the runner's generic `except Exception`
-around handler dispatch, so it was recorded as a handler failure and attributed
-to user code. The subscriber's own body ran fine every time -- the failure was
-the runner awaiting its return value. Under `continue_on_error=True` every
-event "failed" forever while the handler was in fact working, and under
-`continue_on_error=False` the subscription stopped on the first event. Either
-way the reported cause pointed at the user's handler.
-
-These tests assert from the published Protocol: a subscriber matching
-`SyncSubscriber` is dispatched to, its side effects happen, and it is not
-recorded as a failure.
-"""
+"""Unit tests for `SyncSubscriber` dispatch in CatchUpRunner and LiveRunner."""
 
 import asyncio
 from uuid import uuid4
@@ -44,7 +21,6 @@ from eventsource.ports.positions import ExpectedVersion, Position
 from eventsource.ports.subscribers import SyncSubscriber
 
 _REGISTRY = EventRegistry()
-
 BOUND = 5.0
 
 
@@ -57,11 +33,7 @@ class SyncTestEvent(DomainEvent):
 
 
 class PlainSyncSubscriber:
-    """Implements exactly `SyncSubscriber` -- `handle()` is NOT async.
-
-    This is the shape the Protocol documents for in-memory state updates,
-    metrics collection, and test mocks.
-    """
+    """Implements `SyncSubscriber` with synchronous `handle()`."""
 
     def __init__(self) -> None:
         self.handled: list[DomainEvent] = []
@@ -74,7 +46,7 @@ class PlainSyncSubscriber:
 
 
 class AsyncSubscriber:
-    """The control: an ordinary async subscriber must be unaffected."""
+    """Control subscriber with async `handle()`."""
 
     def __init__(self) -> None:
         self.handled: list[DomainEvent] = []
@@ -87,9 +59,7 @@ class AsyncSubscriber:
 
 
 class RaisingSyncSubscriber:
-    """A sync handler that genuinely fails, to prove failures are still
-    reported -- the fix must not swallow real errors along with the phantom
-    TypeError."""
+    """Sync subscriber that raises to verify real failures are still reported."""
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
         return [SyncTestEvent]
@@ -140,9 +110,6 @@ def make_config(**kwargs: object) -> SubscriptionConfig:
 
 class TestProtocolShape:
     def test_plain_sync_subscriber_satisfies_the_protocol(self) -> None:
-        """Guards the premise of every other test here: if this stops being a
-        SyncSubscriber, these tests are no longer about the published contract.
-        """
         assert isinstance(PlainSyncSubscriber(), SyncSubscriber)
 
 
@@ -170,10 +137,7 @@ class TestCatchUpSyncDispatch:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """The assertion that separates a real fix from one that merely stops
-        the exception escaping: the handler ran AND nothing was counted as a
-        failure. Before the fix, `handled` filled up and every event was still
-        recorded as failed."""
+        """The handler ran and nothing was counted as a failure."""
         subscriber = PlainSyncSubscriber()
         subscription = Subscription(name="sync-nofail", config=make_config(), subscriber=subscriber)
         await add_events(event_store, 3)
@@ -189,9 +153,7 @@ class TestCatchUpSyncDispatch:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """With continue_on_error=False a *working* sync handler must not stop
-        the subscription. This is the sharpest form of the bug: the phantom
-        TypeError killed subscriptions whose handlers were fine."""
+        """With continue_on_error=False a working sync handler must not stop the subscription."""
         subscriber = PlainSyncSubscriber()
         subscription = Subscription(
             name="sync-strict",
@@ -251,8 +213,7 @@ class TestLiveSyncDispatch:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """The live path dispatches to a sync handler too, and does not record
-        it as a failure."""
+        """The live path dispatches to a sync handler without recording a failure."""
         subscriber = PlainSyncSubscriber()
         subscription = Subscription(
             name="sync-live",
