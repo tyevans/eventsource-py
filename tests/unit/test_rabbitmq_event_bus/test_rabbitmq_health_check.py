@@ -7,8 +7,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from eventsource.adapters.rabbitmq import (
+    HealthCheckResult,
+    RabbitMQEventBus,
     RabbitMQEventBusConfig,
 )
+
+
+def _setup_mock_broker(
+    mock_aio_pika: MagicMock, *, setup_queue_and_exchange: bool = True
+) -> tuple[AsyncMock, AsyncMock, AsyncMock]:
+    mock_connection = AsyncMock(is_closed=False)
+    mock_channel = AsyncMock(is_closed=False)
+    mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
+    mock_connection.channel = AsyncMock(return_value=mock_channel)
+    mock_queue = AsyncMock()
+    if setup_queue_and_exchange:
+        mock_queue.declaration_result = MagicMock(message_count=0, consumer_count=0)
+        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+        mock_channel.declare_exchange = AsyncMock(return_value=AsyncMock())
+    return mock_connection, mock_channel, mock_queue
 
 
 class TestHealthCheck:
@@ -37,10 +54,7 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_when_not_connected(self, config: RabbitMQEventBusConfig) -> None:
         """Test health_check returns unhealthy when not connected."""
-        from eventsource.adapters.rabbitmq import HealthCheckResult, RabbitMQEventBus
-
         bus = RabbitMQEventBus(config=config)
-
         result = await bus.health_check()
 
         assert isinstance(result, HealthCheckResult)
@@ -55,30 +69,11 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check returns healthy when all checks pass."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
-        # Setup mock queue (use AsyncMock so bind() can be awaited)
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result = MagicMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
-        # Setup mock exchange
-        mock_exchange = AsyncMock()
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+        # Setup mock connection, channel, queue, and exchange
+        _setup_mock_broker(mock_aio_pika)
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         result = await bus.health_check()
 
         assert result.healthy is True
@@ -94,30 +89,11 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check includes configuration details."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
-        # Setup mock queue (use AsyncMock so bind() can be awaited)
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result = MagicMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
-        # Setup mock exchange
-        mock_exchange = AsyncMock()
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+        # Setup mock connection, channel, queue, and exchange
+        _setup_mock_broker(mock_aio_pika)
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         result = await bus.health_check()
 
         assert result.details is not None
@@ -134,26 +110,8 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check includes stats in details."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
-        # Setup mock queue (use AsyncMock so bind() can be awaited)
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result = MagicMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
-        # Setup mock exchange
-        mock_exchange = AsyncMock()
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+        # Setup mock connection, channel, queue, and exchange
+        _setup_mock_broker(mock_aio_pika)
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -175,22 +133,14 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check when connection is closed."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
+        mock_connection, _, _ = _setup_mock_broker(mock_aio_pika, setup_queue_and_exchange=False)
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
         # Simulate connection closed
         mock_connection.is_closed = True
-
         result = await bus.health_check()
 
         assert result.healthy is False
@@ -203,22 +153,14 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check when channel is closed."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
+        _, mock_channel, _ = _setup_mock_broker(mock_aio_pika, setup_queue_and_exchange=False)
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
         # Simulate channel closed
         mock_channel.is_closed = True
-
         result = await bus.health_check()
 
         assert result.healthy is False
@@ -231,25 +173,8 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check when queue check fails."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
-        # Setup mock queue for connect (use AsyncMock for bind)
-        mock_queue_for_connect = AsyncMock()
-        mock_queue_for_connect.declaration_result = MagicMock()
-        mock_queue_for_connect.declaration_result.message_count = 0
-        mock_queue_for_connect.declaration_result.consumer_count = 0
-
-        # Setup mock exchange
-        mock_exchange = AsyncMock()
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+        # Setup mock connection, channel, queue for connect, and exchange
+        _, mock_channel, mock_queue_for_connect = _setup_mock_broker(mock_aio_pika)
 
         # connect() succeeds, but health_check passive declaration fails
         call_count = 0
@@ -266,7 +191,6 @@ class TestHealthCheck:
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         result = await bus.health_check()
 
         assert result.healthy is False
@@ -276,12 +200,8 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_dlq_disabled(self, config_no_dlq: RabbitMQEventBusConfig) -> None:
         """Test health_check when DLQ is disabled."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         bus = RabbitMQEventBus(config=config_no_dlq)
-
         result = await bus.health_check()
-
         assert result.dlq_status == "disabled"
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -290,25 +210,8 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that DLQ check failure doesn't make overall health fail."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        # Setup mock connection and channel
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
-        # Setup mock queue (use AsyncMock for bind)
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result = MagicMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-
-        # Setup mock exchange
-        mock_exchange = AsyncMock()
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+        # Setup mock connection, channel, queue, and exchange
+        _, mock_channel, mock_queue = _setup_mock_broker(mock_aio_pika)
 
         async def declare_queue_side_effect(**kwargs: dict) -> AsyncMock:
             name = kwargs.get("name", "")
@@ -322,7 +225,6 @@ class TestHealthCheck:
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-
         result = await bus.health_check()
 
         # Overall health should still be True (DLQ errors are warnings)
@@ -336,11 +238,8 @@ class TestHealthCheck:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test health_check with multiple errors combines them."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         bus = RabbitMQEventBus(config=config)
         # Not connected, so multiple errors expected
-
         result = await bus.health_check()
 
         assert result.healthy is False
