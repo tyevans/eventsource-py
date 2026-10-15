@@ -29,56 +29,25 @@ from tests.fixtures import (
 
 @pytest.fixture
 def tenant_id() -> UUID:
-    """
-    Provide a random tenant ID for multi-tenant tests.
-
-    Returns:
-        A new random UUID for use as a tenant identifier.
-    """
+    """Provide a random tenant ID for multi-tenant tests."""
     return uuid4()
 
 
 @pytest.fixture
 def customer_id() -> UUID:
-    """
-    Provide a random customer ID for order tests.
-
-    Returns:
-        A new random UUID for use as a customer identifier.
-    """
+    """Provide a random customer ID for order tests."""
     return uuid4()
 
 
 @pytest.fixture
 def event_factory() -> Callable[..., DomainEvent]:
-    """
-    Factory fixture for creating test events with sensible defaults.
-
-    This fixture returns the create_event factory function from the fixtures
-    module, allowing tests to easily create events with custom parameters.
-
-    Usage:
-        def test_something(event_factory):
-            event = event_factory(CounterIncremented, increment=5)
-            event = event_factory(aggregate_version=2)  # SampleEvent at v2
-
-    Returns:
-        The create_event factory function.
-    """
+    """Factory fixture for creating test events with sensible defaults."""
     return create_event
 
 
 @pytest.fixture
 def sample_event(aggregate_id: UUID) -> SampleEvent:
-    """
-    Provide a pre-created sample event for simple tests.
-
-    Args:
-        aggregate_id: The aggregate ID fixture.
-
-    Returns:
-        A SampleEvent with default values.
-    """
+    """Provide a pre-created sample event for simple tests."""
     return SampleEvent(
         aggregate_id=aggregate_id,
         aggregate_version=1,
@@ -88,15 +57,7 @@ def sample_event(aggregate_id: UUID) -> SampleEvent:
 
 @pytest.fixture
 def counter_event(aggregate_id: UUID) -> CounterIncremented:
-    """
-    Provide a counter increment event for counter tests.
-
-    Args:
-        aggregate_id: The aggregate ID fixture.
-
-    Returns:
-        A CounterIncremented event with increment=5.
-    """
+    """Provide a counter increment event for counter tests."""
     return CounterIncremented(
         aggregate_id=aggregate_id,
         aggregate_version=1,
@@ -106,18 +67,7 @@ def counter_event(aggregate_id: UUID) -> CounterIncremented:
 
 @pytest.fixture
 def event_stream(aggregate_id: UUID) -> list[DomainEvent]:
-    """
-    Provide a list of events representing a typical counter lifecycle.
-
-    Returns events: Incremented(10) -> Incremented(5) -> Decremented(3)
-    Final counter value would be 12.
-
-    Args:
-        aggregate_id: The aggregate ID fixture.
-
-    Returns:
-        A list of 3 counter events with sequential versions.
-    """
+    """Provide a list of events representing a typical counter lifecycle (value = 12)."""
     return [
         CounterIncremented(
             aggregate_id=aggregate_id,
@@ -139,18 +89,7 @@ def event_stream(aggregate_id: UUID) -> list[DomainEvent]:
 
 @pytest.fixture
 def order_event_stream(aggregate_id: UUID, customer_id: UUID) -> list[DomainEvent]:
-    """
-    Provide a list of events representing a complete order lifecycle.
-
-    Returns events: Created -> ItemAdded -> ItemAdded -> Shipped
-
-    Args:
-        aggregate_id: The aggregate ID fixture.
-        customer_id: The customer ID fixture.
-
-    Returns:
-        A list of 4 order events with sequential versions.
-    """
+    """Provide a list of events representing a complete order lifecycle."""
     return [
         OrderCreated(
             aggregate_id=aggregate_id,
@@ -179,14 +118,7 @@ def order_event_stream(aggregate_id: UUID, customer_id: UUID) -> list[DomainEven
 
 @pytest.fixture
 def in_memory_store() -> InMemoryEventStore:
-    """
-    Provide a fresh InMemoryEventStore instance.
-
-    Each test gets its own isolated event store.
-
-    Returns:
-        A new InMemoryEventStore instance.
-    """
+    """Provide a fresh InMemoryEventStore instance."""
     return InMemoryEventStore()
 
 
@@ -195,18 +127,7 @@ async def populated_store(
     in_memory_store: InMemoryEventStore,
     event_stream: list[DomainEvent],
 ) -> AsyncGenerator[InMemoryEventStore]:
-    """
-    Provide a InMemoryEventStore pre-populated with sample events.
-
-    Contains 3 counter events for a single aggregate (final value = 12).
-
-    Args:
-        in_memory_store: The event store fixture.
-        event_stream: The event stream fixture.
-
-    Yields:
-        The event store populated with events.
-    """
+    """Provide an InMemoryEventStore pre-populated with 3 sample counter events."""
     aggregate_id = event_stream[0].aggregate_id
     await in_memory_store.append(
         StreamId(aggregate_id=aggregate_id, category="Counter"),
@@ -218,62 +139,30 @@ async def populated_store(
 
 @pytest.fixture
 def checkpoint_repo() -> InMemoryCheckpointRepository:
-    """
-    Provide a fresh InMemoryCheckpointRepository instance.
-
-    Each test gets its own isolated checkpoint repository.
-
-    Returns:
-        A new InMemoryCheckpointRepository instance.
-    """
+    """Provide a fresh InMemoryCheckpointRepository instance."""
     return InMemoryCheckpointRepository()
 
 
 @pytest.fixture
 def dlq_repo() -> InMemoryDLQRepository:
-    """
-    Provide a fresh InMemoryDLQRepository instance.
-
-    Each test gets its own isolated dead letter queue repository.
-
-    Returns:
-        A new InMemoryDLQRepository instance.
-    """
+    """Provide a fresh InMemoryDLQRepository instance."""
     return InMemoryDLQRepository()
 
 
 @pytest.fixture
 def outbox_repo() -> InMemoryOutboxRepository:
-    """
-    Provide a fresh InMemoryOutboxRepository instance.
-
-    Each test gets its own isolated outbox repository.
-
-    Returns:
-        A new InMemoryOutboxRepository instance.
-    """
+    """Provide a fresh InMemoryOutboxRepository instance."""
     return InMemoryOutboxRepository()
 
 
 class MockEventPublisher:
-    """
-    Mock event publisher for testing event publishing behavior.
-
-    Captures all events that would be published, allowing tests to
-    verify that the correct events are published at the right times.
-    """
+    """Mock event publisher that captures published events for verification."""
 
     def __init__(self) -> None:
-        """Initialize with empty published events list."""
         self.published_events: list[DomainEvent] = []
 
     async def publish(self, events: list[DomainEvent]) -> None:
-        """
-        Capture events for later verification.
-
-        Args:
-            events: The events to "publish" (capture).
-        """
+        """Capture events for later verification."""
         self.published_events.extend(events)
 
     def clear(self) -> None:
@@ -283,12 +172,7 @@ class MockEventPublisher:
 
 @pytest.fixture
 def mock_event_publisher() -> MockEventPublisher:
-    """
-    Provide a mock event publisher for testing event publishing.
-
-    Returns:
-        A MockEventPublisher that captures published events.
-    """
+    """Provide a mock event publisher for testing event publishing."""
     return MockEventPublisher()
 
 

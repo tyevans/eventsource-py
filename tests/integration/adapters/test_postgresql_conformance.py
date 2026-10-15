@@ -1,16 +1,7 @@
 """Conformance tests for PostgreSQLEventStore against the port suites.
 
-Subclasses the five store-port conformance suites (appender, stream reader,
-event lookup, global feed, category query). The hypothesis stateful machine
-(`StoreStateMachine`) is exercised for the memory and sqlite adapters only
-(see Task 12 brief) -- it is not required here.
-
-Runs against the private `ports_conformance` database (see local
-`conftest.py`'s `ports_postgres_connection_url`) rather than the shared
-database the legacy `tests/integration/stores/test_postgresql.py` suite
-owns, since this module's `events` table follows the canonical migrations
-schema (`tenant_id UUID`) while the legacy fixtures provision `tenant_id
-VARCHAR(255)`.
+Subclasses the five store-port conformance suites plus snapshot, checkpoint,
+and DLQ repository suites against the private `ports_conformance` database.
 """
 
 import asyncio
@@ -53,13 +44,7 @@ from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
 
 
 async def _fresh_store(connection_url: str) -> PostgreSQLEventStore:
-    """Create a store on a fresh engine, with the `events` table dropped first.
-
-    Each test gets its own `AsyncEngine` (disposed by `store.close()`), and
-    the `events` table is dropped before the store lazily recreates it on
-    first use -- this isolates each test from the others within the
-    session-scoped private `ports_conformance` database.
-    """
+    """Create a store on a fresh engine with the `events` table dropped first."""
     engine = create_async_engine(connection_url)
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS events CASCADE"))
@@ -101,11 +86,7 @@ class TestPostgreSQLGlobalFeed(_PGStoreFixture, GlobalFeedConformance):
     async def test_rows_with_null_txid_are_returned_by_read_all(
         self, store: PostgreSQLEventStore
     ) -> None:
-        """A row predating updates/004 has a NULL txid and is always safe.
-
-        `ALTER TABLE` takes ACCESS EXCLUSIVE, so any transaction that
-        inserted such a row finished before every post-migration snapshot.
-        """
+        """A row predating updates/004 has a NULL txid and is always safe."""
         stream = make_stream()
         await store.append(stream, [make_event(stream.aggregate_id)], ExpectedVersion.no_stream())
         async with store._engine.begin() as conn:  # type: ignore[attr-defined]
@@ -126,28 +107,13 @@ class TestPostgreSQLSnapshotStore(SnapshotStoreConformance):
         engine = create_async_engine(ports_postgres_connection_url)
         async with engine.begin() as conn:
             await conn.execute(text("DROP TABLE IF EXISTS snapshots CASCADE"))
-            # get_schema returns a multi-statement script; asyncpg's prepared-statement
-            # path rejects those, so run it via the raw driver connection (simple query
-            # protocol), same as PostgreSQLEventStore._ensure_schema.
             await _exec_raw_schema(conn, "snapshots")
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         yield PostgreSQLSnapshotStore(session_factory)
         await engine.dispose()
 
 
-# `get_schema("checkpoints"/"dlq", "postgresql")` -- unlike "events" and
-# "snapshots" -- ships PL/pgSQL helper functions (dollar-quoted bodies with
-# `GET DIAGNOSTICS`) alongside the DDL. Neither `SQLCheckpointRepository`
-# nor `SQLDLQRepository` calls those functions (both issue plain
-# parameterized SQL from Python), but asyncpg's raw-connection `execute()` --
-# the simple query protocol used elsewhere in this module to run
-# `events.sql`/`snapshots.sql` as one script -- mis-splits the dollar-quoted
-# bodies and fails with `PostgresSyntaxError: unrecognized GET DIAGNOSTICS
-# item`. So these two tables are provisioned as bare DDL, one statement at a
-# time via `text()`, mirroring `tests/integration/conftest.py`'s
-# `CHECKPOINTS_SCHEMA_STATEMENTS`/`DLQ_SCHEMA_STATEMENTS` -- both exist
-# solely because of this PL/pgSQL constraint, not because of any schema
-# drift (that drift, for `events.tenant_id`, was reconciled by ADR 0027).
+# Bare DDL without PL/pgSQL helper functions so asyncpg text() execution works cleanly.
 _CHECKPOINTS_DDL = [
     """CREATE TABLE IF NOT EXISTS projection_checkpoints (
         projection_name VARCHAR(255) PRIMARY KEY,
@@ -194,8 +160,6 @@ class TestPostgreSQLCheckpointRepository(CheckpointRepositoryConformance):
     async def write_legacy_int_row(
         self, store: SQLCheckpointRepository, subscription_id: str, value: int
     ) -> None:
-        # A row as written before position tokens existed: an integer
-        # global_position and no token. The adapter must read it as None.
         async with store._conn.begin() as conn:
             await conn.execute(
                 text(
@@ -221,9 +185,6 @@ class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
     async def test_postgres_delete_resolved_events_removes_past_cutoff_entries(
         self, store: SQLDLQRepository
     ) -> None:
-        # Same cutoff semantics as the sqlite adapter (both use the shared
-        # `SQLDLQRepository`): `now` minus `older_than_days`, not
-        # truncated to midnight like the memory adapter.
         await store.add_failed_event(
             event_id=uuid4(),
             projection_name="P",
@@ -239,13 +200,7 @@ class TestPostgreSQLDLQRepository(DLQRepositoryConformance):
 
 
 class TestPostgreSQLConcurrency(_PGStoreFixture):
-    """Real-transaction concurrency coverage ported from the retired legacy
-    `tests/integration/stores/test_postgresql.py` suite -- not exercised by
-    the port conformance suites above, which append sequentially. These
-    exercise genuine concurrent `asyncio.gather` writers against a live
-    PostgreSQL server, so they stay integration tests rather than folding
-    into the abstract conformance classes.
-    """
+    """Real-transaction concurrency coverage against a live PostgreSQL server."""
 
     async def test_concurrent_appends_to_different_streams_all_succeed(
         self, store: PostgreSQLEventStore
@@ -282,9 +237,7 @@ class TestPostgreSQLConcurrency(_PGStoreFixture):
 
 
 class TestPostgreSQLLargePayloads(_PGStoreFixture):
-    """Large-metadata round trip, ported from the retired legacy suite --
-    exercises JSONB payload handling at a size the generic conformance
-    round-trip tests don't specifically stress."""
+    """Large-metadata round trip exercising JSONB payload handling."""
 
     async def test_large_metadata_round_trips(self, store: PostgreSQLEventStore) -> None:
         stream = make_stream()
