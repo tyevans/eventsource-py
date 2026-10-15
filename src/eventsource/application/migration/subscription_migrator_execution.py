@@ -46,22 +46,17 @@ class SubscriptionMigratorExecutionMixin:
         *,
         dry_run: bool = False,
     ) -> MigrationSummary:
-        """
-        Migrate subscription checkpoints to target store positions.
-
-        Raises SubscriptionMigrationError if a critical error occurs.
-        """
+        """Migrate subscription checkpoints to target store positions."""
+        span_attrs = {
+            "migration.id": str(migration_id),
+            "tenant.id": str(tenant_id),
+            "subscription_count": len(subscription_names),
+            "dry_run": dry_run,
+        }
         with self._tracer.span(
-            "eventsource.subscription_migrator.migrate_subscriptions",
-            {
-                "migration.id": str(migration_id),
-                "tenant.id": str(tenant_id),
-                "subscription_count": len(subscription_names),
-                "dry_run": dry_run,
-            },
+            "eventsource.subscription_migrator.migrate_subscriptions", span_attrs
         ):
             start_time = datetime.now(UTC)
-
             logger.info(
                 "Starting subscription migration",
                 extra={
@@ -79,8 +74,6 @@ class SubscriptionMigratorExecutionMixin:
                     subscription_names=subscription_names,
                 )
                 end_time = datetime.now(UTC)
-                duration_ms = (end_time - start_time).total_seconds() * 1000
-
                 dry_run_results = [
                     SubscriptionMigrationResult(
                         subscription_name=pm.subscription_name,
@@ -93,7 +86,6 @@ class SubscriptionMigratorExecutionMixin:
                     )
                     for pm in plan.planned_migrations
                 ]
-
                 return MigrationSummary(
                     migration_id=migration_id,
                     tenant_id=tenant_id,
@@ -103,13 +95,11 @@ class SubscriptionMigratorExecutionMixin:
                     skipped_count=len(plan.skipped_subscriptions),
                     started_at=start_time,
                     completed_at=end_time,
-                    duration_ms=duration_ms,
+                    duration_ms=(end_time - start_time).total_seconds() * 1000,
                 )
 
             results: list[SubscriptionMigrationResult] = []
-            successful_count = 0
-            failed_count = 0
-            skipped_count = 0
+            successful_count = failed_count = skipped_count = 0
 
             for name in subscription_names:
                 try:
@@ -118,8 +108,6 @@ class SubscriptionMigratorExecutionMixin:
                         subscription_name=name,
                     )
                 except Exception as e:
-                    # Expected translation/save failures are caught in _migrate_single_subscription;
-                    # unexpected repository failures raise SubscriptionMigrationError.
                     raise SubscriptionMigrationError(
                         f"Critical error migrating subscription {name}: {e}",
                         migration_id=migration_id,
@@ -129,17 +117,26 @@ class SubscriptionMigratorExecutionMixin:
 
                 if result is None:
                     skipped_count += 1
-                elif result.success:
-                    results.append(result)
-                    successful_count += 1
                 else:
                     results.append(result)
-                    failed_count += 1
+                    if result.success:
+                        successful_count += 1
+                    else:
+                        failed_count += 1
 
             end_time = datetime.now(UTC)
             duration_ms = (end_time - start_time).total_seconds() * 1000
-
-            summary = MigrationSummary(
+            logger.info(
+                "Subscription migration completed",
+                extra={
+                    "migration_id": str(migration_id),
+                    "successful_count": successful_count,
+                    "failed_count": failed_count,
+                    "skipped_count": skipped_count,
+                    "duration_ms": duration_ms,
+                },
+            )
+            return MigrationSummary(
                 migration_id=migration_id,
                 tenant_id=tenant_id,
                 results=results,
@@ -151,19 +148,6 @@ class SubscriptionMigratorExecutionMixin:
                 duration_ms=duration_ms,
             )
 
-            logger.info(
-                "Subscription migration completed",
-                extra={
-                    "migration_id": str(migration_id),
-                    "successful_count": successful_count,
-                    "failed_count": failed_count,
-                    "skipped_count": skipped_count,
-                    "duration_ms": duration_ms,
-                },
-            )
-
-            return summary
-
     async def _migrate_single_subscription(
         self,
         migration_id: UUID,
@@ -172,19 +156,13 @@ class SubscriptionMigratorExecutionMixin:
         """Migrate a single subscription's checkpoint, or return None if skipped."""
         with self._tracer.span(
             "eventsource.subscription_migrator.migrate_single",
-            {
-                "migration.id": str(migration_id),
-                "subscription.name": subscription_name,
-            },
+            {"migration.id": str(migration_id), "subscription.name": subscription_name},
         ):
             current_position = await self._checkpoint_repo.get_position(subscription_name)
             if current_position is None:
                 logger.debug(
                     "Subscription has no checkpoint, skipping",
-                    extra={
-                        "subscription": subscription_name,
-                        "migration_id": str(migration_id),
-                    },
+                    extra={"subscription": subscription_name, "migration_id": str(migration_id)},
                 )
                 return None
 
@@ -193,14 +171,10 @@ class SubscriptionMigratorExecutionMixin:
                 (c for c in checkpoints if c.projection_name == subscription_name),
                 None,
             )
-
             if checkpoint_data is None or checkpoint_data.last_event_id is None:
                 logger.warning(
                     "Checkpoint data incomplete, skipping",
-                    extra={
-                        "subscription": subscription_name,
-                        "migration_id": str(migration_id),
-                    },
+                    extra={"subscription": subscription_name, "migration_id": str(migration_id)},
                 )
                 return None
 
@@ -234,7 +208,6 @@ class SubscriptionMigratorExecutionMixin:
                     event_id=checkpoint_data.last_event_id,
                     event_type=checkpoint_data.last_event_type or "Unknown",
                 )
-
                 logger.info(
                     "Subscription checkpoint migrated",
                     extra={
@@ -245,7 +218,6 @@ class SubscriptionMigratorExecutionMixin:
                         "is_exact": translation.is_exact,
                     },
                 )
-
                 return SubscriptionMigrationResult(
                     subscription_name=subscription_name,
                     success=True,
@@ -255,7 +227,6 @@ class SubscriptionMigratorExecutionMixin:
                     nearest_source_position=translation.nearest_source_position,
                     migrated_at=datetime.now(UTC),
                 )
-
             except Exception as e:
                 logger.error(
                     "Failed to update checkpoint",
@@ -284,11 +255,7 @@ class SubscriptionMigratorExecutionMixin:
         """Migrate all specified (or checkpoint-discovered) subscriptions for a tenant."""
         with self._tracer.span(
             "eventsource.subscription_migrator.migrate_tenant_subscriptions",
-            {
-                "migration.id": str(migration_id),
-                "tenant.id": str(tenant_id),
-                "dry_run": dry_run,
-            },
+            {"migration.id": str(migration_id), "tenant.id": str(tenant_id), "dry_run": dry_run},
         ):
             if subscription_names is None:
                 checkpoints = await self._checkpoint_repo.get_all_checkpoints()
@@ -303,7 +270,6 @@ class SubscriptionMigratorExecutionMixin:
                     "dry_run": dry_run,
                 },
             )
-
             return await self.migrate_subscriptions(
                 migration_id=migration_id,
                 tenant_id=tenant_id,

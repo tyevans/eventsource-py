@@ -29,14 +29,10 @@ from eventsource.ports import (
 
 
 class InMemoryEventStore:
-    """In-memory implementation of `FullEventStore`.
+    """In-memory implementation of `FullEventStore` (structural conformance only).
 
-    Structural conformance only -- no inheritance from the port protocols.
-
-    `store_id` defaults to `"memory"` for *every* instance, so two of these
-    stores compare positions as though they shared a feed rather than raising
-    `PositionForeignError`. Give each one its own `store_id` in any test that
-    puts two in play at once; see `Position`'s docstring.
+    `store_id` defaults to `"memory"` for every instance; give each instance its
+    own `store_id` when testing multiple stores concurrently.
     """
 
     def __init__(
@@ -52,11 +48,7 @@ class InMemoryEventStore:
         self._categories: dict[str, list[int]] = {}
         self._by_category: dict[str, list[int]] = self._categories
         self._event_ids: set[UUID] = set()
-        # threading.Lock, not asyncio.Lock: SyncEventStoreAdapter runs each
-        # call in a fresh event loop (`asyncio.run`), so an asyncio.Lock
-        # acquired under one loop raises RuntimeError when awaited from
-        # another. The critical section below never awaits, so a plain
-        # threading.Lock (safe across loops and threads) is sufficient.
+        # Plain threading.Lock is safe across fresh loops from SyncEventStoreAdapter.
         self._lock = threading.Lock()
 
     @property
@@ -70,12 +62,7 @@ class InMemoryEventStore:
     async def __aenter__(self) -> "InMemoryEventStore":
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: object,
-        exc_val: object,
-        exc_tb: object,
-    ) -> None:
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         await self.close()
 
     def _position_of(self, index: int) -> Position:
@@ -98,18 +85,13 @@ class InMemoryEventStore:
         if not events:
             raise ValueError("cannot append an empty batch of events")
 
-        # This store keeps live DomainEvent objects and never deserializes,
-        # so nothing here would ever consult the registry. Validate anyway:
-        # otherwise a missing `@register_event` passes in tests against this
-        # adapter and raises EventTypeNotFoundError on the first read against
-        # SQLite or PostgreSQL. Pinned by AppenderConformance.
+        # Validate event registration for parity with SQLite/PostgreSQL stores.
         check_registered(events, self._event_registry)
 
         with self._lock:
             key = stream.render()
             indexes = self._streams.get(key, [])
             current_version = len(indexes)
-
             check_expected(current_version, expected, stream)
 
             seen_in_batch: set[UUID] = set()
@@ -144,9 +126,9 @@ class InMemoryEventStore:
                     first_position = envelope.position
 
             self._streams[key] = indexes + new_indexes
-            category_indexes = self._categories.get(stream.category, [])
-            self._categories[stream.category] = category_indexes + new_indexes
-
+            self._categories[stream.category] = (
+                self._categories.get(stream.category, []) + new_indexes
+            )
             return AppendResult(stream=stream, new_version=version, position=first_position)
 
     def read_stream(
@@ -154,8 +136,7 @@ class InMemoryEventStore:
         stream: StreamId,
         options: StreamReadOptions | None = None,
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or StreamReadOptions()
-        return self._do_read_stream(stream, opts)
+        return self._do_read_stream(stream, options or StreamReadOptions())
 
     async def _do_read_stream(
         self,
@@ -213,8 +194,7 @@ class InMemoryEventStore:
         from_position: Position | None = None,
         options: FeedReadOptions | None = None,
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or FeedReadOptions()
-        return self._do_read_all(from_position, opts)
+        return self._do_read_all(from_position, options or FeedReadOptions())
 
     async def _do_read_all(
         self,
@@ -228,10 +208,7 @@ class InMemoryEventStore:
         if from_position is not None:
             self._validate_position(from_position)
 
-        # Filtered on the stream category, not `event.aggregate_type`: the SQL
-        # adapters store the stream's category in the `aggregate_type` column,
-        # so this is the same fact, and reading it from the envelope keeps the
-        # three feeds answering identically.
+        # Filtered on stream category for parity with SQL adapters.
         if options.aggregate_type is not None:
             cat_indices: Sequence[int] = self._categories.get(options.aggregate_type, ())
             start = (
@@ -263,17 +240,14 @@ class InMemoryEventStore:
             yield envelope
 
     async def current_position(self) -> Position | None:
-        if not self._events:
-            return None
-        return self._events[-1].position
+        return self._events[-1].position if self._events else None
 
     def read_category(
         self,
         category: str,
         options: CategoryReadOptions | None = None,
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or CategoryReadOptions()
-        return self._do_read_category(category, opts)
+        return self._do_read_category(category, options or CategoryReadOptions())
 
     async def _do_read_category(
         self,
@@ -288,9 +262,6 @@ class InMemoryEventStore:
         if not indices:
             return
 
-        # `self._events` is appended under `self._lock` with monotonically
-        # non-decreasing `stored_at` and strictly increasing `position.key`, so
-        # `indices` is already ordered by `(stored_at, position.key)`.
         start = (
             bisect.bisect_left(
                 indices,
