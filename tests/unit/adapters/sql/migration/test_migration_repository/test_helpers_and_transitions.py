@@ -20,13 +20,11 @@ class TestPostgreSQLMigrationRepositoryHelpers:
 
     @pytest.fixture
     def repo(self) -> PostgreSQLMigrationRepository:
-        """Create a repository for testing."""
         return PostgreSQLMigrationRepository(MagicMock(), enable_tracing=False)
 
     def test_get_phase_timestamp_updates_bulk_copy(
         self, repo: PostgreSQLMigrationRepository
     ) -> None:
-        """Test timestamp updates for BULK_COPY phase."""
         sql = repo._get_phase_timestamp_updates(MigrationPhase.BULK_COPY)
         assert "started_at = :phase_time" in sql
         assert "bulk_copy_started_at = :phase_time" in sql
@@ -34,86 +32,54 @@ class TestPostgreSQLMigrationRepositoryHelpers:
     def test_get_phase_timestamp_updates_dual_write(
         self, repo: PostgreSQLMigrationRepository
     ) -> None:
-        """Test timestamp updates for DUAL_WRITE phase."""
         sql = repo._get_phase_timestamp_updates(MigrationPhase.DUAL_WRITE)
         assert "bulk_copy_completed_at = :phase_time" in sql
         assert "dual_write_started_at = :phase_time" in sql
 
     def test_get_phase_timestamp_updates_cutover(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test timestamp updates for CUTOVER phase."""
         sql = repo._get_phase_timestamp_updates(MigrationPhase.CUTOVER)
         assert "cutover_started_at = :phase_time" in sql
 
     def test_get_phase_timestamp_updates_completed(
         self, repo: PostgreSQLMigrationRepository
     ) -> None:
-        """Test timestamp updates for COMPLETED phase."""
         sql = repo._get_phase_timestamp_updates(MigrationPhase.COMPLETED)
         assert "completed_at = :phase_time" in sql
 
     def test_get_phase_timestamp_updates_aborted(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test timestamp updates for ABORTED phase."""
         sql = repo._get_phase_timestamp_updates(MigrationPhase.ABORTED)
         assert "completed_at = :phase_time" in sql
 
     def test_get_phase_timestamp_updates_failed(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test timestamp updates for FAILED phase."""
         sql = repo._get_phase_timestamp_updates(MigrationPhase.FAILED)
         assert "completed_at = :phase_time" in sql
 
     def test_get_phase_timestamp_updates_pending(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test timestamp updates for PENDING phase returns empty string."""
         assert repo._get_phase_timestamp_updates(MigrationPhase.PENDING) == ""
 
     def test_get_phase_timestamp_params_bulk_copy(
         self, repo: PostgreSQLMigrationRepository
     ) -> None:
-        """Test timestamp params for BULK_COPY phase."""
         now = datetime.now(UTC)
         params = repo._get_phase_timestamp_params(MigrationPhase.BULK_COPY, now)
         assert params["phase_time"] == now
 
     def test_get_phase_timestamp_params_pending(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test timestamp params for PENDING phase returns empty dict."""
         now = datetime.now(UTC)
         assert repo._get_phase_timestamp_params(MigrationPhase.PENDING, now) == {}
 
     def test_row_to_migration(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test converting a database row to Migration."""
         migration_id, tenant_id = uuid4(), uuid4()
         config = MigrationConfig(batch_size=500).to_dict()
         created_at = datetime.now(UTC)
         source_position = Position(store_id="source", key=(400,))
         target_position = Position(store_id="target", key=(200,))
 
-        row = (
-            migration_id,
-            tenant_id,
-            "shared",
-            "dedicated",
-            "dual_write",
-            1000,
-            750,
-            source_position.to_str(),
-            target_position.to_str(),
-            created_at,
-            created_at,
-            created_at,
-            created_at,
-            None,
-            None,
-            json.dumps(config),
-            2,
-            "Test error",
-            created_at,
-            True,
-            created_at,
-            "Maintenance",
-            created_at,
-            created_at,
-            "admin@example.com",
-        )
-        migration = repo._row_to_migration(row)
+        head = (migration_id, tenant_id, "shared", "dedicated", "dual_write", 1000, 750)
+        positions = (source_position.to_str(), target_position.to_str(), *(created_at,) * 4, None)
+        tail = (None, json.dumps(config), 2, "Test error", created_at, True, created_at)
+        meta = ("Maintenance", created_at, created_at, "admin@example.com")
+        migration = repo._row_to_migration((*head, *positions, *tail, *meta))
 
         assert migration.id == migration_id
         assert migration.tenant_id == tenant_id
@@ -132,47 +98,16 @@ class TestPostgreSQLMigrationRepositoryHelpers:
         assert migration.created_by == "admin@example.com"
 
     def test_row_to_migration_with_dict_config(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test converting a row with config already as dict."""
         created_at = datetime.now(UTC)
-        row = (
-            uuid4(),
-            uuid4(),
-            "shared",
-            "dedicated",
-            "pending",
-            0,
-            0,
-            None,
-            None,
-            *(None,) * 6,
-            {"batch_size": 500},
-            0,
-            None,
-            None,
-            False,
-            None,
-            None,
-            created_at,
-            created_at,
-            None,
-        )
-        migration = repo._row_to_migration(row)
+        head = (uuid4(), uuid4(), "shared", "dedicated", "pending", 0, 0, *(None,) * 8)
+        tail = ({"batch_size": 500}, 0, None, None, False, None, None, created_at, created_at, None)
+        migration = repo._row_to_migration((*head, *tail))
         assert migration.config.batch_size == 500
 
     def test_row_to_migration_with_null_values(self, repo: PostgreSQLMigrationRepository) -> None:
-        """Test converting a row with null values."""
         config = MigrationConfig().to_dict()
-        row = (
-            uuid4(),
-            uuid4(),
-            "shared",
-            "dedicated",
-            "pending",
-            *(None,) * 10,
-            json.dumps(config),
-            *(None,) * 9,
-        )
-        migration = repo._row_to_migration(row)
+        head = (uuid4(), uuid4(), "shared", "dedicated", "pending", *(None,) * 10)
+        migration = repo._row_to_migration((*head, json.dumps(config), *(None,) * 9))
         assert migration.events_total == 0
         assert migration.events_copied == 0
         assert migration.last_source_position is None
@@ -228,7 +163,6 @@ class TestPhaseTransitionValidation:
         new_phase: MigrationPhase,
         should_succeed: bool,
     ) -> None:
-        """Test phase transition validation."""
         migration_id = uuid4()
         migration = Migration(
             id=migration_id,

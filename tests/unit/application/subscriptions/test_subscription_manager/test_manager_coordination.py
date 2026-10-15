@@ -9,10 +9,7 @@ import pytest
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
 from eventsource.adapters.memory.store import InMemoryEventStore
-from eventsource.application.subscriptions import (
-    SubscriptionManager,
-    SubscriptionState,
-)
+from eventsource.application.subscriptions import SubscriptionManager, SubscriptionState
 from eventsource.domain import StreamId
 from eventsource.ports.positions import ExpectedVersion
 from tests.unit.application.subscriptions.test_subscription_manager._fixtures import (
@@ -29,9 +26,7 @@ class TestMultipleSubscriptionsConcurrent:
 
     @pytest.mark.asyncio
     async def test_concurrent_start_all_subscriptions(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 10)
         order_projection = OrderProjection()
@@ -48,14 +43,11 @@ class TestMultipleSubscriptionsConcurrent:
         assert len(order_projection.handled_events) == 10
         assert len(customer_projection.handled_events) == 10
         assert len(third_projection.handled_events) == 10
-
         await manager.stop()
 
     @pytest.mark.asyncio
     async def test_concurrent_start_returns_results(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
         order_projection = OrderProjection()
@@ -69,14 +61,11 @@ class TestMultipleSubscriptionsConcurrent:
         assert "CustomerProjection" in results
         assert results["OrderProjection"] is None
         assert results["CustomerProjection"] is None
-
         await manager.stop()
 
     @pytest.mark.asyncio
     async def test_sequential_start_mode(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
         order_projection = OrderProjection()
@@ -90,7 +79,6 @@ class TestMultipleSubscriptionsConcurrent:
         assert all(v is None for v in results.values())
         assert len(order_projection.handled_events) == 5
         assert len(customer_projection.handled_events) == 5
-
         await manager.stop()
 
 
@@ -99,18 +87,12 @@ class TestMultipleSubscriptionsLifecycle:
 
     @pytest.mark.asyncio
     async def test_stop_stops_all_subscriptions(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-        third_projection = MockSubscriber()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
-        await manager.subscribe(third_projection, name="ThirdProjection")
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
+        await manager.subscribe(MockSubscriber(), name="ThirdProjection")
 
         await manager.start()
         await manager.stop()
@@ -121,16 +103,11 @@ class TestMultipleSubscriptionsLifecycle:
 
     @pytest.mark.asyncio
     async def test_unsubscribe_one_keeps_others(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
 
         await manager.start()
         await manager.unsubscribe("OrderProjection")
@@ -139,7 +116,6 @@ class TestMultipleSubscriptionsLifecycle:
         customer_sub = manager.get_subscription("CustomerProjection")
         assert customer_sub.state == SubscriptionState.LIVE
         assert manager.get_subscription("OrderProjection") is None
-
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -150,18 +126,14 @@ class TestMultipleSubscriptionsLifecycle:
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         await add_events_to_store(event_store, 10)
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
         await manager.start()
 
         order_checkpoint = await checkpoint_repo.get_position("OrderProjection")
         customer_checkpoint = await checkpoint_repo.get_position("CustomerProjection")
         assert order_checkpoint is not None
         assert customer_checkpoint is not None
-
         await manager.stop()
 
 
@@ -176,46 +148,34 @@ class TestConcurrentStartPerformance:
         checkpoint_repo: InMemoryCheckpointRepository,
     ):
         await add_events_to_store(event_store, 50)
-
-        slow_subscriber1 = MockSubscriber()
-        slow_subscriber1.handle_delay = 0.01
-        slow_subscriber2 = MockSubscriber()
-        slow_subscriber2.handle_delay = 0.01
-        slow_subscriber3 = MockSubscriber()
-        slow_subscriber3.handle_delay = 0.01
-
         concurrent_manager = SubscriptionManager(event_store, event_bus, checkpoint_repo)
-        await concurrent_manager.subscribe(slow_subscriber1, name="Sub1")
-        await concurrent_manager.subscribe(slow_subscriber2, name="Sub2")
-        await concurrent_manager.subscribe(slow_subscriber3, name="Sub3")
+        subs = []
+        for idx in (1, 2, 3):
+            sub = MockSubscriber()
+            sub.handle_delay = 0.01
+            subs.append(sub)
+            await concurrent_manager.subscribe(sub, name=f"Sub{idx}")
 
         start_time = time.time()
         await concurrent_manager.start(concurrent=True)
         concurrent_duration = time.time() - start_time
         await concurrent_manager.stop()
 
-        slow_subscriber1.handled_events.clear()
-        slow_subscriber2.handled_events.clear()
-        slow_subscriber3.handled_events.clear()
-
+        for sub in subs:
+            sub.handled_events.clear()
         assert concurrent_duration < 10.0
 
     @pytest.mark.asyncio
     async def test_start_returns_empty_dict_if_already_running(
-        self,
-        manager: SubscriptionManager,
-        event_store: InMemoryEventStore,
+        self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
-        subscriber = MockSubscriber()
-        await manager.subscribe(subscriber)
+        await manager.subscribe(MockSubscriber())
 
         results1 = await manager.start()
         assert len(results1) == 1
-
         results2 = await manager.start()
         assert results2 == {}
-
         await manager.stop()
 
 
@@ -247,5 +207,4 @@ class TestLiveEvents:
 
         assert len(subscriber.handled_events) == 6
         assert subscriber.handled_events[-1].data == "live_event"
-
         await manager.stop()

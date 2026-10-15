@@ -8,23 +8,24 @@ from eventsource.application.subscriptions.health import (
 )
 
 
+def _sample_sub_health() -> SubscriptionHealth:
+    return SubscriptionHealth(
+        name="TestSub",
+        status="healthy",
+        state="live",
+        events_processed=100,
+        events_failed=2,
+        lag_events=5,
+        error_rate=0.1,
+        last_error=None,
+        uptime_seconds=3600.0,
+    )
+
+
 class TestManagerHealth:
     """Tests for ManagerHealth dataclass."""
 
     def test_create_manager_health(self):
-        """Test creating a ManagerHealth instance."""
-        sub_health = SubscriptionHealth(
-            name="TestSub",
-            status="healthy",
-            state="live",
-            events_processed=100,
-            events_failed=2,
-            lag_events=5,
-            error_rate=0.1,
-            last_error=None,
-            uptime_seconds=3600.0,
-        )
-
         health = ManagerHealth(
             status="healthy",
             running=True,
@@ -36,7 +37,7 @@ class TestManagerHealth:
             total_events_failed=2,
             total_lag_events=5,
             uptime_seconds=7200.0,
-            subscriptions=[sub_health],
+            subscriptions=[_sample_sub_health()],
         )
 
         assert health.status == "healthy"
@@ -52,19 +53,6 @@ class TestManagerHealth:
         assert len(health.subscriptions) == 1
 
     def test_manager_health_to_dict(self):
-        """Test ManagerHealth serialization."""
-        sub_health = SubscriptionHealth(
-            name="TestSub",
-            status="healthy",
-            state="live",
-            events_processed=100,
-            events_failed=2,
-            lag_events=5,
-            error_rate=0.1,
-            last_error=None,
-            uptime_seconds=3600.0,
-        )
-
         health = ManagerHealth(
             status="degraded",
             running=True,
@@ -76,11 +64,10 @@ class TestManagerHealth:
             total_events_failed=5,
             total_lag_events=100,
             uptime_seconds=1800.0,
-            subscriptions=[sub_health],
+            subscriptions=[_sample_sub_health()],
         )
 
         data = health.to_dict()
-
         assert data["status"] == "degraded"
         assert data["running"] is True
         assert data["subscription_count"] == 2
@@ -99,7 +86,6 @@ class TestSubscriptionHealth:
     """Tests for SubscriptionHealth dataclass."""
 
     def test_create_subscription_health(self):
-        """Test creating a SubscriptionHealth instance."""
         health = SubscriptionHealth(
             name="OrderProjection",
             status="healthy",
@@ -123,7 +109,6 @@ class TestSubscriptionHealth:
         assert health.uptime_seconds == 86400.0
 
     def test_subscription_health_with_error(self):
-        """Test SubscriptionHealth with an error."""
         health = SubscriptionHealth(
             name="FailingProjection",
             status="unhealthy",
@@ -141,7 +126,6 @@ class TestSubscriptionHealth:
         assert health.last_error == "Database connection failed"
 
     def test_subscription_health_to_dict(self):
-        """Test SubscriptionHealth serialization."""
         health = SubscriptionHealth(
             name="TestProjection",
             status="degraded",
@@ -155,7 +139,6 @@ class TestSubscriptionHealth:
         )
 
         data = health.to_dict()
-
         assert data["name"] == "TestProjection"
         assert data["status"] == "degraded"
         assert data["state"] == "catching_up"
@@ -171,38 +154,27 @@ class TestReadinessStatus:
     """Tests for ReadinessStatus dataclass."""
 
     def test_create_ready_status(self):
-        """Test creating a ready ReadinessStatus."""
         status = ReadinessStatus(
-            ready=True,
-            reason="Manager is ready",
-            details={"subscription_count": 2},
+            ready=True, reason="Manager is ready", details={"subscription_count": 2}
         )
-
         assert status.ready is True
         assert status.reason == "Manager is ready"
         assert status.details["subscription_count"] == 2
 
     def test_create_not_ready_status(self):
-        """Test creating a not ready ReadinessStatus."""
         status = ReadinessStatus(
-            ready=False,
-            reason="Manager is not running",
-            details={"running": False},
+            ready=False, reason="Manager is not running", details={"running": False}
         )
-
         assert status.ready is False
         assert status.reason == "Manager is not running"
 
     def test_readiness_status_to_dict(self):
-        """Test ReadinessStatus serialization."""
         status = ReadinessStatus(
             ready=True,
             reason="All systems operational",
             details={"running": True, "subscription_count": 3},
         )
-
         data = status.to_dict()
-
         assert data["ready"] is True
         assert data["reason"] == "All systems operational"
         assert data["details"]["running"] is True
@@ -213,38 +185,31 @@ class TestLivenessStatus:
     """Tests for LivenessStatus dataclass."""
 
     def test_create_alive_status(self):
-        """Test creating an alive LivenessStatus."""
         status = LivenessStatus(
             alive=True,
             reason="Manager is alive and responsive",
             details={"uptime_seconds": 3600.0},
         )
-
         assert status.alive is True
         assert status.reason == "Manager is alive and responsive"
         assert status.details["uptime_seconds"] == 3600.0
 
     def test_create_not_alive_status(self):
-        """Test creating a not alive LivenessStatus."""
         status = LivenessStatus(
             alive=False,
             reason="Internal lock not responsive (possible deadlock)",
             details={"lock_responsive": False},
         )
-
         assert status.alive is False
         assert "deadlock" in status.reason
 
     def test_liveness_status_to_dict(self):
-        """Test LivenessStatus serialization."""
         status = LivenessStatus(
             alive=True,
             reason="All checks passed",
             details={"running": True, "lock_responsive": True},
         )
-
         data = status.to_dict()
-
         assert data["alive"] is True
         assert data["reason"] == "All checks passed"
         assert data["details"]["lock_responsive"] is True
