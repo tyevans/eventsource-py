@@ -1,5 +1,6 @@
 """Unit tests for CutoverManager lock acquisition, sync lag validation, and timeouts."""
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -24,6 +25,12 @@ def _make_lag(events: int, src: int, tgt: int) -> SyncLag:
     )
 
 
+def _manager(lock_manager, router, routing_repo) -> CutoverManager:
+    return CutoverManager(
+        lock_manager=lock_manager, router=router, routing_repo=routing_repo, enable_tracing=False
+    )
+
+
 class TestLockAcquisition:
     """Tests for lock acquisition handling."""
 
@@ -40,21 +47,12 @@ class TestLockAcquisition:
     ):
         error = LockAcquisitionError(key="cutover:test", reason="Timeout after 0.5s", timeout=0.5)
         create_failing_lock_context_manager(mock_lock_manager, error)
-        manager = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
-        )
+        manager = _manager(mock_lock_manager, mock_router, mock_routing_repo)
         result = await manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is False
+        assert result.success is False and result.rolled_back is False
         assert "Failed to acquire cutover lock" in result.error_message
-        assert result.rolled_back is False
         mock_routing_repo.set_migration_state.assert_not_called()
 
     @pytest.mark.asyncio
@@ -69,29 +67,14 @@ class TestLockAcquisition:
         mock_lag_tracker,
     ):
         create_lock_context_manager(mock_lock_manager)
-        manager1 = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
-        )
+        manager1 = _manager(mock_lock_manager, mock_router, mock_routing_repo)
         error = LockAcquisitionError(key="cutover:test", reason="Lock already held")
         mock_lock_manager2 = MagicMock()
         create_failing_lock_context_manager(mock_lock_manager2, error)
-        manager2 = CutoverManager(
-            lock_manager=mock_lock_manager2,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
-        )
-        kwargs = {
-            "migration_id": migration_id,
-            "tenant_id": tenant_id,
-            "lag_tracker": mock_lag_tracker,
-            "target_store_id": target_store_id,
-        }
-        result1 = await manager1.execute_cutover(**kwargs)
-        result2 = await manager2.execute_cutover(**kwargs)
+        manager2 = _manager(mock_lock_manager2, mock_router, mock_routing_repo)
+        args = (migration_id, tenant_id, mock_lag_tracker, target_store_id)
+        result1 = await manager1.execute_cutover(*args)
+        result2 = await manager2.execute_cutover(*args)
         assert result1.success is True
         assert result2.success is False and "lock" in result2.error_message.lower()
 
@@ -113,15 +96,10 @@ class TestSyncLagValidation:
     ):
         mock_lag_tracker.current_lag = _make_lag(50, 100, 50)
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=strict_config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=strict_config
         )
-        assert result.success is False
+        assert result.success is False and result.rolled_back is True
         assert "lag too high" in result.error_message.lower()
-        assert result.rolled_back is True
         mock_router.pause_writes.assert_called_once()
         mock_router.resume_writes.assert_called_once()
         mock_routing_repo.set_migration_state.assert_called_with(
@@ -140,10 +118,7 @@ class TestSyncLagValidation:
     ):
         mock_lag_tracker.current_lag = None
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         assert result.success is False
         assert "sync lag" in result.error_message.lower() and result.rolled_back is True
@@ -154,11 +129,7 @@ class TestSyncLagValidation:
     ):
         mock_lag_tracker.current_lag = _make_lag(100, 200, 100)
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=config
         )
         assert result.success is True
 
@@ -180,24 +151,13 @@ class TestTimeoutEnforcement:
         create_lock_context_manager(mock_lock_manager)
 
         async def slow_calculate_lag():
-            import asyncio
-
             await asyncio.sleep(0.2)
 
         mock_lag_tracker.calculate_lag = slow_calculate_lag
         mock_lag_tracker.current_lag = _make_lag(0, 100, 100)
-        manager = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
-        )
+        manager = _manager(mock_lock_manager, mock_router, mock_routing_repo)
         result = await manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            timeout_ms=50.0,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, timeout_ms=50.0
         )
         assert result.duration_ms >= 0
 
@@ -206,10 +166,10 @@ class TestTimeoutEnforcement:
         self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id,
+            tenant_id,
+            mock_lag_tracker,
+            target_store_id,
             config=MigrationConfig(cutover_timeout_ms=200),
         )
         assert result.success is True and result.duration_ms < 200

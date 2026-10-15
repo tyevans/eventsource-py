@@ -53,13 +53,11 @@ class TestPostgreSQLMigrationAuditLogRepositoryHelpers:
             now,
         )
         entry = repo._row_to_entry(row)
-        assert entry.id == 1
-        assert entry.migration_id == migration_id
+        assert entry.id == 1 and entry.migration_id == migration_id
         assert entry.event_type == AuditEventType.PHASE_CHANGED
         assert entry.old_phase == MigrationPhase.PENDING
         assert entry.new_phase == MigrationPhase.BULK_COPY
-        assert entry.details == {"key": "value"}
-        assert entry.operator == "admin@example.com"
+        assert entry.details == {"key": "value"} and entry.operator == "admin@example.com"
         assert entry.occurred_at == now
 
     def test_row_to_entry_with_dict_details(
@@ -75,17 +73,14 @@ class TestPostgreSQLMigrationAuditLogRepositoryHelpers:
             "system",
             datetime.now(UTC),
         )
-        entry = repo._row_to_entry(row)
-        assert entry.details == {"error": "test"}
+        assert repo._row_to_entry(row).details == {"error": "test"}
 
     def test_row_to_entry_with_null_phases(
         self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
         row = (1, uuid4(), "error_occurred", None, None, None, "system", datetime.now(UTC))
         entry = repo._row_to_entry(row)
-        assert entry.old_phase is None
-        assert entry.new_phase is None
-        assert entry.details is None
+        assert (entry.old_phase, entry.new_phase, entry.details) == (None, None, None)
 
     def test_row_to_entry_with_all_event_types(
         self, repo: PostgreSQLMigrationAuditLogRepository
@@ -93,8 +88,7 @@ class TestPostgreSQLMigrationAuditLogRepositoryHelpers:
         migration_id, now = uuid4(), datetime.now(UTC)
         for event_type in ALL_EVENT_TYPES:
             row = (1, migration_id, event_type, None, None, None, "system", now)
-            entry = repo._row_to_entry(row)
-            assert entry.event_type.value == event_type
+            assert repo._row_to_entry(row).event_type.value == event_type
 
 
 class TestMigrationAuditEntryFactoryMethods:
@@ -103,49 +97,45 @@ class TestMigrationAuditEntryFactoryMethods:
     def test_phase_change_factory(self) -> None:
         migration_id, now = uuid4(), datetime.now(UTC)
         entry = MigrationAuditEntry.phase_change(
-            migration_id=migration_id,
-            old_phase=MigrationPhase.PENDING,
-            new_phase=MigrationPhase.BULK_COPY,
-            occurred_at=now,
+            migration_id,
+            MigrationPhase.PENDING,
+            MigrationPhase.BULK_COPY,
+            now,
             operator="admin",
             details={"reason": "Manual start"},
         )
-        assert entry.migration_id == migration_id
+        assert entry.migration_id == migration_id and entry.id is None
         assert entry.event_type == AuditEventType.PHASE_CHANGED
         assert entry.old_phase == MigrationPhase.PENDING
         assert entry.new_phase == MigrationPhase.BULK_COPY
-        assert entry.operator == "admin"
-        assert entry.details == {"reason": "Manual start"}
-        assert entry.id is None
+        assert entry.operator == "admin" and entry.details == {"reason": "Manual start"}
 
     def test_migration_started_factory(self) -> None:
         migration_id, now = uuid4(), datetime.now(UTC)
         entry = MigrationAuditEntry.migration_started(
-            migration_id=migration_id,
-            occurred_at=now,
+            migration_id,
+            now,
             operator="admin@example.com",
             details={"config": {"batch_size": 1000}},
         )
         assert entry.migration_id == migration_id
         assert entry.event_type == AuditEventType.MIGRATION_STARTED
-        assert entry.old_phase is None
-        assert entry.new_phase == MigrationPhase.PENDING
+        assert entry.old_phase is None and entry.new_phase == MigrationPhase.PENDING
         assert entry.operator == "admin@example.com"
         assert entry.details == {"config": {"batch_size": 1000}}
 
     def test_error_occurred_factory(self) -> None:
         migration_id, now = uuid4(), datetime.now(UTC)
         entry = MigrationAuditEntry.error_occurred(
-            migration_id=migration_id,
-            occurred_at=now,
+            migration_id,
+            now,
             error_message="Connection timeout",
             error_type="NetworkError",
             operator="system",
         )
         assert entry.migration_id == migration_id
         assert entry.event_type == AuditEventType.ERROR_OCCURRED
-        assert entry.old_phase is None
-        assert entry.new_phase is None
+        assert entry.old_phase is None and entry.new_phase is None
         assert entry.details == {
             "error_message": "Connection timeout",
             "error_type": "NetworkError",
@@ -154,49 +144,36 @@ class TestMigrationAuditEntryFactoryMethods:
     def test_to_dict(self) -> None:
         migration_id, now = uuid4(), datetime.now(UTC)
         entry = MigrationAuditEntry(
-            id=42,
-            migration_id=migration_id,
-            event_type=AuditEventType.PHASE_CHANGED,
-            old_phase=MigrationPhase.BULK_COPY,
-            new_phase=MigrationPhase.DUAL_WRITE,
-            details={"key": "value"},
-            operator="admin",
-            occurred_at=now,
+            42,
+            migration_id,
+            AuditEventType.PHASE_CHANGED,
+            MigrationPhase.BULK_COPY,
+            MigrationPhase.DUAL_WRITE,
+            {"key": "value"},
+            "admin",
+            now,
         )
         data = entry.to_dict()
-        assert data["id"] == 42
-        assert data["migration_id"] == str(migration_id)
+        assert data["id"] == 42 and data["migration_id"] == str(migration_id)
         assert data["event_type"] == "phase_changed"
-        assert data["old_phase"] == "bulk_copy"
-        assert data["new_phase"] == "dual_write"
-        assert data["details"] == {"key": "value"}
-        assert data["operator"] == "admin"
+        assert data["old_phase"] == "bulk_copy" and data["new_phase"] == "dual_write"
+        assert data["details"] == {"key": "value"} and data["operator"] == "admin"
         assert data["occurred_at"] == now.isoformat()
 
     def test_to_dict_with_null_phases(self) -> None:
         entry = MigrationAuditEntry(
-            id=1,
-            migration_id=uuid4(),
-            event_type=AuditEventType.ERROR_OCCURRED,
-            old_phase=None,
-            new_phase=None,
-            details=None,
-            operator=None,
-            occurred_at=datetime.now(UTC),
+            1, uuid4(), AuditEventType.ERROR_OCCURRED, None, None, None, None, datetime.now(UTC)
         )
         data = entry.to_dict()
-        assert data["old_phase"] is None
-        assert data["new_phase"] is None
-        assert data["details"] is None
-        assert data["operator"] is None
+        for k in ("old_phase", "new_phase", "details", "operator"):
+            assert data[k] is None
 
 
 class TestAuditEventTypeEnum:
     """Tests for AuditEventType enum."""
 
     def test_all_event_types_match_db_constraint(self) -> None:
-        enum_values = {et.value for et in AuditEventType}
-        assert enum_values == set(ALL_EVENT_TYPES)
+        assert {et.value for et in AuditEventType} == set(ALL_EVENT_TYPES)
 
     def test_event_type_values(self) -> None:
         assert AuditEventType.MIGRATION_STARTED.value == "migration_started"

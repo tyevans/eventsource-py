@@ -36,13 +36,10 @@ class TestOptimisticLockError:
         aggregate_id = uuid4()
         with pytest.raises(OptimisticLockError) as exc_info:
             raise OptimisticLockError(aggregate_id, expected_version=5, actual_version=7)
-
         error = exc_info.value
         assert error.aggregate_id == aggregate_id
-        assert error.expected_version == 5
-        assert error.actual_version == 7
-        assert "expected version 5" in str(error)
-        assert "current version is 7" in str(error)
+        assert (error.expected_version, error.actual_version) == (5, 7)
+        assert "expected version 5" in str(error) and "current version is 7" in str(error)
         assert str(aggregate_id) in str(error)
 
     def test_is_eventsource_error_subclass(self):
@@ -56,10 +53,8 @@ class TestEventNotFoundError:
         event_id = uuid4()
         with pytest.raises(EventNotFoundError) as exc_info:
             raise EventNotFoundError(event_id)
-
         error = exc_info.value
-        assert error.event_id == event_id
-        assert str(event_id) in str(error)
+        assert error.event_id == event_id and str(event_id) in str(error)
         assert "Event not found" in str(error)
 
     def test_is_eventsource_error_subclass(self):
@@ -77,12 +72,9 @@ class TestProjectionError:
         )
         with pytest.raises(ProjectionError) as exc_info:
             raise ProjectionError(projection_name, event_id, message)
-
         error = exc_info.value
-        assert error.projection_name == projection_name
-        assert error.event_id == event_id
-        assert projection_name in str(error)
-        assert str(event_id) in str(error)
+        assert error.projection_name == projection_name and error.event_id == event_id
+        assert projection_name in str(error) and str(event_id) in str(error)
         assert message in str(error)
 
     def test_is_eventsource_error_subclass(self):
@@ -96,24 +88,17 @@ class TestAggregateNotFoundError:
         aggregate_id = uuid4()
         with pytest.raises(AggregateNotFoundError) as exc_info:
             raise AggregateNotFoundError(aggregate_id)
-
         error = exc_info.value
-        assert error.aggregate_id == aggregate_id
-        assert error.aggregate_type is None
-        assert str(aggregate_id) in str(error)
-        assert "not found" in str(error)
+        assert error.aggregate_id == aggregate_id and error.aggregate_type is None
+        assert str(aggregate_id) in str(error) and "not found" in str(error)
 
     def test_error_with_aggregate_type(self):
         aggregate_id, aggregate_type = uuid4(), "Order"
         with pytest.raises(AggregateNotFoundError) as exc_info:
             raise AggregateNotFoundError(aggregate_id, aggregate_type)
-
         error = exc_info.value
-        assert error.aggregate_id == aggregate_id
-        assert error.aggregate_type == aggregate_type
-        assert str(aggregate_id) in str(error)
-        assert aggregate_type in str(error)
-        assert "of type Order" in str(error)
+        assert error.aggregate_id == aggregate_id and error.aggregate_type == aggregate_type
+        assert str(aggregate_id) in str(error) and "of type Order" in str(error)
 
     def test_is_eventsource_error_subclass(self):
         assert issubclass(AggregateNotFoundError, EventSourceError)
@@ -162,12 +147,9 @@ class TestSerializationError:
         event_type, message = "OrderCreated", "Invalid JSON structure"
         with pytest.raises(SerializationError) as exc_info:
             raise SerializationError(event_type, message)
-
         error = exc_info.value
-        assert error.event_type == event_type
-        assert event_type in str(error)
-        assert message in str(error)
-        assert "Serialization error" in str(error)
+        assert error.event_type == event_type and event_type in str(error)
+        assert message in str(error) and "Serialization error" in str(error)
 
     def test_is_eventsource_error_subclass(self):
         assert issubclass(SerializationError, EventSourceError)
@@ -197,19 +179,16 @@ class TestExceptionHierarchy:
 
     def test_each_exception_is_distinct(self):
         aggregate_id = uuid4()
-        with pytest.raises(OptimisticLockError):
-            raise OptimisticLockError(aggregate_id, 1, 2)
-        with pytest.raises(EventNotFoundError):
-            raise EventNotFoundError(uuid4())
-        with pytest.raises(ProjectionError):
-            raise ProjectionError("Test", uuid4(), "msg")
-        with pytest.raises(AggregateNotFoundError):
-            raise AggregateNotFoundError(aggregate_id)
-        with pytest.raises(EventStoreError):
-            raise EventStoreError("test")
-        with pytest.raises(EventBusError):
-            raise EventBusError("test")
-        with pytest.raises(CheckpointError):
-            raise CheckpointError("test")
-        with pytest.raises(SerializationError):
-            raise SerializationError("Test", "msg")
+        pairs = [
+            (OptimisticLockError, OptimisticLockError(aggregate_id, 1, 2)),
+            (EventNotFoundError, EventNotFoundError(uuid4())),
+            (ProjectionError, ProjectionError("Test", uuid4(), "msg")),
+            (AggregateNotFoundError, AggregateNotFoundError(aggregate_id)),
+            (EventStoreError, EventStoreError("test")),
+            (EventBusError, EventBusError("test")),
+            (CheckpointError, CheckpointError("test")),
+            (SerializationError, SerializationError("Test", "msg")),
+        ]
+        for exc_cls, inst in pairs:
+            with pytest.raises(exc_cls):
+                raise inst

@@ -26,9 +26,7 @@ def _wire_exact_translation(mock_position_mapper: MagicMock, src: int = 1000, ds
 
 
 def _wire_checkpoint_repo(
-    mock_checkpoint_repo: MagicMock,
-    cps: list[CheckpointData] | None = None,
-    pos: int = 1000,
+    mock_checkpoint_repo: MagicMock, cps: list[CheckpointData] | None = None, pos: int = 1000
 ) -> None:
     mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(pos))
     if cps is not None:
@@ -39,10 +37,7 @@ def _wire_checkpoint_repo(
 class TestSubscriptionMigratorMigrateSubscriptions:
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_dry_run(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(1000))
@@ -56,10 +51,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_executes(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
         migration_id, tenant_id, event_id = uuid4(), uuid4(), uuid4()
         cp = CheckpointData("OrderProjection", event_id, "OrderCreated", position=source_pos(1000))
@@ -74,8 +66,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
             event_id=event_id,
             event_type="OrderCreated",
         )
-        assert summary.successful_count == 1 and summary.failed_count == 0
-        assert summary.all_successful
+        assert (summary.successful_count, summary.failed_count) == (1, 0) and summary.all_successful
         saved_position = mock_checkpoint_repo.save_position.call_args.kwargs["position"]
         assert isinstance(saved_position, Position) and not isinstance(saved_position, int)
         res = summary.results[0]
@@ -84,10 +75,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_missing_checkpoint_data(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
         cp = make_checkpoint_data(
             projection_name="OrderProjection", last_event_id=None, last_event_type=None
@@ -100,10 +88,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_translation_error(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
         migration_id = uuid4()
         _wire_checkpoint_repo(mock_checkpoint_repo, [make_checkpoint_data(last_event_id=uuid4())])
@@ -122,10 +107,7 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_handles_save_error(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
         _wire_checkpoint_repo(mock_checkpoint_repo, [make_checkpoint_data(last_event_id=uuid4())])
         mock_checkpoint_repo.save_position = AsyncMock(side_effect=Exception("Database error"))
@@ -133,13 +115,12 @@ class TestSubscriptionMigratorMigrateSubscriptions:
         summary = await migrator.migrate_subscriptions(
             uuid4(), uuid4(), ["OrderProjection"], dry_run=False
         )
-        assert summary.failed_count == 1
-        assert summary.results[0].error_message is not None
+        assert summary.failed_count == 1 and summary.results[0].error_message is not None
         assert "Database error" in summary.results[0].error_message
 
     @pytest.mark.asyncio
     async def test_migrate_subscriptions_raises_on_critical_checkpoint_repo_error(
-        self, migrator: SubscriptionMigrator, mock_checkpoint_repo: MagicMock
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo
     ) -> None:
         migration_id = uuid4()
         mock_checkpoint_repo.get_position = AsyncMock(
@@ -157,59 +138,46 @@ class TestSubscriptionMigratorMigrateSubscriptions:
 class TestSubscriptionMigratorMigrateTenantSubscriptions:
     @pytest.mark.asyncio
     async def test_migrate_tenant_with_explicit_names(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
         _wire_checkpoint_repo(mock_checkpoint_repo, [make_checkpoint_data(last_event_id=uuid4())])
         _wire_exact_translation(mock_position_mapper)
-        summary = await migrator.migrate_tenant_subscriptions(
-            migration_id=uuid4(), tenant_id=uuid4(), subscription_names=["OrderProjection"]
-        )
+        summary = await migrator.migrate_tenant_subscriptions(uuid4(), uuid4(), ["OrderProjection"])
         assert summary.successful_count == 1
 
     @pytest.mark.asyncio
     async def test_migrate_tenant_discovers_subscriptions(
-        self,
-        migrator: SubscriptionMigrator,
-        mock_checkpoint_repo: MagicMock,
-        mock_position_mapper: MagicMock,
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo, mock_position_mapper
     ) -> None:
-        event_id = uuid4()
+        eid = uuid4()
         cps = [
-            make_checkpoint_data("OrderProjection", event_id, "OrderCreated", source_pos(1000)),
-            make_checkpoint_data(
-                "InventoryProjection", event_id, "InventoryUpdated", source_pos(2000)
-            ),
+            make_checkpoint_data("OrderProjection", eid, "OrderCreated", source_pos(1000)),
+            make_checkpoint_data("InventoryProjection", eid, "InventoryUpdated", source_pos(2000)),
         ]
         _wire_checkpoint_repo(mock_checkpoint_repo, cps)
         _wire_exact_translation(mock_position_mapper)
-        summary = await migrator.migrate_tenant_subscriptions(
-            migration_id=uuid4(), tenant_id=uuid4(), subscription_names=None
-        )
+        summary = await migrator.migrate_tenant_subscriptions(uuid4(), uuid4(), None)
         assert summary.successful_count == 2
 
 
 class TestSubscriptionMigratorVerifyMigration:
     @pytest.mark.asyncio
     async def test_verify_migration_all_present(
-        self, migrator: SubscriptionMigrator, mock_checkpoint_repo: MagicMock
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo
     ) -> None:
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
         results = await migrator.verify_migration(
-            migration_id=uuid4(), subscription_names=["OrderProjection", "InventoryProjection"]
+            uuid4(), ["OrderProjection", "InventoryProjection"]
         )
         assert all(results.values()) and len(results) == 2
 
     @pytest.mark.asyncio
     async def test_verify_migration_some_missing(
-        self, migrator: SubscriptionMigrator, mock_checkpoint_repo: MagicMock
+        self, migrator: SubscriptionMigrator, mock_checkpoint_repo
     ) -> None:
         positions = {"OrderProjection": source_pos(500), "InventoryProjection": None}
         mock_checkpoint_repo.get_position = AsyncMock(side_effect=lambda name: positions.get(name))
         results = await migrator.verify_migration(
-            migration_id=uuid4(), subscription_names=["OrderProjection", "InventoryProjection"]
+            uuid4(), ["OrderProjection", "InventoryProjection"]
         )
-        assert results["OrderProjection"] is True
-        assert results["InventoryProjection"] is False
+        assert results["OrderProjection"] is True and results["InventoryProjection"] is False

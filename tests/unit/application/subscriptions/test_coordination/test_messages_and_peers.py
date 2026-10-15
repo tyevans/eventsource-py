@@ -16,7 +16,7 @@ class TestHeartbeatMessage:
 
     def test_create_heartbeat(self) -> None:
         now = datetime.now(UTC)
-        heartbeat = HeartbeatMessage(
+        hb = HeartbeatMessage(
             instance_id="worker-1",
             timestamp=now,
             subscriptions=("sub-1",),
@@ -24,16 +24,13 @@ class TestHeartbeatMessage:
             is_leader=True,
             load_factor=0.75,
         )
-        assert heartbeat.instance_id == "worker-1"
-        assert heartbeat.timestamp == now
-        assert heartbeat.subscriptions == ("sub-1",)
-        assert heartbeat.in_flight_count == 5
-        assert heartbeat.is_leader is True
-        assert heartbeat.load_factor == 0.75
+        assert hb.instance_id == "worker-1" and hb.timestamp == now
+        assert hb.subscriptions == ("sub-1",) and hb.in_flight_count == 5
+        assert hb.is_leader is True and hb.load_factor == 0.75
 
     def test_to_dict(self) -> None:
         now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
-        heartbeat = HeartbeatMessage(
+        hb = HeartbeatMessage(
             instance_id="worker-1",
             timestamp=now,
             subscriptions=("sub-1", "sub-2"),
@@ -41,13 +38,11 @@ class TestHeartbeatMessage:
             is_leader=True,
             load_factor=0.5,
         )
-        result = heartbeat.to_dict()
-        assert result["instance_id"] == "worker-1"
-        assert result["timestamp"] == "2025-01-01T12:00:00+00:00"
-        assert result["subscriptions"] == ["sub-1", "sub-2"]
-        assert result["in_flight_count"] == 10
-        assert result["is_leader"] is True
-        assert result["load_factor"] == 0.5
+        res = hb.to_dict()
+        assert res["instance_id"] == "worker-1"
+        assert res["timestamp"] == "2025-01-01T12:00:00+00:00"
+        assert res["subscriptions"] == ["sub-1", "sub-2"] and res["in_flight_count"] == 10
+        assert res["is_leader"] is True and res["load_factor"] == 0.5
 
     def test_from_dict(self) -> None:
         data = {
@@ -58,22 +53,19 @@ class TestHeartbeatMessage:
             "is_leader": False,
             "load_factor": 0.25,
         }
-        heartbeat = HeartbeatMessage.from_dict(data)
-        assert heartbeat.instance_id == "worker-1"
-        assert heartbeat.subscriptions == ("sub-1",)
-        assert heartbeat.in_flight_count == 5
-        assert heartbeat.is_leader is False
-        assert heartbeat.load_factor == 0.25
+        hb = HeartbeatMessage.from_dict(data)
+        assert hb.instance_id == "worker-1" and hb.subscriptions == ("sub-1",)
+        assert hb.in_flight_count == 5 and hb.is_leader is False and hb.load_factor == 0.25
 
     def test_is_stale_fresh(self) -> None:
-        heartbeat = HeartbeatMessage(instance_id="worker-1", timestamp=datetime.now(UTC))
-        assert heartbeat.is_stale(max_age_seconds=15.0) is False
+        hb = HeartbeatMessage(instance_id="worker-1", timestamp=datetime.now(UTC))
+        assert hb.is_stale(max_age_seconds=15.0) is False
 
     def test_is_stale_old(self) -> None:
-        heartbeat = HeartbeatMessage(
+        hb = HeartbeatMessage(
             instance_id="worker-1", timestamp=datetime.now(UTC) - timedelta(seconds=20)
         )
-        assert heartbeat.is_stale(max_age_seconds=15.0) is True
+        assert hb.is_stale(max_age_seconds=15.0) is True
 
     def test_round_trip(self) -> None:
         original = HeartbeatMessage(
@@ -105,8 +97,7 @@ class TestWorkAssignment:
         assert assignment.target_instance_id == "worker-2"
         assert assignment.subscriptions == ("sub-1", "sub-2")
         assert assignment.source_instance_id == "worker-1"
-        assert assignment.assigned_at == now
-        assert assignment.priority == 1
+        assert assignment.assigned_at == now and assignment.priority == 1
 
     def test_to_dict(self) -> None:
         now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -117,12 +108,10 @@ class TestWorkAssignment:
             assigned_at=now,
             priority=2,
         )
-        result = assignment.to_dict()
-        assert result["target_instance_id"] == "worker-2"
-        assert result["subscriptions"] == ["sub-1"]
-        assert result["source_instance_id"] == "worker-1"
-        assert result["assigned_at"] == "2025-01-01T12:00:00+00:00"
-        assert result["priority"] == 2
+        res = assignment.to_dict()
+        assert res["target_instance_id"] == "worker-2" and res["subscriptions"] == ["sub-1"]
+        assert res["source_instance_id"] == "worker-1" and res["priority"] == 2
+        assert res["assigned_at"] == "2025-01-01T12:00:00+00:00"
 
     def test_from_dict(self) -> None:
         data = {
@@ -135,8 +124,7 @@ class TestWorkAssignment:
         assignment = WorkAssignment.from_dict(data)
         assert assignment.target_instance_id == "worker-2"
         assert assignment.subscriptions == ("sub-1", "sub-2")
-        assert assignment.source_instance_id == "worker-1"
-        assert assignment.priority == 3
+        assert assignment.source_instance_id == "worker-1" and assignment.priority == 3
 
     def test_round_trip(self) -> None:
         original = WorkAssignment(
@@ -158,10 +146,8 @@ class TestPeerInfo:
 
     def test_initial_state(self) -> None:
         peer = PeerInfo(instance_id="worker-1")
-        assert peer.instance_id == "worker-1"
-        assert peer.last_heartbeat is None
-        assert peer.shutdown_notification is None
-        assert peer.status == "unknown"
+        assert peer.instance_id == "worker-1" and peer.last_heartbeat is None
+        assert peer.shutdown_notification is None and peer.status == "unknown"
         assert peer.subscriptions == ()
 
     def test_status_healthy(self) -> None:
@@ -171,8 +157,7 @@ class TestPeerInfo:
                 instance_id="worker-1", timestamp=datetime.now(UTC), subscriptions=("sub-1",)
             ),
         )
-        assert peer.status == "healthy"
-        assert peer.subscriptions == ("sub-1",)
+        assert peer.status == "healthy" and peer.subscriptions == ("sub-1",)
 
     def test_status_stale(self) -> None:
         peer = PeerInfo(
@@ -197,8 +182,7 @@ class TestPeerInfo:
                 subscriptions=("sub-1",),
             ),
         )
-        assert peer.status == "draining"
-        assert peer.subscriptions == ("sub-1",)
+        assert peer.status == "draining" and peer.subscriptions == ("sub-1",)
 
     def test_status_terminated(self) -> None:
         now = datetime.now(UTC)
