@@ -75,38 +75,20 @@ class RabbitMQConsumerDispatchMixin:
     ) -> None:
         """Process a single message from the queue with retry handling and tracing.
 
-        Deserializes the event and dispatches to registered handlers.
-        Tracks retry count via x-retry-count header and implements
-        exponential backoff before DLQ routing.
-
-        When tracing is enabled, creates a consumer span that extracts
-        trace context from message headers for distributed tracing correlation.
-
-        On success: acknowledges the message.
-        On failure:
-        - If retries remaining: republish with incremented retry count
-        - If max_retries exceeded: send to DLQ with failure metadata
-
-        Also tracks DLQ-related information from x-death headers for
-        observability and debugging purposes.
-
-        Args:
-            message: The incoming AMQP message
+        Deserializes the event, dispatches to registered handlers, and acknowledges
+        on success. On failure, delegates to ``_handle_failed_message`` for retry
+        or DLQ routing.
         """
         headers = message.headers or {}
         event_type_name = str(headers.get("event_type", "unknown"))
-        # Extract retry count with type-safe conversion
-        # Header values can be various types, so we ensure numeric conversion
         retry_count_value = headers.get("x-retry-count")
         if retry_count_value is None:
             retry_count = 0
         elif isinstance(retry_count_value, int):
             retry_count = retry_count_value
         else:
-            # Handle string or other numeric types
             retry_count = int(str(retry_count_value))
 
-        # Extract death info for logging and tracking
         death_info = death_headers.get_death_info(message)
         is_redelivered = death_headers.is_from_dlq(message)
 
@@ -117,7 +99,6 @@ class RabbitMQConsumerDispatchMixin:
             "retry_count": retry_count,
         }
 
-        # Add death info if message was dead-lettered
         if is_redelivered:
             log_extra.update(
                 {
@@ -139,15 +120,10 @@ class RabbitMQConsumerDispatchMixin:
             )
 
         processing_start = datetime.now(UTC)
-
-        # Set up tracing if enabled with context extraction for distributed tracing
         span = None
         ctx = None
 
-        # Use Tracer's start_span with SpanKindEnum.CONSUMER for distributed tracing
-        # Extract trace context from message headers to link consumer span to publisher span
         if self._enable_tracing and PROPAGATION_AVAILABLE and self._tracer is not None:
-            # Extract trace context from message headers for distributed tracing
             from eventsource.adapters.rabbitmq import consumer as _consumer_mod
 
             if _consumer_mod.extract is not None:
@@ -168,11 +144,9 @@ class RabbitMQConsumerDispatchMixin:
             )
 
         try:
-            # Deserialize event
             event = self._deserialize_event(message)
 
             if event is None:
-                # Unknown event type - acknowledge to prevent blocking
                 self._logger.warning(
                     f"Unknown event type: {event_type_name}, acknowledging to skip",
                     extra={
@@ -189,10 +163,7 @@ class RabbitMQConsumerDispatchMixin:
             if span:
                 span.set_attribute("event.id", str(event.event_id))
 
-            # Dispatch to handlers with tracing
             await self._dispatch_event(event, message, span)
-
-            # Acknowledge successful processing
             await message.ack()
 
             self._stats.events_consumed += 1
@@ -230,7 +201,6 @@ class RabbitMQConsumerDispatchMixin:
                 "error_type": type(e).__name__,
             }
 
-            # Include death info in error logging
             if is_redelivered:
                 error_extra.update(
                     {
@@ -250,12 +220,6 @@ class RabbitMQConsumerDispatchMixin:
                 extra=error_extra,
             )
 
-            # Handle retry or DLQ routing. Unwrap a single-failure
-            # HandlerDispatchError so retry/DLQ metadata (x-dlq-error-type,
-            # etc.) still reflects the handler's own exception type rather
-            # than the aggregate wrapper -- error isolation changes how
-            # dispatch runs handlers, not what gets reported for a single
-            # failing handler.
             dlq_error: Exception = e
             if isinstance(e, HandlerDispatchError) and len(e.failures) == 1:
                 dlq_error = e.failures[0][1]
@@ -271,30 +235,12 @@ class RabbitMQConsumerDispatchMixin:
         message: AbstractIncomingMessage,
         parent_span: Any = None,
     ) -> None:
-        """Dispatch an event to all matching handlers with optional tracing.
+        """Dispatch an event to all matching handlers with error isolation.
 
-        Invokes handlers for the specific event type and wildcard handlers.
-        When tracing is enabled and a parent span is provided, creates child
-        spans for each handler execution.
-
-        Args:
-            event: The deserialized domain event
-            message: Original AMQP message for context
-            parent_span: Optional parent span for tracing. If provided and
-                        tracing is enabled, child spans are created for each
-                        handler execution.
-
-        Raises:
-            HandlerDispatchError: If one or more handlers raise. Every handler
-                still runs for this delivery (error isolation); failures are
-                collected and raised together afterward so the message is
-                still rejected for retry/DLQ exactly as a single raise would
-                have done.
+        Runs every registered handler sequentially; any failures are collected
+        and raised together as a single :class:`HandlerDispatchError`.
         """
-        event_type = type(event)
-
-        # Get all handlers
-        handlers = self._handlers_for(event_type)
+        handlers = self._handlers_for(type(event))
 
         if not handlers:
             self._logger.warning(
@@ -303,7 +249,6 @@ class RabbitMQConsumerDispatchMixin:
             )
             return
 
-        # Add handler count to parent span for observability
         if parent_span is not None:
             parent_span.set_attribute(ATTR_HANDLER_COUNT, len(handlers))
 
@@ -316,17 +261,12 @@ class RabbitMQConsumerDispatchMixin:
             },
         )
 
-        # Process handlers sequentially for ordering guarantees. Every handler
-        # runs for this delivery even if an earlier one failed (error
-        # isolation) -- failures are collected and raised together as one
-        # HandlerDispatchError afterward.
         failures: list[tuple[str, Exception]] = []
         for adapter in handlers:
             handler_name = adapter.name
             handler_start = datetime.now(UTC)
             handler_span = None
 
-            # Create handler span if tracing is enabled (using composition-based tracer)
             if (
                 self._enable_tracing
                 and parent_span
@@ -345,7 +285,6 @@ class RabbitMQConsumerDispatchMixin:
 
             try:
                 await adapter.handle(event)
-
                 handler_duration = (datetime.now(UTC) - handler_start).total_seconds()
 
                 if handler_span:
