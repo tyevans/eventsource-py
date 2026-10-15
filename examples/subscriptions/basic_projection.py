@@ -1,15 +1,9 @@
 """
 Basic Subscription Manager Example - Order Summary Projection
 
-This example demonstrates:
-- Creating a simple read model projection
-- Setting up the SubscriptionManager with in-memory implementations
-- Subscribing a projection to receive events
-- Starting catch-up and live subscriptions
-- Querying the projection's read model
-
-The projection tracks order counts by status, demonstrating how to build
-a simple read model from an event stream.
+Demonstrates creating a read model projection, setting up SubscriptionManager
+with in-memory implementations, running catch-up and live subscriptions, and
+querying the projection's read model.
 
 Run with: python -m examples.subscriptions.basic_projection
 """
@@ -33,17 +27,12 @@ from eventsource import (
 )
 from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 @register_event
 class OrderPlaced(DomainEvent):
-    """Event emitted when an order is placed."""
-
     aggregate_type: str = "Order"
     customer_id: UUID
     customer_name: str
@@ -52,8 +41,6 @@ class OrderPlaced(DomainEvent):
 
 @register_event
 class OrderShipped(DomainEvent):
-    """Event emitted when an order is shipped."""
-
     aggregate_type: str = "Order"
     tracking_number: str
     carrier: str
@@ -61,23 +48,17 @@ class OrderShipped(DomainEvent):
 
 @register_event
 class OrderDelivered(DomainEvent):
-    """Event emitted when an order is delivered."""
-
     aggregate_type: str = "Order"
     delivered_at: datetime
 
 
 @register_event
 class OrderCancelled(DomainEvent):
-    """Event emitted when an order is cancelled."""
-
     aggregate_type: str = "Order"
     reason: str
 
 
 class OrderState(BaseModel):
-    """Order aggregate state."""
-
     order_id: UUID
     customer_id: UUID | None = None
     customer_name: str = ""
@@ -110,7 +91,6 @@ class OrderAggregate(AggregateRoot[OrderState]):
             self._state = self._state.model_copy(update={"status": "cancelled"})
 
     def place(self, customer_id: UUID, customer_name: str, total_amount: float) -> None:
-        """Place a new order."""
         if self.version > 0:
             raise ValueError("Order already placed")
         self.apply_event(
@@ -124,7 +104,6 @@ class OrderAggregate(AggregateRoot[OrderState]):
         )
 
     def ship(self, tracking_number: str, carrier: str) -> None:
-        """Ship the order."""
         if not self.state or self.state.status != "placed":
             raise ValueError("Order must be placed to ship")
         self.apply_event(
@@ -137,7 +116,6 @@ class OrderAggregate(AggregateRoot[OrderState]):
         )
 
     def deliver(self) -> None:
-        """Mark order as delivered."""
         if not self.state or self.state.status != "shipped":
             raise ValueError("Order must be shipped to deliver")
         self.apply_event(
@@ -149,7 +127,6 @@ class OrderAggregate(AggregateRoot[OrderState]):
         )
 
     def cancel(self, reason: str) -> None:
-        """Cancel the order."""
         if not self.state or self.state.status in ("delivered", "cancelled"):
             raise ValueError("Cannot cancel this order")
         self.apply_event(
@@ -162,12 +139,7 @@ class OrderAggregate(AggregateRoot[OrderState]):
 
 
 class OrderSummaryProjection:
-    """
-    Projection that maintains order counts by status.
-
-    Demonstrates declaring handled event types, updating an in-memory read model,
-    and querying the read model for reporting.
-    """
+    """Projection that maintains order counts by status."""
 
     def __init__(self):
         self.order_counts: dict[str, int] = defaultdict(int)
@@ -175,11 +147,9 @@ class OrderSummaryProjection:
         self.customers: set[UUID] = set()
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
-        """Declare which event types this projection handles."""
         return [OrderPlaced, OrderShipped, OrderDelivered, OrderCancelled]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Process a single event and update the read model."""
         if isinstance(event, OrderPlaced):
             self.order_counts["placed"] += 1
             self.total_revenue += event.total_amount
@@ -207,13 +177,19 @@ class OrderSummaryProjection:
             logger.info(f"Order cancelled: {self.order_counts['cancelled']} cancelled")
 
     def get_summary(self) -> dict:
-        """Get a summary of order statistics."""
         return {
             "total_orders": sum(self.order_counts.values()),
             "by_status": dict(self.order_counts),
             "total_revenue": self.total_revenue,
             "unique_customers": len(self.customers),
         }
+
+
+def _print_summary(projection: OrderSummaryProjection) -> None:
+    summary = projection.get_summary()
+    print(f"   Total orders: {summary['total_orders']}\n   By status: {summary['by_status']}")
+    print(f"   Total revenue: ${summary['total_revenue']:.2f}")
+    print(f"   Unique customers: {summary['unique_customers']}")
 
 
 async def main():
@@ -225,12 +201,9 @@ async def main():
     event_bus = InMemoryEventBus()
     checkpoint_repo = InMemoryCheckpointRepository()
     repo = AggregateRepository(
-        event_store=event_store,
-        aggregate_factory=OrderAggregate,
-        event_publisher=event_bus,
+        event_store=event_store, aggregate_factory=OrderAggregate, event_publisher=event_bus
     )
-    print("   - Event store: InMemoryEventStore")
-    print("   - Event bus: InMemoryEventBus")
+    print("   - Event store: InMemoryEventStore\n   - Event bus: InMemoryEventBus")
     print("   - Checkpoint repo: InMemoryCheckpointRepository")
 
     print("\n2. Creating OrderSummaryProjection...")
@@ -267,9 +240,7 @@ async def main():
 
     print("\n4. Setting up SubscriptionManager...")
     manager = SubscriptionManager(
-        event_store=event_store,
-        event_bus=event_bus,
-        checkpoint_repo=checkpoint_repo,
+        event_store=event_store, event_bus=event_bus, checkpoint_repo=checkpoint_repo
     )
     config = SubscriptionConfig(start_from="beginning", batch_size=100)
     subscription = await manager.subscribe(projection, config=config, name="OrderSummary")
@@ -280,10 +251,7 @@ async def main():
     await asyncio.sleep(0.5)
 
     print("\n6. Querying projection after catch-up:")
-    summary = projection.get_summary()
-    print(f"   Total orders: {summary['total_orders']}\n   By status: {summary['by_status']}")
-    print(f"   Total revenue: ${summary['total_revenue']:.2f}")
-    print(f"   Unique customers: {summary['unique_customers']}")
+    _print_summary(projection)
 
     print("\n7. Creating new events (live subscription)...")
     order = repo.create_new(uuid4())
@@ -293,25 +261,21 @@ async def main():
     await asyncio.sleep(0.2)
 
     print("\n8. Final projection status:")
-    summary = projection.get_summary()
-    print(f"   Total orders: {summary['total_orders']}\n   By status: {summary['by_status']}")
-    print(f"   Total revenue: ${summary['total_revenue']:.2f}")
-    print(f"   Unique customers: {summary['unique_customers']}")
+    _print_summary(projection)
 
     for name, sub_status in manager.get_all_statuses().items():
         print(f"\n   Subscription '{name}':")
-        print(f"     State: {sub_status.state}")
-        print(f"     Events processed: {sub_status.events_processed}")
+        print(
+            f"     State: {sub_status.state}\n     Events processed: {sub_status.events_processed}"
+        )
         print(f"     Last position: {sub_status.position}")
 
     print("\n9. Stopping subscription manager...")
     await manager.stop()
     checkpoint = await checkpoint_repo.get_checkpoint("OrderSummary")
-    if checkpoint:
-        print(f"   Checkpoint saved at position: {checkpoint}")
-    else:
-        print("   No checkpoint saved")
-
+    print(
+        f"   Checkpoint saved at position: {checkpoint}" if checkpoint else "   No checkpoint saved"
+    )
     print("\n" + "=" * 60 + "\nExample completed successfully!\n" + "=" * 60)
 
 

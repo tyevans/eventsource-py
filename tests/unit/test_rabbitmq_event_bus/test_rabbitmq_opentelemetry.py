@@ -8,10 +8,34 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.rabbitmq import (
+    OTEL_AVAILABLE,
     RabbitMQEventBus,
     RabbitMQEventBusConfig,
 )
 from eventsource.domain.event import DomainEvent
+
+
+def _make_test_event() -> DomainEvent:
+    class TestEvent(DomainEvent):
+        aggregate_type: str = "TestAggregate"
+
+    return TestEvent(aggregate_id=uuid4())
+
+
+def _setup_aio_pika_mocks(mock_aio_pika: MagicMock) -> AsyncMock:
+    mock_connection = AsyncMock(is_closed=False)
+    mock_channel = AsyncMock(is_closed=False)
+    mock_exchange = AsyncMock()
+    mock_queue = AsyncMock()
+    mock_queue.declaration_result.message_count = 0
+    mock_queue.declaration_result.consumer_count = 0
+
+    mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
+    mock_connection.channel = AsyncMock(return_value=mock_channel)
+    mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+    mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+    mock_exchange.publish = AsyncMock()
+    return mock_exchange
 
 
 class TestOpenTelemetryTracing:
@@ -39,9 +63,6 @@ class TestOpenTelemetryTracing:
 
     def test_otel_available_exported(self) -> None:
         """Test that OTEL_AVAILABLE is properly exported."""
-        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE
-
-        # OTEL_AVAILABLE should be a boolean
         assert isinstance(OTEL_AVAILABLE, bool)
 
     def test_tracer_is_none_when_tracing_disabled(
@@ -49,19 +70,13 @@ class TestOpenTelemetryTracing:
     ) -> None:
         """Test that _tracer is disabled when tracing is disabled."""
         bus = RabbitMQEventBus(config=config_no_tracing)
-
-        # With composition-based tracing, _tracer is always set but disabled
         assert bus._publisher._tracer is not None
         assert bus._publisher._tracer.enabled is False
         assert bus._publisher._enable_tracing is False
 
     def test_tracer_set_when_enabled_and_available(self, config: RabbitMQEventBusConfig) -> None:
         """Test that _tracer is set when enabled and available."""
-        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE
-
         bus = RabbitMQEventBus(config=config)
-
-        # With composition-based tracing, _tracer is always set
         assert bus._publisher._tracer is not None
         if OTEL_AVAILABLE:
             assert bus._publisher._enable_tracing is True
@@ -75,45 +90,19 @@ class TestOpenTelemetryTracing:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish creates a span when tracing is enabled."""
-        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
-
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
-        # Set up mocks
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-        mock_exchange.publish = AsyncMock()
-
-        # Create test event
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "TestAggregate"
-
-        event = TestEvent(aggregate_id=uuid4())
-
+        _setup_aio_pika_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        # Mock the tracer via TracingMixin's _tracer attribute
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
         bus._publisher._tracer = mock_tracer
 
-        await bus.publish([event])
-
-        # Verify span was created and ended
+        await bus.publish([_make_test_event()])
         mock_tracer.start_span.assert_called()
         mock_span.end.assert_called()
 
@@ -123,7 +112,6 @@ class TestOpenTelemetryTracing:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish span includes correct attributes."""
-        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
         from eventsource.observability.attributes import (
             ATTR_EVENT_TYPE,
             ATTR_MESSAGING_DESTINATION,
@@ -133,45 +121,19 @@ class TestOpenTelemetryTracing:
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
-        # Set up mocks
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-        mock_exchange.publish = AsyncMock()
-
-        # Create test event
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "TestAggregate"
-
-        event = TestEvent(aggregate_id=uuid4())
-
+        _setup_aio_pika_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        # Mock the tracer via TracingMixin's _tracer attribute
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
         bus._publisher._tracer = mock_tracer
 
-        await bus.publish([event])
+        await bus.publish([_make_test_event()])
 
-        # Verify span was created with correct name pattern (now uses eventsource.event_bus.publish)
         call_args = mock_tracer.start_span.call_args
-        span_name = call_args[0][0]
-        assert "eventsource.event_bus.publish" in span_name
-
-        # Verify attributes were set using standard constants
+        assert "eventsource.event_bus.publish" in call_args[0][0]
         attributes = call_args[1]["attributes"]
         assert attributes[ATTR_MESSAGING_SYSTEM] == "rabbitmq"
         assert attributes[ATTR_MESSAGING_DESTINATION] == config.exchange_name
@@ -184,40 +146,15 @@ class TestOpenTelemetryTracing:
         self, mock_aio_pika: MagicMock, config_no_tracing: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish does not create span when tracing is disabled."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        # Set up mocks
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-        mock_exchange.publish = AsyncMock()
-
-        # Create test event
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "TestAggregate"
-
-        event = TestEvent(aggregate_id=uuid4())
-
+        mock_exchange = _setup_aio_pika_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config_no_tracing)
         await bus.connect()
 
-        # With composition-based tracing, _tracer is always set but disabled
         assert bus._publisher._tracer is not None
         assert bus._publisher._tracer.enabled is False
         assert bus._publisher._enable_tracing is False
 
-        # Publish should still work without tracing
-        await bus.publish([event])
+        await bus.publish([_make_test_event()])
         mock_exchange.publish.assert_called_once()
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -226,49 +163,23 @@ class TestOpenTelemetryTracing:
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that publish span records exception when publish fails."""
-        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
-
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
-        # Set up mocks
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_queue.declaration_result.message_count = 0
-        mock_queue.declaration_result.consumer_count = 0
-
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
-        # Make publish fail
-        publish_error = Exception("Publish failed")
-        mock_exchange.publish = AsyncMock(side_effect=publish_error)
-
-        # Create test event
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "TestAggregate"
-
-        event = TestEvent(aggregate_id=uuid4())
+        mock_exchange = _setup_aio_pika_mocks(mock_aio_pika)
+        mock_exchange.publish = AsyncMock(side_effect=Exception("Publish failed"))
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        # Mock the tracer via TracingMixin's _tracer attribute
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
         bus._publisher._tracer = mock_tracer
 
         with pytest.raises(Exception, match="Publish failed"):
-            await bus.publish([event])
+            await bus.publish([_make_test_event()])
 
-        # Verify exception was recorded on span
         mock_span.record_exception.assert_called_once()
         mock_span.end.assert_called()
 
@@ -276,45 +187,23 @@ class TestOpenTelemetryTracing:
         self, config: RabbitMQEventBusConfig
     ) -> None:
         """Test that _create_message_with_tracing injects trace context."""
-        from eventsource.adapters.rabbitmq import OTEL_AVAILABLE, RabbitMQEventBus
-
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
-        # Create test event
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "TestAggregate"
-
-        event = TestEvent(aggregate_id=uuid4())
-
+        event = _make_test_event()
         bus = RabbitMQEventBus(config=config)
 
-        # Mock inject to verify it gets called
         with patch("eventsource.adapters.rabbitmq.serialization.inject") as mock_inject:
-            mock_span = MagicMock()
-            message = bus._create_message_with_tracing(event, mock_span)
-
-            # Verify inject was called
+            message = bus._create_message_with_tracing(event, MagicMock())
             mock_inject.assert_called_once()
-            # Message should be created
             assert message is not None
 
     def test_create_message_with_tracing_without_span(self, config: RabbitMQEventBusConfig) -> None:
         """Test that _create_message_with_tracing works without span."""
-
-        # Create test event
-        class TestEvent(DomainEvent):
-            aggregate_type: str = "TestAggregate"
-
-        event = TestEvent(aggregate_id=uuid4())
-
+        event = _make_test_event()
         bus = RabbitMQEventBus(config=config)
 
-        # Without span, inject should not be called
         with patch("eventsource.adapters.rabbitmq.serialization.inject") as mock_inject:
             message = bus._create_message_with_tracing(event, None)
-
-            # Verify inject was not called
             mock_inject.assert_not_called()
-            # Message should still be created
             assert message is not None
