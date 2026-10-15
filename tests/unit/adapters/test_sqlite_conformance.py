@@ -42,7 +42,7 @@ from eventsource.testing.conformance_ports.stateful import StoreStateMachine  # 
 from eventsource.testing.sync_facade import SyncStoreFacade  # noqa: E402
 
 
-class TestSQLiteAppender(AppenderConformance):
+class _SQLiteEventStoreFixture:
     @pytest.fixture
     async def store(self) -> AsyncIterator[SQLiteEventStore]:
         store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
@@ -50,36 +50,24 @@ class TestSQLiteAppender(AppenderConformance):
         await store.close()
 
 
-class TestSQLiteStreamReader(StreamReaderConformance):
-    @pytest.fixture
-    async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
-        yield store
-        await store.close()
+class TestSQLiteAppender(_SQLiteEventStoreFixture, AppenderConformance):
+    pass
 
 
-class TestSQLiteEventLookup(EventLookupConformance):
-    @pytest.fixture
-    async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
-        yield store
-        await store.close()
+class TestSQLiteStreamReader(_SQLiteEventStoreFixture, StreamReaderConformance):
+    pass
 
 
-class TestSQLiteGlobalFeed(GlobalFeedConformance):
-    @pytest.fixture
-    async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
-        yield store
-        await store.close()
+class TestSQLiteEventLookup(_SQLiteEventStoreFixture, EventLookupConformance):
+    pass
 
 
-class TestSQLiteCategoryQuery(CategoryQueryConformance):
-    @pytest.fixture
-    async def store(self) -> AsyncIterator[SQLiteEventStore]:
-        store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
-        yield store
-        await store.close()
+class TestSQLiteGlobalFeed(_SQLiteEventStoreFixture, GlobalFeedConformance):
+    pass
+
+
+class TestSQLiteCategoryQuery(_SQLiteEventStoreFixture, CategoryQueryConformance):
+    pass
 
 
 class TestSQLiteSnapshotStore(SnapshotStoreConformance, SnapshotDeserializationConformance):
@@ -121,15 +109,12 @@ class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):
     async def write_legacy_int_row(
         self, store: SQLCheckpointRepository, subscription_id: str, value: int
     ) -> None:
+        sql = (
+            "INSERT INTO projection_checkpoints "
+            "(projection_name, global_position, events_processed) VALUES (:name, :value, 1)"
+        )
         async with store._conn.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO projection_checkpoints "
-                    "(projection_name, global_position, events_processed) "
-                    "VALUES (:name, :value, 1)"
-                ),
-                {"name": subscription_id, "value": value},
-            )
+            await conn.execute(text(sql), {"name": subscription_id, "value": value})
 
 
 class TestSQLiteDLQRepository(DLQRepositoryConformance):
@@ -146,8 +131,7 @@ class TestSQLiteDLQRepository(DLQRepositoryConformance):
 class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
     @pytest.fixture
     async def store(self, tmp_path) -> AsyncIterator[SQLiteOutboxRepository]:
-        db_path = f"{tmp_path}/outbox_repo.db"
-        async with aiosqlite.connect(db_path) as conn:
+        async with aiosqlite.connect(f"{tmp_path}/outbox_repo.db") as conn:
             await conn.executescript(get_schema("outbox", backend="sqlite"))
             await conn.commit()
             yield SQLiteOutboxRepository(conn)
@@ -195,23 +179,17 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
         return original_json_dumps(obj)
 
     monkeypatch.setattr(sqlite_store_module, "json_dumps", flaky_json_dumps)
+    events = [
+        ConformanceEvent(aggregate_id=stream.aggregate_id, payload="1"),
+        ConformanceEvent(aggregate_id=stream.aggregate_id, payload="2"),
+    ]
     with pytest.raises(RuntimeError, match="boom"):
-        await store.append(
-            stream,
-            [
-                ConformanceEvent(aggregate_id=stream.aggregate_id, payload="1"),
-                ConformanceEvent(aggregate_id=stream.aggregate_id, payload="2"),
-            ],
-            ExpectedVersion.any_(),
-        )
+        await store.append(stream, events, ExpectedVersion.any_())
 
     monkeypatch.setattr(sqlite_store_module, "json_dumps", original_json_dumps)
     assert [e async for e in store.read_category(stream.category, CategoryReadOptions())] == []
-    result = await store.append(
-        stream,
-        [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="3")],
-        ExpectedVersion.any_(),
-    )
+    ev3 = [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="3")]
+    result = await store.append(stream, ev3, ExpectedVersion.any_())
     assert result.new_version == 1
     await store.close()
 

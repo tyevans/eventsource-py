@@ -6,15 +6,9 @@ import asyncio
 
 import pytest
 
-from eventsource.application.subscriptions import (
-    SubscriptionConfig,
-    SubscriptionManager,
-)
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 from eventsource.application.subscriptions.flow_control import FlowController
-from eventsource.application.subscriptions.shutdown import (
-    ShutdownCoordinator,
-    ShutdownPhase,
-)
+from eventsource.application.subscriptions.shutdown import ShutdownCoordinator, ShutdownPhase
 from tests.integration.subscriptions.conftest import (
     CollectingProjection,
     SubTestOrderCreated,
@@ -37,12 +31,9 @@ class TestSequentialDelivery:
             async with await controller.acquire():
                 await asyncio.sleep(0.01)
 
-        tasks = [asyncio.create_task(process()) for _ in range(25)]
-        await asyncio.gather(*tasks)
-
+        await asyncio.gather(*[asyncio.create_task(process()) for _ in range(25)])
         stats = controller.stats
-        assert stats.total_acquisitions == 25
-        assert stats.total_releases == 25
+        assert stats.total_acquisitions == 25 and stats.total_releases == 25
         assert stats.events_in_flight == 0
 
     async def test_a_slow_subscriber_is_delivered_one_event_at_a_time(
@@ -54,11 +45,9 @@ class TestSequentialDelivery:
     ):
         """A slow handler does not cause the runner to overlap deliveries."""
         await populate_event_store(in_memory_event_store, 50)
-
         projection = ConcurrencyTrackingProjection(process_delay=0.05)
 
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
 
         success = await projection.wait_for_events(50, timeout=30.0)
@@ -66,8 +55,7 @@ class TestSequentialDelivery:
 
         assert success, f"Expected 50 events, got {projection.event_count}"
         assert projection.max_concurrent == 1, (
-            f"Deliveries overlapped: peak concurrency was "
-            f"{projection.max_concurrent}, expected exactly 1"
+            f"Deliveries overlapped: peak concurrency was {projection.max_concurrent}, expected 1"
         )
 
     async def test_a_burst_does_not_widen_delivery_concurrency(
@@ -79,24 +67,18 @@ class TestSequentialDelivery:
     ):
         """A large backlog read in batches is still delivered one at a time."""
         await populate_event_store(in_memory_event_store, 100)
-
         projection = ConcurrencyTrackingProjection(process_delay=0.02)
 
-        config = SubscriptionConfig(
-            start_from="beginning",
-            batch_size=25,
-        )
+        config = SubscriptionConfig(start_from="beginning", batch_size=25)
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
 
         success = await projection.wait_for_events(100, timeout=30.0)
         await subscription_manager.stop()
 
-        assert success
-        assert projection.event_count == 100
+        assert success and projection.event_count == 100
         assert projection.max_concurrent == 1, (
-            f"Deliveries overlapped under burst: peak concurrency was "
-            f"{projection.max_concurrent}, expected exactly 1"
+            f"Deliveries overlapped under burst: peak concurrency was {projection.max_concurrent}"
         )
 
 
@@ -112,7 +94,6 @@ class TestGracefulShutdown:
     ):
         """Test that in-flight events complete before shutdown."""
         await populate_event_store(in_memory_event_store, 30)
-
         started_events: list[str] = []
         completed_events: list[str] = []
 
@@ -125,13 +106,9 @@ class TestGracefulShutdown:
                 await asyncio.sleep(0.1)
                 completed_events.append(str(event.event_id))
 
-        projection = TrackingProjection()
-
-        await subscription_manager.subscribe(projection)
+        await subscription_manager.subscribe(TrackingProjection())
         await subscription_manager.start()
-
         await asyncio.sleep(0.2)
-
         await subscription_manager.stop(timeout=10.0)
 
         assert len(completed_events) >= len(started_events) - 2
@@ -145,13 +122,10 @@ class TestGracefulShutdown:
     ):
         """Test that checkpoint is saved before shutdown."""
         await populate_event_store(in_memory_event_store, 50)
-
         projection = CollectingProjection()
 
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
-
         await projection.wait_for_events(50)
         await subscription_manager.stop()
 
@@ -183,32 +157,23 @@ class TestGracefulShutdown:
                 self.event_count += 1
 
         projection = LocalSlowProjection()
-
         manager = SubscriptionManager(
             event_store=in_memory_event_store,
             event_bus=in_memory_event_bus,
             checkpoint_repo=in_memory_checkpoint_repo,
         )
-
         await manager.subscribe(projection)
         await manager.start()
-
         await asyncio.wait_for(projection.handler_started.wait(), timeout=2.0)
 
         start = asyncio.get_event_loop().time()
         await manager.stop(timeout=0.2)
         duration = asyncio.get_event_loop().time() - start
-
         assert duration < 1.0, f"Stop took too long: {duration:.2f}s"
 
     async def test_shutdown_coordinator_phases(self):
         """Test shutdown coordinator goes through proper phases."""
-        coordinator = ShutdownCoordinator(
-            timeout=30.0,
-            drain_timeout=5.0,
-            checkpoint_timeout=2.0,
-        )
-
+        coordinator = ShutdownCoordinator(timeout=30.0, drain_timeout=5.0, checkpoint_timeout=2.0)
         phases_seen: list[ShutdownPhase] = []
 
         async def stop_func():
@@ -223,11 +188,8 @@ class TestGracefulShutdown:
             return 1
 
         result = await coordinator.shutdown(
-            stop_func=stop_func,
-            drain_func=drain_func,
-            checkpoint_func=checkpoint_func,
+            stop_func=stop_func, drain_func=drain_func, checkpoint_func=checkpoint_func
         )
-
         assert result.phase in (ShutdownPhase.STOPPED, ShutdownPhase.FORCED)
         assert ShutdownPhase.STOPPING in phases_seen
         assert ShutdownPhase.DRAINING in phases_seen
@@ -236,9 +198,6 @@ class TestGracefulShutdown:
     async def test_shutdown_coordinator_request_shutdown(self):
         """Test programmatic shutdown request."""
         coordinator = ShutdownCoordinator()
-
         assert not coordinator.is_shutting_down
-
         coordinator.request_shutdown()
-
         assert coordinator.is_shutting_down

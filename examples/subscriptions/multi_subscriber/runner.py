@@ -34,12 +34,10 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     """Demonstrate multiple projections with different configurations."""
-    print("=" * 60)
-    print("Multi-Subscriber Example")
-    print("Multiple Projections Running Concurrently")
-    print("=" * 60)
+    print(
+        f"{'=' * 60}\nMulti-Subscriber Example\nMultiple Projections Running Concurrently\n{'=' * 60}"
+    )
 
-    # Step 1: Set up infrastructure
     print("\n1. Setting up infrastructure...")
     event_store = InMemoryEventStore()
     event_bus = InMemoryEventBus()
@@ -52,25 +50,21 @@ async def main() -> None:
         event_publisher=event_bus,
     )
 
-    # Step 2: Create projections
     print("\n2. Creating projections...")
     catalog_projection = ProductCatalogProjection()
     inventory_projection = InventoryDashboardProjection(low_stock_threshold=5)
     analytics_projection = SalesAnalyticsProjection()
-
     print("   - ProductCatalogProjection (browsing)")
     print("   - InventoryDashboardProjection (operations)")
     print("   - SalesAnalyticsProjection (reporting)")
 
-    # Step 3: Create subscription manager with health monitoring
     print("\n3. Creating SubscriptionManager with health monitoring...")
     health_config = HealthCheckConfig(
-        max_lag_events_warning=100,  # Warn if more than 100 events behind
-        max_errors_warning=10,  # Warn at 10 errors
-        max_errors_critical=50,  # Critical at 50 errors
-        max_error_rate_per_minute=10.0,  # Error rate threshold
+        max_lag_events_warning=100,
+        max_errors_warning=10,
+        max_errors_critical=50,
+        max_error_rate_per_minute=10.0,
     )
-
     manager = SubscriptionManager(
         event_store=event_store,
         event_bus=event_bus,
@@ -79,27 +73,21 @@ async def main() -> None:
         health_check_config=health_config,
     )
 
-    # Step 4: Subscribe projections with different configurations
     print("\n4. Subscribing projections with different configurations...")
-
-    # Catalog: Start from beginning, needs full history
     catalog_config = SubscriptionConfig(start_from="beginning", batch_size=200)
     await manager.subscribe(catalog_projection, config=catalog_config, name="ProductCatalog")
     print("   ProductCatalog: start=beginning, batch_size=200")
 
-    # Inventory: Start from beginning, smaller batches
     inventory_config = SubscriptionConfig(start_from="beginning", batch_size=50)
     await manager.subscribe(
         inventory_projection, config=inventory_config, name="InventoryDashboard"
     )
     print("   InventoryDashboard: start=beginning, batch_size=50")
 
-    # Analytics: Start from checkpoint (demonstrates resumability)
     analytics_config = SubscriptionConfig(start_from="beginning", batch_size=100)
     await manager.subscribe(analytics_projection, config=analytics_config, name="SalesAnalytics")
     print("   SalesAnalytics: start=beginning, batch_size=100")
 
-    # Step 5: Create test data
     print("\n5. Creating test data (products, inventory, sales)...")
     products_data = [
         ("Laptop Pro 15", 1299.99, "Electronics"),
@@ -116,7 +104,6 @@ async def main() -> None:
         product = repo.create_new(product_id)
         product.create(name, price, category)
         await repo.save(product)
-
     print(f"   Created {len(products_data)} products")
 
     for pid in product_ids:
@@ -131,7 +118,6 @@ async def main() -> None:
         product = await repo.load(product_id)
         product.reserve_inventory(2, order_id)
         await repo.save(product)
-
         product = await repo.load(product_id)
         product.confirm_sale(2, order_id)
         await repo.save(product)
@@ -142,7 +128,6 @@ async def main() -> None:
     await repo.save(product)
     print("   Applied one price change")
 
-    # Step 6: Start all subscriptions concurrently
     print("\n6. Starting all subscriptions (concurrent)...")
     start_results = await manager.start(concurrent=True)
     failures = {k: v for k, v in start_results.items() if v is not None}
@@ -153,15 +138,12 @@ async def main() -> None:
 
     await asyncio.sleep(1.0)
 
-    # Step 7: Query each projection's read model
-    print("\n7. Querying projection read models:")
-    print("\n   === Product Catalog ===")
+    print("\n7. Querying projection read models:\n\n   === Product Catalog ===")
     catalog_stats = catalog_projection.get_stats()
     print(f"   Total products: {catalog_stats['total_products']}")
     print(f"   Categories: {catalog_stats['categories']}")
     print(f"   Events processed: {catalog_stats['events_processed']}")
-    electronics = catalog_projection.get_by_category("Electronics")
-    print(f"   Electronics products: {len(electronics)}")
+    print(f"   Electronics products: {len(catalog_projection.get_by_category('Electronics'))}")
 
     print("\n   === Inventory Dashboard ===")
     inventory_stats = inventory_projection.get_stats()
@@ -179,48 +161,42 @@ async def main() -> None:
     print(f"   Units sold: {analytics_stats['total_units_sold']}")
     print(f"   Products with sales: {analytics_stats['products_sold']}")
     print(f"   Events processed: {analytics_stats['events_processed']}")
-    top_products = analytics_projection.get_top_products(limit=3)
     print("   Top 3 products by revenue:")
-    for i, p in enumerate(top_products, 1):
+    for i, p in enumerate(analytics_projection.get_top_products(limit=3), 1):
         print(f"     {i}. ${p['revenue']:.2f} ({p['units_sold']} units)")
 
-    # Step 8: Monitor health across all subscriptions
     print("\n8. Health monitoring:")
     health = await manager.health_check()
-    print(f"\n   Overall Status: {health.status}")
-    print(f"   Running: {health.running}")
-    print(f"   Total subscriptions: {health.subscription_count}")
-    print(f"   Healthy: {health.healthy_count}")
-    print(f"   Degraded: {health.degraded_count}")
-    print(f"   Unhealthy: {health.unhealthy_count}")
-    print(f"   Total events processed: {health.total_events_processed}")
-    print(f"   Total lag: {health.total_lag_events} events")
+    print(f"\n   Overall Status: {health.status} (Running: {health.running})")
+    print(
+        f"   Subscriptions: {health.subscription_count} "
+        f"(Healthy: {health.healthy_count}, Degraded: {health.degraded_count}, Unhealthy: {health.unhealthy_count})"
+    )
+    print(
+        f"   Total events processed: {health.total_events_processed}, Lag: {health.total_lag_events} events"
+    )
 
     print("\n   Subscription Status:")
     for sub_health in health.subscriptions:
-        print(f"   - {sub_health.name}:")
-        print(f"       State: {sub_health.state}")
-        print(f"       Status: {sub_health.status}")
-        print(f"       Events: {sub_health.events_processed}")
-        print(f"       Lag: {sub_health.lag_events}")
+        print(
+            f"   - {sub_health.name}: state={sub_health.state}, status={sub_health.status}, "
+            f"events={sub_health.events_processed}, lag={sub_health.lag_events}"
+        )
 
-    # Step 9: Demonstrate pause/resume
     print("\n9. Demonstrating pause/resume:")
     paused = await manager.pause_subscription("InventoryDashboard")
-    print(f"   Paused InventoryDashboard: {paused}")
-    paused_names = manager.paused_subscription_names
-    print(f"   Currently paused: {paused_names}")
+    print(
+        f"   Paused InventoryDashboard: {paused} (Currently paused: {manager.paused_subscription_names})"
+    )
     resumed = await manager.resume_subscription("InventoryDashboard")
     print(f"   Resumed InventoryDashboard: {resumed}")
 
-    # Step 10: Readiness and liveness checks
     print("\n10. Kubernetes-style health probes:")
     readiness = await manager.readiness_check()
     print(f"   Readiness: ready={readiness.ready}, reason={readiness.reason}")
     liveness = await manager.liveness_check()
     print(f"   Liveness: alive={liveness.alive}, reason={liveness.reason}")
 
-    # Step 11: Clean shutdown
     print("\n11. Shutting down all subscriptions...")
     await manager.stop()
 
@@ -230,9 +206,7 @@ async def main() -> None:
         if checkpoint:
             print(f"   - {name}: position {checkpoint}")
 
-    print("\n" + "=" * 60)
-    print("Example completed successfully!")
-    print("=" * 60)
+    print(f"\n{'=' * 60}\nExample completed successfully!\n{'=' * 60}")
     print("\nKey Takeaways:")
     print("- Multiple projections can share one SubscriptionManager")
     print("- Each projection can have different configurations")

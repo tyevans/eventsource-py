@@ -10,41 +10,22 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource import (
-    DomainEvent,
-    EventRegistry,
-    RabbitMQEventBus,
-    RabbitMQEventBusConfig,
-)
+from eventsource import DomainEvent, EventRegistry, RabbitMQEventBus, RabbitMQEventBusConfig
 from tests.integration.conftest import TestItemCreated
 
 from .conftest import skip_if_no_rabbitmq_infra
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.rabbitmq,
-    skip_if_no_rabbitmq_infra,
-]
+pytestmark = [pytest.mark.integration, pytest.mark.rabbitmq, skip_if_no_rabbitmq_infra]
 
 
 class TestAdvancedMultipleConsumers:
-    """Advanced tests for multiple consumer scenarios.
-
-    These tests verify competing consumers (load balancing) and
-    multiple consumer groups receiving copies of the same events.
-    """
+    """Advanced tests for multiple consumer scenarios."""
 
     @pytest.mark.slow
     async def test_competing_consumers_load_distribution(
-        self,
-        rabbitmq_connection_url: str,
+        self, rabbitmq_connection_url: str
     ) -> None:
-        """Test that messages are distributed across competing consumers.
-
-        When multiple consumers share the same queue (same consumer group),
-        RabbitMQ distributes messages between them (competing consumers pattern).
-        This verifies load balancing behavior.
-        """
+        """Test that messages are distributed across competing consumers."""
         unique_suffix = uuid4().hex[:8]
         exchange_name = f"test_competing_{unique_suffix}"
         consumer_group = f"competing_group_{unique_suffix}"
@@ -52,30 +33,21 @@ class TestAdvancedMultipleConsumers:
         registry = EventRegistry()
         registry.register(TestItemCreated)
 
-        # Create two consumers in the SAME consumer group (same queue)
-        config1 = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=exchange_name,
-            exchange_type="topic",
-            consumer_group=consumer_group,
-            consumer_name=f"consumer_1_{unique_suffix}",
-            prefetch_count=1,  # Low prefetch to encourage distribution
-            durable=False,
-            auto_delete=True,
-        )
-        config2 = RabbitMQEventBusConfig(
-            rabbitmq_url=rabbitmq_connection_url,
-            exchange_name=exchange_name,
-            exchange_type="topic",
-            consumer_group=consumer_group,
-            consumer_name=f"consumer_2_{unique_suffix}",
-            prefetch_count=1,
-            durable=False,
-            auto_delete=True,
-        )
-
-        bus1 = RabbitMQEventBus(config=config1, event_registry=registry)
-        bus2 = RabbitMQEventBus(config=config2, event_registry=registry)
+        configs = [
+            RabbitMQEventBusConfig(
+                rabbitmq_url=rabbitmq_connection_url,
+                exchange_name=exchange_name,
+                exchange_type="topic",
+                consumer_group=consumer_group,
+                consumer_name=f"consumer_{i}_{unique_suffix}",
+                prefetch_count=1,
+                durable=False,
+                auto_delete=True,
+            )
+            for i in (1, 2)
+        ]
+        bus1 = RabbitMQEventBus(config=configs[0], event_registry=registry)
+        bus2 = RabbitMQEventBus(config=configs[1], event_registry=registry)
 
         try:
             await bus1.connect()
@@ -88,25 +60,23 @@ class TestAdvancedMultipleConsumers:
 
             async def handler1(event: DomainEvent) -> None:
                 received_by_consumer1.append(event)
-                await asyncio.sleep(0.05)  # Simulate work
+                await asyncio.sleep(0.05)
                 if len(received_by_consumer1) + len(received_by_consumer2) >= event_count:
                     all_received.set()
 
             async def handler2(event: DomainEvent) -> None:
                 received_by_consumer2.append(event)
-                await asyncio.sleep(0.05)  # Simulate work
+                await asyncio.sleep(0.05)
                 if len(received_by_consumer1) + len(received_by_consumer2) >= event_count:
                     all_received.set()
 
             bus1.subscribe(TestItemCreated, handler1)
             bus2.subscribe(TestItemCreated, handler2)
 
-            # Start both consumers
             task1 = asyncio.create_task(bus1.start_consuming())
             task2 = asyncio.create_task(bus2.start_consuming())
             await asyncio.sleep(0.5)
 
-            # Publish events
             events: list[DomainEvent] = [
                 TestItemCreated(
                     aggregate_id=uuid4(),
@@ -118,7 +88,6 @@ class TestAdvancedMultipleConsumers:
             ]
             await bus1.publish(events)
 
-            # Wait for all events to be consumed
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(all_received.wait(), timeout=30.0)
 
@@ -130,36 +99,25 @@ class TestAdvancedMultipleConsumers:
                 except TimeoutError:
                     task.cancel()
 
-            # Total should equal event_count
             total_received = len(received_by_consumer1) + len(received_by_consumer2)
             assert total_received == event_count, f"Expected {event_count}, got {total_received}"
-
-            # Verify no duplicate processing (each event received exactly once total)
             all_event_ids = [e.event_id for e in received_by_consumer1 + received_by_consumer2]
-            unique_event_ids = set(all_event_ids)
-            assert len(all_event_ids) == len(unique_event_ids), "Duplicate events detected"
-
+            assert len(all_event_ids) == len(set(all_event_ids)), "Duplicate events detected"
         finally:
             await bus1.disconnect()
             await bus2.disconnect()
 
     @pytest.mark.slow
     async def test_multiple_consumer_groups_each_receive_all(
-        self,
-        rabbitmq_connection_url: str,
+        self, rabbitmq_connection_url: str
     ) -> None:
-        """Test that different consumer groups each receive all messages.
-
-        When consumers are in DIFFERENT groups, each group should receive
-        a copy of every message (pub/sub pattern).
-        """
+        """Test that different consumer groups each receive all messages."""
         unique_suffix = uuid4().hex[:8]
         exchange_name = f"test_multi_group_{unique_suffix}"
 
         registry = EventRegistry()
         registry.register(TestItemCreated)
 
-        # Create three consumers in DIFFERENT groups
         configs = [
             RabbitMQEventBusConfig(
                 rabbitmq_url=rabbitmq_connection_url,
@@ -171,7 +129,6 @@ class TestAdvancedMultipleConsumers:
             )
             for i in range(3)
         ]
-
         buses = [RabbitMQEventBus(config=config, event_registry=registry) for config in configs]
 
         try:
@@ -190,15 +147,12 @@ class TestAdvancedMultipleConsumers:
 
                 return handler
 
-            # Subscribe each group
             for idx, bus in enumerate(buses):
                 bus.subscribe(TestItemCreated, create_handler(idx))
 
-            # Start all consumers
             tasks = [asyncio.create_task(bus.start_consuming()) for bus in buses]
             await asyncio.sleep(0.5)
 
-            # Publish events through first bus
             events: list[DomainEvent] = [
                 TestItemCreated(
                     aggregate_id=uuid4(),
@@ -210,11 +164,9 @@ class TestAdvancedMultipleConsumers:
             ]
             await buses[0].publish(events)
 
-            # Wait for all groups to receive all events
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
-                    asyncio.gather(*[ev.wait() for ev in events_ready]),
-                    timeout=15.0,
+                    asyncio.gather(*[ev.wait() for ev in events_ready]), timeout=15.0
                 )
 
             for bus in buses:
@@ -225,20 +177,17 @@ class TestAdvancedMultipleConsumers:
                 except TimeoutError:
                     task.cancel()
 
-            # Each group should have received all events
             for idx, received in enumerate(received_per_group):
                 assert len(received) == event_count, (
                     f"Group {idx} received {len(received)} events, expected {event_count}"
                 )
 
-            # Verify all groups received the same events (by event_id)
             event_ids_per_group = [
                 {e.event_id for e in received} for received in received_per_group
             ]
             assert event_ids_per_group[0] == event_ids_per_group[1] == event_ids_per_group[2], (
                 "Consumer groups received different events"
             )
-
         finally:
             for bus in buses:
                 await bus.disconnect()

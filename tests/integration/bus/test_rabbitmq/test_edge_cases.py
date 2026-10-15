@@ -9,46 +9,28 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource import (
-    DomainEvent,
-    EventRegistry,
-    RabbitMQEventBus,
-)
-from tests.integration.conftest import (
-    TestItemCreated,
-    TestItemUpdated,
-)
+from eventsource import DomainEvent, EventRegistry, RabbitMQEventBus
+from tests.integration.conftest import TestItemCreated, TestItemUpdated
 
 from .conftest import skip_if_no_rabbitmq_infra
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.rabbitmq,
-    skip_if_no_rabbitmq_infra,
-]
+pytestmark = [pytest.mark.integration, pytest.mark.rabbitmq, skip_if_no_rabbitmq_infra]
 
 
 class TestRabbitMQEventBusEdgeCases:
     """Tests for edge cases and error handling."""
 
-    async def test_consume_unknown_event_type(
-        self,
-        rabbitmq_event_bus_factory: Any,
-    ) -> None:
+    async def test_consume_unknown_event_type(self, rabbitmq_event_bus_factory: Any) -> None:
         """Test that unknown event types are handled gracefully."""
         unique_suffix = uuid4().hex[:8]
-
-        # Create a bus with limited registry
         bus = rabbitmq_event_bus_factory(
             exchange_name=f"test_unknown_{unique_suffix}",
             consumer_group=f"test_group_{unique_suffix}",
         )
-        # Override registry to only include TestItemCreated, not TestOrderCreated
         bus._event_registry = EventRegistry()
         bus._event_registry.register(TestItemCreated)
 
         await bus.connect()
-
         try:
             received_events: list[DomainEvent] = []
 
@@ -56,8 +38,6 @@ class TestRabbitMQEventBusEdgeCases:
                 received_events.append(event)
 
             bus.subscribe(TestItemCreated, handler)
-
-            # Publish a known and an unknown event type
             known_event = TestItemCreated(
                 aggregate_id=uuid4(),
                 aggregate_version=1,
@@ -66,10 +46,8 @@ class TestRabbitMQEventBusEdgeCases:
             )
             await bus.publish([known_event])
 
-            # Start consuming
             consume_task = asyncio.create_task(bus.start_consuming())
 
-            # Wait for known event
             async def wait_for_event() -> None:
                 while len(received_events) < 1:
                     await asyncio.sleep(0.1)
@@ -83,27 +61,18 @@ class TestRabbitMQEventBusEdgeCases:
                 except TimeoutError:
                     consume_task.cancel()
 
-            # Known event should be processed
             assert len(received_events) == 1
-
         finally:
             await bus.disconnect()
 
-    async def test_no_handlers_for_event(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_no_handlers_for_event(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test that events with no handlers are still acknowledged."""
-        # Don't subscribe any handler for TestItemUpdated
-        # But subscribe to TestItemCreated to verify bus is working
         received_events: list[DomainEvent] = []
 
         async def handler(event: DomainEvent) -> None:
             received_events.append(event)
 
         rabbitmq_event_bus.subscribe(TestItemCreated, handler)
-
-        # Publish both event types
         await rabbitmq_event_bus.publish(
             [
                 TestItemCreated(
@@ -120,32 +89,21 @@ class TestRabbitMQEventBusEdgeCases:
             ]
         )
 
-        # Start consuming
         consume_task = asyncio.create_task(rabbitmq_event_bus.start_consuming())
-
-        # Wait for events to be processed
         await asyncio.sleep(3.0)
-
         await rabbitmq_event_bus.stop_consuming()
         try:
             await asyncio.wait_for(consume_task, timeout=2.0)
         except TimeoutError:
             consume_task.cancel()
 
-        # Only the event with a handler should be in our list
         assert len(received_events) == 1
         assert received_events[0].event_type == "TestItemCreated"
-
-        # Both should have been consumed
         assert rabbitmq_event_bus.stats.events_consumed >= 1
 
-    async def test_clear_subscribers(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_clear_subscribers(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test clearing all subscribers."""
 
-        # Add some subscribers
         async def handler(e: DomainEvent) -> None:
             pass
 
@@ -156,9 +114,7 @@ class TestRabbitMQEventBusEdgeCases:
         assert rabbitmq_event_bus.get_subscriber_count() > 0
         assert rabbitmq_event_bus.get_wildcard_subscriber_count() > 0
 
-        # Clear
         rabbitmq_event_bus.clear_subscribers()
-
         assert rabbitmq_event_bus.get_subscriber_count() == 0
         assert rabbitmq_event_bus.get_wildcard_subscriber_count() == 0
 
@@ -167,12 +123,8 @@ class TestRabbitMQEventBusPerformance:
     """Performance-related tests."""
 
     @pytest.mark.benchmark
-    async def test_batch_publish_performance(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
-    ) -> None:
+    async def test_batch_publish_performance(self, rabbitmq_event_bus: RabbitMQEventBus) -> None:
         """Test that batch publishing completes in reasonable time."""
-        # Create many events
         events: list[DomainEvent] = [
             TestItemCreated(
                 aggregate_id=uuid4(),
@@ -183,21 +135,16 @@ class TestRabbitMQEventBusPerformance:
             for i in range(100)
         ]
 
-        # Publish in batch
         start = datetime.now(UTC)
         await rabbitmq_event_bus.publish(events)
         duration = (datetime.now(UTC) - start).total_seconds()
 
-        # Should be reasonably fast
-        assert duration < 10.0  # 10 seconds max for 100 events
-
-        # All events should be published
+        assert duration < 10.0
         assert rabbitmq_event_bus.stats.events_published == 100
 
     @pytest.mark.benchmark
     async def test_high_throughput_publish_consume(
-        self,
-        rabbitmq_event_bus: RabbitMQEventBus,
+        self, rabbitmq_event_bus: RabbitMQEventBus
     ) -> None:
         """Test high throughput publish and consume."""
         received_events: list[DomainEvent] = []
@@ -208,7 +155,6 @@ class TestRabbitMQEventBusPerformance:
 
         rabbitmq_event_bus.subscribe(TestItemCreated, handler)
 
-        # Publish all events
         for i in range(event_count):
             event = TestItemCreated(
                 aggregate_id=uuid4(),
@@ -218,7 +164,6 @@ class TestRabbitMQEventBusPerformance:
             )
             await rabbitmq_event_bus.publish([event])
 
-        # Start consuming
         start = datetime.now(UTC)
         consume_task = asyncio.create_task(rabbitmq_event_bus.start_consuming())
 
@@ -236,9 +181,5 @@ class TestRabbitMQEventBusPerformance:
                 consume_task.cancel()
 
         duration = (datetime.now(UTC) - start).total_seconds()
-
-        # Verify all received
         assert len(received_events) == event_count
-
-        # Should complete in reasonable time
         assert duration < 30.0
