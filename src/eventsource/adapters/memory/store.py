@@ -4,6 +4,7 @@ Suitable for testing and development only. All state lives in process
 memory and is lost on restart. Not distributed-safe.
 """
 
+import bisect
 import threading
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from eventsource.ports import (
     ExpectedVersion,
     FeedReadOptions,
     Position,
+    PositionForeignError,
     ReadDirection,
     StreamReadOptions,
 )
@@ -47,6 +49,8 @@ class InMemoryEventStore:
         self._event_registry = event_registry or default_registry
         self._events: list[EventEnvelope] = []
         self._streams: dict[str, list[int]] = {}
+        self._categories: dict[str, list[int]] = {}
+        self._by_category: dict[str, list[int]] = self._categories
         self._event_ids: set[UUID] = set()
         # threading.Lock, not asyncio.Lock: SyncEventStoreAdapter runs each
         # call in a fresh event loop (`asyncio.run`), so an asyncio.Lock
@@ -59,9 +63,31 @@ class InMemoryEventStore:
     def store_id(self) -> str:
         return self._store_id
 
+    async def close(self) -> None:
+        """No-op resource release for lifecycle parity."""
+        return None
+
+    async def __aenter__(self) -> "InMemoryEventStore":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
+        await self.close()
+
     def _position_of(self, index: int) -> Position:
         """1-based global position for the given 0-based `_events` index."""
         return Position(store_id=self._store_id, key=(index + 1,))
+
+    def _validate_position(self, position: Position) -> None:
+        """Raise `PositionForeignError` if `position` belongs to another store."""
+        if position.store_id != self._store_id:
+            raise PositionForeignError(
+                f"cannot order positions from {self._store_id!r} and {position.store_id!r}"
+            )
 
     async def append(
         self,
@@ -94,6 +120,10 @@ class InMemoryEventStore:
                     )
                 seen_in_batch.add(event.event_id)
 
+            now = datetime.now(UTC)
+            if self._events and now < self._events[-1].stored_at:
+                now = self._events[-1].stored_at
+
             new_indexes: list[int] = []
             first_position: Position | None = None
             version = current_version
@@ -105,7 +135,7 @@ class InMemoryEventStore:
                     stream_id=stream,
                     stream_version=version,
                     position=self._position_of(index),
-                    stored_at=datetime.now(UTC),
+                    stored_at=now,
                 )
                 self._events.append(envelope)
                 self._event_ids.add(event.event_id)
@@ -114,6 +144,8 @@ class InMemoryEventStore:
                     first_position = envelope.position
 
             self._streams[key] = indexes + new_indexes
+            category_indexes = self._categories.get(stream.category, [])
+            self._categories[stream.category] = category_indexes + new_indexes
 
             return AppendResult(stream=stream, new_version=version, position=first_position)
 
@@ -130,26 +162,48 @@ class InMemoryEventStore:
         stream: StreamId,
         options: StreamReadOptions,
     ) -> AsyncIterator[EventEnvelope]:
-        events_snapshot = self._events
-        indexes = list(self._streams.get(stream.render(), []))
-        envelopes = [events_snapshot[i] for i in indexes]
+        if options.limit is not None and options.limit <= 0:
+            return
 
-        if options.from_version is not None:
-            envelopes = [e for e in envelopes if e.stream_version >= options.from_version]
-        if options.to_version is not None:
-            envelopes = [e for e in envelopes if e.stream_version <= options.to_version]
+        events_snapshot = self._events
+        indexes = self._streams.get(stream.render(), ())
+        if not indexes:
+            return
+
+        start = (
+            bisect.bisect_left(
+                indexes,
+                options.from_version,
+                key=lambda i: events_snapshot[i].stream_version,
+            )
+            if options.from_version is not None
+            else 0
+        )
+        end = (
+            bisect.bisect_right(
+                indexes,
+                options.to_version,
+                key=lambda i: events_snapshot[i].stream_version,
+            )
+            if options.to_version is not None
+            else len(indexes)
+        )
+        if start >= end:
+            return
 
         if options.direction == ReadDirection.BACKWARD:
-            envelopes = list(reversed(envelopes))
-
-        if options.limit is not None:
-            envelopes = envelopes[: options.limit]
-
-        for envelope in envelopes:
-            yield envelope
+            if options.limit is not None:
+                start = max(start, end - options.limit)
+            for i in reversed(indexes[start:end]):
+                yield events_snapshot[i]
+        else:
+            if options.limit is not None:
+                end = min(end, start + options.limit)
+            for i in indexes[start:end]:
+                yield events_snapshot[i]
 
     async def get_stream_version(self, stream: StreamId) -> int:
-        return len(self._streams.get(stream.render(), []))
+        return len(self._streams.get(stream.render(), ()))
 
     async def event_exists(self, event_id: UUID) -> bool:
         return event_id in self._event_ids
@@ -167,29 +221,45 @@ class InMemoryEventStore:
         from_position: Position | None,
         options: FeedReadOptions,
     ) -> AsyncIterator[EventEnvelope]:
-        envelopes = list(self._events)
+        if options.limit is not None and options.limit <= 0:
+            return
 
+        events_snapshot = self._events
         if from_position is not None:
-            envelopes = [
-                e for e in envelopes if e.position is not None and e.position > from_position
-            ]
-
-        if options.tenant_id is not None:
-            envelopes = [
-                e for e in envelopes if getattr(e.event, "tenant_id", None) == options.tenant_id
-            ]
+            self._validate_position(from_position)
 
         # Filtered on the stream category, not `event.aggregate_type`: the SQL
         # adapters store the stream's category in the `aggregate_type` column,
         # so this is the same fact, and reading it from the envelope keeps the
         # three feeds answering identically.
         if options.aggregate_type is not None:
-            envelopes = [e for e in envelopes if e.stream_id.category == options.aggregate_type]
+            cat_indices: Sequence[int] = self._categories.get(options.aggregate_type, ())
+            start = (
+                bisect.bisect_right(cat_indices, from_position.key, key=lambda i: (i + 1,))
+                if from_position is not None
+                else 0
+            )
+            candidate_indices: Sequence[int] = cat_indices[start:]
+        else:
+            all_indices = range(len(events_snapshot))
+            start = (
+                bisect.bisect_right(all_indices, from_position.key, key=lambda i: (i + 1,))
+                if from_position is not None
+                else 0
+            )
+            candidate_indices = range(start, len(events_snapshot))
 
-        if options.limit is not None:
-            envelopes = envelopes[: options.limit]
-
-        for envelope in envelopes:
+        yielded = 0
+        for i in candidate_indices:
+            if options.limit is not None and yielded >= options.limit:
+                break
+            envelope = events_snapshot[i]
+            if (
+                options.tenant_id is not None
+                and getattr(envelope.event, "tenant_id", None) != options.tenant_id
+            ):
+                continue
+            yielded += 1
             yield envelope
 
     async def current_position(self) -> Position | None:
@@ -210,25 +280,36 @@ class InMemoryEventStore:
         category: str,
         options: CategoryReadOptions,
     ) -> AsyncIterator[EventEnvelope]:
-        envelopes = [e for e in self._events if e.stream_id.category == category]
+        if options.limit is not None and options.limit <= 0:
+            return
 
-        if options.tenant_id is not None:
-            envelopes = [
-                e for e in envelopes if getattr(e.event, "tenant_id", None) == options.tenant_id
-            ]
-        if options.from_timestamp is not None:
-            envelopes = [e for e in envelopes if e.stored_at >= options.from_timestamp]
+        events_snapshot = self._events
+        indices: Sequence[int] = self._categories.get(category, ())
+        if not indices:
+            return
 
-        # `stored_at` alone can tie within a batch (all events in one
-        # `append()` call share the same `datetime.now(UTC)` snapshot); the
-        # position key breaks the tie deterministically, mirroring the
-        # sqlite/postgresql adapters' `created_at, global_position` order.
-        envelopes = sorted(
-            envelopes, key=lambda e: (e.stored_at, e.position.key if e.position else ())
+        # `self._events` is appended under `self._lock` with monotonically
+        # non-decreasing `stored_at` and strictly increasing `position.key`, so
+        # `indices` is already ordered by `(stored_at, position.key)`.
+        start = (
+            bisect.bisect_left(
+                indices,
+                options.from_timestamp,
+                key=lambda i: events_snapshot[i].stored_at,
+            )
+            if options.from_timestamp is not None
+            else 0
         )
 
-        if options.limit is not None:
-            envelopes = envelopes[: options.limit]
-
-        for envelope in envelopes:
+        yielded = 0
+        for i in indices[start:]:
+            if options.limit is not None and yielded >= options.limit:
+                break
+            envelope = events_snapshot[i]
+            if (
+                options.tenant_id is not None
+                and getattr(envelope.event, "tenant_id", None) != options.tenant_id
+            ):
+                continue
+            yielded += 1
             yield envelope
