@@ -1,7 +1,7 @@
 ---
 id: TASK-0353
 title: "Compact 10 test modules at 259-260 lines below 235 lines"
-status: Refined
+status: Complete
 target_bc: testing
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md

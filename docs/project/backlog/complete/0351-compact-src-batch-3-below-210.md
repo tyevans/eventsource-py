@@ -1,7 +1,7 @@
 ---
 id: TASK-0351
 title: "Compact 8 src/ modules at 220-223 lines below 210 lines"
-status: Refined
+status: Complete
 target_bc: application
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md
