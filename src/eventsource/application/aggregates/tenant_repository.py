@@ -9,6 +9,7 @@ It provides no read isolation; see ADR 0018 and ADR 0057.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
@@ -78,6 +79,15 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
 
         await self._repository.save(aggregate)
 
+    async def save_all(self, *aggregates: TAggregate | Iterable[TAggregate]) -> None:
+        """Save multiple aggregates in order, validating tenant consistency for each."""
+        for item in aggregates:
+            if isinstance(item, Iterable):
+                for aggregate in item:
+                    await self.save(aggregate)
+            else:
+                await self.save(item)
+
     def _validate_tenant_consistency(self, aggregate: TAggregate) -> None:
         """Validate all uncommitted events match current tenant context.
 
@@ -136,6 +146,20 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
             return await self.load(aggregate_id)
         except AggregateNotFoundError:
             return None
+
+    async def load_many(
+        self, aggregate_ids: Iterable[UUID], *, ignore_missing: bool = False
+    ) -> dict[UUID, TAggregate]:
+        """Load multiple aggregates by ID into a mapping keyed by aggregate ID."""
+        results: dict[UUID, TAggregate] = {}
+        for agg_id in aggregate_ids:
+            if ignore_missing:
+                aggregate = await self.get_or_none(agg_id)
+                if aggregate is not None:
+                    results[agg_id] = aggregate
+            else:
+                results[agg_id] = await self.load(agg_id)
+        return results
 
     async def exists(self, aggregate_id: UUID) -> bool:
         """Check if aggregate exists, optionally requiring an active tenant scope."""

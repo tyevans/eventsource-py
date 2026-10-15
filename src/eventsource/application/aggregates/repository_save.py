@@ -5,6 +5,7 @@ Provides event stream append, optimistic locking, and event dispatch.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -126,6 +127,15 @@ class AggregateRepositorySaveMixin[TAggregate: AggregateRoot[Any]]:
                         aggregate_type=self._aggregate_type,
                         aggregate_id=aggregate.aggregate_id,
                     )
+
+    async def save_all(self, *aggregates: TAggregate | Iterable[TAggregate]) -> None:
+        """Save multiple aggregates in order, accepting variadic args or an iterable."""
+        for item in aggregates:
+            if isinstance(item, Iterable):
+                for aggregate in item:
+                    await self.save(aggregate)
+            else:
+                await self.save(item)
 
 
 __all__ = [
