@@ -45,8 +45,7 @@ class SQLCheckpointRepository:
                 "WHERE projection_name = :projection_name"
             )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, {"projection_name": projection_name})
-                row = result.fetchone()
+                row = (await conn.execute(query, {"projection_name": projection_name})).fetchone()
                 return uuid_result(row[0]) if row else None
 
     async def update_checkpoint(
@@ -59,28 +58,24 @@ class SQLCheckpointRepository:
         ):
             now = datetime.now(UTC)
             async with sql_connection(self._conn, write=True) as conn:
-                dialect = dialect_of(conn)
-                query = text("""
-                    INSERT INTO projection_checkpoints
-                        (projection_name, last_event_id, last_event_type,
-                         last_processed_at, events_processed, created_at, updated_at)
-                    VALUES (:projection_name, :event_id, :event_type, :now, 1, :now, :now)
-                    ON CONFLICT (projection_name) DO UPDATE
-                    SET last_event_id = EXCLUDED.last_event_id,
-                        last_event_type = EXCLUDED.last_event_type,
-                        last_processed_at = EXCLUDED.last_processed_at,
-                        events_processed = projection_checkpoints.events_processed + 1,
-                        updated_at = EXCLUDED.updated_at
-                """)
-                await conn.execute(
-                    query,
-                    {
-                        "projection_name": projection_name,
-                        "event_id": uuid_param(event_id, dialect),
-                        "event_type": event_type,
-                        "now": ts_param(now, dialect),
-                    },
+                d = dialect_of(conn)
+                query = text(
+                    "INSERT INTO projection_checkpoints (projection_name, last_event_id, "
+                    "last_event_type, last_processed_at, events_processed, created_at, updated_at) "
+                    "VALUES (:projection_name, :event_id, :event_type, :now, 1, :now, :now) "
+                    "ON CONFLICT (projection_name) DO UPDATE SET "
+                    "last_event_id = EXCLUDED.last_event_id, last_event_type = EXCLUDED.last_event_type, "
+                    "last_processed_at = EXCLUDED.last_processed_at, "
+                    "events_processed = projection_checkpoints.events_processed + 1, "
+                    "updated_at = EXCLUDED.updated_at"
                 )
+                params = {
+                    "projection_name": projection_name,
+                    "event_id": uuid_param(event_id, d),
+                    "event_type": event_type,
+                    "now": ts_param(now, d),
+                }
+                await conn.execute(query, params)
 
     async def get_lag_metrics(
         self, projection_name: str, event_types: list[str] | None = None
@@ -104,46 +99,30 @@ class SQLCheckpointRepository:
                     event_filter = ""
 
                 query = text(
-                    f"""
-                    WITH latest_relevant_event AS (
-                        SELECT event_id as max_id, timestamp as max_time
-                        FROM events {event_filter}
-                        ORDER BY timestamp DESC LIMIT 1
-                    )
-                    SELECT pc.projection_name, pc.last_event_id, le.max_id as latest_event_id,
-                           le.max_time as latest_event_time, pc.events_processed, pc.last_processed_at
-                    FROM projection_checkpoints pc
-                    LEFT JOIN latest_relevant_event le ON 1 = 1
-                    WHERE pc.projection_name = :projection_name
-                """  # nosec B608 -- only generated placeholders are interpolated
+                    f"WITH latest_relevant_event AS (SELECT event_id as max_id, timestamp as max_time "
+                    f"FROM events {event_filter} ORDER BY timestamp DESC LIMIT 1) "
+                    f"SELECT pc.projection_name, pc.last_event_id, le.max_id as latest_event_id, "
+                    f"le.max_time as latest_event_time, pc.events_processed, pc.last_processed_at "
+                    f"FROM projection_checkpoints pc LEFT JOIN latest_relevant_event le ON 1 = 1 "
+                    f"WHERE pc.projection_name = :projection_name"  # nosec B608
                 )
-                result = await conn.execute(query, params)
-                row = result.fetchone()
+                row = (await conn.execute(query, params)).fetchone()
 
             if not row:
                 return None
 
-            last_event_id = str(uuid_result(row[1])) if row[1] is not None else None
-            latest_event_id = str(uuid_result(row[2])) if row[2] is not None else None
-            last_processed_at = ts_result(row[5])
-            latest_event_time = ts_result(row[3])
-            raw_lag = (
-                (latest_event_time - last_processed_at).total_seconds()
-                if last_processed_at is not None and latest_event_time is not None
-                else 0.0
-            )
-            lag_seconds = (
-                0.0
-                if (last_event_id and last_event_id == latest_event_id) or raw_lag < 0
-                else round(raw_lag, 1)
-            )
+            last_id = str(uuid_result(row[1])) if row[1] is not None else None
+            latest_id = str(uuid_result(row[2])) if row[2] is not None else None
+            last_ts, latest_ts = ts_result(row[5]), ts_result(row[3])
+            raw_lag = (latest_ts - last_ts).total_seconds() if last_ts and latest_ts else 0.0
+            lag = 0.0 if (last_id and last_id == latest_id) or raw_lag < 0 else round(raw_lag, 1)
             return LagMetrics(
                 projection_name=row[0],
-                last_event_id=last_event_id,
-                latest_event_id=latest_event_id,
-                lag_seconds=lag_seconds,
+                last_event_id=last_id,
+                latest_event_id=latest_id,
+                lag_seconds=lag,
                 events_processed=row[4] or 0,
-                last_processed_at=last_processed_at.isoformat() if last_processed_at else None,
+                last_processed_at=last_ts.isoformat() if last_ts else None,
             )
 
     async def reset_checkpoint(self, projection_name: str) -> None:
@@ -167,8 +146,7 @@ class SQLCheckpointRepository:
                 "WHERE projection_name = :subscription_id"
             )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, {"subscription_id": subscription_id})
-                row = result.fetchone()
+                row = (await conn.execute(query, {"subscription_id": subscription_id})).fetchone()
                 return Position.from_str(row[0]) if row and row[0] is not None else None
 
     async def save_position(
@@ -185,42 +163,35 @@ class SQLCheckpointRepository:
         ):
             now = datetime.now(UTC)
             async with sql_connection(self._conn, write=True) as conn:
-                dialect = dialect_of(conn)
-                query = text("""
-                    INSERT INTO projection_checkpoints
-                        (projection_name, last_event_id, last_event_type,
-                         last_processed_at, events_processed, position_token,
-                         created_at, updated_at)
-                    VALUES
-                        (:subscription_id, :event_id, :event_type, :now,
-                         1, :position_token, :now, :now)
-                    ON CONFLICT (projection_name) DO UPDATE
-                    SET last_event_id = EXCLUDED.last_event_id,
-                        last_event_type = EXCLUDED.last_event_type,
-                        last_processed_at = EXCLUDED.last_processed_at,
-                        events_processed = projection_checkpoints.events_processed + 1,
-                        position_token = EXCLUDED.position_token,
-                        updated_at = EXCLUDED.updated_at
-                """)
-                await conn.execute(
-                    query,
-                    {
-                        "subscription_id": subscription_id,
-                        "event_id": uuid_param(event_id, dialect),
-                        "event_type": event_type,
-                        "now": ts_param(now, dialect),
-                        "position_token": position.to_str(),
-                    },
+                d = dialect_of(conn)
+                query = text(
+                    "INSERT INTO projection_checkpoints (projection_name, last_event_id, "
+                    "last_event_type, last_processed_at, events_processed, position_token, "
+                    "created_at, updated_at) VALUES (:subscription_id, :event_id, :event_type, "
+                    ":now, 1, :position_token, :now, :now) ON CONFLICT (projection_name) "
+                    "DO UPDATE SET last_event_id = EXCLUDED.last_event_id, "
+                    "last_event_type = EXCLUDED.last_event_type, "
+                    "last_processed_at = EXCLUDED.last_processed_at, "
+                    "events_processed = projection_checkpoints.events_processed + 1, "
+                    "position_token = EXCLUDED.position_token, updated_at = EXCLUDED.updated_at"
                 )
+                params = {
+                    "subscription_id": subscription_id,
+                    "event_id": uuid_param(event_id, d),
+                    "event_type": event_type,
+                    "now": ts_param(now, d),
+                    "position_token": position.to_str(),
+                }
+                await conn.execute(query, params)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """Get all projection checkpoints ordered by projection_name."""
         with self._tracer.span("eventsource.checkpoint.get_all_checkpoints", {}):
-            query = text("""
-                SELECT projection_name, last_event_id, last_event_type,
-                       last_processed_at, events_processed, position_token
-                FROM projection_checkpoints ORDER BY projection_name
-            """)
+            query = text(
+                "SELECT projection_name, last_event_id, last_event_type, "
+                "last_processed_at, events_processed, position_token "
+                "FROM projection_checkpoints ORDER BY projection_name"
+            )
             async with sql_connection(self._conn, write=False) as conn:
                 rows = (await conn.execute(query)).fetchall()
 

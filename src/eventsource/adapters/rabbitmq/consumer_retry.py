@@ -1,8 +1,4 @@
-"""Retry and DLQ write path mixin for RabbitMQ consumer.
-
-Provides retry delay calculation, retry republishing with exponential backoff,
-and DLQ routing with error metadata.
-"""
+"""Retry and DLQ write path mixin for RabbitMQ consumer."""
 
 from __future__ import annotations
 
@@ -38,17 +34,7 @@ class RabbitMQConsumerRetryMixin:
     _retry_scheduler: RetryScheduler
 
     def _calculate_retry_delay(self, retry_count: int) -> float:
-        """Calculate the delay before the next retry.
-
-        Delegates to the shared RetryPolicy so Kafka and RabbitMQ cannot drift
-        apart again.
-
-        Args:
-            retry_count: Zero-based retry attempt number.
-
-        Returns:
-            Delay in seconds, with symmetric jitter applied.
-        """
+        """Calculate the delay in seconds before the next retry via shared RetryPolicy."""
         return self._retry_policy.delay_for(retry_count)
 
     async def _handle_failed_message(
@@ -57,26 +43,13 @@ class RabbitMQConsumerRetryMixin:
         error: Exception,
         retry_count: int,
     ) -> None:
-        """Handle a failed message - retry with backoff or route to DLQ.
-
-        This method implements the retry logic with exponential backoff. When
-        a message fails processing:
-        1. If retry_count < max_retries: republish with incremented retry count
-           after applying exponential backoff delay
-        2. If retry_count >= max_retries: send to DLQ with failure metadata
-
-        Args:
-            message: The failed message
-            error: The exception that caused the failure
-            retry_count: Current retry count (from x-retry-count header)
-        """
+        """Handle a failed message: retry with exponential backoff or route to DLQ."""
         headers = message.headers or {}
         event_type_name = str(headers.get("event_type", "unknown"))
 
         if retry_count >= self._config.max_retries:
-            # Max retries exceeded - send to DLQ
             await self._send_to_dlq(message, error, retry_count)
-            await message.ack()  # Ack to remove from main queue
+            await message.ack()
 
             self._logger.warning(
                 f"Message sent to DLQ after {retry_count} retries: {event_type_name}",
@@ -89,7 +62,6 @@ class RabbitMQConsumerRetryMixin:
                 },
             )
         else:
-            # Calculate backoff delay
             delay = self._calculate_retry_delay(retry_count)
 
             self._logger.info(
@@ -107,7 +79,7 @@ class RabbitMQConsumerRetryMixin:
 
             async def _do_retry() -> None:
                 await self._republish_for_retry(message, retry_count + 1)
-                await message.ack()  # Ack original, republished copy will be processed
+                await message.ack()
 
                 self._logger.info(
                     f"Republished message for retry {retry_count + 1}",
@@ -118,7 +90,6 @@ class RabbitMQConsumerRetryMixin:
                     },
                 )
 
-            # Non-blocking async retry scheduling: do not block the consume loop
             if delay > 0:
                 self._retry_scheduler.schedule(
                     delay,
@@ -133,28 +104,14 @@ class RabbitMQConsumerRetryMixin:
         original_message: AbstractIncomingMessage,
         new_retry_count: int,
     ) -> None:
-        """Republish a message with incremented retry count.
-
-        Creates a new message with updated headers containing the incremented
-        retry count and timestamp of the retry attempt. The message body and
-        other properties are preserved from the original message.
-
-        Args:
-            original_message: The original message to retry
-            new_retry_count: The new retry count value
-
-        Raises:
-            RuntimeError: If exchange is not initialized
-        """
+        """Republish a message with incremented retry count and retry timestamp."""
         if not self._topology.exchange:
             raise RuntimeError("Exchange not initialized")
 
-        # Copy headers and update retry count
         headers = dict(original_message.headers or {})
         headers["x-retry-count"] = new_retry_count
         headers["x-last-retry-at"] = datetime.now(UTC).isoformat()
 
-        # Create new message with updated headers
         retry_message = Message(
             body=original_message.body,
             content_type=original_message.content_type,
@@ -164,7 +121,6 @@ class RabbitMQConsumerRetryMixin:
             headers=headers,
         )
 
-        # Republish to exchange with original routing key
         routing_key = original_message.routing_key or ""
         await self._topology.exchange.publish(retry_message, routing_key=routing_key)
 
@@ -174,25 +130,7 @@ class RabbitMQConsumerRetryMixin:
         error: Exception,
         retry_count: int,
     ) -> None:
-        """Send a failed message to the dead letter queue.
-
-        Publishes the failed message to the DLQ exchange with additional
-        headers containing failure metadata:
-        - x-dlq-reason: Error message
-        - x-dlq-error-type: Exception class name
-        - x-dlq-retry-count: Number of retries before DLQ
-        - x-dlq-timestamp: When message was sent to DLQ
-        - x-original-routing-key: Original routing key
-
-        Args:
-            message: The failed message
-            error: The exception that caused the failure
-            retry_count: Final retry count before DLQ
-
-        Note:
-            If DLQ is not enabled or DLQ exchange is not initialized,
-            this method logs a warning and returns without action.
-        """
+        """Send a failed message to the dead letter queue with failure metadata headers."""
         if not self._config.enable_dlq or not self._topology.dlq_exchange:
             self._logger.warning(
                 "DLQ not enabled or not initialized, message will be lost",
@@ -203,14 +141,12 @@ class RabbitMQConsumerRetryMixin:
         headers = dict(message.headers or {})
         event_type_name = str(headers.get("event_type", "unknown"))
 
-        # Add failure metadata to headers
         headers["x-dlq-reason"] = str(error)
         headers["x-dlq-error-type"] = type(error).__name__
         headers["x-dlq-retry-count"] = retry_count
         headers["x-dlq-timestamp"] = datetime.now(UTC).isoformat()
         headers["x-original-routing-key"] = message.routing_key or ""
 
-        # Create DLQ message with failure metadata
         dlq_message = Message(
             body=message.body,
             content_type=message.content_type,
@@ -220,7 +156,6 @@ class RabbitMQConsumerRetryMixin:
             headers=headers,
         )
 
-        # Publish to DLQ exchange with queue name as routing key
         await self._topology.dlq_exchange.publish(
             dlq_message,
             routing_key=self._config.queue_name,

@@ -1,15 +1,8 @@
-"""
-Database migration support for the eventsource library.
-
-Provides SQL schema templates and utilities for setting up database tables
-(events, event_outbox, projection_checkpoints, dead_letter_queue, snapshots,
-migration) across supported backends (postgresql, sqlite) and Alembic templates.
-"""
+"""Database migration and SQL schema template utilities for postgresql and sqlite."""
 
 from pathlib import Path
 from typing import Literal
 
-# Schema file names
 SchemaName = Literal[
     "events",
     "events_partitioned",
@@ -20,20 +13,14 @@ SchemaName = Literal[
     "migration",
     "all",
 ]
-
-# Supported database backends
 BackendName = Literal["postgresql", "sqlite"]
 
-# Paths
 _PACKAGE_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 _SCHEMAS_DIR = _PACKAGE_DIR / "schemas"
 _ADDITIVE_DIR = _PACKAGE_DIR / "additive"
 
-# Schema fragments appended at composition time. Base schema files under
-# schemas/ and templates/ are append-only BY FILE: a new column arrives as
-# a new fragment here plus an operator script under updates/, never as an
-# edit to a base file.
+# Schema fragments appended at composition time (base schema files are append-only by file).
 _ADDITIVE_FRAGMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("checkpoints", "postgresql"): ("checkpoints_position_token",),
     ("checkpoints", "sqlite"): ("checkpoints_position_token",),
@@ -62,20 +49,7 @@ def _get_backend_schema_file(backend: BackendName) -> Path:
 
 
 def get_template_path(name: SchemaName, backend: BackendName = "postgresql") -> Path:
-    """
-    Get the path to a SQL template file.
-
-    Args:
-        name: The schema name (events, events_partitioned, outbox, checkpoints, dlq)
-        backend: The database backend (postgresql, sqlite). Defaults to postgresql.
-
-    Returns:
-        Path to the SQL template file
-
-    Raises:
-        FileNotFoundError: If the template file doesn't exist
-        ValueError: If the schema is not available for the specified backend
-    """
+    """Get the path to a SQL template file for the given schema name and backend."""
     templates_dir = _get_backend_templates_dir(backend)
     path = templates_dir / f"{name}.sql"
 
@@ -92,24 +66,7 @@ def get_template_path(name: SchemaName, backend: BackendName = "postgresql") -> 
 def get_schema(
     name: SchemaName, backend: BackendName = "postgresql", *, additive: bool = True
 ) -> str:
-    """
-    Load a SQL schema template by name and backend.
-
-    Args:
-        name: Schema name ("events", "events_partitioned", "outbox", "checkpoints",
-            "dlq", "snapshots", "migration", or "all").
-        backend: Database backend ("postgresql" or "sqlite"). Defaults to "postgresql".
-        additive: When True (default), append registered additive fragments for
-            this (name, backend) pair after the base schema text. Pass False to
-            get only the base file's text.
-
-    Returns:
-        SQL schema definition as a string.
-
-    Raises:
-        FileNotFoundError: If the schema file or additive fragment doesn't exist.
-        ValueError: If the schema is not available for the specified backend.
-    """
+    """Load a SQL schema template by name and backend, optionally appending additive fragments."""
     if name == "all":
         path = _get_backend_schema_file(backend)
     else:
@@ -148,28 +105,12 @@ def get_schema(
 
 
 def get_all_schemas(backend: BackendName = "postgresql") -> str:
-    """
-    Load the combined SQL schema containing all tables for the given backend.
-
-    Args:
-        backend: The database backend (postgresql, sqlite). Defaults to postgresql.
-
-    Returns:
-        Combined SQL schema definition.
-    """
+    """Load the combined SQL schema containing all tables for the given backend."""
     return get_schema("all", backend=backend)
 
 
 def list_schemas(backend: BackendName = "postgresql") -> list[str]:
-    """
-    List all available schema templates for a backend.
-
-    Args:
-        backend: The database backend (postgresql, sqlite). Defaults to postgresql.
-
-    Returns:
-        Sorted list of schema names available for the specified backend.
-    """
+    """List all available schema templates for a backend."""
     templates_dir = _get_backend_templates_dir(backend)
     if not templates_dir.exists():
         return []
@@ -186,18 +127,7 @@ def list_backends() -> list[str]:
 
 
 def get_alembic_template(name: str) -> str:
-    """
-    Load an Alembic migration template by name.
-
-    Args:
-        name: Template name (events, outbox, checkpoints, dlq, all_tables).
-
-    Returns:
-        Alembic migration template content.
-
-    Raises:
-        FileNotFoundError: If the template doesn't exist.
-    """
+    """Load an Alembic migration template by name."""
     path = _TEMPLATES_DIR / "alembic" / f"{name}.py.template"
     if not path.exists():
         raise FileNotFoundError(f"Alembic template not found: {path}")
@@ -212,7 +142,6 @@ def list_alembic_templates() -> list[str]:
     return sorted(p.stem.replace(".py", "") for p in alembic_dir.glob("*.py.template"))
 
 
-# Convenience exports
 EVENTS_SCHEMA = "events"
 EVENTS_PARTITIONED_SCHEMA = "events_partitioned"
 OUTBOX_SCHEMA = "outbox"

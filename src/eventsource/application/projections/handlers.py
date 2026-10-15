@@ -1,6 +1,4 @@
-"""
-Handler registry for discovering, validating, and routing @handles event handlers.
-"""
+"""Handler registry for discovering, validating, and routing @handles event handlers."""
 
 import inspect
 import logging
@@ -29,9 +27,7 @@ class HandlerInfo:
 
 
 class HandlerRegistry:
-    """
-    Registry for discovering, validating, and routing @handles event handlers.
-    """
+    """Registry for discovering, validating, and routing @handles event handlers."""
 
     def __init__(
         self,
@@ -41,15 +37,7 @@ class HandlerRegistry:
         unregistered_event_handling: UnregisteredEventHandling = "ignore",
         validate_on_init: bool = True,
     ) -> None:
-        """
-        Initialize the handler registry.
-
-        Args:
-            owner: The object containing @handles decorated methods
-            require_async: If True, all handlers must be async (default)
-            unregistered_event_handling: Policy for unregistered events ("ignore", "warn", "error")
-            validate_on_init: If True, validate handlers during __init__
-        """
+        """Initialize the handler registry and optionally validate discovered handlers."""
         self._owner = owner
         self._owner_name = owner.__class__.__name__
         self._require_async = require_async
@@ -99,9 +87,7 @@ class HandlerRegistry:
             self._validate_handler(handler_info)
 
     def _validate_handler(self, handler_info: HandlerInfo) -> None:
-        """
-        Validate a single handler's signature (async requirement, parameter count, annotation).
-        """
+        """Validate a single handler's signature (async requirement, parameter count, annotation)."""
         handler = handler_info.handler
         handler_name = handler_info.handler_name
         event_type = handler_info.event_type
@@ -110,10 +96,8 @@ class HandlerRegistry:
             event_name = event_type.__name__
             raise ValueError(
                 f"Handler '{handler_name}' in {self._owner_name} must be async.\n\n"
-                f"Change:\n"
-                f"  def {handler_name}(self, ...)\n\n"
-                f"To:\n"
-                f"  async def {handler_name}(self, event: {event_name}) -> None"
+                f"Change:\n  def {handler_name}(self, ...)\n\n"
+                f"To:\n  async def {handler_name}(self, event: {event_name}) -> None"
             )
 
         if handler_info.param_count < 1 or handler_info.param_count > 2:
@@ -165,16 +149,8 @@ class HandlerRegistry:
         """Get dictionary mapping event types to handler info."""
         return dict(self._handlers)
 
-    async def dispatch(
-        self,
-        event: DomainEvent,
-        context: Any = None,
-    ) -> bool:
-        """
-        Dispatch an event to its registered handler.
-
-        Returns True if a handler was found and executed, False otherwise.
-        """
+    async def dispatch(self, event: DomainEvent, context: Any = None) -> bool:
+        """Dispatch an event to its registered handler. Returns True if handled."""
         handler_info = self._handlers.get(type(event))
         if handler_info is None:
             self._handle_unregistered_event(event)
@@ -234,8 +210,4 @@ class HandlerRegistry:
         )
 
 
-__all__ = [
-    "HandlerRegistry",
-    "HandlerInfo",
-    "UnregisteredEventHandling",
-]
+__all__ = ["HandlerRegistry", "HandlerInfo", "UnregisteredEventHandling"]

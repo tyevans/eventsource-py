@@ -1,8 +1,4 @@
-"""Batch publishing strategies for RabbitMQ publisher.
-
-Extracted from ``RabbitMQPublisher`` (publisher.py) to keep module sizes
-strictly under the 400-line warning threshold (ADR-0002).
-"""
+"""Batch publishing strategies for RabbitMQ publisher."""
 
 from __future__ import annotations
 
@@ -26,35 +22,18 @@ class RabbitMQPublisherBatchMixin:
     _stats: RabbitMQEventBusStats
     _logger: logging.Logger
 
-    async def _publish_single_no_stats(
-        self,
-        event: DomainEvent,
-    ) -> None:
+    async def _publish_single_no_stats(self, event: DomainEvent) -> None:
         """Publish a single event without updating statistics. Implemented by publisher."""
         raise NotImplementedError
 
     async def _publish_chunk_concurrent(
-        self,
-        events: list[DomainEvent],
-        errors: list[Exception],
+        self, events: list[DomainEvent], errors: list[Exception]
     ) -> int:
         """Publish a chunk of events concurrently. Implemented by RabbitMQPublisherManyMixin."""
         raise NotImplementedError
 
-    async def _publish_batch_concurrent(
-        self,
-        events: list[DomainEvent],
-    ) -> dict[str, int]:
-        """Publish events concurrently with detailed result tracking.
-
-        Implementation for concurrent publishing used by ``publish_batch()``.
-
-        Args:
-            events: Events to publish
-
-        Returns:
-            Dictionary with batch statistics
-        """
+    async def _publish_batch_concurrent(self, events: list[DomainEvent]) -> dict[str, int]:
+        """Publish events concurrently in chunks with detailed result tracking."""
         total_events = len(events)
         chunk_size = self._config.publish_chunk_size
         max_concurrent = self._config.max_concurrent_publishes
@@ -68,13 +47,11 @@ class RabbitMQPublisherBatchMixin:
             },
         )
 
-        # Track stats
         self._stats.batch_publishes += 1
         published_count = 0
         errors: list[Exception] = []
         num_chunks = 0
 
-        # Process in chunks
         for chunk_start in range(0, total_events, chunk_size):
             chunk_end = min(chunk_start + chunk_size, total_events)
             chunk = events[chunk_start:chunk_end]
@@ -93,7 +70,6 @@ class RabbitMQPublisherBatchMixin:
                 },
             )
 
-        # Update statistics
         self._stats.events_published += published_count
         self._stats.batch_events_published += published_count
         self._stats.last_publish_at = datetime.now(UTC)
@@ -115,7 +91,6 @@ class RabbitMQPublisherBatchMixin:
             extra=result,
         )
 
-        # Raise BatchPublishError if any failures
         if errors:
             raise BatchPublishError(
                 f"Batch publish had {len(errors)} failures",
@@ -125,21 +100,8 @@ class RabbitMQPublisherBatchMixin:
 
         return result
 
-    async def _publish_batch_sequential(
-        self,
-        events: list[DomainEvent],
-    ) -> dict[str, int]:
-        """Publish events sequentially to preserve order.
-
-        Used when ``preserve_order=True`` in ``publish_batch()``.
-        Slower than concurrent publishing but guarantees event ordering.
-
-        Args:
-            events: Events to publish in order
-
-        Returns:
-            Dictionary with batch statistics
-        """
+    async def _publish_batch_sequential(self, events: list[DomainEvent]) -> dict[str, int]:
+        """Publish events sequentially to preserve order."""
         total_events = len(events)
 
         self._logger.debug(
@@ -147,7 +109,6 @@ class RabbitMQPublisherBatchMixin:
             extra={"batch_size": total_events},
         )
 
-        # Track stats
         self._stats.batch_publishes += 1
         published_count = 0
         errors: list[Exception] = []
@@ -167,7 +128,6 @@ class RabbitMQPublisherBatchMixin:
                     },
                 )
 
-        # Update statistics
         self._stats.events_published += published_count
         self._stats.batch_events_published += published_count
         self._stats.last_publish_at = datetime.now(UTC)
@@ -181,7 +141,7 @@ class RabbitMQPublisherBatchMixin:
             "total": total_events,
             "published": published_count,
             "failed": failed_count,
-            "chunks": 1,  # Sequential is always one "chunk"
+            "chunks": 1,
         }
 
         self._logger.info(
@@ -189,7 +149,6 @@ class RabbitMQPublisherBatchMixin:
             extra=result,
         )
 
-        # Raise BatchPublishError if any failures
         if errors:
             raise BatchPublishError(
                 f"Ordered batch publish had {len(errors)} failures",
@@ -204,38 +163,13 @@ class RabbitMQPublisherBatchMixin:
         events: list[DomainEvent],
         preserve_order: bool = False,
     ) -> dict[str, int]:
-        """Publish multiple events with batch optimization.
-
-        This method provides optimized batch publishing using concurrent
-        asyncio.gather() to publish multiple events in parallel. Large
-        batches are automatically chunked based on config.publish_chunk_size to
-        prevent overwhelming the broker.
-
-        Args:
-            events: List of events to publish
-            preserve_order: If True, publishes events sequentially to
-                          maintain order guarantees. Default is False
-                          (concurrent publishing).
-
-        Returns:
-            Dictionary with batch publishing statistics: total, published,
-            failed, chunks.
-
-        Raises:
-            RuntimeError: If exchange not initialized
-            BatchPublishError: If any events failed to publish (contains
-                partial results)
-        """
-        exchange = self._topology.exchange
-        if not exchange:
+        """Publish multiple events concurrently in chunks or sequentially if preserve_order=True."""
+        if not self._topology.exchange:
             raise RuntimeError("Exchange not initialized")
 
         if preserve_order:
-            # Sequential publishing for order guarantees
             return await self._publish_batch_sequential(events)
-        else:
-            # Concurrent publishing for performance
-            return await self._publish_batch_concurrent(events)
+        return await self._publish_batch_concurrent(events)
 
 
 __all__ = ["RabbitMQPublisherBatchMixin"]
