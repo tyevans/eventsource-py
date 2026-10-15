@@ -22,15 +22,11 @@ class AnotherTestEvent(DomainEvent):
 
 
 class TestHandlesDecorator:
-    """Tests for the @handles decorator."""
-
     def test_handles_decorator_attaches_event_type(self):
         @handles(TestEvent)
-        def handler(self, event):
-            pass
+        def handler(self, event): ...
 
-        assert hasattr(handler, "_handles_event_type")
-        assert handler._handles_event_type is TestEvent
+        assert hasattr(handler, "_handles_event_type") and handler._handles_event_type is TestEvent
 
     def test_handles_preserves_function(self):
         @handles(TestEvent)
@@ -38,50 +34,41 @@ class TestHandlesDecorator:
             """Handler docstring."""
             return "result"
 
-        assert my_handler.__name__ == "my_handler"
-        assert my_handler.__doc__ == "Handler docstring."
+        assert my_handler.__name__ == "my_handler" and my_handler.__doc__ == "Handler docstring."
 
     def test_handles_function_is_callable(self):
         @handles(TestEvent)
         def handler(self, event):
             return "executed"
 
-        result = handler(None, None)
-        assert result == "executed"
+        assert handler(None, None) == "executed"
 
     def test_handles_works_with_async(self):
         @handles(TestEvent)
-        async def async_handler(self, conn, event):
-            pass
+        async def async_handler(self, conn, event): ...
 
         assert get_handled_event_type(async_handler) is TestEvent
 
     def test_handles_with_different_event_types(self):
         @handles(TestEvent)
-        def handler_one(self, event):
-            pass
+        def handler_one(self, event): ...
 
         @handles(AnotherTestEvent)
-        def handler_two(self, event):
-            pass
+        def handler_two(self, event): ...
 
         assert get_handled_event_type(handler_one) is TestEvent
         assert get_handled_event_type(handler_two) is AnotherTestEvent
 
 
 class TestGetHandledEventType:
-    """Tests for get_handled_event_type utility function."""
-
     def test_returns_event_type_for_decorated(self):
         @handles(TestEvent)
-        def handler(self, event):
-            pass
+        def handler(self, event): ...
 
         assert get_handled_event_type(handler) is TestEvent
 
     def test_returns_none_for_undecorated(self):
-        def regular_func():
-            pass
+        def regular_func(): ...
 
         assert get_handled_event_type(regular_func) is None
 
@@ -94,62 +81,50 @@ class TestGetHandledEventType:
     def test_returns_event_type_for_method(self):
         class MyClass:
             @handles(TestEvent)
-            def my_method(self, event):
-                pass
+            def my_method(self, event): ...
 
         assert get_handled_event_type(MyClass.my_method) is TestEvent
 
 
 class TestIsEventHandler:
-    """Tests for is_event_handler utility function."""
-
     def test_true_for_decorated(self):
         @handles(TestEvent)
-        def handler(self, event):
-            pass
+        def handler(self, event): ...
 
         assert is_event_handler(handler) is True
 
     def test_false_for_undecorated(self):
-        def regular_func():
-            pass
+        def regular_func(): ...
 
         assert is_event_handler(regular_func) is False
 
     def test_false_for_builtin_functions(self):
-        assert is_event_handler(len) is False
-        assert is_event_handler(print) is False
+        assert is_event_handler(len) is False and is_event_handler(print) is False
 
     def test_true_for_async_handler(self):
         @handles(TestEvent)
-        async def async_handler(self, conn, event):
-            pass
+        async def async_handler(self, conn, event): ...
 
         assert is_event_handler(async_handler) is True
 
     def test_false_for_class_without_handler(self):
         class MyClass:
-            def regular_method(self):
-                pass
+            def regular_method(self): ...
 
         assert is_event_handler(MyClass.regular_method) is False
 
 
 class TestDecoratorIntegration:
-    """Integration tests for decorator functions working together."""
-
     def test_decorator_and_utilities_work_together(self):
         @handles(TestEvent)
-        def my_handler(self, event):
-            pass
+        def my_handler(self, event): ...
 
         assert is_event_handler(my_handler) is True
         assert get_handled_event_type(my_handler) is TestEvent
         assert hasattr(my_handler, "_handles_event_type")
 
     def test_undecorated_function_utilities_consistent(self):
-        def regular_func():
-            pass
+        def regular_func(): ...
 
         assert is_event_handler(regular_func) is False
         assert get_handled_event_type(regular_func) is None

@@ -43,35 +43,27 @@ class TestValidTransitions:
 
     def test_bulk_copy_valid_transitions(self) -> None:
         valid = VALID_TRANSITIONS[MigrationPhase.BULK_COPY]
-        assert MigrationPhase.DUAL_WRITE in valid
-        assert MigrationPhase.ABORTED in valid
-        assert MigrationPhase.FAILED in valid
+        assert {MigrationPhase.DUAL_WRITE, MigrationPhase.ABORTED, MigrationPhase.FAILED} <= valid
 
     def test_dual_write_valid_transitions(self) -> None:
         valid = VALID_TRANSITIONS[MigrationPhase.DUAL_WRITE]
-        assert MigrationPhase.CUTOVER in valid
-        assert MigrationPhase.ABORTED in valid
-        assert MigrationPhase.FAILED in valid
+        assert {MigrationPhase.CUTOVER, MigrationPhase.ABORTED, MigrationPhase.FAILED} <= valid
 
     def test_cutover_valid_transitions(self) -> None:
         valid = VALID_TRANSITIONS[MigrationPhase.CUTOVER]
-        assert MigrationPhase.COMPLETED in valid
-        assert MigrationPhase.DUAL_WRITE in valid
-        assert MigrationPhase.FAILED in valid
+        assert {MigrationPhase.COMPLETED, MigrationPhase.DUAL_WRITE, MigrationPhase.FAILED} <= valid
 
     def test_terminal_phases_have_no_transitions(self) -> None:
-        assert VALID_TRANSITIONS[MigrationPhase.COMPLETED] == set()
-        assert VALID_TRANSITIONS[MigrationPhase.ABORTED] == set()
-        assert VALID_TRANSITIONS[MigrationPhase.FAILED] == set()
+        for phase in (MigrationPhase.COMPLETED, MigrationPhase.ABORTED, MigrationPhase.FAILED):
+            assert VALID_TRANSITIONS[phase] == set()
 
 
 class TestMigrationRepositoryProtocol:
     def test_postgresql_repository_implements_protocol(self) -> None:
-        repo = PostgreSQLMigrationRepository(MagicMock())
-        assert isinstance(repo, MigrationRepository)
+        assert isinstance(PostgreSQLMigrationRepository(MagicMock()), MigrationRepository)
 
     def test_protocol_has_required_methods(self) -> None:
-        for method in (
+        methods = [
             "create",
             "get",
             "get_by_tenant",
@@ -81,25 +73,23 @@ class TestMigrationRepositoryProtocol:
             "record_error",
             "set_paused",
             "list_active",
-        ):
+        ]
+        for method in methods:
             assert hasattr(MigrationRepository, method)
 
 
 class TestPostgreSQLMigrationRepositoryInit:
     def test_init_with_connection(self) -> None:
         mock_conn = MagicMock()
-        repo = PostgreSQLMigrationRepository(mock_conn)
-        assert repo._conn == mock_conn
+        assert PostgreSQLMigrationRepository(mock_conn)._conn == mock_conn
 
     def test_init_with_tracing_enabled(self) -> None:
         mock_conn = MagicMock()
-        repo = PostgreSQLMigrationRepository(mock_conn, enable_tracing=True)
-        assert repo._conn == mock_conn
+        assert PostgreSQLMigrationRepository(mock_conn, enable_tracing=True)._conn == mock_conn
 
     def test_init_with_tracing_disabled(self) -> None:
         mock_conn = MagicMock()
-        repo = PostgreSQLMigrationRepository(mock_conn, enable_tracing=False)
-        assert repo._conn == mock_conn
+        assert PostgreSQLMigrationRepository(mock_conn, enable_tracing=False)._conn == mock_conn
 
 
 class TestPostgreSQLMigrationRepositoryCreate:
@@ -123,8 +113,7 @@ class TestPostgreSQLMigrationRepositoryCreate:
         with patch(_SQL_CONN_PATCH) as mock_ctx:
             mock_conn = AsyncMock()
             mock_ctx.return_value.__aenter__.return_value = mock_conn
-            result = await repo.create(sample_migration)
-            assert result == sample_migration.id
+            assert await repo.create(sample_migration) == sample_migration.id
             mock_conn.execute.assert_called_once()
 
     @pytest.mark.asyncio
@@ -152,9 +141,7 @@ class TestPostgreSQLMigrationRepositoryGet:
     ) -> None:
         with patch(_SQL_CONN_PATCH) as mock_ctx:
             mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = None
-            mock_conn.execute.return_value = mock_result
+            mock_conn.execute.return_value = MagicMock(fetchone=MagicMock(return_value=None))
             mock_ctx.return_value.__aenter__.return_value = mock_conn
             assert await repo.get(uuid4()) is None
 
@@ -166,40 +153,20 @@ class TestPostgreSQLMigrationRepositoryGet:
         src_pos = Position(store_id="source", key=(250,)).to_str()
         tgt_pos = Position(store_id="target", key=(125,)).to_str()
         now = datetime.now(UTC)
+        cfg_json = json.dumps(MigrationConfig().to_dict())
         row = (
-            migration_id,
-            tenant_id,
-            "shared",
-            "dedicated",
-            "pending",
-            1000,
-            500,
-            src_pos,
-            tgt_pos,
-            *(None,) * 6,
-            json.dumps(MigrationConfig().to_dict()),
-            0,
-            None,
-            None,
-            False,
-            None,
-            None,
-            now,
-            now,
-            "test@example.com",
+            *(migration_id, tenant_id, "shared", "dedicated", "pending", 1000, 500),
+            *(src_pos, tgt_pos, *(None,) * 6, cfg_json, 0, None, None, False, None, None),
+            *(now, now, "test@example.com"),
         )
         with patch(_SQL_CONN_PATCH) as mock_ctx:
             mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = row
-            mock_conn.execute.return_value = mock_result
+            mock_conn.execute.return_value = MagicMock(fetchone=MagicMock(return_value=row))
             mock_ctx.return_value.__aenter__.return_value = mock_conn
             result = await repo.get(migration_id)
             assert result is not None
-            assert result.id == migration_id
-            assert result.tenant_id == tenant_id
-            assert result.source_store_id == "shared"
-            assert result.target_store_id == "dedicated"
+            assert (result.id, result.tenant_id) == (migration_id, tenant_id)
+            assert (result.source_store_id, result.target_store_id) == ("shared", "dedicated")
             assert result.phase == MigrationPhase.PENDING
 
 
@@ -210,8 +177,6 @@ class TestPostgreSQLMigrationRepositoryGetByTenant:
     ) -> None:
         with patch(_SQL_CONN_PATCH) as mock_ctx:
             mock_conn = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.fetchone.return_value = None
-            mock_conn.execute.return_value = mock_result
+            mock_conn.execute.return_value = MagicMock(fetchone=MagicMock(return_value=None))
             mock_ctx.return_value.__aenter__.return_value = mock_conn
             assert await repo.get_by_tenant(uuid4()) is None

@@ -17,17 +17,18 @@ class _TestEvent(DomainEvent):
     aggregate_type: str = "TestAggregate"
 
 
+@pytest.fixture
+def config() -> RabbitMQEventBusConfig:
+    return RabbitMQEventBusConfig(
+        rabbitmq_url="amqp://test:test@localhost/",
+        exchange_name="test-events",
+        consumer_group="test-group",
+        enable_tracing=True,
+    )
+
+
 class TestOpenTelemetryConsumerTracing:
     """Tests for OpenTelemetry consumer tracing (P3-001)."""
-
-    @pytest.fixture
-    def config(self) -> RabbitMQEventBusConfig:
-        return RabbitMQEventBusConfig(
-            rabbitmq_url="amqp://test:test@localhost/",
-            exchange_name="test-events",
-            consumer_group="test-group",
-            enable_tracing=True,
-        )
 
     @pytest.fixture
     def registry(self) -> EventRegistry:
@@ -42,10 +43,7 @@ class TestOpenTelemetryConsumerTracing:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_process_message_creates_consumer_span(
-        self,
-        mock_aio_pika: MagicMock,
-        config: RabbitMQEventBusConfig,
-        registry: EventRegistry,
+        self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig, registry: EventRegistry
     ) -> None:
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -84,18 +82,14 @@ class TestOpenTelemetryConsumerTracing:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dispatch_event_creates_handler_spans(
-        self,
-        mock_aio_pika: MagicMock,
-        config: RabbitMQEventBusConfig,
-        registry: EventRegistry,
+        self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig, registry: EventRegistry
     ) -> None:
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
 
         bus = RabbitMQEventBus(config=config, event_registry=registry)
 
-        async def test_handler(e: DomainEvent) -> None:
-            pass
+        async def test_handler(e: DomainEvent) -> None: ...
 
         bus.subscribe(_TestEvent, test_handler)
         mock_tracer, mock_parent_span, mock_handler_span = MagicMock(), MagicMock(), MagicMock()
@@ -112,10 +106,7 @@ class TestOpenTelemetryConsumerTracing:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_dispatch_event_no_handler_spans_without_parent(
-        self,
-        mock_aio_pika: MagicMock,
-        config: RabbitMQEventBusConfig,
-        registry: EventRegistry,
+        self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig, registry: EventRegistry
     ) -> None:
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -139,10 +130,7 @@ class TestOpenTelemetryConsumerTracing:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_handler_span_records_exception_on_error(
-        self,
-        mock_aio_pika: MagicMock,
-        config: RabbitMQEventBusConfig,
-        registry: EventRegistry,
+        self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig, registry: EventRegistry
     ) -> None:
         if not OTEL_AVAILABLE:
             pytest.skip("OpenTelemetry not installed")
@@ -168,15 +156,6 @@ class TestOpenTelemetryConsumerTracing:
 class TestOpenTelemetryGracefulDegradation:
     """Tests for graceful degradation when OpenTelemetry is not available."""
 
-    @pytest.fixture
-    def config(self) -> RabbitMQEventBusConfig:
-        return RabbitMQEventBusConfig(
-            rabbitmq_url="amqp://test:test@localhost/",
-            exchange_name="test-events",
-            consumer_group="test-group",
-            enable_tracing=True,
-        )
-
     def test_tracer_none_when_otel_unavailable(self, config: RabbitMQEventBusConfig) -> None:
         bus = RabbitMQEventBus(config=config)
         assert bus._consumer._tracer is not None
@@ -187,12 +166,8 @@ class TestOpenTelemetryGracefulDegradation:
     async def test_publish_works_without_otel(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_conn, mock_chan, mock_ex, mock_q = (
-            AsyncMock(is_closed=False),
-            AsyncMock(is_closed=False),
-            AsyncMock(),
-            AsyncMock(),
-        )
+        mock_conn, mock_chan = AsyncMock(is_closed=False), AsyncMock(is_closed=False)
+        mock_ex, mock_q = AsyncMock(), AsyncMock()
         mock_q.declaration_result.message_count = 0
         mock_q.declaration_result.consumer_count = 0
         mock_aio_pika.connect_robust = AsyncMock(return_value=mock_conn)

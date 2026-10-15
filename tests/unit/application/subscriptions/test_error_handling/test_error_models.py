@@ -68,12 +68,7 @@ class TestErrorStats:
         return ErrorStats()
 
     def test_initial_state(self, stats: ErrorStats):
-        vals = (
-            stats.total_errors,
-            stats.transient_errors,
-            stats.permanent_errors,
-            stats.dlq_count,
-        )
+        vals = (stats.total_errors, stats.transient_errors, stats.permanent_errors, stats.dlq_count)
         assert vals == (0, 0, 0, 0) and stats.first_error_at is None and stats.last_error_at is None
 
     def test_record_transient_error(self, stats: ErrorStats):
@@ -99,15 +94,11 @@ class TestErrorStats:
         assert stats.dlq_count == 1
 
     def test_to_dict(self, stats: ErrorStats):
-        data = stats.to_dict()
-        assert {
-            "total_errors",
-            "transient_errors",
-            "permanent_errors",
-            "dlq_count",
-            "errors_by_type",
-            "errors_by_category",
-        } <= data.keys()
+        expected = (
+            "total_errors transient_errors permanent_errors "
+            "dlq_count errors_by_type errors_by_category"
+        )
+        assert set(expected.split()) <= stats.to_dict().keys()
 
 
 class TestErrorHandlerRegistry:
@@ -120,48 +111,42 @@ class TestErrorHandlerRegistry:
         return _make_error_info(severity=ErrorSeverity.HIGH)
 
     @pytest.mark.asyncio
-    async def test_register_and_notify_callback(
-        self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
-    ):
-        callback = AsyncMock()
-        registry.register(callback)
+    async def test_register_and_notify_callback(self, registry, error_info):
+        cb = AsyncMock()
+        registry.register(cb)
         await registry.notify(error_info)
-        callback.assert_called_once_with(error_info)
+        cb.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
-    async def test_register_sync_callback(
-        self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
-    ):
-        callback = MagicMock()
-        registry.register_sync(callback)
+    async def test_register_sync_callback(self, registry, error_info):
+        cb = MagicMock()
+        registry.register_sync(cb)
         await registry.notify(error_info)
-        callback.assert_called_once_with(error_info)
+        cb.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
-    async def test_category_callback(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
-        callback = AsyncMock()
-        registry.register_for_category(ErrorCategory.APPLICATION, callback)
+    async def test_category_callback(self, registry, error_info):
+        cb = AsyncMock()
+        registry.register_for_category(ErrorCategory.APPLICATION, cb)
         await registry.notify(error_info)
-        callback.assert_called_once_with(error_info)
+        cb.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
-    async def test_category_callback_not_called_for_different_category(
-        self, registry: ErrorHandlerRegistry
-    ):
-        callback = AsyncMock()
-        registry.register_for_category(ErrorCategory.TRANSIENT, callback)
+    async def test_category_callback_not_called_for_different_category(self, registry):
+        cb = AsyncMock()
+        registry.register_for_category(ErrorCategory.TRANSIENT, cb)
         await registry.notify(_make_error_info(category=ErrorCategory.APPLICATION))
-        callback.assert_not_called()
+        cb.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_severity_callback(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
-        callback = AsyncMock()
-        registry.register_for_severity(ErrorSeverity.HIGH, callback)
+    async def test_severity_callback(self, registry, error_info):
+        cb = AsyncMock()
+        registry.register_for_severity(ErrorSeverity.HIGH, cb)
         await registry.notify(error_info)
-        callback.assert_called_once_with(error_info)
+        cb.assert_called_once_with(error_info)
 
     @pytest.mark.asyncio
-    async def test_multiple_callbacks(self, registry: ErrorHandlerRegistry, error_info: ErrorInfo):
+    async def test_multiple_callbacks(self, registry, error_info):
         callbacks = [AsyncMock(), AsyncMock(), AsyncMock()]
         for cb in callbacks:
             registry.register(cb)
@@ -170,20 +155,18 @@ class TestErrorHandlerRegistry:
             cb.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_callback_error_does_not_stop_others(
-        self, registry: ErrorHandlerRegistry, error_info: ErrorInfo
-    ):
-        callback1, callback2 = AsyncMock(side_effect=RuntimeError("Callback error")), AsyncMock()
-        registry.register(callback1)
-        registry.register(callback2)
+    async def test_callback_error_does_not_stop_others(self, registry, error_info):
+        registry.register(AsyncMock(side_effect=RuntimeError("Callback error")))
+        cb2 = AsyncMock()
+        registry.register(cb2)
         await registry.notify(error_info)
-        callback2.assert_called_once()
+        cb2.assert_called_once()
 
     def test_clear(self, registry: ErrorHandlerRegistry):
-        callback = AsyncMock()
-        registry.register(callback)
-        registry.register_for_category(ErrorCategory.APPLICATION, callback)
-        registry.register_for_severity(ErrorSeverity.HIGH, callback)
+        cb = AsyncMock()
+        registry.register(cb)
+        registry.register_for_category(ErrorCategory.APPLICATION, cb)
+        registry.register_for_severity(ErrorSeverity.HIGH, cb)
         registry.clear()
         assert not (
             registry._callbacks or registry._category_callbacks or registry._severity_callbacks
@@ -210,8 +193,5 @@ class TestErrorHandlingConfig:
 
 class TestErrorHandlingStrategy:
     def test_strategy_values(self):
-        assert ErrorHandlingStrategy.STOP.value == "stop"
-        assert ErrorHandlingStrategy.CONTINUE.value == "continue"
-        assert ErrorHandlingStrategy.RETRY_THEN_CONTINUE.value == "retry_then_continue"
-        assert ErrorHandlingStrategy.RETRY_THEN_DLQ.value == "retry_then_dlq"
-        assert ErrorHandlingStrategy.DLQ_ONLY.value == "dlq_only"
+        expected = ["stop", "continue", "retry_then_continue", "retry_then_dlq", "dlq_only"]
+        assert [s.value for s in ErrorHandlingStrategy] == expected
