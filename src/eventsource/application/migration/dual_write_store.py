@@ -69,36 +69,7 @@ class DualWriteStoreMixin:
         events: Sequence[DomainEvent],
         expected: ExpectedVersion,
     ) -> AppendResult:
-        """
-        Append events to both source and target stores.
-
-        Writes to source store first (authoritative), then attempts to write
-        to target store. Source failures propagate to the caller. Target
-        failures are recorded but don't fail the operation.
-
-        The mirror does NOT forward the caller's `expected`: it appends to
-        the target with the exact stream version the source held before
-        this append (derived from the source result). The mirror therefore
-        lands only when the target stream has fully converged with the
-        source, which is what keeps the overlap with a running bulk-copy
-        pass safe: a mirror can never leapfrog events the copier has not
-        yet delivered, so the target's stream order always matches the
-        source's -- even for callers appending with `any`. A mirror
-        refused for non-convergence is recorded as a failure and the
-        event reaches the target through the copy pass instead.
-
-        Args:
-            stream: Identity of the stream to append to.
-            events: Events to append.
-            expected: Optimistic-concurrency expectation.
-
-        Returns:
-            AppendResult from the source store write.
-
-        Raises:
-            OptimisticLockError: If the source store's version check fails.
-            ValueError: If events list is empty.
-        """
+        """Append events to source store (authoritative) and mirror to target store (best-effort)."""
         if not events:
             raise ValueError("Cannot append empty event list")
 
@@ -112,14 +83,10 @@ class DualWriteStoreMixin:
                 ATTR_EXPECTED_VERSION: expected.kind,
             },
         ):
-            # Step 1: Write to source (authoritative).
             source_result = await self._source.append(stream, events, expected)
-
-            # Coverage starts at the first append handled, successful mirror or not.
             if self._first_seen_source_position is None and source_result.position is not None:
                 self._first_seen_source_position = source_result.position
 
-            # Step 2: Write to target (best-effort)
             try:
                 mirror_expected = ExpectedVersion.exact(source_result.new_version - len(events))
                 await self._target.append(stream, events, mirror_expected)
@@ -131,14 +98,11 @@ class DualWriteStoreMixin:
                 )
             except Exception as e:
                 _get_logger().warning(
-                    f"Target write failed for tenant {self._tenant_id}, "
-                    f"stream {stream.render()}: {e}"
+                    f"Target write failed for tenant {self._tenant_id}, stream {stream.render()}: {e}"
                 )
                 if self._migration_id is not None:
-                    get_migration_metrics(
-                        str(self._migration_id),
-                        str(self._tenant_id),
-                    ).record_failed_target_write(error_type=type(e).__name__)
+                    metrics = get_migration_metrics(str(self._migration_id), str(self._tenant_id))
+                    metrics.record_failed_target_write(error_type=type(e).__name__)
                 if source_result.position is not None:
                     if len(self._unabsorbed_failure_positions) >= self._max_failure_history:
                         self._failure_positions_saturated = True
@@ -155,9 +119,7 @@ class DualWriteStoreMixin:
             return source_result
 
     async def read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions | None = None,
+        self, category: str, options: CategoryReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         """Read a category from the source store."""
         async for envelope in self._source.read_category(category, options):
@@ -172,18 +134,14 @@ class DualWriteStoreMixin:
         return await self._source.get_stream_version(stream)
 
     async def read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions | None = None,
+        self, stream: StreamId, options: StreamReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         """Read events from a stream in the source store."""
         async for envelope in self._source.read_stream(stream, options):
             yield envelope
 
     async def read_all(
-        self,
-        from_position: Position | None = None,
-        options: FeedReadOptions | None = None,
+        self, from_position: Position | None = None, options: FeedReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
         """Read the global feed from the source store."""
         async for envelope in self._source.read_all(from_position, options):
@@ -194,6 +152,4 @@ class DualWriteStoreMixin:
         return await self._source.current_position()
 
 
-__all__ = [
-    "DualWriteStoreMixin",
-]
+__all__ = ["DualWriteStoreMixin"]

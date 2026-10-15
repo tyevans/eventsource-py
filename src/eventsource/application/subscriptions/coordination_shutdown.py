@@ -9,48 +9,23 @@ from enum import Enum
 from typing import Any
 
 COORDINATION_TOPIC_PREFIX = "__eventsource_coordination"
-"""Prefix for all coordination topics."""
-
 SHUTDOWN_NOTIFICATIONS_TOPIC = f"{COORDINATION_TOPIC_PREFIX}.shutdown"
-"""Topic for shutdown notifications between instances."""
-
 HEARTBEAT_TOPIC = f"{COORDINATION_TOPIC_PREFIX}.heartbeat"
-"""Topic for heartbeat messages between instances."""
-
 WORK_ASSIGNMENT_TOPIC = f"{COORDINATION_TOPIC_PREFIX}.work_assignment"
-"""Topic for work assignment messages from leader."""
 
 
 class ShutdownIntent(Enum):
     """The intent behind a shutdown notification."""
 
     GRACEFUL = "graceful"
-    """Normal graceful shutdown (e.g., rolling update, scale-down)."""
-
     PREEMPTION = "preemption"
-    """Cloud preemption (spot instance termination)."""
-
     HEALTH_FAILURE = "health_failure"
-    """Shutdown due to health check failure."""
-
     MAINTENANCE = "maintenance"
-    """Planned maintenance window."""
 
 
 @dataclass(frozen=True)
 class ShutdownNotification:
-    """
-    Notification broadcast when an instance begins shutdown.
-
-    Attributes:
-        instance_id: Unique identifier of the shutting-down instance
-        intent: The reason for shutdown
-        initiated_at: When shutdown was initiated
-        expected_completion_at: When shutdown is expected to complete
-        subscriptions: Subscriptions this instance is handling
-        in_flight_count: Number of events currently in flight
-        metadata: Additional context (e.g., cloud provider details)
-    """
+    """Notification broadcast when an instance begins shutdown."""
 
     instance_id: str
     intent: ShutdownIntent
@@ -99,17 +74,7 @@ class ShutdownNotification:
 
 @dataclass(frozen=True)
 class HeartbeatMessage:
-    """
-    Heartbeat message for peer health monitoring.
-
-    Attributes:
-        instance_id: Unique identifier of the instance
-        timestamp: When heartbeat was generated
-        subscriptions: Active subscriptions
-        in_flight_count: Current in-flight events
-        is_leader: Whether this instance is the leader
-        load_factor: Current load as fraction (0.0-1.0)
-    """
+    """Heartbeat message for peer health monitoring."""
 
     instance_id: str
     timestamp: datetime
