@@ -16,6 +16,8 @@ from eventsource.ports.migration.repositories import PositionMappingRepository
 
 from ._helpers import pos
 
+_PATCH_PATH = "eventsource.adapters.sql.migration.position_mapping.sql_connection"
+
 
 class TestPositionMappingRepositoryProtocol:
     def test_postgresql_repository_implements_protocol(self) -> None:
@@ -24,7 +26,7 @@ class TestPositionMappingRepositoryProtocol:
         )
 
     def test_protocol_has_required_methods(self) -> None:
-        for method in (
+        methods = (
             "create",
             "create_batch",
             "get",
@@ -37,8 +39,8 @@ class TestPositionMappingRepositoryProtocol:
             "count_by_migration",
             "get_position_bounds",
             "delete_by_migration",
-        ):
-            assert hasattr(PositionMappingRepository, method)
+        )
+        assert all(hasattr(PositionMappingRepository, m) for m in methods)
 
 
 class TestPostgreSQLPositionMappingRepositoryInit:
@@ -48,15 +50,13 @@ class TestPostgreSQLPositionMappingRepositoryInit:
 
     def test_init_with_tracing_enabled(self) -> None:
         mock_conn = MagicMock()
-        assert (
-            PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=True)._conn == mock_conn
-        )
+        repo = PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=True)
+        assert repo._conn == mock_conn
 
     def test_init_with_tracing_disabled(self) -> None:
         mock_conn = MagicMock()
-        assert (
-            PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=False)._conn == mock_conn
-        )
+        repo = PostgreSQLPositionMappingRepository(mock_conn, enable_tracing=False)
+        assert repo._conn == mock_conn
 
 
 @pytest.fixture
@@ -84,9 +84,7 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
     async def test_create_returns_id(
         self, repo: PostgreSQLPositionMappingRepository, sample_mapping: PositionMapping
     ) -> None:
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
+        with patch(_PATCH_PATH) as mock_ctx:
             mock_conn, mock_result = AsyncMock(), MagicMock()
             mock_result.fetchone.return_value = (42,)
             mock_conn.execute.return_value = mock_result
@@ -97,9 +95,7 @@ class TestPostgreSQLPositionMappingRepositoryCreate:
     async def test_create_executes_insert_with_tokens(
         self, repo: PostgreSQLPositionMappingRepository, sample_mapping: PositionMapping
     ) -> None:
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
+        with patch(_PATCH_PATH) as mock_ctx:
             mock_conn, mock_result = AsyncMock(), MagicMock()
             mock_result.fetchone.return_value = (1,)
             mock_conn.execute.return_value = mock_result
@@ -139,9 +135,7 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
             )
             for i in range(5)
         ]
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
+        with patch(_PATCH_PATH) as mock_ctx:
             mock_conn, mock_result = AsyncMock(), MagicMock(rowcount=5)
             mock_conn.execute.return_value = mock_result
             mock_ctx.return_value.__aenter__.return_value = mock_conn
@@ -162,9 +156,7 @@ class TestPostgreSQLPositionMappingRepositoryCreateBatch:
             )
             for i in range(3)
         ]
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
+        with patch(_PATCH_PATH) as mock_ctx:
             mock_conn, mock_result = AsyncMock(), MagicMock(rowcount=3)
             mock_conn.execute.return_value = mock_result
             mock_ctx.return_value.__aenter__.return_value = mock_conn
@@ -181,9 +173,7 @@ class TestPostgreSQLPositionMappingRepositoryGet:
     async def test_get_returns_none_when_not_found(
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
+        with patch(_PATCH_PATH) as mock_ctx:
             mock_conn, mock_result = AsyncMock(), MagicMock()
             mock_result.fetchone.return_value = None
             mock_conn.execute.return_value = mock_result
@@ -195,11 +185,9 @@ class TestPostgreSQLPositionMappingRepositoryGet:
         self, repo: PostgreSQLPositionMappingRepository
     ) -> None:
         migration_id, event_id, now = uuid4(), uuid4(), datetime.now(UTC)
-        source_position, target_position = pos(1000, "src"), pos(500, "tgt")
-        row = (1, migration_id, source_position.to_str(), target_position.to_str(), event_id, now)
-        with patch(
-            "eventsource.adapters.sql.migration.position_mapping.sql_connection"
-        ) as mock_ctx:
+        src_pos, tgt_pos = pos(1000, "src"), pos(500, "tgt")
+        row = (1, migration_id, src_pos.to_str(), tgt_pos.to_str(), event_id, now)
+        with patch(_PATCH_PATH) as mock_ctx:
             mock_conn, mock_result = AsyncMock(), MagicMock()
             mock_result.fetchone.return_value = row
             mock_conn.execute.return_value = mock_result
@@ -207,7 +195,4 @@ class TestPostgreSQLPositionMappingRepositoryGet:
             result = await repo.get(1)
             assert result is not None
             assert result.migration_id == migration_id and result.event_id == event_id
-            assert (
-                result.source_position == source_position
-                and result.target_position == target_position
-            )
+            assert (result.source_position, result.target_position) == (src_pos, tgt_pos)

@@ -100,8 +100,8 @@ class ShoppingCartAggregate(es.DeclarativeAggregate[ShoppingCartState]):
     def _on_item_removed(self, event: ItemRemovedFromCart) -> None:
         if self._state:
             items = {k: v for k, v in self._state.items.items() if k != str(event.product_id)}
-            status = "active" if items else "empty"
-            self._state = self._state.model_copy(update={"items": items, "status": status})
+            upd = {"items": items, "status": "active" if items else "empty"}
+            self._state = self._state.model_copy(update=upd)
 
     @es.handles(ItemQuantityChanged)
     def _on_quantity_changed(self, event: ItemQuantityChanged) -> None:
@@ -122,13 +122,10 @@ class ShoppingCartAggregate(es.DeclarativeAggregate[ShoppingCartState]):
         if self._state:
             self._state = self._state.model_copy(update={"status": "abandoned"})
 
-    def _require_state(
-        self, verb: str = "modify", allowed: tuple[str, ...] = ("empty", "active")
-    ) -> ShoppingCartState:
-        if not self.state:
-            raise ValueError("Cart does not exist")
-        if self.state.status not in allowed:
-            raise ValueError(f"Cannot {verb} {self.state.status} cart")
+    def _require_state(self, verb: str = "modify", ok: tuple[str, ...] = ("empty", "active")):
+        if not self.state or self.state.status not in ok:
+            err = f"Cannot {verb} {self.state.status} cart" if self.state else "Cart does not exist"
+            raise ValueError(err)
         return self.state
 
     def _emit(self, event_cls: type[es.DomainEvent], **kwargs: object) -> None:
@@ -140,31 +137,26 @@ class ShoppingCartAggregate(es.DeclarativeAggregate[ShoppingCartState]):
             raise ValueError("Cart already exists")
         self._emit(CartCreated, customer_id=customer_id)
 
-    def add_item(
-        self, product_id: UUID, product_name: str, quantity: int, unit_price: float
-    ) -> None:
+    def add_item(self, pid: UUID, name: str, qty: int, price: float) -> None:
         self._require_state("add items to")
-        if quantity <= 0 or unit_price < 0:
-            raise ValueError(
-                "Quantity must be positive" if quantity <= 0 else "Price cannot be negative"
-            )
-        item = {"product_id": product_id, "product_name": product_name, "quantity": quantity}
-        self._emit(ItemAddedToCart, **item, unit_price=unit_price)
+        if qty <= 0 or price < 0:
+            err = "Quantity must be positive" if qty <= 0 else "Price cannot be negative"
+            raise ValueError(err)
+        item = {"product_id": pid, "product_name": name, "quantity": qty, "unit_price": price}
+        self._emit(ItemAddedToCart, **item)
 
     def remove_item(self, product_id: UUID) -> None:
         if str(product_id) not in self._require_state("remove items from").items:
             raise ValueError("Item not in cart")
         self._emit(ItemRemovedFromCart, product_id=product_id)
 
-    def change_quantity(self, product_id: UUID, new_quantity: int) -> None:
-        state, key = self._require_state("modify"), str(product_id)
-        if key not in state.items:
-            raise ValueError("Item not in cart")
-        if new_quantity <= 0:
-            raise ValueError("Quantity must be positive (use remove_item to delete)")
+    def change_quantity(self, pid: UUID, new_qty: int) -> None:
+        state, key = self._require_state("modify"), str(pid)
+        if key not in state.items or new_qty <= 0:
+            err = "Quantity must be positive (use remove_item to delete)"
+            raise ValueError("Item not in cart" if key not in state.items else err)
         old_qty = state.items[key].quantity
-        args = {"product_id": product_id, "old_quantity": old_qty, "new_quantity": new_quantity}
-        self._emit(ItemQuantityChanged, **args)
+        self._emit(ItemQuantityChanged, product_id=pid, old_quantity=old_qty, new_quantity=new_qty)
 
     def checkout(self) -> UUID:
         state = self._require_state("checkout", ("active",))
@@ -180,31 +172,24 @@ class ShoppingCartAggregate(es.DeclarativeAggregate[ShoppingCartState]):
 
 
 async def main() -> None:
-    event_store = es.InMemoryEventStore()
-    repo = es.AggregateRepository(event_store=event_store, aggregate_factory=ShoppingCartAggregate)
-    cart_id, customer_id = uuid4(), uuid4()
+    store = es.InMemoryEventStore()
+    repo = es.AggregateRepository(event_store=store, aggregate_factory=ShoppingCartAggregate)
+    cart_id, customer_id, p1, p2, p3 = uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
     cart = repo.create_new(cart_id)
     cart.create(customer_id)
-    await repo.save(cart)
-
-    products = [
-        (uuid4(), "Wireless Mouse", 2, 29.99),
-        (uuid4(), "USB-C Hub", 1, 49.99),
-        (uuid4(), "Mechanical Keyboard", 1, 149.99),
-    ]
-    cart = await repo.load(cart_id)
-    for product_id, name, qty, price in products:
-        cart.add_item(product_id, name, qty, price)
-    cart.change_quantity(products[0][0], 3)
-    cart.remove_item(products[1][0])
+    for pid, name, qty, price in [
+        (p1, "Mouse", 2, 29.99),
+        (p2, "Hub", 1, 49.99),
+        (p3, "KB", 1, 99.0),
+    ]:
+        cart.add_item(pid, name, qty, price)
+    cart.change_quantity(p1, 3)
+    cart.remove_item(p2)
     order_id = cart.checkout()
     await repo.save(cart)
     print(f"Order {order_id} created (${cart.state.total_amount:.2f}, {cart.state.status})")
-    async for envelope in event_store.read_stream(es.StreamId(cart_id, "ShoppingCart")):
-        print(f"Event: {envelope.event.event_type}")
     abandoned = repo.create_new(uuid4())
     abandoned.create(customer_id)
-    abandoned.add_item(uuid4(), "Some Product", 1, 19.99)
     abandoned.abandon("Session timeout")
     await repo.save(abandoned)
 

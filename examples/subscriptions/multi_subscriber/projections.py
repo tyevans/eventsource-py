@@ -30,11 +30,9 @@ class ProductCatalogProjection(EventSubscriber):
         self.events_processed: int = 0
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
-        """Only interested in product metadata events."""
         return [ProductCreated, ProductPriceChanged]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Update the catalog read model."""
         self.events_processed += 1
         if isinstance(event, ProductCreated):
             self.products[event.aggregate_id] = {
@@ -51,16 +49,13 @@ class ProductCatalogProjection(EventSubscriber):
             logger.debug(f"Catalog: Updated price to ${event.new_price:.2f}")
 
     def get_all_products(self) -> list[dict[str, Any]]:
-        """Get all products in the catalog."""
         return list(self.products.values())
 
     def get_by_category(self, category: str) -> list[dict[str, Any]]:
-        """Get products in a category."""
         product_ids = self.by_category.get(category, [])
         return [self.products[pid] for pid in product_ids if pid in self.products]
 
     def get_stats(self) -> dict[str, Any]:
-        """Get catalog statistics."""
         return {
             "total_products": len(self.products),
             "categories": list(self.by_category.keys()),
@@ -79,11 +74,9 @@ class InventoryDashboardProjection(EventSubscriber):
         self.events_processed: int = 0
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
-        """Interested in inventory-related events."""
         return [InventoryAdded, InventoryReserved, InventorySold]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Update inventory tracking."""
         self.events_processed += 1
         if isinstance(event, InventoryAdded):
             self.inventory[event.aggregate_id] += event.quantity
@@ -98,7 +91,6 @@ class InventoryDashboardProjection(EventSubscriber):
             logger.debug(f"Inventory: Sale confirmed for order {event.order_id}")
 
     def _check_low_stock(self, product_id: UUID) -> None:
-        """Check and record low stock alerts."""
         level = self.inventory.get(product_id, 0)
         if level < self.low_stock_threshold and not any(
             a["product_id"] == product_id for a in self.low_stock_alerts
@@ -114,11 +106,9 @@ class InventoryDashboardProjection(EventSubscriber):
             logger.warning(f"LOW STOCK ALERT: Product {product_id} at {level} units")
 
     def get_inventory_levels(self) -> dict[UUID, int]:
-        """Get current inventory levels for all products."""
         return dict(self.inventory)
 
     def get_low_stock_products(self) -> list[dict[str, Any]]:
-        """Get products below threshold."""
         return [
             {"product_id": pid, "level": level}
             for pid, level in self.inventory.items()
@@ -126,11 +116,9 @@ class InventoryDashboardProjection(EventSubscriber):
         ]
 
     def get_warehouse_levels(self, warehouse: str) -> dict[UUID, int]:
-        """Get inventory levels for a specific warehouse."""
         return dict(self.by_warehouse.get(warehouse, {}))
 
     def get_stats(self) -> dict[str, Any]:
-        """Get inventory statistics."""
         return {
             "total_products_tracked": len(self.inventory),
             "total_inventory": sum(self.inventory.values()),
@@ -152,11 +140,9 @@ class SalesAnalyticsProjection(EventSubscriber):
         self._product_prices: dict[UUID, float] = {}
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
-        """Interested in price and sales events."""
         return [ProductCreated, ProductPriceChanged, InventorySold]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Update sales analytics."""
         self.events_processed += 1
         if isinstance(event, ProductCreated):
             self._product_prices[event.aggregate_id] = event.price
@@ -180,11 +166,9 @@ class SalesAnalyticsProjection(EventSubscriber):
             logger.debug(f"Analytics: Sale recorded, revenue=${revenue:.2f}")
 
     def get_total_revenue(self) -> float:
-        """Get total revenue across all products."""
         return sum(self.revenue_by_product.values())
 
     def get_top_products(self, limit: int = 5) -> list[dict[str, Any]]:
-        """Get top products by revenue."""
         sorted_products = sorted(self.revenue_by_product.items(), key=lambda x: x[1], reverse=True)
         return [
             {"product_id": pid, "revenue": rev, "units_sold": self.sales_count[pid]}
@@ -192,11 +176,9 @@ class SalesAnalyticsProjection(EventSubscriber):
         ]
 
     def get_daily_revenue(self) -> dict[str, float]:
-        """Get revenue by day."""
         return dict(self.daily_revenue)
 
     def get_stats(self) -> dict[str, Any]:
-        """Get analytics statistics."""
         return {
             "total_revenue": self.get_total_revenue(),
             "total_units_sold": sum(self.sales_count.values()),
