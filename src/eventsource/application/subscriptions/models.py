@@ -44,45 +44,19 @@ class SubscriptionState(Enum):
     """
 
     STARTING = "starting"
-    """Initial state while reading checkpoint and initializing."""
-
     CATCHING_UP = "catching_up"
-    """Reading historical events from the event store."""
-
     LIVE = "live"
-    """Receiving real-time events from the event bus."""
-
     PAUSED = "paused"
-    """Temporarily paused. See `PauseReason` for who asked."""
-
     STOPPED = "stopped"
-    """Cleanly shut down."""
-
     ERROR = "error"
-    """Failed with an unrecoverable error."""
 
 
 class PauseReason(Enum):
-    """
-    Reasons why a subscription can be paused.
-
-    Used to track the source of a pause operation for diagnostics
-    and to determine resume behavior.
-    """
+    """Reasons why a subscription can be paused for diagnostics and resume behavior."""
 
     MANUAL = "manual"
-    """User-initiated pause via API call."""
-
     BACKPRESSURE = "backpressure"
-    """Paused because a caller reported downstream pressure.
-
-    The library never pauses for this reason on its own -- delivery is
-    sequential, so there is no in-library backpressure to detect. This is
-    vocabulary for an application that pauses a subscription because *its*
-    downstream is struggling, so the reason is legible in health output."""
-
     MAINTENANCE = "maintenance"
-    """Pause for maintenance operations."""
 
 
 # Valid state transitions
@@ -122,44 +96,18 @@ def is_valid_transition(
     from_state: SubscriptionState,
     to_state: SubscriptionState,
 ) -> bool:
-    """
-    Check if a state transition is valid.
-
-    Args:
-        from_state: Current state
-        to_state: Target state
-
-    Returns:
-        True if transition is allowed, False otherwise
-    """
+    """Check if a state transition from `from_state` to `to_state` is valid."""
     return to_state in VALID_TRANSITIONS.get(from_state, set())
 
 
 # Type aliases for event handlers
 EventHandler = Callable[["DomainEvent"], Awaitable[None]]
-"""Async handler for a single event."""
-
 BatchHandler = Callable[[Sequence["DomainEvent"]], Awaitable[None]]
-"""Async handler for a batch of events."""
 
 
 @dataclass
 class RecentErrorInfo:
-    """
-    Lightweight information about a recent processing error.
-
-    Used to track recent errors in the subscription for debugging
-    and monitoring without storing full stack traces in memory.
-
-    Attributes:
-        event_id: ID of the failed event
-        event_type: Type of the failed event
-        position: Global-feed position of the failed event, None if unknown
-        error_type: Exception class name
-        error_message: Error message (truncated)
-        timestamp: When the error occurred
-        sent_to_dlq: Whether event was sent to DLQ
-    """
+    """Lightweight information about a recent processing error."""
 
     event_id: UUID
     event_type: str
@@ -184,27 +132,7 @@ class RecentErrorInfo:
 
 @dataclass(frozen=True)
 class SubscriptionStatus:
-    """
-    Status snapshot for health checks and monitoring.
-
-    This is a point-in-time snapshot of subscription state,
-    suitable for serialization and external reporting.
-
-    Attributes:
-        name: Subscription name
-        state: Current state as string
-        position: Last processed global-feed position, None if nothing
-            has been processed
-        lag_events: Number of events behind
-        events_processed: Total events successfully processed
-        events_failed: Total events that failed processing
-        events_dlq: Total events sent to dead letter queue
-        last_processed_at: ISO timestamp of last processed event
-        started_at: ISO timestamp when subscription started
-        uptime_seconds: Time since subscription started
-        error: Error message if in error state
-        recent_errors_count: Number of recent errors in buffer
-    """
+    """Point-in-time status snapshot for health checks and monitoring."""
 
     name: str
     state: str
@@ -220,12 +148,7 @@ class SubscriptionStatus:
     recent_errors_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            Dictionary representation of status
-        """
+        """Convert to dictionary for JSON serialization."""
         return {
             "name": self.name,
             "state": self.state,

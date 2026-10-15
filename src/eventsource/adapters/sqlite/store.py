@@ -9,31 +9,16 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from eventsource import ports as p
 from eventsource.adapters._common import check_expected, describe_expected
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps
 from eventsource.adapters.sql.schemas import get_schema
-from eventsource.adapters.sqlite.queries import (
-    apply_additive_updates,
-    build_read_all_query,
-    build_read_category_query,
-    build_read_stream_query,
-    row_to_envelope,
-)
+from eventsource.adapters.sqlite import queries as q
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry, default_registry
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
-from eventsource.ports import (
-    AppendResult,
-    CategoryReadOptions,
-    EventEnvelope,
-    EventStoreConnectionError,
-    ExpectedVersion,
-    FeedReadOptions,
-    Position,
-    StreamReadOptions,
-)
 from eventsource.ports.outbox import outbox_event_data
 
 try:
@@ -65,9 +50,8 @@ class SQLiteEventStore:
             raise ImportError(msg)
         self._database, self._event_registry = database, event_registry or default_registry
         self._wal_mode, self._busy_timeout = wal_mode, busy_timeout
-        self._outbox_enabled = outbox_enabled
+        self._outbox_enabled, self._store_id = outbox_enabled, store_id or f"sqlite:{database}"
         self._connection: aiosqlite.Connection | None = None
-        self._store_id = store_id or f"sqlite:{database}"
         self._codec = IntPositionCodec(self._store_id)
         self._lock, self._init_lock = asyncio.Lock(), asyncio.Lock()
 
@@ -77,11 +61,9 @@ class SQLiteEventStore:
 
     @property
     def outbox_enabled(self) -> bool:
-        """Whether `append` also writes to `event_outbox` in the same transaction."""
         return self._outbox_enabled
 
     async def _conn(self) -> aiosqlite.Connection:
-        """Return the live connection, opening and initializing it on first use."""
         if self._connection is not None:
             return self._connection
         async with self._init_lock:
@@ -91,20 +73,19 @@ class SQLiteEventStore:
                 conn = await aiosqlite.connect(self._database)
             except (aiosqlite.Error, OSError) as e:
                 msg = f"could not open the SQLite database at {self._database!r}: {e}"
-                raise EventStoreConnectionError(msg, store=type(self).__name__) from e
+                raise p.EventStoreConnectionError(msg, store=type(self).__name__) from e
             await conn.execute("PRAGMA foreign_keys = ON")
             await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
             if self._wal_mode:
                 await conn.execute("PRAGMA journal_mode = WAL")
             conn.row_factory = aiosqlite.Row
             await conn.executescript(get_schema("all", backend="sqlite", additive=False))
-            await apply_additive_updates(conn)
+            await q.apply_additive_updates(conn)
             await conn.commit()
             self._connection = conn
             return conn
 
     async def close(self) -> None:
-        """Close the underlying connection, if open. Safe to call multiple times."""
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
@@ -129,13 +110,12 @@ class SQLiteEventStore:
         return row[0] if row else 0
 
     async def append(
-        self, stream: StreamId, events: Sequence[DomainEvent], expected: ExpectedVersion
-    ) -> AppendResult:
+        self, stream: StreamId, events: Sequence[DomainEvent], expected: p.ExpectedVersion
+    ) -> p.AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
         conn = await self._conn()
         aid, category = str(stream.aggregate_id), stream.category
-
         async with self._lock:
             try:
                 current_version = await self._max_version(conn, aid, category)
@@ -146,7 +126,6 @@ class SQLiteEventStore:
                         msg = f"event_id {event.event_id} already exists in the store"
                         raise DuplicateEventError(msg)
                     seen_in_batch.add(event.event_id)
-
                 version, first_position, now = current_version, None, datetime.now(UTC).isoformat()
                 sql = (
                     "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, "
@@ -165,9 +144,8 @@ class SQLiteEventStore:
                         first_position = self._codec.encode(cursor.lastrowid or 0)
                     if self._outbox_enabled:
                         await self._write_to_outbox(conn, event, category, now)
-
                 await conn.commit()
-                return AppendResult(stream=stream, new_version=version, position=first_position)
+                return p.AppendResult(stream=stream, new_version=version, position=first_position)
             except aiosqlite.IntegrityError as e:
                 await conn.rollback()
                 err = str(e).lower()
@@ -198,19 +176,18 @@ class SQLiteEventStore:
 
     async def _fetch_envelopes(
         self, sql: str, params: Sequence[Any]
-    ) -> AsyncIterator[EventEnvelope]:
+    ) -> AsyncIterator[p.EventEnvelope]:
         conn = await self._conn()
         async with self._lock:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+            rows = await (await conn.execute(sql, params)).fetchall()
         for row in rows:
-            yield self._row_to_envelope(row)
+            yield q.row_to_envelope(row, self._codec, self._event_registry)
 
     def read_stream(
-        self, stream: StreamId, options: StreamReadOptions | None = None
-    ) -> AsyncIterator[EventEnvelope]:
-        sql, params = build_read_stream_query(stream, options or StreamReadOptions())
-        return self._fetch_envelopes(sql, params)
+        self, stream: StreamId, options: p.StreamReadOptions | None = None
+    ) -> AsyncIterator[p.EventEnvelope]:
+        opts = options or p.StreamReadOptions()
+        return self._fetch_envelopes(*q.build_read_stream_query(stream, opts))
 
     async def get_stream_version(self, stream: StreamId) -> int:
         conn = await self._conn()
@@ -224,32 +201,31 @@ class SQLiteEventStore:
             return await (await conn.execute(sql, (str(event_id),))).fetchone() is not None
 
     def read_all(
-        self, from_position: Position | None = None, options: FeedReadOptions | None = None
-    ) -> AsyncIterator[EventEnvelope]:
-        return self._do_read_all(from_position, options or FeedReadOptions())
+        self, from_position: p.Position | None = None, options: p.FeedReadOptions | None = None
+    ) -> AsyncIterator[p.EventEnvelope]:
+        return self._do_read_all(from_position, options or p.FeedReadOptions())
 
     async def _do_read_all(
-        self, from_position: Position | None, options: FeedReadOptions
-    ) -> AsyncIterator[EventEnvelope]:
+        self, from_position: p.Position | None, options: p.FeedReadOptions
+    ) -> AsyncIterator[p.EventEnvelope]:
         pos_val = self._codec.value_of(from_position) if from_position is not None else None
-        async for env in self._fetch_envelopes(*build_read_all_query(pos_val, options)):
+        async for env in self._fetch_envelopes(*q.build_read_all_query(pos_val, options)):
             yield env
 
-    async def current_position(self) -> Position | None:
+    async def current_position(self) -> p.Position | None:
         conn = await self._conn()
         async with self._lock:
-            cursor = await conn.execute("SELECT MAX(global_position) FROM events")
-            row = await cursor.fetchone()
+            row = await (await conn.execute("SELECT MAX(global_position) FROM events")).fetchone()
         return None if (row is None or row[0] is None) else self._codec.encode(row[0])
 
     def read_category(
-        self, category: str, options: CategoryReadOptions | None = None
-    ) -> AsyncIterator[EventEnvelope]:
-        sql, params = build_read_category_query(category, options or CategoryReadOptions())
-        return self._fetch_envelopes(sql, params)
+        self, category: str, options: p.CategoryReadOptions | None = None
+    ) -> AsyncIterator[p.EventEnvelope]:
+        opts = options or p.CategoryReadOptions()
+        return self._fetch_envelopes(*q.build_read_category_query(category, opts))
 
-    def _row_to_envelope(self, row: Any) -> EventEnvelope:
-        return row_to_envelope(row, self._codec, self._event_registry)
+    def _row_to_envelope(self, row: Any) -> p.EventEnvelope:
+        return q.row_to_envelope(row, self._codec, self._event_registry)
 
 
 __all__ = ["AIOSQLITE_AVAILABLE", "SQLiteEventStore"]

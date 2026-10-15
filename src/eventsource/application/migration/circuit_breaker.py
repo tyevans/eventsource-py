@@ -30,48 +30,21 @@ __all__ = [
 
 
 class CircuitState(Enum):
-    """
-    Circuit breaker state.
-
-    Attributes:
-        CLOSED: Circuit is closed, operations proceed normally.
-        OPEN: Circuit is open, operations are rejected immediately.
-        HALF_OPEN: Circuit is testing if operations can succeed again.
-    """
+    """Circuit breaker state (CLOSED, OPEN, or HALF_OPEN)."""
 
     CLOSED = "closed"
-    """Circuit is closed, operations proceed normally."""
-
     OPEN = "open"
-    """Circuit is open, operations are rejected immediately."""
-
     HALF_OPEN = "half_open"
-    """Circuit is testing if operations can succeed again."""
 
 
 @dataclass
 class CircuitBreakerConfig:
-    """
-    Configuration for circuit breaker behavior.
-
-    Attributes:
-        failure_threshold: Number of failures before opening circuit.
-        success_threshold: Number of successes in half-open state to close.
-        timeout_seconds: Seconds before trying half-open state.
-        excluded_exceptions: Exception types that don't trip the circuit.
-    """
+    """Configuration for circuit breaker behavior."""
 
     failure_threshold: int = 5
-    """Number of failures before opening circuit."""
-
     success_threshold: int = 2
-    """Number of successes in half-open state to close circuit."""
-
     timeout_seconds: float = 30.0
-    """Seconds before trying half-open state."""
-
     excluded_exceptions: tuple[type[Exception], ...] = ()
-    """Exception types that don't trip the circuit."""
 
 
 class CircuitBreaker:
@@ -80,18 +53,6 @@ class CircuitBreaker:
 
     Tracks failures and opens the circuit when a threshold is reached,
     preventing cascading failures during system instability.
-
-    Usage:
-        >>> cb = CircuitBreaker(config=CircuitBreakerConfig(failure_threshold=5))
-        >>> async with cb.protect("my_operation"):
-        ...     await risky_operation()
-
-    Attributes:
-        config: Circuit breaker configuration.
-        state: Current circuit state.
-        failure_count: Number of consecutive failures.
-        success_count: Number of consecutive successes in half-open state.
-        last_failure_time: Timestamp of last failure.
     """
 
     def __init__(
@@ -99,13 +60,6 @@ class CircuitBreaker:
         config: CircuitBreakerConfig | None = None,
         name: str = "default",
     ) -> None:
-        """
-        Initialize the circuit breaker.
-
-        Args:
-            config: Circuit breaker configuration (uses defaults if None).
-            name: Name for logging and identification.
-        """
         self.config = config or CircuitBreakerConfig()
         self.name = name
         self._state = CircuitState.CLOSED
@@ -155,7 +109,6 @@ class CircuitBreaker:
 
     async def _record_failure(self, exc: Exception) -> None:
         """Record a failed operation."""
-        # Check if this exception should trip the circuit
         if isinstance(exc, self.config.excluded_exceptions):
             return
 
@@ -192,28 +145,14 @@ class CircuitBreaker:
         operation_name: str,
         migration_id: UUID | None = None,
     ) -> CircuitBreakerContext:
-        """
-        Create a context manager for protecting an operation.
-
-        Args:
-            operation_name: Name of the operation for logging.
-            migration_id: Optional migration ID for error context.
-
-        Returns:
-            Context manager that protects the operation.
-
-        Raises:
-            CircuitBreakerOpenError: If the circuit is open.
-        """
+        """Create a context manager for protecting an operation, or raise CircuitBreakerOpenError."""
         await self._check_state()
-
         if self._state == CircuitState.OPEN:
             raise CircuitBreakerOpenError(
                 operation_name=operation_name,
                 time_until_retry=self.get_time_until_retry(),
                 migration_id=migration_id,
             )
-
         return CircuitBreakerContext(
             circuit_breaker=self,
             operation_name=operation_name,
