@@ -24,16 +24,9 @@ from tests.unit.application.migration.test_subscription_migrator._fixtures impor
 
 
 class TestSubscriptionMigrationResultDataclass:
-    """Tests for SubscriptionMigrationResult dataclass."""
-
     def test_result_success(self) -> None:
         result = SubscriptionMigrationResult(
-            "OrderProjection",
-            True,
-            source_pos(1000),
-            target_pos(500),
-            True,
-            migrated_at=datetime.now(UTC),
+            "OrderProjection", True, source_pos(1000), target_pos(500), True, datetime.now(UTC)
         )
         assert result.subscription_name == "OrderProjection"
         assert result.success is True
@@ -69,8 +62,6 @@ class TestSubscriptionMigrationResultDataclass:
 
 
 class TestPlannedMigrationDataclass:
-    """Tests for PlannedMigration dataclass."""
-
     def test_planned_migration_exact(self) -> None:
         planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500), True)
         assert planned.subscription_name == "OrderProjection"
@@ -101,15 +92,13 @@ class TestPlannedMigrationDataclass:
 
 
 class TestMigrationPlanDataclass:
-    """Tests for MigrationPlan dataclass."""
-
     def test_migration_plan_creation(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
         planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500))
         plan = MigrationPlan(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            planned_migrations=[planned],
+            migration_id,
+            tenant_id,
+            [planned],
             total_subscriptions=2,
             migratable_count=1,
             skipped_subscriptions=["NoCheckpoint"],
@@ -129,8 +118,6 @@ class TestMigrationPlanDataclass:
 
 
 class TestMigrationSummaryDataclass:
-    """Tests for MigrationSummary dataclass."""
-
     def test_migration_summary_creation(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
         result = SubscriptionMigrationResult(
@@ -151,14 +138,7 @@ class TestMigrationSummaryDataclass:
     def test_migration_summary_to_dict(self) -> None:
         migration_id, tenant_id, now = uuid4(), uuid4(), datetime.now(UTC)
         summary = MigrationSummary(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            results=[],
-            successful_count=1,
-            failed_count=0,
-            started_at=now,
-            completed_at=now,
-            duration_ms=100.0,
+            migration_id, tenant_id, [], 1, 0, started_at=now, completed_at=now, duration_ms=100.0
         )
         d = summary.to_dict()
         assert d["migration_id"] == str(migration_id)
@@ -167,8 +147,6 @@ class TestMigrationSummaryDataclass:
 
 
 class TestSubscriptionMigrationErrorException:
-    """Tests for SubscriptionMigrationError exception."""
-
     def test_exception_creation(self) -> None:
         migration_id = uuid4()
         error = SubscriptionMigrationError(
@@ -187,8 +165,6 @@ class TestSubscriptionMigrationErrorException:
 
 
 class TestSubscriptionMigratorWorkflows:
-    """Integration-style tests for subscription migration workflows."""
-
     @pytest.mark.asyncio
     async def test_full_migration_workflow(
         self,

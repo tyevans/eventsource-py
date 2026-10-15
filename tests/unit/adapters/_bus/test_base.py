@@ -29,7 +29,6 @@ def _handler(event: DomainEvent) -> None: ...
 
 def test_subscription_methods_delegate_to_the_registry() -> None:
     bus = StubBus()
-
     bus.subscribe(BaseBusEvent, _handler)
     assert bus.get_subscriber_count(BaseBusEvent) == 1
     assert bus.get_subscriber_count() == 1
@@ -47,9 +46,7 @@ def test_clear_subscribers_empties_both_registries() -> None:
     bus = StubBus()
     bus.subscribe(BaseBusEvent, _handler)
     bus.subscribe_to_all_events(_handler)
-
     bus.clear_subscribers()
-
     assert bus.get_subscriber_count() == 0
     assert bus.get_wildcard_subscriber_count() == 0
 
@@ -63,7 +60,6 @@ def test_subscribe_all_uses_subscribed_to() -> None:
 
     bus = StubBus()
     bus.subscribe_all(Subscriber())
-
     assert bus.get_subscriber_count(BaseBusEvent) == 1
 
 
@@ -71,7 +67,6 @@ def test_resolve_event_class_uses_injected_registry_first() -> None:
     registry = EventRegistry()
     registry.register(BaseBusEvent, "CustomName")
     bus = StubBus(event_registry=registry)
-
     assert bus._resolve_event_class("CustomName") is BaseBusEvent
 
 
@@ -86,7 +81,6 @@ def test_resolve_event_class_falls_back_to_default_registry() -> None:
 
 def test_resolve_event_class_returns_none_for_unknown_type() -> None:
     bus = StubBus()
-
     assert bus._resolve_event_class("NoSuchEventTypeAnywhere") is None
 
 
@@ -99,18 +93,14 @@ async def test_track_background_runs_and_is_drained() -> None:
 
     await bus._track_background(work())
     assert bus.get_background_task_count() == 1
-
     await bus._drain_background(timeout=5.0)
-
     assert ran.is_set()
     assert bus.get_background_task_count() == 0
 
 
 async def test_drain_background_with_no_tasks_returns_immediately() -> None:
     bus = StubBus()
-
     await bus._drain_background(timeout=5.0)
-
     assert bus.get_background_task_count() == 0
 
 
@@ -122,7 +112,6 @@ async def test_background_task_failure_does_not_propagate() -> None:
 
     await bus._track_background(boom())
     await bus._drain_background(timeout=5.0)
-
     assert bus.get_background_task_count() == 0
 
 
@@ -137,7 +126,6 @@ async def test_drain_cancels_tasks_that_exceed_the_timeout(caplog) -> None:  # t
         await bus._drain_background(timeout=0.05)
 
     assert task.cancelled() or task.done()
-
     own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
     info_messages = [r.message for r in own_records if r.levelname == "INFO"]
     assert any("Draining 1 background task(s)" in m for m in info_messages)
@@ -151,12 +139,7 @@ async def test_drain_cancels_tasks_that_exceed_the_timeout(caplog) -> None:  # t
 async def test_drain_background_default_timeout_lets_a_20s_task_finish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression test for the 30.0s default. Calling ``_drain_background()``
-    with no explicit timeout must wait long enough for a task that takes
-    noticeably longer than mutmut's off-by-one mutant (29.0s/31.0s) would
-    still distinguish -- so instead of waiting for real time, patch
-    ``asyncio.wait`` to capture the timeout it was actually invoked with.
-    """
+    """Regression test for the 30.0s default timeout passed to asyncio.wait."""
     bus = StubBus()
     captured_timeout: list[float | None] = []
     real_wait = asyncio.wait
@@ -172,7 +155,6 @@ async def test_drain_background_default_timeout_lets_a_20s_task_finish(
 
     await bus._track_background(instant())
     await bus._drain_background()
-
     assert captured_timeout == [30.0]
 
 
@@ -191,7 +173,6 @@ async def test_drain_background_logs_and_suppresses_wait_errors(
         raise RuntimeError("distinctive wait failure")
 
     monkeypatch.setattr(asyncio, "wait", boom)
-
     with caplog.at_level("ERROR", logger="eventsource.adapters._bus.base"):
         await bus._drain_background(timeout=1.0)
 
@@ -199,8 +180,6 @@ async def test_drain_background_logs_and_suppresses_wait_errors(
     errors = [r for r in own_records if r.levelname == "ERROR"]
     assert len(errors) == 1
     assert "Error draining background tasks: distinctive wait failure" in errors[0].message
-    # exc_info must be truthy (True or a real exc_info tuple) -- `False` would
-    # also satisfy `is not None`, so check truthiness explicitly.
     assert errors[0].exc_info
 
     for task in bus._background_tasks:
@@ -215,7 +194,6 @@ def test_get_subscriber_count_is_scoped_to_the_requested_event_type() -> None:
     bus.subscribe(BaseBusEvent, _handler)
     bus.subscribe(OtherBusEvent, _handler)
     bus.subscribe(OtherBusEvent, _handler)
-
     assert bus.get_subscriber_count(BaseBusEvent) == 1
     assert bus.get_subscriber_count(OtherBusEvent) == 2
     assert bus.get_subscriber_count() == 3
@@ -239,8 +217,7 @@ async def test_on_background_task_done_logs_the_actual_task_exception(caplog) ->
 
 async def test_drain_background_waits_for_every_pending_task_not_just_the_first() -> None:
     bus = StubBus()
-    fast_done = asyncio.Event()
-    slow_done = asyncio.Event()
+    fast_done, slow_done = asyncio.Event(), asyncio.Event()
 
     async def fast() -> None:
         fast_done.set()
@@ -251,8 +228,6 @@ async def test_drain_background_waits_for_every_pending_task_not_just_the_first(
 
     await bus._track_background(fast())
     await bus._track_background(slow())
-
     await bus._drain_background(timeout=5.0)
-
     assert fast_done.is_set()
     assert slow_done.is_set()

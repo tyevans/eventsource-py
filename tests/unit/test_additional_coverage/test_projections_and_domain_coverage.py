@@ -39,14 +39,10 @@ class AnotherCoverageEvent(DomainEvent):
     value: int = 0
 
 
-# --- Projections Tests ---
-
-
 class TestProjectionAbstractMethods:
     """Tests for abstract projection methods."""
 
     def test_projection_requires_handle_implementation(self):
-        """Test that Projection requires handle implementation."""
         with pytest.raises(TypeError):
 
             class IncompleteProjection(Projection):
@@ -56,26 +52,20 @@ class TestProjectionAbstractMethods:
             IncompleteProjection()
 
     def test_sync_projection_requires_both_methods(self):
-        """Test that SyncProjection requires both methods."""
         with pytest.raises(TypeError):
 
             class IncompleteSyncProjection(SyncProjection):
                 def handle(self, event):
                     pass
 
-                # Missing reset()
-
             IncompleteSyncProjection()
 
     def test_event_handler_base_requires_methods(self):
-        """Test that EventHandlerBase requires both methods."""
         with pytest.raises(TypeError):
 
             class IncompleteHandler(EventHandlerBase):
                 def can_handle(self, event):
                     return True
-
-                # Missing handle()
 
             IncompleteHandler()
 
@@ -85,11 +75,7 @@ class TestCheckpointTrackingProjectionDLQFailure:
 
     @pytest.mark.asyncio
     async def test_dlq_write_failure_is_logged(self):
-        """Test that DLQ write failures are logged and the original exception is re-raised."""
-
-        # Create a checkpoint tracking projection
         class TestProjection(CheckpointTrackingProjection):
-            # Set MAX_RETRIES to 1 to skip retries quickly
             MAX_RETRIES = 1
 
             def subscribed_to(self):
@@ -101,22 +87,17 @@ class TestCheckpointTrackingProjectionDLQFailure:
             async def reset(self):
                 pass
 
-        # Create a failing DLQ repo
         failing_dlq = AsyncMock()
         failing_dlq.add_failed_event = AsyncMock(side_effect=Exception("DLQ write failed"))
-
         projection = TestProjection(
             checkpoint_repo=InMemoryCheckpointRepository(),
             dlq_repo=failing_dlq,
         )
-
         event = AdditionalTestEvent(aggregate_id=uuid4(), data="test")
 
-        # The original exception is re-raised after DLQ write (even if DLQ fails)
         with pytest.raises(RuntimeError, match="Processing failed"):
             await projection.handle(event)
 
-        # Verify DLQ was called (even if it failed)
         failing_dlq.add_failed_event.assert_called_once()
 
 
@@ -125,8 +106,6 @@ class TestDeclarativeProjectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_handler_with_self_only(self):
-        """Test handler that takes only self and event."""
-
         class SelfOnlyProjection(DeclarativeProjection):
             def __init__(self):
                 super().__init__()
@@ -148,15 +127,10 @@ class TestDeclarativeProjectionEdgeCases:
         assert len(proj.events) == 1
 
 
-# --- AsyncEventHandler ABC Tests ---
-
-
 class TestAsyncEventHandlerABC:
     """Tests for AsyncEventHandler abstract base class."""
 
     def test_can_handle_default_implementation(self):
-        """Test default can_handle implementation."""
-
         class MyHandler(AsyncEventHandler):
             def event_types(self):
                 return [AdditionalTestEvent]
@@ -165,41 +139,30 @@ class TestAsyncEventHandlerABC:
                 pass
 
         handler = MyHandler()
-
         test_event = AdditionalTestEvent(aggregate_id=uuid4())
         another_event = AnotherCoverageEvent(aggregate_id=uuid4())
-
         assert handler.can_handle(test_event) is True
         assert handler.can_handle(another_event) is False
-
-
-# --- Aggregate Base Tests ---
 
 
 class TestAggregateRootAbstractMethods:
     """Tests for AggregateRoot abstract methods."""
 
     def test_aggregate_root_requires_apply_implementation(self):
-        """Test that AggregateRoot requires _apply implementation."""
         with pytest.raises(TypeError):
 
             class IncompleteAggregate(AggregateRoot[dict]):
                 def _get_initial_state(self):
                     return {}
 
-                # Missing _apply()
-
             IncompleteAggregate(uuid4())
 
     def test_aggregate_root_requires_initial_state(self):
-        """Test that AggregateRoot requires _get_initial_state implementation."""
         with pytest.raises(TypeError):
 
             class IncompleteAggregate(AggregateRoot[dict]):
                 def _apply(self, event):
                     pass
-
-                # Missing _get_initial_state()
 
             IncompleteAggregate(uuid4())
 
@@ -208,8 +171,7 @@ class TestDeclarativeAggregateClass:
     """Tests for DeclarativeAggregate."""
 
     def test_declarative_aggregate_with_no_handlers(self):
-        """Test declarative aggregate with no handlers ignores events when it
-        explicitly opts down to unregistered_event_handling="ignore"."""
+        """Test declarative aggregate with no handlers ignores events when opted in."""
 
         class EmptyAggregate(DeclarativeAggregate[dict]):
             aggregate_type = "EmptyAggregate"
@@ -220,23 +182,14 @@ class TestDeclarativeAggregateClass:
 
         agg = EmptyAggregate(uuid4())
         event = AdditionalTestEvent(aggregate_id=agg.aggregate_id, data="test")
-
-        # Should not raise when applying unhandled event
         agg._apply(event)
-        # State should remain as None since no handler set it
-        # Note: state is None until first handler actually sets it
         assert agg.state is None or agg.state == {}
-
-
-# --- Protocol Compliance Tests ---
 
 
 class TestProtocolCompliance:
     """Tests for protocol compliance."""
 
     def test_event_handler_protocol_with_async_method(self):
-        """Test that async handlers satisfy EventHandler protocol."""
-
         class AsyncHandler:
             async def handle(self, event: DomainEvent) -> None:
                 pass
@@ -245,8 +198,6 @@ class TestProtocolCompliance:
         assert isinstance(handler, EventHandler)
 
     def test_event_subscriber_protocol(self):
-        """Test that projections satisfy FlexibleEventSubscriber protocol."""
-
         class MySubscriber:
             def subscribed_to(self):
                 return [AdditionalTestEvent]
