@@ -10,7 +10,7 @@ These tests verify actual database operations for checkpoint tracking including:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -23,10 +23,6 @@ from ..conftest import (
     TestItemCreated,
     skip_if_no_postgres_infra,
 )
-
-if TYPE_CHECKING:
-    pass
-
 
 pytestmark = [
     pytest.mark.integration,
@@ -55,14 +51,12 @@ class TestSQLCheckpointRepositoryBasics:
         event_id = uuid4()
         event_type = "TestItemCreated"
 
-        # Update checkpoint
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name,
             event_id=event_id,
             event_type=event_type,
         )
 
-        # Retrieve checkpoint
         result = await postgres_checkpoint_repo.get_checkpoint(projection_name)
         assert result == event_id
 
@@ -73,7 +67,6 @@ class TestSQLCheckpointRepositoryBasics:
         """Test that updating checkpoint increments event count."""
         projection_name = "CountingProjection"
 
-        # Update multiple times
         for _ in range(5):
             event_id = uuid4()
             await postgres_checkpoint_repo.update_checkpoint(
@@ -82,7 +75,6 @@ class TestSQLCheckpointRepositoryBasics:
                 event_type="TestEvent",
             )
 
-        # Get all checkpoints and verify count
         all_checkpoints = await postgres_checkpoint_repo.get_all_checkpoints()
         checkpoint = next(
             (c for c in all_checkpoints if c.projection_name == projection_name),
@@ -101,7 +93,6 @@ class TestSQLCheckpointRepositoryBasics:
         event_id_1 = uuid4()
         event_id_2 = uuid4()
 
-        # First update
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name,
             event_id=event_id_1,
@@ -111,7 +102,6 @@ class TestSQLCheckpointRepositoryBasics:
         result1 = await postgres_checkpoint_repo.get_checkpoint(projection_name)
         assert result1 == event_id_1
 
-        # Second update (should update, not insert)
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name,
             event_id=event_id_2,
@@ -121,7 +111,6 @@ class TestSQLCheckpointRepositoryBasics:
         result2 = await postgres_checkpoint_repo.get_checkpoint(projection_name)
         assert result2 == event_id_2
 
-        # Should still be only one checkpoint
         all_checkpoints = await postgres_checkpoint_repo.get_all_checkpoints()
         matching = [c for c in all_checkpoints if c.projection_name == projection_name]
         assert len(matching) == 1
@@ -138,21 +127,17 @@ class TestSQLCheckpointRepositoryReset:
         projection_name = "ResetProjection"
         event_id = uuid4()
 
-        # Create checkpoint
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name,
             event_id=event_id,
             event_type="TestEvent",
         )
 
-        # Verify it exists
         result = await postgres_checkpoint_repo.get_checkpoint(projection_name)
         assert result == event_id
 
-        # Reset checkpoint
         await postgres_checkpoint_repo.reset_checkpoint(projection_name)
 
-        # Verify it's gone
         result = await postgres_checkpoint_repo.get_checkpoint(projection_name)
         assert result is None
 
@@ -161,7 +146,6 @@ class TestSQLCheckpointRepositoryReset:
         postgres_checkpoint_repo: SQLCheckpointRepository,
     ) -> None:
         """Test resetting a checkpoint that doesn't exist (should not error)."""
-        # Should not raise
         await postgres_checkpoint_repo.reset_checkpoint("NonExistentProjection")
 
 
@@ -193,7 +177,6 @@ class TestSQLCheckpointRepositoryAllCheckpoints:
         result = await postgres_checkpoint_repo.get_all_checkpoints()
 
         assert len(result) == 3
-        # Should be sorted by name
         names = [c.projection_name for c in result]
         assert names == sorted(names)
 
@@ -262,13 +245,12 @@ class TestSQLCheckpointRepositoryLagMetrics:
     async def test_get_lag_metrics_with_event_types_filter(
         self,
         postgres_checkpoint_repo: SQLCheckpointRepository,
-        postgres_event_store,  # Need event store to create actual events
+        postgres_event_store,
         sample_aggregate_id,
     ) -> None:
         """Test getting lag metrics with event type filtering."""
         projection_name = "FilteredLagProjection"
 
-        # Create some events in the event store
         event = TestItemCreated(
             aggregate_id=sample_aggregate_id,
             aggregate_version=1,
@@ -281,21 +263,18 @@ class TestSQLCheckpointRepositoryLagMetrics:
             ExpectedVersion.no_stream(),
         )
 
-        # Update checkpoint
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name,
             event_id=event.event_id,
             event_type="TestItemCreated",
         )
 
-        # Get lag metrics with filter
         result = await postgres_checkpoint_repo.get_lag_metrics(
             projection_name,
             event_types=["TestItemCreated"],
         )
 
         assert result is not None
-        # When caught up, lag should be 0
         assert result.lag_seconds >= 0
 
     async def test_get_lag_metrics_without_event_types_uses_latest_event(
@@ -305,15 +284,7 @@ class TestSQLCheckpointRepositoryLagMetrics:
         sample_aggregate_id,
     ) -> None:
         """With no `event_types` filter, `get_lag_metrics` must find the
-        TRUE latest event -- on both dialects. SQLite already gets this
-        right (an empty/`None` `event_types` falls through to `else:
-        event_filter = ""`, i.e. no filter). PostgreSQL must agree: it must
-        NOT take the `ANY(:event_types)` branch when `event_types` is
-        empty, because `WHERE event_type = ANY('{}')` matches zero rows in
-        PostgreSQL -- silently reporting "no relevant event" (and therefore
-        no/wrong lag) for a projection that is, in reality, caught up or
-        behind by a knowable amount. This is a monitoring path: a wrong
-        answer here doesn't crash, it just lies to whoever is watching."""
+        TRUE latest event -- on both dialects."""
         projection_name = "NoFilterLagProjection"
 
         event = TestItemCreated(
@@ -334,8 +305,6 @@ class TestSQLCheckpointRepositoryLagMetrics:
             event_type="TestItemCreated",
         )
 
-        # No event_types passed -- must still find the event above as the
-        # latest relevant one, exactly as SQLite would with the same data.
         result = await postgres_checkpoint_repo.get_lag_metrics(projection_name)
 
         assert result is not None
@@ -348,11 +317,7 @@ class TestSQLCheckpointRepositoryLagMetrics:
         sample_aggregate_id,
     ) -> None:
         """A checkpoint behind a genuinely newer, different relevant event
-        must report a positive lag -- not silently clamp to 0. Exercises the
-        real PostgreSQL ANY() filter with a match, plus the raw-lag/rounding
-        arithmetic end to end against a real server."""
-        import asyncio
-
+        must report a positive lag -- not silently clamp to 0."""
         projection_name = "StaleLagProjection"
 
         stale_event = TestItemCreated(
@@ -372,8 +337,6 @@ class TestSQLCheckpointRepositoryLagMetrics:
             event_type="TestItemCreated",
         )
 
-        # A real, measurable gap between the checkpoint's last_processed_at
-        # and the newer event's timestamp.
         await asyncio.sleep(1.1)
 
         newer_event = TestItemCreated(
@@ -396,5 +359,4 @@ class TestSQLCheckpointRepositoryLagMetrics:
         assert result is not None
         assert result.last_event_id != result.latest_event_id
         assert result.latest_event_id == str(newer_event.event_id)
-        # Real, positive lag -- not clamped to 0 -- with second-level precision.
         assert result.lag_seconds >= 1.0

@@ -14,14 +14,12 @@ Advisory locks are application-level locks that:
 Usage:
     >>> lock_manager = PostgreSQLLockManager(session_factory)
     >>> async with lock_manager.acquire("migration:tenant-abc"):
-    ...     # Critical section - only one holder at a time
     ...     await perform_cutover()
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -30,6 +28,11 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.adapters.postgresql.locks_helpers import (
+    acquire_advisory_lock_session,
+    key_to_lock_id,
+    release_advisory_lock_session,
+)
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_LOCK_ACQUIRED,
@@ -37,7 +40,7 @@ from eventsource.observability.attributes import (
     ATTR_LOCK_KEY,
     ATTR_LOCK_TIMEOUT,
 )
-from eventsource.ports.exceptions import LockAcquisitionError, LockNotHeldError
+from eventsource.ports.exceptions import LockNotHeldError
 from eventsource.ports.locks import LockInfo
 
 logger = logging.getLogger(__name__)
@@ -47,31 +50,9 @@ class PostgreSQLLockManager:
     """
     Manages PostgreSQL advisory locks for distributed coordination.
 
-    Advisory locks are useful for:
-    - Coordinating cutover operations across multiple instances
-    - Preventing concurrent migrations for the same tenant
-    - Ensuring exclusive access to critical operations
-
     The lock manager maintains a separate database session for each held lock,
     which is necessary because PostgreSQL advisory locks are session-level:
     they persist until explicitly released or the session ends.
-
-    Example:
-        >>> lock_manager = PostgreSQLLockManager(session_factory)
-        >>>
-        >>> # Blocking acquisition
-        >>> async with lock_manager.acquire("cutover:tenant-123"):
-        ...     await perform_cutover()
-        >>>
-        >>> # Non-blocking with timeout
-        >>> try:
-        ...     async with lock_manager.acquire(
-        ...         "cutover:tenant-123",
-        ...         timeout=5.0,
-        ...     ):
-        ...         await perform_cutover()
-        ... except LockAcquisitionError:
-        ...     print("Another instance is performing cutover")
 
     Note:
         Each lock uses a dedicated session/connection. Consider connection pool
@@ -104,29 +85,7 @@ class PostgreSQLLockManager:
         self._held_locks: dict[str, tuple[AsyncSession, int]] = {}
         self._lock = asyncio.Lock()
 
-    @staticmethod
-    def _key_to_lock_id(key: str) -> int:
-        """
-        Convert a string key to a 64-bit lock ID.
-
-        Uses SHA-256 hash truncated to 63 bits (PostgreSQL bigint is signed).
-        The 63-bit limit ensures the result fits in a PostgreSQL bigint without
-        overflow issues.
-
-        Args:
-            key: String key to hash
-
-        Returns:
-            63-bit positive integer lock ID
-
-        Example:
-            >>> PostgreSQLLockManager._key_to_lock_id("migration:tenant-abc")
-            4526372985471823495  # Example value
-        """
-        hash_bytes = hashlib.sha256(key.encode()).digest()
-        # Use first 8 bytes, mask to 63 bits for signed bigint
-        lock_id = int.from_bytes(hash_bytes[:8], byteorder="big") & 0x7FFFFFFFFFFFFFFF
-        return lock_id
+    _key_to_lock_id = staticmethod(key_to_lock_id)
 
     @asynccontextmanager
     async def acquire(
@@ -152,10 +111,6 @@ class PostgreSQLLockManager:
 
         Raises:
             LockAcquisitionError: If lock cannot be acquired within timeout
-
-        Example:
-            >>> async with lock_manager.acquire("cutover:tenant-123", timeout=5.0):
-            ...     await perform_cutover()
         """
         lock_id = self._key_to_lock_id(key)
 
@@ -206,64 +161,14 @@ class PostgreSQLLockManager:
         timeout: float | None,
         retry_interval: float,
     ) -> AsyncSession:
-        """
-        Internal method to acquire the lock.
-
-        Args:
-            key: String key identifying the lock
-            lock_id: Numeric lock ID
-            timeout: Maximum seconds to wait (None = wait forever)
-            retry_interval: Seconds between retry attempts
-
-        Returns:
-            AsyncSession holding the lock
-
-        Raises:
-            LockAcquisitionError: If lock cannot be acquired within timeout
-        """
-        session = self._session_factory()
-
-        try:
-            if timeout is None:
-                # Blocking acquisition - wait indefinitely
-                await session.execute(
-                    text("SELECT pg_advisory_lock(:lock_id)"),
-                    {"lock_id": lock_id},
-                )
-                return session
-
-            # Non-blocking with timeout - retry until acquired or timeout
-            loop = asyncio.get_event_loop()
-            deadline = loop.time() + timeout
-
-            while True:
-                result = await session.execute(
-                    text("SELECT pg_try_advisory_lock(:lock_id)"),
-                    {"lock_id": lock_id},
-                )
-                acquired = result.scalar()
-
-                if acquired:
-                    return session
-
-                if loop.time() >= deadline:
-                    await session.close()
-                    raise LockAcquisitionError(
-                        key=key,
-                        reason=f"Timeout after {timeout}s",
-                        timeout=timeout,
-                    )
-
-                await asyncio.sleep(retry_interval)
-
-        except LockAcquisitionError:
-            raise
-        except Exception as e:
-            await session.close()
-            raise LockAcquisitionError(
-                key=key,
-                reason=f"Database error: {e}",
-            ) from e
+        """Internal method to acquire the lock."""
+        return await acquire_advisory_lock_session(
+            self._session_factory,
+            key,
+            lock_id,
+            timeout,
+            retry_interval,
+        )
 
     async def _release_lock(
         self,
@@ -271,14 +176,7 @@ class PostgreSQLLockManager:
         session: AsyncSession,
         lock_id: int,
     ) -> None:
-        """
-        Internal method to release the lock.
-
-        Args:
-            key: String key identifying the lock
-            session: Session holding the lock
-            lock_id: Numeric lock ID
-        """
+        """Internal method to release the lock."""
         with self._tracer.span(
             "eventsource.lock.release",
             {
@@ -287,21 +185,7 @@ class PostgreSQLLockManager:
             },
         ):
             try:
-                await session.execute(
-                    text("SELECT pg_advisory_unlock(:lock_id)"),
-                    {"lock_id": lock_id},
-                )
-                logger.debug(
-                    "Released advisory lock: key=%s, lock_id=%d",
-                    key,
-                    lock_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Error releasing advisory lock: key=%s, error=%s",
-                    key,
-                    e,
-                )
+                await release_advisory_lock_session(key, session, lock_id)
             finally:
                 async with self._lock:
                     self._held_locks.pop(key, None)
@@ -314,27 +198,11 @@ class PostgreSQLLockManager:
         """
         Try to acquire a lock without blocking.
 
-        This method attempts to acquire the lock immediately and returns
-        None if the lock is already held by another session.
-
         Args:
             key: String key identifying the lock
 
         Returns:
             LockInfo if acquired, None if lock is held by another session
-
-        Note:
-            Caller is responsible for calling release() when done.
-
-        Example:
-            >>> lock_info = await lock_manager.try_acquire("cutover:tenant-123")
-            >>> if lock_info:
-            ...     try:
-            ...         await perform_cutover()
-            ...     finally:
-            ...         await lock_manager.release("cutover:tenant-123")
-            ... else:
-            ...     print("Lock already held")
         """
         lock_id = self._key_to_lock_id(key)
         session = self._session_factory()
@@ -384,14 +252,6 @@ class PostgreSQLLockManager:
 
         Raises:
             LockNotHeldError: If the lock is not held by this manager
-
-        Example:
-            >>> lock_info = await lock_manager.try_acquire("cutover:tenant-123")
-            >>> if lock_info:
-            ...     try:
-            ...         await perform_cutover()
-            ...     finally:
-            ...         await lock_manager.release("cutover:tenant-123")
         """
         async with self._lock:
             if key not in self._held_locks:
@@ -401,19 +261,7 @@ class PostgreSQLLockManager:
         await self._release_lock(key, session, lock_id)
 
     async def is_held(self, key: str) -> bool:
-        """
-        Check if a lock is currently held by this manager.
-
-        Args:
-            key: String key identifying the lock
-
-        Returns:
-            True if lock is held, False otherwise
-
-        Example:
-            >>> if await lock_manager.is_held("cutover:tenant-123"):
-            ...     print("Lock is held")
-        """
+        """Check if a lock is currently held by this manager."""
         async with self._lock:
             return key in self._held_locks
 
@@ -421,14 +269,8 @@ class PostgreSQLLockManager:
         """
         Release all locks held by this manager.
 
-        Useful for cleanup on shutdown or error recovery.
-
         Returns:
             Number of locks released
-
-        Example:
-            >>> released = await lock_manager.release_all()
-            >>> print(f"Released {released} locks")
         """
         async with self._lock:
             keys = list(self._held_locks.keys())
@@ -439,7 +281,6 @@ class PostgreSQLLockManager:
                 await self.release(key)
                 released += 1
             except LockNotHeldError:
-                # Lock was already released (race condition)
                 pass
             except Exception as e:
                 logger.warning(
@@ -452,23 +293,10 @@ class PostgreSQLLockManager:
 
     @property
     def held_lock_count(self) -> int:
-        """
-        Get the number of locks currently held by this manager.
-
-        Returns:
-            Number of held locks
-
-        Note:
-            This property is not async-safe; use with caution in
-            concurrent code.
-        """
+        """Get the number of locks currently held by this manager."""
         return len(self._held_locks)
 
 
-# Alias for backwards compatibility and explicit naming
-PostgreSQLAdvisoryLock = PostgreSQLLockManager
-
 __all__ = [
-    "PostgreSQLAdvisoryLock",
     "PostgreSQLLockManager",
 ]
