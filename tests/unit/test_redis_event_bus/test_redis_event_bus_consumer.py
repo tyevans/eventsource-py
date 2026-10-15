@@ -33,8 +33,7 @@ __all__ = [
 ]
 
 
-def _order_message_data(event: SampleOrderCreated) -> dict[str, str]:
-    """Build Redis stream message payload for a SampleOrderCreated event."""
+def _order_msg(event: SampleOrderCreated) -> dict[str, str]:
     return {
         "event_id": str(event.event_id),
         "event_type": "SampleOrderCreated",
@@ -43,6 +42,12 @@ def _order_message_data(event: SampleOrderCreated) -> dict[str, str]:
         "occurred_at": datetime.now(UTC).isoformat(),
         "payload": event.model_dump_json(),
     }
+
+
+def _new_order(agg_id=None) -> SampleOrderCreated:
+    return SampleOrderCreated(
+        aggregate_id=agg_id or uuid4(), order_number="ORD-001", customer_id=uuid4()
+    )
 
 
 def _pending_entry(delivered: int = 1, idle_ms: int = 120000) -> list[dict[str, object]]:
@@ -57,17 +62,13 @@ def _pending_entry(delivered: int = 1, idle_ms: int = 120000) -> list[dict[str, 
 
 
 class TestRedisEventBusDeserialization:
-    """Tests for event deserialization."""
-
     async def test_deserialize_known_event(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        aggregate_id, customer_id = uuid4(), uuid4()
-        event = SampleOrderCreated(
-            aggregate_id=aggregate_id, order_number="ORD-001", customer_id=customer_id
-        )
-        message_data = {"event_type": "SampleOrderCreated", "payload": event.model_dump_json()}
-        result = bus._deserialize_event("SampleOrderCreated", message_data)
+        aggregate_id = uuid4()
+        event = _new_order(aggregate_id)
+        msg = {"event_type": "SampleOrderCreated", "payload": event.model_dump_json()}
+        result = bus._deserialize_event("SampleOrderCreated", msg)
         assert result is not None
         assert (result.event_type, result.order_number, result.aggregate_id) == (
             "SampleOrderCreated",
@@ -78,29 +79,24 @@ class TestRedisEventBusDeserialization:
     async def test_deserialize_unknown_event(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        message_data = {"event_type": "UnknownEvent", "payload": "{}"}
-        assert bus._deserialize_event("UnknownEvent", message_data) is None
+        msg = {"event_type": "UnknownEvent", "payload": "{}"}
+        assert bus._deserialize_event("UnknownEvent", msg) is None
 
 
 class TestRedisEventBusMessageProcessing:
-    """Tests for message processing."""
-
     async def test_process_message_success(
         self, bus: RedisEventBus, event_registry: EventRegistry, mock_redis: AsyncMock
     ) -> None:
         handler = OrderHandler()
         bus.subscribe(SampleOrderCreated, handler)
-        event = SampleOrderCreated(
-            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
-        )
-        await bus._process_message("msg-123", _order_message_data(event), "test_consumer")
+        await bus._process_message("msg-123", _order_msg(_new_order()), "test_consumer")
         assert len(handler.handled_events) == 1
         mock_redis.xack.assert_called_once()
 
     async def test_process_message_unknown_event(
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
-        message_data = {
+        msg = {
             "event_id": str(uuid4()),
             "event_type": "UnknownEvent",
             "aggregate_id": str(uuid4()),
@@ -108,36 +104,26 @@ class TestRedisEventBusMessageProcessing:
             "occurred_at": datetime.now(UTC).isoformat(),
             "payload": "{}",
         }
-        await bus._process_message("msg-123", message_data, "test_consumer")
+        await bus._process_message("msg-123", msg, "test_consumer")
         mock_redis.xack.assert_called_once()
 
     async def test_process_message_handler_failure(
         self, bus: RedisEventBus, event_registry: EventRegistry, mock_redis: AsyncMock
     ) -> None:
         bus.subscribe(SampleOrderCreated, FailingHandler())
-        event = SampleOrderCreated(
-            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
-        )
-        await bus._process_message("msg-123", _order_message_data(event), "test_consumer")
+        await bus._process_message("msg-123", _order_msg(_new_order()), "test_consumer")
         mock_redis.xack.assert_not_called()
 
 
 class TestRedisEventBusDLQ:
-    """Tests for Dead Letter Queue functionality."""
-
     async def test_send_to_dlq(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
-        message_data = {
-            "event_id": str(uuid4()),
-            "event_type": "SampleOrderCreated",
-            "payload": "{}",
-        }
-        await bus._send_to_dlq("msg-123", message_data, 3)
+        msg = {"event_id": str(uuid4()), "event_type": "SampleOrderCreated", "payload": "{}"}
+        await bus._send_to_dlq("msg-123", msg, 3)
         mock_redis.xadd.assert_called_once()
-        call_args = mock_redis.xadd.call_args
-        assert call_args.kwargs["name"] == "test_events:stream_dlq"
-        assert "original_message_id" in call_args.kwargs["fields"]
-        assert call_args.kwargs["fields"]["original_message_id"] == "msg-123"
-        assert call_args.kwargs["fields"]["retry_count"] == "3"
+        kw = mock_redis.xadd.call_args.kwargs
+        assert kw["name"] == "test_events:stream_dlq"
+        assert kw["fields"]["original_message_id"] == "msg-123"
+        assert kw["fields"]["retry_count"] == "3"
 
     async def test_get_dlq_messages(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
         mock_redis.xrange.return_value = [
@@ -145,8 +131,7 @@ class TestRedisEventBusDLQ:
             ("msg-2", {"event_type": "SampleOrderShipped", "original_message_id": "orig-2"}),
         ]
         messages = await bus.get_dlq_messages(count=10)
-        assert len(messages) == 2
-        assert (messages[0]["message_id"], messages[1]["message_id"]) == ("msg-1", "msg-2")
+        assert [m["message_id"] for m in messages] == ["msg-1", "msg-2"]
         mock_redis.xrange.assert_called_once()
 
     async def test_replay_dlq_message(self, bus: RedisEventBus, mock_redis: AsyncMock) -> None:
@@ -163,9 +148,7 @@ class TestRedisEventBusDLQ:
         mock_redis.xadd.assert_called_once()
         mock_redis.xdel.assert_called_once()
         fields = mock_redis.xadd.call_args.kwargs["fields"]
-        assert "original_message_id" not in fields
-        assert "retry_count" not in fields
-        assert "dlq_timestamp" not in fields
+        assert {"original_message_id", "retry_count", "dlq_timestamp"}.isdisjoint(fields)
 
     async def test_replay_dlq_message_not_found(
         self, bus: RedisEventBus, mock_redis: AsyncMock
@@ -175,26 +158,21 @@ class TestRedisEventBusDLQ:
 
 
 class TestRedisEventBusPendingRecovery:
-    """Tests for pending message recovery."""
-
     async def test_recover_no_pending_messages(
         self, bus: RedisEventBus, mock_redis: AsyncMock
     ) -> None:
         mock_redis.xpending.return_value = {"pending": 0}
-        stats = await bus.recover_pending_messages()
-        assert (stats["checked"], stats["claimed"], stats["reprocessed"]) == (0, 0, 0)
-        assert (stats["dlq"], stats["failed"]) == (0, 0)
+        s = await bus.recover_pending_messages()
+        assert (s["checked"], s["claimed"], s["reprocessed"]) == (0, 0, 0)
+        assert (s["dlq"], s["failed"]) == (0, 0)
 
     async def test_recover_pending_messages_success(
         self, bus: RedisEventBus, event_registry: EventRegistry, mock_redis: AsyncMock
     ) -> None:
         bus.subscribe(SampleOrderCreated, OrderHandler())
-        event = SampleOrderCreated(
-            aggregate_id=uuid4(), order_number="ORD-001", customer_id=uuid4()
-        )
         mock_redis.xpending.return_value = {"pending": 1}
         mock_redis.xpending_range.return_value = _pending_entry(delivered=1)
-        mock_redis.xclaim.return_value = [("msg-123", _order_message_data(event))]
+        mock_redis.xclaim.return_value = [("msg-123", _order_msg(_new_order()))]
         stats = await bus.recover_pending_messages(min_idle_time_ms=60000)
         assert (stats["checked"], stats["claimed"], stats["reprocessed"]) == (1, 1, 1)
 

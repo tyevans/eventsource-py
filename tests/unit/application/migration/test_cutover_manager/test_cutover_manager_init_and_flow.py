@@ -24,32 +24,25 @@ def _lag(events: int, src: int, tgt: int) -> SyncLag:
 
 class TestCutoverManagerInit:
     def test_init_with_defaults(self, mock_lock_manager, mock_router, mock_routing_repo):
-        manager = CutoverManager(
+        m = CutoverManager(
             lock_manager=mock_lock_manager, router=mock_router, routing_repo=mock_routing_repo
         )
-        assert manager._lock_manager is mock_lock_manager
-        assert manager._router is mock_router
-        assert manager._routing_repo is mock_routing_repo
-        assert manager._lock_acquisition_timeout == 0.5
-        assert manager._enable_tracing is True
+        assert (m._lock_manager, m._router, m._routing_repo) == (
+            mock_lock_manager,
+            mock_router,
+            mock_routing_repo,
+        )
+        assert (m._lock_acquisition_timeout, m._enable_tracing) == (0.5, True)
 
     def test_init_with_custom_timeout(self, mock_lock_manager, mock_router, mock_routing_repo):
-        manager = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            lock_acquisition_timeout=1.0,
+        m = CutoverManager(
+            mock_lock_manager, mock_router, mock_routing_repo, lock_acquisition_timeout=1.0
         )
-        assert manager._lock_acquisition_timeout == 1.0
+        assert m._lock_acquisition_timeout == 1.0
 
     def test_init_with_tracing_disabled(self, mock_lock_manager, mock_router, mock_routing_repo):
-        manager = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
-        )
-        assert manager._enable_tracing is False
+        m = CutoverManager(mock_lock_manager, mock_router, mock_routing_repo, enable_tracing=False)
+        assert m._enable_tracing is False
 
 
 class TestSuccessfulCutover:
@@ -65,15 +58,10 @@ class TestSuccessfulCutover:
         mock_routing_repo,
     ):
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is True
+        assert (result.success, result.rolled_back, result.error_message) == (True, False, None)
         assert result.duration_ms > 0
-        assert result.rolled_back is False
-        assert result.error_message is None
         mock_router.pause_writes.assert_called_once_with(tenant_id)
         mock_router.resume_writes.assert_called_once_with(tenant_id)
         mock_routing_repo.set_migration_state.assert_any_call(
@@ -95,10 +83,7 @@ class TestSuccessfulCutover:
 
         clear_metrics_registry()
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
         assert result.success is True
         snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
@@ -111,11 +96,7 @@ class TestSuccessfulCutover:
     ):
         mock_lag_tracker.current_lag = _lag(50, 100, 50)
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=config
         )
         assert result.success is True
 
@@ -124,11 +105,7 @@ class TestSuccessfulCutover:
         self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            timeout_ms=1000.0,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, timeout_ms=1000.0
         )
         assert result.success is True
 
@@ -147,14 +124,9 @@ class TestSuccessfulCutover:
         mock_lag_tracker.calculate_lag.side_effect = update_lag
         mock_lag_tracker.current_lag = initial_lag
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=config
         )
-        assert result.success is True
-        assert result.events_synced == 8
+        assert (result.success, result.events_synced) == (True, 8)
 
 
 class TestStrictZeroLagDefault:
@@ -171,13 +143,9 @@ class TestStrictZeroLagDefault:
     ):
         mock_lag_tracker.current_lag = _lag(1, 101, 100)
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is False
-        assert result.rolled_back is True
+        assert (result.success, result.rolled_back) == (False, True)
         mock_routing_repo.set_routing.assert_not_called()
         mock_router.resume_writes.assert_called_once_with(tenant_id)
 
@@ -207,13 +175,9 @@ class TestStrictZeroLagDefault:
             None,
         ]
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id
         )
-        assert result.success is False
-        assert result.rolled_back is True
+        assert (result.success, result.rolled_back) == (False, True)
         restored_to = [call.args[1] for call in mock_routing_repo.set_routing.call_args_list]
         assert restored_to[-1] == "source-store"
 
@@ -223,10 +187,6 @@ class TestStrictZeroLagDefault:
     ):
         mock_lag_tracker.current_lag = _lag(1, 101, 100)
         result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=mock_lag_tracker,
-            target_store_id=target_store_id,
-            config=config,
+            migration_id, tenant_id, mock_lag_tracker, target_store_id, config=config
         )
         assert result.success is True

@@ -23,6 +23,16 @@ pytestmark = [
 ]
 
 
+async def _stop_consumer(
+    bus: KafkaEventBus, task: asyncio.Task[None], timeout: float = 10.0
+) -> None:
+    await bus.stop_consuming()
+    try:
+        await asyncio.wait_for(task, timeout=timeout)
+    except TimeoutError:
+        task.cancel()
+
+
 class TestKafkaEventBusDLQ:
     """Tests for dead letter queue functionality."""
 
@@ -32,10 +42,7 @@ class TestKafkaEventBusDLQ:
         kafka_event_bus_factory: Any,
     ) -> None:
         """Test that handler exceptions trigger retry logic."""
-        bus = kafka_event_bus_factory(
-            max_retries=2,
-            retry_base_delay=0.1,
-        )
+        bus = kafka_event_bus_factory(max_retries=2, retry_base_delay=0.1)
         await bus.connect()
 
         try:
@@ -48,35 +55,20 @@ class TestKafkaEventBusDLQ:
                     raise ValueError("Simulated failure")
 
             bus.subscribe(TestItemCreated, failing_handler)
-
-            # Publish an event
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="Retry Test",
-                quantity=1,
+                aggregate_id=uuid4(), aggregate_version=1, name="Retry Test", quantity=1
             )
             await bus.publish([event])
 
-            # Start consuming (will retry and eventually succeed)
             consume_task = asyncio.create_task(bus.start_consuming())
-
-            # Wait for retries to complete
             for _ in range(100):
                 if fail_count >= 3:
                     break
                 await asyncio.sleep(0.1)
 
-            await bus.stop_consuming()
-            try:
-                await asyncio.wait_for(consume_task, timeout=10.0)
-            except TimeoutError:
-                consume_task.cancel()
-
-            # Should have retried
+            await _stop_consumer(bus, consume_task)
             assert fail_count >= 2
             assert bus.stats.handler_errors >= 2
-
         finally:
             await bus.disconnect()
 
@@ -86,11 +78,7 @@ class TestKafkaEventBusDLQ:
         kafka_event_bus_factory: Any,
     ) -> None:
         """Test that exceeding max retries sends message to DLQ."""
-        bus = kafka_event_bus_factory(
-            max_retries=1,
-            retry_base_delay=0.1,
-            enable_dlq=True,
-        )
+        bus = kafka_event_bus_factory(max_retries=1, retry_base_delay=0.1, enable_dlq=True)
         await bus.connect()
 
         try:
@@ -99,33 +87,19 @@ class TestKafkaEventBusDLQ:
                 raise RuntimeError("Always fails")
 
             bus.subscribe(TestItemCreated, always_failing_handler)
-
-            # Publish an event
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="DLQ Test",
-                quantity=1,
+                aggregate_id=uuid4(), aggregate_version=1, name="DLQ Test", quantity=1
             )
             await bus.publish([event])
 
-            # Start consuming (will fail and send to DLQ)
             consume_task = asyncio.create_task(bus.start_consuming())
-
-            # Wait for DLQ message
             for _ in range(100):
                 if bus.stats.messages_sent_to_dlq >= 1:
                     break
                 await asyncio.sleep(0.1)
 
-            await bus.stop_consuming()
-            try:
-                await asyncio.wait_for(consume_task, timeout=10.0)
-            except TimeoutError:
-                consume_task.cancel()
-
+            await _stop_consumer(bus, consume_task)
             assert bus.stats.messages_sent_to_dlq >= 1
-
         finally:
             await bus.disconnect()
 
@@ -142,32 +116,16 @@ class TestKafkaEventBusDLQ:
             raise RuntimeError("Handler error")
 
         kafka_event_bus.subscribe(TestItemCreated, failing_handler)
-
-        # Publish event
         event = TestItemCreated(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            name="Error Test",
-            quantity=1,
+            aggregate_id=uuid4(), aggregate_version=1, name="Error Test", quantity=1
         )
         await kafka_event_bus.publish([event])
 
-        # Start consuming
         consume_task = asyncio.create_task(kafka_event_bus.start_consuming())
-
-        # Wait a bit
         await asyncio.sleep(3.0)
+        await _stop_consumer(kafka_event_bus, consume_task, timeout=5.0)
 
-        await kafka_event_bus.stop_consuming()
-        try:
-            await asyncio.wait_for(consume_task, timeout=5.0)
-        except TimeoutError:
-            consume_task.cancel()
-
-        # Handler was called
         assert error_count >= 1
-
-        # Stats should show handler errors
         assert kafka_event_bus.stats.handler_errors >= 1
 
     @pytest.mark.slow
@@ -176,11 +134,7 @@ class TestKafkaEventBusDLQ:
         kafka_event_bus_factory: Any,
     ) -> None:
         """Test retrieving messages from DLQ."""
-        bus = kafka_event_bus_factory(
-            max_retries=1,
-            retry_base_delay=0.1,
-            enable_dlq=True,
-        )
+        bus = kafka_event_bus_factory(max_retries=1, retry_base_delay=0.1, enable_dlq=True)
         await bus.connect()
 
         try:
@@ -189,34 +143,20 @@ class TestKafkaEventBusDLQ:
                 raise RuntimeError("Always fails")
 
             bus.subscribe(TestItemCreated, always_failing_handler)
-
-            # Publish an event that will end up in DLQ
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="DLQ Message Test",
-                quantity=42,
+                aggregate_id=uuid4(), aggregate_version=1, name="DLQ Message Test", quantity=42
             )
             await bus.publish([event])
 
-            # Consume until message reaches DLQ
             consume_task = asyncio.create_task(bus.start_consuming())
-
             for _ in range(100):
                 if bus.stats.messages_sent_to_dlq >= 1:
                     break
                 await asyncio.sleep(0.1)
 
-            await bus.stop_consuming()
-            try:
-                await asyncio.wait_for(consume_task, timeout=10.0)
-            except TimeoutError:
-                consume_task.cancel()
-
-            # Verify message was sent to DLQ
+            await _stop_consumer(bus, consume_task)
             assert bus.stats.messages_sent_to_dlq >= 1, "Message should have been sent to DLQ"
 
-            # Retrieve DLQ messages with a timeout to prevent hanging
             try:
                 dlq_messages = await asyncio.wait_for(
                     bus.get_dlq_messages(limit=10, timeout_ms=10000),
@@ -226,9 +166,7 @@ class TestKafkaEventBusDLQ:
                 pytest.skip("DLQ message retrieval timed out - Kafka consumer startup delay")
 
             assert len(dlq_messages) >= 1
-            # Check DLQ headers exist
             assert "dlq_reason" in dlq_messages[0]["headers"]
             assert dlq_messages[0]["headers"]["dlq_reason"] == "max_retries_exceeded"
-
         finally:
             await bus.disconnect()
