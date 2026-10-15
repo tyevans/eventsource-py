@@ -1,12 +1,11 @@
-"""
-Registry for managing multiple projections and event handlers.
-"""
+"""Registry for managing multiple projections and event handlers."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Self
 
 from eventsource.application.projections.base import EventHandlerBase, Projection
 from eventsource.application.projections.coordinator_subscriber_registry import (
@@ -30,44 +29,54 @@ class ProjectionRegistry:
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
         max_concurrency: int | None = None,
+        *,
+        projections: Sequence[Projection] | None = None,
+        handlers: Sequence[EventHandlerBase] | None = None,
     ) -> None:
-        """Initialize the projection registry with optional tracing and concurrency cap."""
+        """Initialize the projection registry with optional tracing, concurrency cap, and initial items."""
         self._projections: list[Projection] = []
         self._handlers: list[EventHandlerBase] = []
-        # Composition-based tracing (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+        if projections:
+            for proj in projections:
+                self.register_projection(proj)
+        if handlers:
+            for handler in handlers:
+                self.register_handler(handler)
+
+    def register(self, *items: Projection | EventHandlerBase) -> Self:
+        """Register one or more projections or event handlers and return ``self``."""
+        for item in items:
+            if isinstance(item, Projection):
+                self.register_projection(item)
+            elif isinstance(item, EventHandlerBase):
+                self.register_handler(item)
+            else:
+                raise TypeError(
+                    f"Expected Projection or EventHandlerBase, got {type(item).__name__}"
+                )
+        return self
 
     def register_projection(self, projection: Projection) -> None:
         """Register a projection."""
         self._projections.append(projection)
-        projection_name = projection.__class__.__name__
-        logger.info(
-            "Registered projection %s",
-            projection_name,
-            extra={"projection": projection_name},
-        )
+        name = projection.__class__.__name__
+        logger.info("Registered projection %s", name, extra={"projection": name})
 
     def register_handler(self, handler: EventHandlerBase) -> None:
         """Register an event handler."""
         self._handlers.append(handler)
-        handler_name = handler.__class__.__name__
-        logger.info(
-            "Registered handler %s",
-            handler_name,
-            extra={"handler": handler_name},
-        )
+        name = handler.__class__.__name__
+        logger.info("Registered handler %s", name, extra={"handler": name})
 
     def unregister_projection(self, projection: Projection) -> bool:
         """Unregister a projection. Returns True if found and removed."""
         try:
             self._projections.remove(projection)
-            logger.info(
-                "Unregistered projection %s",
-                projection.__class__.__name__,
-                extra={"projection": projection.__class__.__name__},
-            )
+            name = projection.__class__.__name__
+            logger.info("Unregistered projection %s", name, extra={"projection": name})
             return True
         except ValueError:
             return False
@@ -76,11 +85,8 @@ class ProjectionRegistry:
         """Unregister an event handler. Returns True if found and removed."""
         try:
             self._handlers.remove(handler)
-            logger.info(
-                "Unregistered handler %s",
-                handler.__class__.__name__,
-                extra={"handler": handler.__class__.__name__},
-            )
+            name = handler.__class__.__name__
+            logger.info("Unregistered handler %s", name, extra={"handler": name})
             return True
         except ValueError:
             return False
@@ -99,7 +105,7 @@ class ProjectionRegistry:
             await self._dispatch_internal(event)
 
     async def _bounded(self, coro: Any) -> Any:
-        """Run `coro` under the fan-out semaphore, if one is configured."""
+        """Run ``coro`` under the fan-out semaphore, if one is configured."""
         if self._semaphore is None:
             return await coro
         async with self._semaphore:
@@ -107,77 +113,52 @@ class ProjectionRegistry:
 
     async def _dispatch_internal(self, event: DomainEvent) -> None:
         """Internal dispatch implementation without tracing context."""
-        # Prepare projection tasks
-        projection_tasks = []
-        for projection in self._projections:
-            projection_tasks.append(self._bounded(projection.handle(event)))
-
-        # Prepare handler tasks
-        handler_tasks = []
-        for handler in self._handlers:
-            if handler.can_handle(event):
-                handler_tasks.append(self._bounded(handler.handle(event)))
-
-        # Execute all projections and handlers concurrently, up to
-        # max_concurrency at a time if configured.
-        # return_exceptions=True prevents one failure from stopping others
+        projection_tasks = [self._bounded(p.handle(event)) for p in self._projections]
+        handler_tasks = [
+            self._bounded(h.handle(event)) for h in self._handlers if h.can_handle(event)
+        ]
         all_tasks = projection_tasks + handler_tasks
-        if all_tasks:
-            results = await asyncio.gather(*all_tasks, return_exceptions=True)
-
-            # Log any errors that occurred
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    task_type = "projection" if i < len(projection_tasks) else "handler"
-                    if i < len(projection_tasks):
-                        task_name = self._projections[i].__class__.__name__
-                    else:
-                        task_name = self._handlers[i - len(projection_tasks)].__class__.__name__
-                    logger.error(
-                        "Error in %s %s while processing %s: %s",
-                        task_type,
-                        task_name,
-                        type(event).__name__,
-                        result,
-                        exc_info=result,
-                        extra={
-                            "event_type": type(event).__name__,
-                            "event_id": str(event.event_id),
-                            "task_type": task_type,
-                            "task_name": task_name,
-                        },
-                    )
+        if not all_tasks:
+            return
+        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                is_proj = i < len(projection_tasks)
+                task_type = "projection" if is_proj else "handler"
+                target = (
+                    self._projections[i] if is_proj else self._handlers[i - len(projection_tasks)]
+                )
+                task_name = target.__class__.__name__
+                logger.error(
+                    "Error in %s %s while processing %s: %s",
+                    task_type,
+                    task_name,
+                    type(event).__name__,
+                    result,
+                    exc_info=result,
+                    extra={
+                        "event_type": type(event).__name__,
+                        "event_id": str(event.event_id),
+                        "task_type": task_type,
+                        "task_name": task_name,
+                    },
+                )
 
     async def dispatch_many(self, events: list[DomainEvent]) -> None:
-        """
-        Dispatch multiple events in order.
-
-        Events are dispatched sequentially to maintain ordering guarantees.
-        Within each event dispatch, projections run concurrently.
-
-        Args:
-            events: List of events to dispatch
-        """
+        """Dispatch multiple events sequentially to maintain ordering guarantees."""
         for event in events:
             await self.dispatch(event)
 
     async def reset_all(self) -> None:
-        """
-        Reset all registered projections.
-
-        Clears all read model data and checkpoints. Use with caution.
-        """
+        """Reset all registered projections."""
         logger.warning(
             "Resetting all projections",
             extra={"projection_count": len(self._projections)},
         )
         for projection in self._projections:
             await projection.reset()
-            logger.info(
-                "Reset projection %s",
-                projection.__class__.__name__,
-                extra={"projection": projection.__class__.__name__},
-            )
+            name = projection.__class__.__name__
+            logger.info("Reset projection %s", name, extra={"projection": name})
 
     @property
     def projections(self) -> list[Projection]:
