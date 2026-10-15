@@ -1,11 +1,4 @@
-"""
-Execution runner for graceful shutdown sequence.
-
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0002 (Single-Responsibility Modules and File Limits)
-- TASK-0008 (Decompose Monolithic Modules SubscriptionManager and Shutdown)
-"""
+"""Execution runner for graceful shutdown sequence."""
 
 from __future__ import annotations
 
@@ -46,7 +39,6 @@ def create_shutdown_result(
 ) -> ShutdownResult:
     """Create a ShutdownResult and update metrics snapshot on coordinator."""
     duration = (datetime.now(UTC) - start_time).total_seconds()
-
     if forced and error_msg and "double signal" in error_msg.lower():
         outcome = "forced"
     elif forced:
@@ -59,7 +51,6 @@ def create_shutdown_result(
         final_reason = ShutdownReason.TIMEOUT
 
     events_not_drained = max(0, coordinator._in_flight_at_start - events_drained)
-
     try:
         record_shutdown_completed(outcome, duration)
     except Exception as e:
@@ -73,7 +64,6 @@ def create_shutdown_result(
         in_flight_at_start=coordinator._in_flight_at_start,
         outcome=outcome,
     )
-
     logger.info(
         "Shutdown complete",
         extra={
@@ -90,7 +80,6 @@ def create_shutdown_result(
             "events_not_drained": events_not_drained,
         },
     )
-
     return ShutdownResult(
         phase=coordinator._phase,
         duration_seconds=duration,
@@ -123,7 +112,6 @@ async def execute_shutdown_sequence(
     coordinator._drain_start_time = 0.0
 
     stop_timeout, drain_timeout, checkpoint_timeout = coordinator._get_adjusted_timeouts()
-
     if coordinator._shutdown_deadline is not None:
         logger.info(
             "Using deadline-adjusted timeouts",
@@ -142,13 +130,11 @@ async def execute_shutdown_sequence(
 
     try:
         await coordinator._execute_pre_shutdown_hooks()
-
         coordinator._phase = ShutdownPhase.STOPPING
         logger.info(
             "Shutdown phase: stopping",
             extra={"phase": coordinator._phase.value, "timeout": stop_timeout},
         )
-
         try:
             await asyncio.wait_for(stop_func(), timeout=stop_timeout)
             subscriptions_stopped = 1
@@ -157,14 +143,12 @@ async def execute_shutdown_sequence(
             forced = True
 
         if coordinator._phase == ShutdownPhase.FORCED:
-            forced = True
-            coordinator._phase = ShutdownPhase.FORCED
             return coordinator._create_result(
                 start_time,
                 subscriptions_stopped,
                 events_drained,
                 checkpoints_saved,
-                forced,
+                True,
                 "Forced by double signal",
             )
 
@@ -179,15 +163,10 @@ async def execute_shutdown_sequence(
                     "checkpoint_interval": coordinator.checkpoint_interval,
                 },
             )
-
             if checkpoint_func and coordinator.checkpoint_interval > 0:
                 coordinator._start_periodic_checkpoints(checkpoint_func)
-
             try:
-                events_drained = await asyncio.wait_for(
-                    drain_func(),
-                    timeout=drain_timeout,
-                )
+                events_drained = await asyncio.wait_for(drain_func(), timeout=drain_timeout)
                 logger.info(
                     "Events drained successfully",
                     extra={
@@ -212,13 +191,12 @@ async def execute_shutdown_sequence(
             logger.info("Skipping drain phase due to time constraint")
 
         if coordinator._phase == ShutdownPhase.FORCED:
-            forced = True
             return coordinator._create_result(
                 start_time,
                 subscriptions_stopped,
                 events_drained,
                 checkpoints_saved,
-                forced,
+                True,
                 "Forced by double signal",
             )
 
@@ -228,15 +206,12 @@ async def execute_shutdown_sequence(
                 "Shutdown phase: saving checkpoints",
                 extra={"phase": coordinator._phase.value, "timeout": checkpoint_timeout},
             )
-
             try:
                 checkpoints_saved = await asyncio.wait_for(
-                    checkpoint_func(),
-                    timeout=checkpoint_timeout,
+                    checkpoint_func(), timeout=checkpoint_timeout
                 )
                 logger.info(
-                    "Checkpoints saved successfully",
-                    extra={"checkpoints_saved": checkpoints_saved},
+                    "Checkpoints saved successfully", extra={"checkpoints_saved": checkpoints_saved}
                 )
             except TimeoutError:
                 logger.warning("Checkpoint save timed out", extra={"timeout": checkpoint_timeout})
@@ -251,11 +226,7 @@ async def execute_shutdown_sequence(
             except Exception as e:
                 logger.error("Error closing connections", extra={"error": str(e)})
 
-        if forced:
-            coordinator._phase = ShutdownPhase.FORCED
-        else:
-            coordinator._phase = ShutdownPhase.STOPPED
-
+        coordinator._phase = ShutdownPhase.FORCED if forced else ShutdownPhase.STOPPED
     except Exception as e:
         logger.error("Shutdown error", extra={"error": str(e)}, exc_info=True)
         coordinator._phase = ShutdownPhase.FORCED
@@ -265,10 +236,8 @@ async def execute_shutdown_sequence(
     result = coordinator._create_result(
         start_time, subscriptions_stopped, events_drained, checkpoints_saved, forced, error_msg
     )
-
     try:
         await coordinator._execute_post_shutdown_hooks(result)
     except Exception as e:
         logger.error("Error executing post-shutdown hooks", extra={"error": str(e)}, exc_info=True)
-
     return result
