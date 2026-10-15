@@ -15,13 +15,7 @@ from tests.unit.application.migration.test_load_benchmarks._fixtures import _REG
 
 
 class RaisingTargetStore:
-    """
-    `FullEventStore`-shaped wrapper around `InMemoryEventStore` whose
-    `append` always raises.
-
-    Structural conformance only -- delegates the other seven members to
-    the inner store and never subclasses the legacy `EventStore` ABC.
-    """
+    """FullEventStore-shaped wrapper around InMemoryEventStore whose append always raises."""
 
     __test__ = False
 
@@ -56,29 +50,20 @@ class RaisingTargetStore:
 
 
 class InMemoryMigrationRepository:
-    """
-    In-memory migration repository for benchmarking.
-
-    This mock implementation stores migrations in memory, enabling
-    fast benchmarking without database overhead.
-    """
+    """In-memory migration repository for benchmarking."""
 
     __test__ = False
 
     def __init__(self) -> None:
-        """Initialize the repository."""
         self._migrations: dict[UUID, Migration] = {}
 
     async def create(self, migration: Migration) -> None:
-        """Create a migration."""
         self._migrations[migration.id] = migration
 
     async def get(self, migration_id: UUID) -> Migration | None:
-        """Get a migration by ID."""
         return self._migrations.get(migration_id)
 
     async def get_by_tenant(self, tenant_id: UUID) -> Migration | None:
-        """Get migration by tenant ID."""
         for m in self._migrations.values():
             if m.tenant_id == tenant_id and m.phase not in (
                 MigrationPhase.COMPLETED,
@@ -89,7 +74,6 @@ class InMemoryMigrationRepository:
         return None
 
     async def list_active(self) -> list[Migration]:
-        """List active migrations."""
         return [
             m
             for m in self._migrations.values()
@@ -102,7 +86,6 @@ class InMemoryMigrationRepository:
         ]
 
     async def set_events_total(self, migration_id: UUID, total: int) -> None:
-        """Set total events for migration."""
         migration = self._migrations.get(migration_id)
         if migration:
             migration.events_total = total
@@ -114,7 +97,6 @@ class InMemoryMigrationRepository:
         last_source_position: Position | None,
         last_target_position: Position | None = None,
     ) -> None:
-        """Update migration progress."""
         migration = self._migrations.get(migration_id)
         if migration:
             migration.events_copied = events_copied
@@ -122,13 +104,11 @@ class InMemoryMigrationRepository:
             migration.last_target_position = last_target_position
 
     async def update_phase(self, migration_id: UUID, phase: MigrationPhase) -> None:
-        """Update migration phase."""
         migration = self._migrations.get(migration_id)
         if migration:
             migration.phase = phase
 
     async def record_error(self, migration_id: UUID, error: str) -> None:
-        """Record an error."""
         migration = self._migrations.get(migration_id)
         if migration:
             migration.error_count += 1
@@ -136,36 +116,25 @@ class InMemoryMigrationRepository:
             migration.last_error_at = datetime.now(UTC)
 
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
-        """Set paused state."""
         migration = self._migrations.get(migration_id)
         if migration:
             migration.is_paused = paused
 
 
 class InMemoryPositionMappingRepository:
-    """
-    In-memory position mapping repository for benchmarking.
-
-    Stores position mappings in memory with efficient lookup structures.
-    """
+    """In-memory position mapping repository for benchmarking."""
 
     __test__ = False
 
     def __init__(self) -> None:
-        """Initialize the repository."""
         self._mappings: dict[UUID, list[PositionMapping]] = {}
         self._by_source: dict[UUID, dict[Position, PositionMapping]] = {}
         self._by_target: dict[UUID, dict[Position, PositionMapping]] = {}
         self._by_event: dict[UUID, dict[UUID, PositionMapping]] = {}
         self._id_counter = 0
-        # Counts comparisons made by the nearest-position binary search below,
-        # mirroring the production PostgreSQL repository's ordinal search
-        # (position_mapping.py). Used to assert an O(log n) bound
-        # deterministically instead of timing wall-clock latency.
         self.nearest_lookup_comparisons = 0
 
     async def create(self, mapping: PositionMapping) -> int:
-        """Create a position mapping."""
         if mapping.migration_id not in self._mappings:
             self._mappings[mapping.migration_id] = []
             self._by_source[mapping.migration_id] = {}
@@ -181,7 +150,6 @@ class InMemoryPositionMappingRepository:
         return self._id_counter
 
     async def create_batch(self, mappings: list[PositionMapping]) -> int:
-        """Create multiple position mappings."""
         count = 0
         for mapping in mappings:
             await self.create(mapping)
@@ -189,34 +157,22 @@ class InMemoryPositionMappingRepository:
         return count
 
     async def get(self, mapping_id: int) -> PositionMapping | None:
-        """Get mapping by ID - not implemented for benchmarks."""
         return None
 
     async def find_by_source_position(
         self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
-        """Find mapping by source position."""
-        source_map = self._by_source.get(migration_id, {})
-        return source_map.get(source_position)
+        return self._by_source.get(migration_id, {}).get(source_position)
 
     async def find_by_target_position(
         self, migration_id: UUID, target_position: Position
     ) -> PositionMapping | None:
-        """Find mapping by target position."""
-        target_map = self._by_target.get(migration_id, {})
-        return target_map.get(target_position)
+        return self._by_target.get(migration_id, {}).get(target_position)
 
     async def find_nearest_source_position(
         self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
-        """Find nearest mapping with source_position <= given position.
-
-        Binary search over mappings sorted by source_position, mirroring the
-        ordinal search the PostgreSQL repository performs against `id` order
-        (mappings are recorded in ascending source-position order by a single
-        writer). Each iteration counts as one comparison against
-        `nearest_lookup_comparisons` so tests can assert an O(log n) bound.
-        """
+        """Find nearest mapping with source_position <= given position via binary search."""
         mappings = sorted(self._mappings.get(migration_id, []), key=lambda m: m.source_position)
         if not mappings:
             return None
@@ -235,30 +191,24 @@ class InMemoryPositionMappingRepository:
         return best
 
     async def find_by_event_id(self, migration_id: UUID, event_id: UUID) -> PositionMapping | None:
-        """Find mapping by event ID."""
-        event_map = self._by_event.get(migration_id, {})
-        return event_map.get(event_id)
+        return self._by_event.get(migration_id, {}).get(event_id)
 
     async def list_by_migration(
         self, migration_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[PositionMapping]:
-        """List mappings for a migration."""
         mappings = self._mappings.get(migration_id, [])
         return sorted(mappings, key=lambda m: m.source_position)[offset : offset + limit]
 
     async def list_in_source_range(
         self, migration_id: UUID, start_position: Position, end_position: Position
     ) -> list[PositionMapping]:
-        """List mappings in source position range."""
         source_map = self._by_source.get(migration_id, {})
         return [m for p, m in source_map.items() if start_position <= p <= end_position]
 
     async def count_by_migration(self, migration_id: UUID) -> int:
-        """Count mappings for a migration."""
         return len(self._mappings.get(migration_id, []))
 
     async def get_position_bounds(self, migration_id: UUID) -> tuple[Position, Position] | None:
-        """Get min/max source positions."""
         source_map = self._by_source.get(migration_id, {})
         if not source_map:
             return None
@@ -266,7 +216,6 @@ class InMemoryPositionMappingRepository:
         return (min(positions), max(positions))
 
     async def delete_by_migration(self, migration_id: UUID) -> int:
-        """Delete all mappings for a migration."""
         count = len(self._mappings.get(migration_id, []))
         self._mappings.pop(migration_id, None)
         self._by_source.pop(migration_id, None)
