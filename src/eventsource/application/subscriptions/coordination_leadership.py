@@ -1,6 +1,4 @@
-"""
-Leadership handoff and work assignment primitives for subscription coordination.
-"""
+"""Leadership handoff and work assignment primitives for subscription coordination."""
 
 from __future__ import annotations
 
@@ -16,27 +14,9 @@ from eventsource.ports.exceptions import TransitionError
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Work Assignment Message
-# =============================================================================
-
-
 @dataclass(frozen=True)
 class WorkAssignment:
-    """
-    Work assignment message from leader to followers.
-
-    Used in leader-coordinated redistribution pattern where the
-    leader calculates optimal work distribution and assigns
-    subscriptions to specific instances.
-
-    Attributes:
-        target_instance_id: Instance that should handle this work
-        subscriptions: Subscriptions to be handled
-        source_instance_id: Instance the work is coming from
-        assigned_at: When the assignment was made
-        priority: Assignment priority (higher = more urgent)
-    """
+    """Work assignment message from leader to followers during coordinated redistribution."""
 
     target_instance_id: str
     subscriptions: tuple[str, ...]
@@ -69,22 +49,8 @@ class WorkAssignment:
 WorkAssignmentCallback = Callable[[WorkAssignment], Awaitable[None]]
 
 
-# =============================================================================
-# Leadership Lease Verification
-# =============================================================================
-
-
 async def verify_leadership_lease(elector: LeaderElector | None) -> bool:
-    """
-    Verify leadership lease renewal immediately prior to executing cluster operations.
-
-    Args:
-        elector: The leader elector holding the lease, or None if uncoordinated.
-
-    Returns:
-        True if uncoordinated or if lease is successfully renewed and held;
-        False if lease renewal failed or leadership is lost.
-    """
+    """Verify leadership lease renewal immediately prior to executing cluster operations."""
     if elector is None:
         return True
     try:
@@ -100,31 +66,17 @@ async def verify_leadership_lease(elector: LeaderElector | None) -> bool:
 
 
 class WorkRedistributionLeadershipMixin:
-    """
-    Mixin providing leadership lease verification and handoff for WorkRedistributionCoordinator.
-    """
+    """Mixin providing leadership lease verification and handoff for WorkRedistributionCoordinator."""
 
     async def verify_leadership_lease(self) -> bool:
-        """
-        Verify leadership lease renewal immediately prior to acting.
-
-        Returns:
-            True if leadership lease is valid and renewed, False otherwise.
-        """
+        """Verify leadership lease renewal immediately prior to acting."""
         elector: LeaderElector | None = getattr(self, "leader_elector", None)
         if elector is None:
             return False
         return await verify_leadership_lease(elector)
 
     async def initiate_leadership_handoff(self) -> bool:
-        """
-        Initiate leadership handoff if this instance is the leader.
-
-        Re-verifies leadership lease renewal before performing release.
-
-        Returns:
-            True if leadership was released, False if not leader or lease expired
-        """
+        """Initiate leadership handoff if this instance holds a valid renewed leadership lease."""
         elector: LeaderElector | None = getattr(self, "leader_elector", None)
         instance_id: str = getattr(self, "instance_id", "")
         if elector is None:
@@ -137,11 +89,7 @@ class WorkRedistributionLeadershipMixin:
             )
             return False
 
-        logger.info(
-            "Initiating leadership handoff",
-            extra={"instance_id": instance_id},
-        )
-
+        logger.info("Initiating leadership handoff", extra={"instance_id": instance_id})
         await elector.release()
         return True
 
@@ -151,23 +99,7 @@ class WorkRedistributionLeadershipMixin:
         subscriptions: list[str] | tuple[str, ...],
         priority: int = 0,
     ) -> WorkAssignment:
-        """
-        Create a work assignment for a peer instance.
-
-        Re-verifies leadership lease renewal immediately before issuing work assignment
-        to eliminate split-brain windows.
-
-        Args:
-            target_instance_id: Instance that should handle this work
-            subscriptions: Subscriptions to assign
-            priority: Assignment priority
-
-        Returns:
-            WorkAssignment ready for publishing
-
-        Raises:
-            TransitionError: If instance does not hold a valid leadership lease
-        """
+        """Create a work assignment for a peer instance after verifying leadership lease."""
         elector: LeaderElector | None = getattr(self, "leader_elector", None)
         instance_id: str = getattr(self, "instance_id", "")
         if elector is not None and not await self.verify_leadership_lease():

@@ -10,52 +10,16 @@ from uuid import UUID
 
 
 class VerificationLevel(Enum):
-    """
-    Verification thoroughness levels.
-
-    Each level provides different trade-offs between speed and thoroughness:
-
-    Attributes:
-        COUNT: Verify event counts only (fastest).
-            Checks that source and target have the same number of events
-            per aggregate stream. Does not verify content.
-
-        HASH: Verify event content via hashing (balanced).
-            Computes SHA-256 hashes of event data and compares them.
-            Good balance of speed and thoroughness.
-
-        FULL: Verify complete event data (slowest, most thorough).
-            Compares all event fields directly. Most thorough but
-            slowest for large datasets.
-    """
+    """Verification thoroughness levels (COUNT, HASH, or FULL)."""
 
     COUNT = "count"
-    """Verify event counts only (fastest)."""
-
     HASH = "hash"
-    """Verify event content via hashing (balanced)."""
-
     FULL = "full"
-    """Verify complete event data (slowest, most thorough)."""
 
 
 @dataclass(frozen=True)
 class StreamConsistency:
-    """
-    Consistency status for a single stream (aggregate).
-
-    Attributes:
-        stream_id: The stream identifier (aggregate_id:aggregate_type).
-        aggregate_id: The aggregate UUID.
-        aggregate_type: The aggregate type name.
-        source_count: Number of events in source store.
-        target_count: Number of events in target store.
-        source_version: Latest version in source store.
-        target_version: Latest version in target store.
-        is_consistent: Whether the stream is consistent.
-        hash_match: Whether content hashes match (if hash verification done).
-        mismatched_positions: List of positions with mismatches (for FULL level).
-    """
+    """Consistency status for a single aggregate stream across source and target stores."""
 
     stream_id: str
     aggregate_id: UUID
@@ -81,20 +45,7 @@ class StreamConsistency:
 
 @dataclass(frozen=True)
 class ConsistencyViolation:
-    """
-    Represents a specific consistency violation.
-
-    Provides detailed information about what inconsistency was detected
-    to help with debugging and remediation.
-
-    Attributes:
-        violation_type: Type of violation detected.
-        stream_id: Stream where violation occurred (if applicable).
-        source_value: Value in source store.
-        target_value: Value in target store.
-        position: Event position where violation occurred (if applicable).
-        details: Additional details about the violation.
-    """
+    """Represents a specific consistency violation detected during verification."""
 
     violation_type: str
     stream_id: str | None = None
@@ -119,27 +70,7 @@ class ConsistencyViolation:
 
 @dataclass(frozen=True)
 class VerificationReport:
-    """
-    Complete verification report for a tenant migration.
-
-    Provides comprehensive results of consistency verification including
-    counts, violations, and statistics for monitoring and debugging.
-
-    Attributes:
-        tenant_id: The tenant that was verified.
-        verification_level: The level of verification performed.
-        is_consistent: Whether all data is consistent.
-        source_event_count: Total events in source store.
-        target_event_count: Total events in target store.
-        streams_verified: Number of streams (aggregates) verified.
-        streams_consistent: Number of consistent streams.
-        streams_inconsistent: Number of inconsistent streams.
-        sample_percentage: Percentage of events sampled (100 for full verification).
-        violations: List of specific violations found.
-        stream_results: Detailed results per stream.
-        duration_seconds: Time taken for verification.
-        verified_at: When verification was performed.
-    """
+    """Complete consistency verification report for a tenant migration."""
 
     tenant_id: UUID
     verification_level: VerificationLevel

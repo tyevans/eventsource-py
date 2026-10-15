@@ -1,9 +1,4 @@
-"""Connection and lifecycle mixin for Redis event bus.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Connection and lifecycle mixin for Redis event bus."""
 
 from __future__ import annotations
 
@@ -12,9 +7,7 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from eventsource.adapters.redis.config import (
-    ResponseError,
-)
+from eventsource.adapters.redis.config import ResponseError
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -56,7 +49,6 @@ class RedisBusConnectionMixin:
         if self._connected:
             logger.warning("RedisEventBus already connected")
             return
-
         client = _get_aioredis()
         try:
             self._redis = await client.from_url(
@@ -70,13 +62,8 @@ class RedisBusConnectionMixin:
             if self._redis is None:
                 raise RuntimeError("Redis client not initialized")
             await self._redis.ping()
-            logger.info(
-                "Connected to Redis",
-                extra={
-                    "redis_url": self._config.redis_url,
-                    "stream": self._config.stream_name,
-                },
-            )
+            extra = {"redis_url": self._config.redis_url, "stream": self._config.stream_name}
+            logger.info("Connected to Redis", extra=extra)
             await self._ensure_consumer_group_exists()
             self._connected = True
         except Exception as e:
@@ -90,12 +77,10 @@ class RedisBusConnectionMixin:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
             self._consumer_task = None
-
         if self._redis:
             await self._redis.aclose()
             self._redis = None
-            self._connected = False
-            self._consuming = False
+            self._connected = self._consuming = False
             logger.info("Disconnected from Redis")
 
     async def _ensure_consumer_group_exists(self) -> None:
@@ -124,23 +109,18 @@ class RedisBusConnectionMixin:
         """Get Redis stream statistics and health info."""
         if not self._connected or not self._redis:
             return {"connected": False}
-
         try:
             stream_info = await self._redis.xinfo_stream(self._config.stream_name)
             groups = await self._redis.xinfo_groups(self._config.stream_name)
             pending = await self._redis.xpending(
-                self._config.stream_name,
-                self._config.consumer_group,
+                self._config.stream_name, self._config.consumer_group
             )
             try:
                 dlq_info = await self._redis.xinfo_stream(self._config.dlq_stream_name)
                 dlq_length = dlq_info.get("length", 0)
             except Exception:
                 dlq_length = 0
-
             pending_count = pending.get("pending", 0) if isinstance(pending, dict) else 0
-            total_consumers = sum(group["consumers"] for group in groups)
-
             return {
                 "connected": True,
                 "stream": {
@@ -150,16 +130,12 @@ class RedisBusConnectionMixin:
                     "last_entry_id": stream_info.get("last-entry", [None])[0],
                 },
                 "consumer_groups": [
-                    {
-                        "name": group["name"],
-                        "consumers": group["consumers"],
-                        "pending": group["pending"],
-                    }
-                    for group in groups
+                    {"name": g["name"], "consumers": g["consumers"], "pending": g["pending"]}
+                    for g in groups
                 ],
                 "pending_messages": pending_count,
                 "dlq_messages": dlq_length,
-                "active_consumers": total_consumers,
+                "active_consumers": sum(g["consumers"] for g in groups),
                 "stats": self.get_stats_dict(),
             }
         except Exception as e:
