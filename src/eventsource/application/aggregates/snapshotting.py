@@ -37,6 +37,8 @@ _MISS_COUNTER_NAME = "eventsource.snapshot.miss"
 _meter: Any = None
 _miss_counter: Any = None
 _miss_tally: Counter[str] = Counter()
+_WriteCoro = Coroutine[Any, Any, Snapshot]
+_AnyAgg = AggregateRoot[Any]
 
 
 def _get_miss_counter() -> Any:
@@ -65,9 +67,7 @@ def reset_snapshot_miss_counts() -> None:
 
 @runtime_checkable
 class SnapshotPolicy(Protocol):
-    def should_snapshot(
-        self, aggregate: AggregateRoot[Any], events_since_snapshot: int
-    ) -> bool: ...
+    def should_snapshot(self, aggregate: _AnyAgg, events_since_snapshot: int) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -78,28 +78,23 @@ class EveryNEvents:
         if self.n <= 0:
             raise ValueError(f"EveryNEvents requires n >= 1, got {self.n}")
 
-    def should_snapshot(self, aggregate: AggregateRoot[Any], events_since_snapshot: int) -> bool:
+    def should_snapshot(self, aggregate: _AnyAgg, events_since_snapshot: int) -> bool:
         prev = aggregate.version - events_since_snapshot
         return aggregate.version > 0 and aggregate.version // self.n > prev // self.n
 
 
 @dataclass(frozen=True)
 class Never:
-    def should_snapshot(self, aggregate: AggregateRoot[Any], events_since_snapshot: int) -> bool:
+    def should_snapshot(self, aggregate: _AnyAgg, events_since_snapshot: int) -> bool:
         return False
 
 
-async def take_snapshot(
-    aggregate: AggregateRoot[Any], aggregate_type: str, store: SnapshotStore
-) -> Snapshot:
+async def take_snapshot(aggregate: _AnyAgg, aggregate_type: str, store: SnapshotStore) -> Snapshot:
     schema_ver, agg_id = getattr(type(aggregate), "schema_version", 1), aggregate.aggregate_id
     state, now = aggregate._serialize_state(), datetime.now(UTC)
     snapshot = Snapshot(agg_id, aggregate_type, aggregate.version, state, schema_ver, now)
     await store.save_snapshot(snapshot)
-    ver = snapshot.version
-    logger.info(
-        f"Created snapshot for {aggregate_type}/{agg_id} at version {ver} (schema_version={schema_ver})"
-    )
+    logger.info(f"Created snapshot for {aggregate_type}/{agg_id} at v{snapshot.version}")
     return snapshot
 
 
@@ -107,28 +102,25 @@ async def read_valid_snapshot(
     store: SnapshotStore,
     aggregate_id: UUID,
     aggregate_type: str,
-    aggregate_factory: type[AggregateRoot[Any]],
+    aggregate_factory: type[_AnyAgg],
 ) -> Snapshot | None:
     target = f"{aggregate_type}/{aggregate_id}"
     try:
         snapshot = await store.get_snapshot(aggregate_id, aggregate_type)
-    except SnapshotDeserializationError as e:
-        record_snapshot_miss(SnapshotMissReason.DESERIALIZATION_ERROR, aggregate_type)
-        logger.warning(f"Corrupt snapshot for {target}: {e}.")
-        return None
     except Exception as e:
-        record_snapshot_miss(SnapshotMissReason.STORE_ERROR, aggregate_type)
-        logger.warning(f"Error loading snapshot for {target}: {e}.")
+        is_deser = isinstance(e, SnapshotDeserializationError)
+        miss = (
+            SnapshotMissReason.DESERIALIZATION_ERROR if is_deser else SnapshotMissReason.STORE_ERROR
+        )
+        record_snapshot_miss(miss, aggregate_type)
+        logger.warning(f"{'Corrupt' if is_deser else 'Error loading'} snapshot for {target}: {e}.")
         return None
     if snapshot is None:
         record_snapshot_miss(SnapshotMissReason.MISSING, aggregate_type)
         return None
-    expected = getattr(aggregate_factory, "schema_version", 1)
-    if snapshot.schema_version != expected:
+    if snapshot.schema_version != getattr(aggregate_factory, "schema_version", 1):
         record_snapshot_miss(SnapshotMissReason.SCHEMA_MISMATCH, aggregate_type)
-        logger.info(
-            f"Snapshot schema version mismatch for {target}: v{snapshot.schema_version} != v{expected}."
-        )
+        logger.info(f"Snapshot schema mismatch for {target}: v{snapshot.schema_version}")
         return None
     logger.debug(f"Loaded valid snapshot for {target} at version {snapshot.version}")
     return snapshot
@@ -137,7 +129,7 @@ async def read_valid_snapshot(
 @runtime_checkable
 class SnapshotScheduler(Protocol):
     async def schedule(
-        self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
+        self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None: ...
     @property
     def pending_count(self) -> int: ...
@@ -148,7 +140,7 @@ class ImmediateScheduler:
     pending_count = 0
 
     async def schedule(
-        self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
+        self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None:
         try:
             return await write
@@ -167,12 +159,12 @@ class BackgroundScheduler:
         self._tasks = BackgroundTaskManager()
 
     async def schedule(
-        self, write: Coroutine[Any, Any, Snapshot], *, aggregate_type: str, aggregate_id: UUID
+        self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID
     ) -> Snapshot | None:
         self._tasks.submit(self._guarded(write, f"{aggregate_type}/{aggregate_id}"))
         return None
 
-    async def _guarded(self, write: Coroutine[Any, Any, Snapshot], target: str) -> None:
+    async def _guarded(self, write: _WriteCoro, target: str) -> None:
         try:
             await write
             logger.debug(f"Background snapshot created for {target}")
@@ -187,13 +179,5 @@ class BackgroundScheduler:
         return await self._tasks.await_all()
 
 
-__all__ = [
-    "BackgroundScheduler",
-    "EveryNEvents",
-    "ImmediateScheduler",
-    "Never",
-    "SnapshotPolicy",
-    "SnapshotScheduler",
-    "read_valid_snapshot",
-    "take_snapshot",
-]
+__all__ = ["BackgroundScheduler", "EveryNEvents", "ImmediateScheduler", "Never"]
+__all__ += ["SnapshotPolicy", "SnapshotScheduler", "read_valid_snapshot", "take_snapshot"]

@@ -70,12 +70,7 @@ class BulkCopyError(MigrationError):
         retry_config=CONNECTIVITY_RETRY_CONFIG,
     )
 
-    def __init__(
-        self,
-        migration_id: UUID,
-        last_position: Position | None,
-        error: str,
-    ) -> None:
+    def __init__(self, migration_id: UUID, last_position: Position | None, error: str) -> None:
         self.last_position = last_position
         self.original_error = error
         rendered = last_position.to_str() if last_position is not None else "start"
@@ -103,11 +98,7 @@ class DualWriteError(MigrationError):
         retry_config=TRANSIENT_RETRY_CONFIG,
     )
 
-    def __init__(
-        self,
-        migration_id: UUID,
-        target_error: str,
-    ) -> None:
+    def __init__(self, migration_id: UUID, target_error: str) -> None:
         self.target_error = target_error
         super().__init__(
             message=f"Target store write failed: {target_error}",
@@ -143,11 +134,7 @@ class PositionMappingError(MigrationError):
         self.reason = reason
         if source_position is not None:
             message = f"{message} (source_position={source_position.to_str()})"
-        super().__init__(
-            message=message,
-            migration_id=migration_id,
-            recoverable=False,
-        )
+        super().__init__(message=message, migration_id=migration_id, recoverable=False)
 
 
 class CircuitBreakerOpenError(MigrationError):
@@ -163,13 +150,7 @@ class CircuitBreakerOpenError(MigrationError):
             "Wait for the timeout period before retrying. "
             "Investigate the underlying failures if this persists."
         ),
-        retry_config=RetryConfig(
-            max_attempts=3,
-            base_delay_ms=30000.0,
-            max_delay_ms=120000.0,
-            exponential_base=2.0,
-            jitter_factor=0.2,
-        ),
+        retry_config=RetryConfig(3, 30000.0, 120000.0, 2.0, 0.2),
     )
 
     def __init__(
@@ -181,9 +162,7 @@ class CircuitBreakerOpenError(MigrationError):
         self.operation_name = operation_name
         self.time_until_retry = time_until_retry
         super().__init__(
-            message=(
-                f"Circuit breaker open for '{operation_name}'. Retry after {time_until_retry:.1f}s"
-            ),
+            message=f"Circuit breaker open for '{operation_name}'. Retry after {time_until_retry:.1f}s",
             migration_id=migration_id,
             recoverable=True,
             suggested_action=f"Wait {time_until_retry:.0f}s before retrying",
