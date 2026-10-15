@@ -1,8 +1,4 @@
-"""In-process, non-persistent adapter implementing the five store ports.
-
-Suitable for testing and development only. All state lives in process
-memory and is lost on restart. Not distributed-safe.
-"""
+"""In-process, non-persistent adapter implementing the five store ports."""
 
 import bisect
 import threading
@@ -29,11 +25,7 @@ from eventsource.ports import (
 
 
 class InMemoryEventStore:
-    """In-memory implementation of `FullEventStore` (structural conformance only).
-
-    `store_id` defaults to `"memory"` for every instance; give each instance its
-    own `store_id` when testing multiple stores concurrently.
-    """
+    """In-memory implementation of `FullEventStore` (structural conformance only)."""
 
     def __init__(
         self, store_id: str = "memory", *, event_registry: EventRegistry | None = None
@@ -51,7 +43,6 @@ class InMemoryEventStore:
         return self._store_id
 
     async def close(self) -> None:
-        """No-op resource release for lifecycle parity."""
         return None
 
     async def __aenter__(self) -> "InMemoryEventStore":
@@ -61,37 +52,28 @@ class InMemoryEventStore:
         await self.close()
 
     def _position_of(self, index: int) -> Position:
-        """1-based global position for the given 0-based `_events` index."""
         return Position(store_id=self._store_id, key=(index + 1,))
 
     def _validate_position(self, position: Position) -> None:
-        """Raise `PositionForeignError` if `position` belongs to another store."""
         if position.store_id != self._store_id:
-            raise PositionForeignError(
-                f"cannot order positions from {self._store_id!r} and {position.store_id!r}"
-            )
+            msg = f"cannot order positions from {self._store_id!r} and {position.store_id!r}"
+            raise PositionForeignError(msg)
 
     async def append(
-        self,
-        stream: StreamId,
-        events: Sequence[DomainEvent],
-        expected: ExpectedVersion,
+        self, stream: StreamId, events: Sequence[DomainEvent], expected: ExpectedVersion
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
         check_registered(events, self._event_registry)
-
         with self._lock:
             key = stream.render()
             current_version = len(self._streams.get(key, ()))
             check_expected(current_version, expected, stream)
-
             seen_in_batch: set[UUID] = set()
             for event in events:
                 if event.event_id in self._event_ids or event.event_id in seen_in_batch:
-                    raise DuplicateEventError(
-                        f"event_id {event.event_id} already exists in the store"
-                    )
+                    msg = f"event_id {event.event_id} already exists in the store"
+                    raise DuplicateEventError(msg)
                 seen_in_batch.add(event.event_id)
 
             now = datetime.now(UTC)
@@ -104,18 +86,19 @@ class InMemoryEventStore:
             for event in events:
                 version += 1
                 index = len(self._events)
+                pos = self._position_of(index)
                 envelope = EventEnvelope(
                     event=event,
                     stream_id=stream,
                     stream_version=version,
-                    position=self._position_of(index),
+                    position=pos,
                     stored_at=now,
                 )
                 self._events.append(envelope)
                 self._event_ids.add(event.event_id)
                 new_indexes.append(index)
                 if first_position is None:
-                    first_position = envelope.position
+                    first_position = pos
 
             self._streams.setdefault(key, []).extend(new_indexes)
             self._categories.setdefault(stream.category, []).extend(new_indexes)
@@ -131,18 +114,15 @@ class InMemoryEventStore:
     ) -> AsyncIterator[EventEnvelope]:
         if options.limit is not None and options.limit <= 0:
             return
-
         events_snapshot = self._events
         stream_list = self._streams.get(stream.render(), ())
         total = len(stream_list)
         if not total:
             return
-
         start = max(0, options.from_version - 1) if options.from_version is not None else 0
         end = min(total, max(0, options.to_version)) if options.to_version is not None else total
         if start >= end:
             return
-
         if options.direction == ReadDirection.BACKWARD:
             if options.limit is not None:
                 start = max(start, end - options.limit)
@@ -170,13 +150,10 @@ class InMemoryEventStore:
     ) -> AsyncIterator[EventEnvelope]:
         if options.limit is not None and options.limit <= 0:
             return
-
         events_snapshot = self._events
         total = len(events_snapshot)
         if from_position is not None:
             self._validate_position(from_position)
-
-        # Filtered on stream category for parity with SQL adapters.
         if options.aggregate_type is not None:
             cat_indices: Sequence[int] = self._categories.get(options.aggregate_type, ())
             cat_total = len(cat_indices)
@@ -195,7 +172,6 @@ class InMemoryEventStore:
                 else 0
             )
             candidate_indices = range(start, total)
-
         yielded = 0
         for i in candidate_indices:
             if options.limit is not None and yielded >= options.limit:
@@ -222,24 +198,17 @@ class InMemoryEventStore:
     ) -> AsyncIterator[EventEnvelope]:
         if options.limit is not None and options.limit <= 0:
             return
-
         events_snapshot = self._events
         indices: Sequence[int] = self._categories.get(category, ())
         total = len(indices)
         if not total:
             return
-
+        ts = options.from_timestamp
         start = (
-            bisect.bisect_left(
-                indices,
-                options.from_timestamp,
-                hi=total,
-                key=lambda i: events_snapshot[i].stored_at,
-            )
-            if options.from_timestamp is not None
+            bisect.bisect_left(indices, ts, hi=total, key=lambda i: events_snapshot[i].stored_at)
+            if ts is not None
             else 0
         )
-
         yielded = 0
         for i in indices[start:total]:
             if options.limit is not None and yielded >= options.limit:
