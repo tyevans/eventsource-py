@@ -95,8 +95,8 @@ class EventBus(ABC):
            (``ATTR_EVENT_TYPE``, ``ATTR_EVENT_ID``, ``ATTR_AGGREGATE_ID``,
            ``ATTR_HANDLER_NAME``, ``ATTR_HANDLER_COUNT``, ``ATTR_HANDLER_SUCCESS``,
            ``ATTR_MESSAGING_SYSTEM``, ``ATTR_MESSAGING_DESTINATION``).
-        5. Distributed event buses (Redis, RabbitMQ, Kafka) should inject and
-           extract trace context via ``opentelemetry.propagate.inject/extract``.
+        5. Distributed event buses (Redis, RabbitMQ, Kafka) should support
+           context propagation via ``opentelemetry.propagate.inject/extract``.
 
     See Also:
         - ``eventsource.observability.Tracer`` / ``create_tracer``
