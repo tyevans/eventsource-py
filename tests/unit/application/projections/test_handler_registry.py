@@ -5,7 +5,7 @@ import pytest
 from eventsource.application.projections.handlers import HandlerRegistry
 from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
-from eventsource.domain.exceptions import HandlerSignatureError
+from eventsource.domain.exceptions import EventSourceError, HandlerSignatureError
 
 
 class TestEvent(DomainEvent):
@@ -20,6 +20,18 @@ class AnotherTestEvent(DomainEvent):
     aggregate_type: str = "TestAggregate"
 
 
+class _SingleAsyncHandler:
+    @handles(TestEvent)
+    async def _handle(self, event):
+        pass
+
+
+class _BadThreeParamAsyncHandler:
+    @handles(TestEvent)
+    async def _handle(self, a, b, c):
+        pass
+
+
 class TestHandlerSignatureError:
     """Tests for HandlerSignatureError exception class."""
 
@@ -32,7 +44,6 @@ class TestHandlerSignatureError:
             param_count=3,
             is_async_required=True,
         )
-
         assert error.handler_name == "_handle_order"
         assert error.owner_name == "OrderProjection"
         assert error.event_type is TestEvent
@@ -49,7 +60,6 @@ class TestHandlerSignatureError:
             is_async_required=True,
             reason="too many parameters",
         )
-
         assert error.reason == "too many parameters"
 
     def test_exception_message_format_async(self):
@@ -61,7 +71,6 @@ class TestHandlerSignatureError:
             param_count=3,
             is_async_required=True,
         )
-
         message = str(error)
         assert "Handler '_handle' in MyProjection has invalid signature" in message
         assert "@handles(TestEvent)" in message
@@ -80,7 +89,6 @@ class TestHandlerSignatureError:
             param_count=0,
             is_async_required=False,
         )
-
         message = str(error)
         assert "def _apply(self, event: TestEvent) -> None" in message
         assert "async def" not in message
@@ -88,13 +96,8 @@ class TestHandlerSignatureError:
 
     def test_exception_is_event_source_error(self):
         """HandlerSignatureError should be a subclass of EventSourceError."""
-        from eventsource.domain.exceptions import EventSourceError
-
         error = HandlerSignatureError(
-            handler_name="_handle",
-            owner_name="Test",
-            event_type=TestEvent,
-            param_count=5,
+            handler_name="_handle", owner_name="Test", event_type=TestEvent, param_count=5
         )
         assert isinstance(error, EventSourceError)
 
@@ -107,7 +110,7 @@ class TestHandlerSignatureValidation:
 
         class BadHandler:
             @handles(TestEvent)
-            async def _handle(self, a, b, c):  # 3 params
+            async def _handle(self, a, b, c):
                 pass
 
         with pytest.raises(HandlerSignatureError) as exc_info:
@@ -127,22 +130,21 @@ class TestHandlerSignatureValidation:
 
         class BadHandler:
             @handles(TestEvent)
-            async def _handle(self):  # 0 params
+            async def _handle(self):
                 pass
 
         with pytest.raises(HandlerSignatureError) as exc_info:
             HandlerRegistry(BadHandler(), require_async=True)
 
-        error = exc_info.value
-        assert error.param_count == 0
-        assert "Got: 0 parameter(s)" in str(error)
+        assert exc_info.value.param_count == 0
+        assert "Got: 0 parameter(s)" in str(exc_info.value)
 
     def test_sync_when_async_required_shows_helpful_message(self):
         """Sync handler when async required should show helpful error message."""
 
         class BadHandler:
             @handles(TestEvent)
-            def _handle(self, event):  # Not async
+            def _handle(self, event):
                 pass
 
         with pytest.raises(ValueError) as exc_info:
@@ -156,13 +158,7 @@ class TestHandlerSignatureValidation:
 
     def test_valid_single_param_handler_accepted(self):
         """Handler with single parameter (event) should be accepted."""
-
-        class GoodHandler:
-            @handles(TestEvent)
-            async def _handle(self, event):
-                pass
-
-        registry = HandlerRegistry(GoodHandler(), require_async=True)
+        registry = HandlerRegistry(_SingleAsyncHandler(), require_async=True)
         assert registry.has_handler(TestEvent)
         assert registry.handler_count == 1
 
@@ -197,16 +193,14 @@ class TestHandlerSignatureValidation:
 
         class BadHandler:
             @handles(TestEvent)
-            def _handle(self, a, b, c, d):  # 4 params - too many
+            def _handle(self, a, b, c, d):
                 pass
 
         with pytest.raises(HandlerSignatureError) as exc_info:
             HandlerRegistry(BadHandler(), require_async=False)
 
         message = str(exc_info.value)
-        # Should show sync def, not async def
         assert "def _handle(self, event: TestEvent) -> None" in message
-        # Should not have "async" in the examples
         assert "async def _handle" not in message
 
     def test_multiple_handlers_all_validated(self):
@@ -218,7 +212,7 @@ class TestHandlerSignatureValidation:
                 pass
 
             @handles(AnotherTestEvent)
-            async def _handle_another(self, a, b, c, d):  # Invalid
+            async def _handle_another(self, a, b, c, d):
                 pass
 
         with pytest.raises(HandlerSignatureError) as exc_info:
@@ -228,14 +222,9 @@ class TestHandlerSignatureValidation:
 
     def test_validate_on_init_can_be_disabled(self):
         """Validation can be disabled on init."""
-
-        class BadHandler:
-            @handles(TestEvent)
-            async def _handle(self, a, b, c):  # Would fail validation
-                pass
-
-        # Should not raise when validate_on_init=False
-        registry = HandlerRegistry(BadHandler(), require_async=True, validate_on_init=False)
+        registry = HandlerRegistry(
+            _BadThreeParamAsyncHandler(), require_async=True, validate_on_init=False
+        )
         assert registry.has_handler(TestEvent)
 
 
@@ -250,17 +239,10 @@ class TestHandlerSignatureErrorImport:
 
     def test_exception_can_be_caught_programmatically(self):
         """Exception should be catchable for programmatic error handling."""
-
-        class BadHandler:
-            @handles(TestEvent)
-            async def _handle(self, a, b, c):
-                pass
-
         try:
-            HandlerRegistry(BadHandler(), require_async=True)
+            HandlerRegistry(_BadThreeParamAsyncHandler(), require_async=True)
             pytest.fail("Expected HandlerSignatureError to be raised")
         except HandlerSignatureError as e:
-            # Should be able to access attributes for programmatic handling
             assert e.handler_name == "_handle"
             assert e.event_type is TestEvent
             assert e.param_count == 3
@@ -283,21 +265,13 @@ class TestHandlerRegistryBasic:
 
         registry = HandlerRegistry(Handler(), require_async=True)
         events = registry.get_subscribed_events()
-
         assert len(events) == 2
         assert TestEvent in events
         assert AnotherTestEvent in events
 
     def test_has_handler(self):
         """Should correctly report whether handler exists."""
-
-        class Handler:
-            @handles(TestEvent)
-            async def _handle(self, event):
-                pass
-
-        registry = HandlerRegistry(Handler(), require_async=True)
-
+        registry = HandlerRegistry(_SingleAsyncHandler(), require_async=True)
         assert registry.has_handler(TestEvent) is True
         assert registry.has_handler(AnotherTestEvent) is False
 
@@ -311,7 +285,6 @@ class TestHandlerRegistryBasic:
 
         registry = HandlerRegistry(Handler(), require_async=True)
         handler_info = registry.get_handler(TestEvent)
-
         assert handler_info is not None
         assert handler_info.event_type is TestEvent
         assert handler_info.handler_name == "_handle_test"
@@ -320,27 +293,17 @@ class TestHandlerRegistryBasic:
 
     def test_get_handler_returns_none_for_unregistered(self):
         """Should return None for event type without handler."""
-
-        class Handler:
-            @handles(TestEvent)
-            async def _handle(self, event):
-                pass
-
-        registry = HandlerRegistry(Handler(), require_async=True)
-
+        registry = HandlerRegistry(_SingleAsyncHandler(), require_async=True)
         assert registry.get_handler(AnotherTestEvent) is None
 
     def test_repr(self):
         """Registry should have informative repr."""
 
-        class Handler:
-            @handles(TestEvent)
-            async def _handle(self, event):
-                pass
+        class Handler(_SingleAsyncHandler):
+            pass
 
         registry = HandlerRegistry(Handler(), require_async=True)
         repr_str = repr(registry)
-
         assert "HandlerRegistry" in repr_str
         assert "Handler" in repr_str
         assert "handlers=1" in repr_str

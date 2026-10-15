@@ -1,15 +1,4 @@
-"""
-Unit tests for migration operation, consistency, and classification exceptions.
-
-Tests cover:
-- ConsistencyError
-- BulkCopyError
-- DualWriteError
-- PositionMappingError
-- CircuitBreakerOpenError
-- Exception classification
-- Exception hierarchy
-"""
+"""Unit tests for migration operation, consistency, and classification exceptions."""
 
 from uuid import uuid4
 
@@ -44,11 +33,7 @@ class TestConsistencyError:
     def test_creation_basic(self) -> None:
         """Test creating a basic ConsistencyError."""
         migration_id = uuid4()
-        error = ConsistencyError(
-            "Event counts don't match",
-            migration_id=migration_id,
-        )
-
+        error = ConsistencyError("Event counts don't match", migration_id=migration_id)
         assert error.message == "Event counts don't match"
         assert error.migration_id == migration_id
         assert error.recoverable is False
@@ -56,25 +41,15 @@ class TestConsistencyError:
 
     def test_creation_with_counts(self) -> None:
         """Test creating ConsistencyError with counts."""
-        migration_id = uuid4()
         error = ConsistencyError(
-            "Mismatch detected",
-            migration_id=migration_id,
-            source_count=1000,
-            target_count=999,
+            "Mismatch detected", migration_id=uuid4(), source_count=1000, target_count=999
         )
-
         assert error.source_count == 1000
         assert error.target_count == 999
 
     def test_creation_with_stream_id(self) -> None:
         """Test creating ConsistencyError with stream_id."""
-        error = ConsistencyError(
-            "Stream mismatch",
-            migration_id=uuid4(),
-            stream_id="user-123",
-        )
-
+        error = ConsistencyError("Stream mismatch", migration_id=uuid4(), stream_id="user-123")
         assert error.stream_id == "user-123"
 
     def test_is_subclass_of_migration_error(self) -> None:
@@ -91,11 +66,8 @@ class TestBulkCopyError:
         migration_id = uuid4()
         last_position = Position(store_id="source", key=(50000,))
         error = BulkCopyError(
-            migration_id=migration_id,
-            last_position=last_position,
-            error="Connection timeout",
+            migration_id=migration_id, last_position=last_position, error="Connection timeout"
         )
-
         assert error.migration_id == migration_id
         assert error.last_position == last_position
         assert error.original_error == "Connection timeout"
@@ -117,10 +89,8 @@ class TestDualWriteError:
         """Test creating a DualWriteError."""
         migration_id = uuid4()
         error = DualWriteError(
-            migration_id=migration_id,
-            target_error="Target database unavailable",
+            migration_id=migration_id, target_error="Target database unavailable"
         )
-
         assert error.migration_id == migration_id
         assert error.target_error == "Target database unavailable"
         assert "Target store write failed" in str(error)
@@ -140,26 +110,20 @@ class TestPositionMappingError:
     def test_creation_basic(self) -> None:
         """Test creating a basic PositionMappingError."""
         migration_id = uuid4()
-        error = PositionMappingError(
-            "Position not found in mapping",
-            migration_id=migration_id,
-        )
-
+        error = PositionMappingError("Position not found in mapping", migration_id=migration_id)
         assert error.message == "Position not found in mapping"
         assert error.migration_id == migration_id
         assert error.recoverable is False
 
     def test_creation_with_position(self) -> None:
         """Test creating PositionMappingError with source position."""
-        migration_id = uuid4()
         source_position = Position(store_id="src", key=(12345,))
         error = PositionMappingError(
             "Cannot map position",
-            migration_id=migration_id,
+            migration_id=uuid4(),
             source_position=source_position,
             reason="Position out of range",
         )
-
         assert error.source_position == source_position
         assert error.reason == "Position out of range"
 
@@ -214,22 +178,14 @@ class TestExceptionClassification:
 
     def test_migration_state_error_classification(self) -> None:
         """Test MigrationStateError classification."""
-        error = MigrationStateError(
-            "Invalid state",
-            migration_id=uuid4(),
-            current_phase=MigrationPhase.PENDING,
-        )
+        error = MigrationStateError("Invalid state", uuid4(), MigrationPhase.PENDING)
         assert error.severity == ErrorSeverity.ERROR
         assert error.recoverability_type == ErrorRecoverability.FATAL
         assert error.error_code == "MIGRATION_STATE_ERROR"
 
     def test_invalid_phase_transition_classification(self) -> None:
         """Test InvalidPhaseTransitionError classification."""
-        error = InvalidPhaseTransitionError(
-            uuid4(),
-            current_phase=MigrationPhase.PENDING,
-            target_phase=MigrationPhase.CUTOVER,
-        )
+        error = InvalidPhaseTransitionError(uuid4(), MigrationPhase.PENDING, MigrationPhase.CUTOVER)
         assert error.severity == ErrorSeverity.ERROR
         assert error.recoverability_type == ErrorRecoverability.FATAL
         assert error.error_code == "INVALID_PHASE_TRANSITION"
@@ -294,7 +250,6 @@ class TestExceptionClassification:
         """Test exception to_dict includes classification."""
         error = CutoverTimeoutError(uuid4(), elapsed_ms=150.0, timeout_ms=100.0)
         data = error.to_dict()
-
         assert "message" in data
         assert "classification" in data
         assert data["classification"]["error_code"] == "CUTOVER_TIMEOUT"
@@ -319,7 +274,6 @@ class TestExceptionHierarchy:
             DualWriteError(uuid4(), "error"),
             PositionMappingError("msg", uuid4()),
         ]
-
         for error in errors:
             with pytest.raises(MigrationError):
                 raise error
@@ -331,14 +285,11 @@ class TestExceptionHierarchy:
             CutoverTimeoutError(uuid4(), 150.0, 100.0),
             CutoverLagError(uuid4(), 500, 100),
         ]
-
         for error in cutover_errors:
             with pytest.raises(CutoverError):
                 raise error
 
-        # Non-cutover errors should not be caught
         non_cutover = BulkCopyError(uuid4(), None, "error")
         with pytest.raises(BulkCopyError):
             raise non_cutover
-        # Verify it's not a CutoverError
         assert not isinstance(non_cutover, CutoverError)
