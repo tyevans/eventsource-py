@@ -42,18 +42,29 @@ TestOrderShipped = SubTestOrderShipped
 TestOrderCancelled = SubTestOrderCancelled
 
 
-class CollectingProjection:
-    """Projection that collects events for verification."""
-
-    def __init__(self, name: str | None = None) -> None:
+class _BaseTestProjection:
+    def __init__(self) -> None:
         self.events: list[DomainEvent] = []
         self.event_count = 0
-        self.event_ids: set[str] = set()
         self._lock = asyncio.Lock()
-        self._name = name
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
         return [SubTestOrderCreated, SubTestOrderShipped, SubTestOrderCancelled]
+
+    async def _wait(self, count: int, timeout: float, interval: float) -> bool:
+        start = datetime.now(UTC)
+        while self.event_count < count:
+            if (datetime.now(UTC) - start).total_seconds() > timeout:
+                return False
+            await asyncio.sleep(interval)
+        return True
+
+
+class CollectingProjection(_BaseTestProjection):
+    def __init__(self, name: str | None = None) -> None:
+        super().__init__()
+        self.event_ids: set[str] = set()
+        self._name = name
 
     async def handle(self, event: DomainEvent) -> None:
         async with self._lock:
@@ -64,12 +75,7 @@ class CollectingProjection:
                 self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 5.0) -> bool:
-        start = datetime.now(UTC)
-        while self.event_count < count:
-            if (datetime.now(UTC) - start).total_seconds() > timeout:
-                return False
-            await asyncio.sleep(0.05)
-        return True
+        return await self._wait(count, timeout, 0.05)
 
     def get_event_at_position(self, position: int) -> DomainEvent | None:
         return self.events[position] if 0 <= position < len(self.events) else None
@@ -78,18 +84,11 @@ class CollectingProjection:
         return len(self.events) != len(self.event_ids)
 
 
-class FailingProjection:
-    """Projection that fails on specified event types."""
-
+class FailingProjection(_BaseTestProjection):
     def __init__(self, fail_on_event_types: set[str] | None = None) -> None:
-        self.events: list[DomainEvent] = []
-        self.event_count = 0
+        super().__init__()
         self.failures: list[tuple[DomainEvent, Exception]] = []
         self.fail_on_event_types = fail_on_event_types or set()
-        self._lock = asyncio.Lock()
-
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        return [SubTestOrderCreated, SubTestOrderShipped, SubTestOrderCancelled]
 
     async def handle(self, event: DomainEvent) -> None:
         async with self._lock:
@@ -101,17 +100,10 @@ class FailingProjection:
             self.event_count += 1
 
 
-class SlowProjection:
-    """Projection that processes events slowly."""
-
+class SlowProjection(_BaseTestProjection):
     def __init__(self, delay: float = 0.1) -> None:
-        self.events: list[DomainEvent] = []
-        self.event_count = 0
+        super().__init__()
         self.delay = delay
-        self._lock = asyncio.Lock()
-
-    def subscribed_to(self) -> list[type[DomainEvent]]:
-        return [SubTestOrderCreated, SubTestOrderShipped, SubTestOrderCancelled]
 
     async def handle(self, event: DomainEvent) -> None:
         await asyncio.sleep(self.delay)
@@ -120,12 +112,7 @@ class SlowProjection:
             self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 10.0) -> bool:
-        start = datetime.now(UTC)
-        while self.event_count < count:
-            if (datetime.now(UTC) - start).total_seconds() > timeout:
-                return False
-            await asyncio.sleep(0.1)
-        return True
+        return await self._wait(count, timeout, 0.1)
 
 
 @pytest_asyncio.fixture
@@ -151,14 +138,10 @@ async def subscription_manager(
     in_memory_event_bus: InMemoryEventBus,
     in_memory_checkpoint_repo: InMemoryCheckpointRepository,
 ) -> AsyncGenerator[SubscriptionManager]:
-    manager = SubscriptionManager(
-        event_store=in_memory_event_store,
-        event_bus=in_memory_event_bus,
-        checkpoint_repo=in_memory_checkpoint_repo,
-    )
-    yield manager
-    if manager.is_running:
-        await manager.stop()
+    mgr = SubscriptionManager(in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo)
+    yield mgr
+    if mgr.is_running:
+        await mgr.stop()
 
 
 @pytest.fixture
@@ -167,38 +150,36 @@ def collecting_projection() -> CollectingProjection:
 
 
 async def _append_event(store: InMemoryEventStore, event: DomainEvent) -> DomainEvent:
-    stream_id = StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder")
-    await store.append(stream_id, [event], ExpectedVersion.no_stream())
+    await store.append(
+        StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
+        [event],
+        ExpectedVersion.no_stream(),
+    )
     return event
 
 
 async def populate_event_store(
     store: InMemoryEventStore, count: int, start_index: int = 0
 ) -> list[DomainEvent]:
-    events = []
+    events: list[DomainEvent] = []
     for i in range(count):
-        event = SubTestOrderCreated(
+        ev = SubTestOrderCreated(
             aggregate_id=uuid4(), order_number=f"ORD-{start_index + i:05d}", amount=100.0 + i
         )
-        events.append(await _append_event(store, event))
+        events.append(await _append_event(store, ev))
     return events
 
 
 async def populate_event_store_with_types(
     store: InMemoryEventStore, created_count: int, shipped_count: int, cancelled_count: int = 0
 ) -> list[DomainEvent]:
-    events: list[DomainEvent] = []
-    for i in range(created_count):
-        event = SubTestOrderCreated(
-            aggregate_id=uuid4(), order_number=f"ORD-{len(events):05d}", amount=100.0 + i
-        )
-        events.append(await _append_event(store, event))
-    for _i in range(shipped_count):
-        event = SubTestOrderShipped(aggregate_id=uuid4(), tracking_number=f"TRK-{len(events):05d}")
-        events.append(await _append_event(store, event))
-    for _i in range(cancelled_count):
-        event = SubTestOrderCancelled(aggregate_id=uuid4(), reason=f"Reason {len(events)}")
-        events.append(await _append_event(store, event))
+    events = await populate_event_store(store, created_count)
+    for _ in range(shipped_count):
+        ev = SubTestOrderShipped(aggregate_id=uuid4(), tracking_number=f"TRK-{len(events):05d}")
+        events.append(await _append_event(store, ev))
+    for _ in range(cancelled_count):
+        ev = SubTestOrderCancelled(aggregate_id=uuid4(), reason=f"Reason {len(events)}")
+        events.append(await _append_event(store, ev))
     return events
 
 

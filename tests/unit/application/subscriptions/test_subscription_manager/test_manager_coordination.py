@@ -22,27 +22,23 @@ from tests.unit.application.subscriptions.test_subscription_manager._fixtures im
 
 
 class TestMultipleSubscriptionsConcurrent:
-    """Tests for concurrent multiple subscription handling (PHASE3-002)."""
-
     @pytest.mark.asyncio
     async def test_concurrent_start_all_subscriptions(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 10)
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-        third_projection = MockSubscriber()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
-        await manager.subscribe(third_projection, name="ThirdProjection")
+        order_proj = OrderProjection()
+        customer_proj = CustomerProjection()
+        third_proj = MockSubscriber()
+        await manager.subscribe(order_proj)
+        await manager.subscribe(customer_proj)
+        await manager.subscribe(third_proj, name="ThirdProjection")
 
         results = await manager.start()
-        assert len(results) == 3
-        assert all(v is None for v in results.values())
-        assert len(order_projection.handled_events) == 10
-        assert len(customer_projection.handled_events) == 10
-        assert len(third_projection.handled_events) == 10
+        assert len(results) == 3 and all(v is None for v in results.values())
+        assert len(order_proj.handled_events) == 10
+        assert len(customer_proj.handled_events) == 10
+        assert len(third_proj.handled_events) == 10
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -50,17 +46,11 @@ class TestMultipleSubscriptionsConcurrent:
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
+        await manager.subscribe(OrderProjection())
+        await manager.subscribe(CustomerProjection())
 
         results = await manager.start()
-        assert "OrderProjection" in results
-        assert "CustomerProjection" in results
-        assert results["OrderProjection"] is None
-        assert results["CustomerProjection"] is None
+        assert results["OrderProjection"] is None and results["CustomerProjection"] is None
         await manager.stop()
 
     @pytest.mark.asyncio
@@ -68,23 +58,17 @@ class TestMultipleSubscriptionsConcurrent:
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
         await add_events_to_store(event_store, 5)
-        order_projection = OrderProjection()
-        customer_projection = CustomerProjection()
-
-        await manager.subscribe(order_projection)
-        await manager.subscribe(customer_projection)
+        order_proj, customer_proj = OrderProjection(), CustomerProjection()
+        await manager.subscribe(order_proj)
+        await manager.subscribe(customer_proj)
 
         results = await manager.start(concurrent=False)
-        assert len(results) == 2
-        assert all(v is None for v in results.values())
-        assert len(order_projection.handled_events) == 5
-        assert len(customer_projection.handled_events) == 5
+        assert len(results) == 2 and all(v is None for v in results.values())
+        assert len(order_proj.handled_events) == 5 and len(customer_proj.handled_events) == 5
         await manager.stop()
 
 
 class TestMultipleSubscriptionsLifecycle:
-    """Tests for subscription lifecycle with multiple subscriptions."""
-
     @pytest.mark.asyncio
     async def test_stop_stops_all_subscriptions(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
@@ -97,8 +81,7 @@ class TestMultipleSubscriptionsLifecycle:
         await manager.start()
         await manager.stop()
 
-        statuses = manager.get_all_statuses()
-        for name, status in statuses.items():
+        for name, status in manager.get_all_statuses().items():
             assert status.state == "stopped", f"{name} should be stopped"
 
     @pytest.mark.asyncio
@@ -113,8 +96,7 @@ class TestMultipleSubscriptionsLifecycle:
         await manager.unsubscribe("OrderProjection")
 
         assert manager.is_running is True
-        customer_sub = manager.get_subscription("CustomerProjection")
-        assert customer_sub.state == SubscriptionState.LIVE
+        assert manager.get_subscription("CustomerProjection").state == SubscriptionState.LIVE
         assert manager.get_subscription("OrderProjection") is None
         await manager.stop()
 
@@ -130,16 +112,12 @@ class TestMultipleSubscriptionsLifecycle:
         await manager.subscribe(CustomerProjection())
         await manager.start()
 
-        order_checkpoint = await checkpoint_repo.get_position("OrderProjection")
-        customer_checkpoint = await checkpoint_repo.get_position("CustomerProjection")
-        assert order_checkpoint is not None
-        assert customer_checkpoint is not None
+        assert await checkpoint_repo.get_position("OrderProjection") is not None
+        assert await checkpoint_repo.get_position("CustomerProjection") is not None
         await manager.stop()
 
 
 class TestConcurrentStartPerformance:
-    """Tests for concurrent start performance characteristics."""
-
     @pytest.mark.asyncio
     async def test_concurrent_start_is_faster_than_sequential(
         self,
@@ -172,16 +150,12 @@ class TestConcurrentStartPerformance:
         await add_events_to_store(event_store, 5)
         await manager.subscribe(MockSubscriber())
 
-        results1 = await manager.start()
-        assert len(results1) == 1
-        results2 = await manager.start()
-        assert results2 == {}
+        assert len(await manager.start()) == 1
+        assert await manager.start() == {}
         await manager.stop()
 
 
 class TestLiveEvents:
-    """Tests for live event processing after transition."""
-
     @pytest.mark.asyncio
     async def test_receives_live_events_after_start(
         self,
@@ -193,7 +167,6 @@ class TestLiveEvents:
         subscriber = MockSubscriber()
         await manager.subscribe(subscriber)
         await manager.start()
-
         assert len(subscriber.handled_events) == 5
 
         live_event = ManagerTestEvent(aggregate_id=uuid4(), data="live_event")

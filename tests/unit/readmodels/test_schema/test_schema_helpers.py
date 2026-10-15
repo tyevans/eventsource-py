@@ -13,6 +13,7 @@ from eventsource.adapters.sql.readmodel_schema import (
     _get_custom_sql_type,
     _is_optional,
     generate_full_schema,
+    generate_indexes,
     generate_schema,
 )
 from eventsource.ports.readmodels.model import ReadModel
@@ -22,67 +23,57 @@ from tests.unit.readmodels.test_schema._fixtures import (
     SimpleModel,
 )
 
+_EXPECTED_TYPES = (UUID, str, int, float, Decimal, bool, datetime, date, dict, list, bytes)
+
 
 class TestTypeMaps:
     def test_postgresql_type_map_has_expected_types(self) -> None:
-        assert UUID in POSTGRESQL_TYPE_MAP
-        assert str in POSTGRESQL_TYPE_MAP
-        assert int in POSTGRESQL_TYPE_MAP
-        assert float in POSTGRESQL_TYPE_MAP
-        assert Decimal in POSTGRESQL_TYPE_MAP
-        assert bool in POSTGRESQL_TYPE_MAP
-        assert datetime in POSTGRESQL_TYPE_MAP
-        assert date in POSTGRESQL_TYPE_MAP
-        assert dict in POSTGRESQL_TYPE_MAP
-        assert list in POSTGRESQL_TYPE_MAP
-        assert bytes in POSTGRESQL_TYPE_MAP
+        for t in _EXPECTED_TYPES:
+            assert t in POSTGRESQL_TYPE_MAP
 
     def test_sqlite_type_map_has_expected_types(self) -> None:
-        assert UUID in SQLITE_TYPE_MAP
-        assert str in SQLITE_TYPE_MAP
-        assert int in SQLITE_TYPE_MAP
-        assert float in SQLITE_TYPE_MAP
-        assert Decimal in SQLITE_TYPE_MAP
-        assert bool in SQLITE_TYPE_MAP
-        assert datetime in SQLITE_TYPE_MAP
-        assert date in SQLITE_TYPE_MAP
-        assert dict in SQLITE_TYPE_MAP
-        assert list in SQLITE_TYPE_MAP
-        assert bytes in SQLITE_TYPE_MAP
+        for t in _EXPECTED_TYPES:
+            assert t in SQLITE_TYPE_MAP
 
     def test_postgresql_uses_appropriate_types(self) -> None:
-        assert POSTGRESQL_TYPE_MAP[UUID] == "UUID"
-        assert POSTGRESQL_TYPE_MAP[str] == "VARCHAR(255)"
-        assert POSTGRESQL_TYPE_MAP[int] == "INTEGER"
-        assert POSTGRESQL_TYPE_MAP[float] == "DOUBLE PRECISION"
-        assert POSTGRESQL_TYPE_MAP[Decimal] == "DECIMAL(18, 6)"
-        assert POSTGRESQL_TYPE_MAP[bool] == "BOOLEAN"
-        assert POSTGRESQL_TYPE_MAP[datetime] == "TIMESTAMP WITH TIME ZONE"
-        assert POSTGRESQL_TYPE_MAP[date] == "DATE"
-        assert POSTGRESQL_TYPE_MAP[dict] == "JSONB"
-        assert POSTGRESQL_TYPE_MAP[list] == "JSONB"
-        assert POSTGRESQL_TYPE_MAP[bytes] == "BYTEA"
+        expected = {
+            UUID: "UUID",
+            str: "VARCHAR(255)",
+            int: "INTEGER",
+            float: "DOUBLE PRECISION",
+            Decimal: "DECIMAL(18, 6)",
+            bool: "BOOLEAN",
+            datetime: "TIMESTAMP WITH TIME ZONE",
+            date: "DATE",
+            dict: "JSONB",
+            list: "JSONB",
+            bytes: "BYTEA",
+        }
+        for k, v in expected.items():
+            assert POSTGRESQL_TYPE_MAP[k] == v
 
     def test_sqlite_uses_appropriate_types(self) -> None:
-        assert SQLITE_TYPE_MAP[UUID] == "TEXT"
-        assert SQLITE_TYPE_MAP[str] == "TEXT"
-        assert SQLITE_TYPE_MAP[int] == "INTEGER"
-        assert SQLITE_TYPE_MAP[float] == "REAL"
-        assert SQLITE_TYPE_MAP[Decimal] == "REAL"
-        assert SQLITE_TYPE_MAP[bool] == "INTEGER"
-        assert SQLITE_TYPE_MAP[datetime] == "TEXT"
-        assert SQLITE_TYPE_MAP[date] == "TEXT"
-        assert SQLITE_TYPE_MAP[dict] == "TEXT"
-        assert SQLITE_TYPE_MAP[list] == "TEXT"
-        assert SQLITE_TYPE_MAP[bytes] == "BLOB"
+        expected = {
+            UUID: "TEXT",
+            str: "TEXT",
+            int: "INTEGER",
+            float: "REAL",
+            Decimal: "REAL",
+            bool: "INTEGER",
+            datetime: "TEXT",
+            date: "TEXT",
+            dict: "TEXT",
+            list: "TEXT",
+            bytes: "BLOB",
+        }
+        for k, v in expected.items():
+            assert SQLITE_TYPE_MAP[k] == v
 
 
 class TestExtractType:
     def test_simple_types(self) -> None:
-        assert _extract_type(str) is str
-        assert _extract_type(int) is int
-        assert _extract_type(float) is float
-        assert _extract_type(bool) is bool
+        for t in (str, int, float, bool):
+            assert _extract_type(t) is t
 
     def test_optional_type(self) -> None:
         assert _extract_type(str | None) is str
@@ -149,8 +140,7 @@ class TestFormatDefault:
 
 class TestGetCustomSqlType:
     def test_no_custom_type(self) -> None:
-        field_info = SimpleModel.model_fields["name"]
-        assert _get_custom_sql_type(field_info, "postgresql") is None
+        assert _get_custom_sql_type(SimpleModel.model_fields["name"], "postgresql") is None
 
     def test_dialect_specific_type(self) -> None:
         field_info = ModelWithCustomSqlType.model_fields["description"]
@@ -167,31 +157,17 @@ class TestIntegration:
     def test_generated_sql_is_valid_structure(self) -> None:
         sql = generate_full_schema(ComplexModel, dialect="postgresql")
         assert sql.count("(") == sql.count(")")
-        assert sql.count("CREATE TABLE") == 1
-        assert sql.count("CREATE INDEX") >= 1
+        assert sql.count("CREATE TABLE") == 1 and sql.count("CREATE INDEX") >= 1
 
     def test_all_base_fields_present(self) -> None:
         sql = generate_schema(SimpleModel, dialect="postgresql")
-        assert "id " in sql
-        assert "created_at " in sql
-        assert "updated_at " in sql
-        assert "version " in sql
-        assert "deleted_at " in sql
+        for col in ("id ", "created_at ", "updated_at ", "version ", "deleted_at "):
+            assert col in sql
 
     def test_module_exports(self) -> None:
-        from eventsource.adapters.sql.readmodel_schema import (
-            POSTGRESQL_TYPE_MAP,
-            SQLITE_TYPE_MAP,
-            generate_full_schema,
-            generate_indexes,
-            generate_schema,
-        )
-
-        assert callable(generate_schema)
-        assert callable(generate_indexes)
+        assert callable(generate_schema) and callable(generate_indexes)
         assert callable(generate_full_schema)
-        assert isinstance(POSTGRESQL_TYPE_MAP, dict)
-        assert isinstance(SQLITE_TYPE_MAP, dict)
+        assert isinstance(POSTGRESQL_TYPE_MAP, dict) and isinstance(SQLITE_TYPE_MAP, dict)
 
     def test_schema_can_be_used_for_test_setup(self) -> None:
         class TestOrderView(ReadModel):
@@ -204,7 +180,5 @@ class TestIntegration:
 
         pg_sql = generate_full_schema(TestOrderView, dialect="postgresql")
         sqlite_sql = generate_full_schema(TestOrderView, dialect="sqlite")
-        assert len(pg_sql) > 100
-        assert len(sqlite_sql) > 100
-        assert "CREATE TABLE" in pg_sql
-        assert "CREATE TABLE" in sqlite_sql
+        assert len(pg_sql) > 100 and len(sqlite_sql) > 100
+        assert "CREATE TABLE" in pg_sql and "CREATE TABLE" in sqlite_sql

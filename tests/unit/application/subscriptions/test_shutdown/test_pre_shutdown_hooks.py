@@ -27,9 +27,16 @@ async def _slow_hook() -> None:
     await asyncio.sleep(10.0)
 
 
-class TestPreShutdownHooks:
-    """Tests for pre-shutdown hook functionality."""
+def _make_timed_hook(sink: list, value, delay: float = 0.0):
+    async def _hook():
+        if delay:
+            await asyncio.sleep(delay)
+        sink.append(value)
 
+    return _hook
+
+
+class TestPreShutdownHooks:
     def test_register_hook(self):
         coordinator = ShutdownCoordinator()
         coordinator.on_pre_shutdown(_noop_hook, timeout=5.0)
@@ -58,50 +65,29 @@ class TestPreShutdownHooks:
     def test_register_multiple_hooks(self):
         coordinator = ShutdownCoordinator()
         h1, h2, h3 = AsyncMock(), AsyncMock(), AsyncMock()
-        coordinator.on_pre_shutdown(h1, timeout=5.0)
-        coordinator.on_pre_shutdown(h2, timeout=10.0)
-        coordinator.on_pre_shutdown(h3, timeout=2.0)
+        for h, t in ((h1, 5.0), (h2, 10.0), (h3, 2.0)):
+            coordinator.on_pre_shutdown(h, timeout=t)
         assert coordinator._pre_shutdown_hooks == [(h1, 5.0), (h2, 10.0), (h3, 2.0)]
 
     @pytest.mark.asyncio
     async def test_hooks_execute_in_order(self):
-        coordinator = ShutdownCoordinator()
-        order: list[int] = []
-
-        async def h1():
-            order.append(1)
-
-        async def h2():
-            order.append(2)
-
-        async def h3():
-            order.append(3)
-
-        for h in (h1, h2, h3):
-            coordinator.on_pre_shutdown(h)
+        coordinator, order = ShutdownCoordinator(), []
+        for idx in (1, 2, 3):
+            coordinator.on_pre_shutdown(_make_timed_hook(order, idx))
         await coordinator._execute_pre_shutdown_hooks()
         assert order == [1, 2, 3]
 
     @pytest.mark.asyncio
     async def test_hook_timeout(self):
-        coordinator = ShutdownCoordinator()
-        completed = False
-
-        async def slow():
-            nonlocal completed
-            await asyncio.sleep(10.0)
-            completed = True
-
-        coordinator.on_pre_shutdown(slow, timeout=0.1)
+        coordinator, completed = ShutdownCoordinator(), []
+        coordinator.on_pre_shutdown(_make_timed_hook(completed, True, 10.0), timeout=0.1)
         start = asyncio.get_event_loop().time()
         await coordinator._execute_pre_shutdown_hooks()
-        assert not completed
-        assert asyncio.get_event_loop().time() - start < 0.5
+        assert not completed and asyncio.get_event_loop().time() - start < 0.5
 
     @pytest.mark.asyncio
     async def test_hook_exception_continues_execution(self):
-        coordinator = ShutdownCoordinator()
-        success = AsyncMock()
+        coordinator, success = ShutdownCoordinator(), AsyncMock()
         coordinator.on_pre_shutdown(_failing_hook)
         coordinator.on_pre_shutdown(success)
         await coordinator._execute_pre_shutdown_hooks()
@@ -109,16 +95,14 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_execute_before_stopping_phase(self):
-        coordinator = ShutdownCoordinator()
-        phase_at_hook = None
+        coordinator, phases = ShutdownCoordinator(), []
 
         async def capture_phase():
-            nonlocal phase_at_hook
-            phase_at_hook = coordinator.phase
+            phases.append(coordinator.phase)
 
         coordinator.on_pre_shutdown(capture_phase)
         await coordinator.shutdown(stop_func=_noop_hook)
-        assert phase_at_hook == ShutdownPhase.RUNNING
+        assert phases == [ShutdownPhase.RUNNING]
 
     def test_reset_clears_hooks(self):
         coordinator = ShutdownCoordinator()
@@ -133,16 +117,14 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_run_during_shutdown_sequence(self):
-        coordinator = ShutdownCoordinator()
-        pre_hook = AsyncMock()
+        coordinator, pre_hook = ShutdownCoordinator(), AsyncMock()
         coordinator.on_pre_shutdown(pre_hook)
         await coordinator.shutdown(stop_func=_noop_hook)
         pre_hook.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hook_failure_does_not_prevent_shutdown(self):
-        coordinator = ShutdownCoordinator()
-        stop_func = AsyncMock()
+        coordinator, stop_func = ShutdownCoordinator(), AsyncMock()
         coordinator.on_pre_shutdown(_failing_hook)
         result = await coordinator.shutdown(stop_func=stop_func)
         stop_func.assert_awaited_once()
@@ -150,8 +132,7 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hook_timeout_does_not_prevent_shutdown(self):
-        coordinator = ShutdownCoordinator()
-        stop_func = AsyncMock()
+        coordinator, stop_func = ShutdownCoordinator(), AsyncMock()
         coordinator.on_pre_shutdown(_slow_hook, timeout=0.1)
         result = await coordinator.shutdown(stop_func=stop_func)
         stop_func.assert_awaited_once()
@@ -159,30 +140,16 @@ class TestPreShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_multiple_hooks_with_different_timeouts(self):
-        coordinator = ShutdownCoordinator()
-        results: list[str] = []
-
-        async def fast_hook():
-            results.append("fast")
-
-        async def slow_hook():
-            await asyncio.sleep(10.0)
-            results.append("slow")
-
-        async def medium_hook():
-            await asyncio.sleep(0.05)
-            results.append("medium")
-
-        coordinator.on_pre_shutdown(fast_hook, timeout=1.0)
-        coordinator.on_pre_shutdown(slow_hook, timeout=0.1)
-        coordinator.on_pre_shutdown(medium_hook, timeout=1.0)
+        coordinator, results = ShutdownCoordinator(), []
+        specs = (("fast", 0.0, 1.0), ("slow", 10.0, 0.1), ("medium", 0.05, 1.0))
+        for label, delay, timeout in specs:
+            coordinator.on_pre_shutdown(_make_timed_hook(results, label, delay), timeout=timeout)
         await coordinator._execute_pre_shutdown_hooks()
         assert results == ["fast", "medium"]
 
     @pytest.mark.asyncio
     async def test_hooks_execute_before_drain_and_checkpoint(self):
-        coordinator = ShutdownCoordinator()
-        times: dict[str, float] = {}
+        coordinator, times = ShutdownCoordinator(), {}
 
         async def pre_hook():
             times["hook"] = asyncio.get_event_loop().time()

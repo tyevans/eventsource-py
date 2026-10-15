@@ -23,10 +23,42 @@ from tests.unit.application.migration.test_phase2_integration._mocks import Flak
 if TYPE_CHECKING:
     from eventsource.adapters.memory import InMemoryEventStore
     from eventsource.application.migration.router import TenantStoreRouter
+    from eventsource.ports.positions import Position
     from tests.unit.application.migration.test_phase2_integration._mocks import MockLockManager
     from tests.unit.application.migration.test_phase2_integration._repositories import (
         InMemoryRoutingRepository,
     )
+
+
+async def _assert_lag_and_cutover_blocked(
+    tenant_id: UUID,
+    source_store: InMemoryEventStore,
+    target_store: InMemoryEventStore,
+    routing_repo: InMemoryRoutingRepository,
+    router: TenantStoreRouter,
+    lock_manager: MockLockManager,
+    anchor: Position | None,
+) -> None:
+    config = MigrationConfig(cutover_max_lag_events=3)
+    tracker = SyncLagTracker(source_store, target_store, config, tenant_id, enable_tracing=False)
+    lag = await tracker.calculate_lag(since=anchor)
+    assert lag.events >= 3 and tracker.is_sync_ready() is False
+
+    await routing_repo.set_migration_state(tenant_id, TenantMigrationState.DUAL_WRITE, uuid4())
+    router.register_store("dedicated", target_store)
+    cutover_manager = CutoverManager(lock_manager, router, routing_repo, enable_tracing=False)
+    result = await cutover_manager.execute_cutover(
+        migration_id=uuid4(),
+        tenant_id=tenant_id,
+        lag_tracker=tracker,
+        target_store_id="dedicated",
+        config=config,
+        timeout_ms=500.0,
+        since=anchor,
+    )
+    assert result.success is False
+    routing = await routing_repo.get_routing(tenant_id)
+    assert routing is not None and routing.store_id != "dedicated"
 
 
 class _TestSyncLagAnchorBase:
@@ -42,28 +74,22 @@ class _TestSyncLagAnchorBase:
         )
         await drive_dual_writes(interceptor, tenant_id, 3)
         copied_through = await source_store.current_position()
-        assert copied_through is not None
-        assert interceptor.first_seen_source_position is not None
+        assert copied_through is not None and interceptor.first_seen_source_position is not None
         assert copied_through >= interceptor.first_seen_source_position
 
         await drive_dual_writes(interceptor, tenant_id, 2)
         assert interceptor.first_failed_source_position is None
         assert interceptor.last_synced_source_position is not None
 
+        config = MigrationConfig(cutover_max_lag_events=3)
         tracker = SyncLagTracker(
-            source_store,
-            target_store,
-            MigrationConfig(cutover_max_lag_events=3),
-            tenant_id,
-            enable_tracing=False,
+            source_store, target_store, config, tenant_id, enable_tracing=False
         )
         anchor = interceptor.safe_lag_anchor(copied_through)
         assert anchor == interceptor.last_synced_source_position
 
         lag = await tracker.calculate_lag(since=anchor)
-        assert lag.events == 0
-        assert lag.count_is_bounded is False
-        assert tracker.is_sync_ready() is True
+        assert lag.events == 0 and lag.count_is_bounded is False and tracker.is_sync_ready() is True
 
     @pytest.mark.asyncio
     async def test_failed_prefix_never_reads_as_converged(
@@ -75,40 +101,16 @@ class _TestSyncLagAnchorBase:
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
     ) -> None:
-        migration_id = uuid4()
         copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
         flaky = FlakyTarget(target_store, reject_first=3)
         interceptor = DualWriteInterceptor(source_store, flaky, tenant_id, enable_tracing=False)
         await drive_dual_writes(interceptor, tenant_id, 8)
         assert interceptor.first_failed_source_position is not None
 
-        config = MigrationConfig(cutover_max_lag_events=3)
-        tracker = SyncLagTracker(
-            source_store, target_store, config, tenant_id, enable_tracing=False
-        )
         anchor = interceptor.safe_lag_anchor(copied_through)
-        lag = await tracker.calculate_lag(since=anchor)
-        assert lag.events >= 3
-        assert tracker.is_sync_ready() is False
-
-        await routing_repo.set_migration_state(
-            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        await _assert_lag_and_cutover_blocked(
+            tenant_id, source_store, target_store, routing_repo, router, lock_manager, anchor
         )
-        router.register_store("dedicated", target_store)
-        cutover_manager = CutoverManager(lock_manager, router, routing_repo, enable_tracing=False)
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=tracker,
-            target_store_id="dedicated",
-            config=config,
-            timeout_ms=500.0,
-            since=anchor,
-        )
-        assert result.success is False
-        routing = await routing_repo.get_routing(tenant_id)
-        assert routing is not None
-        assert routing.store_id != "dedicated"
 
     @pytest.mark.asyncio
     async def test_first_failure_watermark_does_not_move_on_recovery(
@@ -139,15 +141,12 @@ class _TestSyncLagAnchorBase:
         router: TenantStoreRouter,
         lock_manager: MockLockManager,
     ) -> None:
-        migration_id = uuid4()
         copied_through = await seed_copied_prefix(source_store, target_store, tenant_id, 4)
-        for _i in range(3):
-            aggregate_id = uuid4()
-            await source_store.append(
-                StreamId(aggregate_id=aggregate_id, category="SampleAggregate"),
-                [SampleTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)],
-                ExpectedVersion.no_stream(),
-            )
+        for _ in range(3):
+            agg_id = uuid4()
+            event = SampleTestEvent(aggregate_id=agg_id, tenant_id=tenant_id)
+            stream = StreamId(aggregate_id=agg_id, category="SampleAggregate")
+            await source_store.append(stream, [event], ExpectedVersion.no_stream())
 
         interceptor = DualWriteInterceptor(
             source_store, target_store, tenant_id, enable_tracing=False
@@ -159,33 +158,9 @@ class _TestSyncLagAnchorBase:
 
         anchor = interceptor.safe_lag_anchor(copied_through)
         assert anchor == copied_through
-
-        config = MigrationConfig(cutover_max_lag_events=3)
-        tracker = SyncLagTracker(
-            source_store, target_store, config, tenant_id, enable_tracing=False
+        await _assert_lag_and_cutover_blocked(
+            tenant_id, source_store, target_store, routing_repo, router, lock_manager, anchor
         )
-        lag = await tracker.calculate_lag(since=anchor)
-        assert lag.events >= 3
-        assert tracker.is_sync_ready() is False
-
-        await routing_repo.set_migration_state(
-            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
-        )
-        router.register_store("dedicated", target_store)
-        cutover_manager = CutoverManager(lock_manager, router, routing_repo, enable_tracing=False)
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=tracker,
-            target_store_id="dedicated",
-            config=config,
-            timeout_ms=500.0,
-            since=anchor,
-        )
-        assert result.success is False
-        routing = await routing_repo.get_routing(tenant_id)
-        assert routing is not None
-        assert routing.store_id != "dedicated"
 
     @pytest.mark.asyncio
     async def test_anchor_advances_when_interceptor_covers_the_checkpoint(
@@ -203,8 +178,7 @@ class _TestSyncLagAnchorBase:
 
         await drive_dual_writes(interceptor, tenant_id, 3)
         anchor = interceptor.safe_lag_anchor(checkpoint)
-        assert anchor == interceptor.last_synced_source_position
-        assert anchor != checkpoint
+        assert anchor == interceptor.last_synced_source_position and anchor != checkpoint
 
 
 __all__ = ["_TestSyncLagAnchorBase"]
