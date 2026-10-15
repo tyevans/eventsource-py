@@ -106,13 +106,15 @@ class CoordinatorCutoverMixin:
             logger.info("Starting cutover for %s, tenant %s", migration_id, migration.tenant_id)
             ev, dw = m.AuditEventType.CUTOVER_INITIATED, m.MigrationPhase.DUAL_WRITE
             await self._audit_cutover(migration_id, ev, m.MigrationPhase.CUTOVER, old_phase=dw)
-            args = (migration_id, migration.tenant_id, lag_tracker, migration.target_store_id)
-            kw = {
-                "config": migration.config,
-                "timeout_ms": timeout_ms,
-                "since": self._lag_anchor(migration),
-            }
-            result = await mgr.execute_cutover(*args, **kw)
+            result = await mgr.execute_cutover(
+                migration_id,
+                migration.tenant_id,
+                lag_tracker,
+                migration.target_store_id,
+                config=migration.config,
+                timeout_ms=timeout_ms,
+                since=self._lag_anchor(migration),
+            )
             if result.success:
                 await self._complete_cutover(migration)
             else:
@@ -167,7 +169,8 @@ class CoordinatorCutoverMixin:
         if msg := result.error_message:
             await self._migration_repo.record_error(migration.id, f"Cutover failed: {msg}")
         logger.warning("Cutover rolled back for %s: %s", migration.id, result.error_message)
-        ev, info = m.AuditEventType.CUTOVER_ROLLED_BACK, {"error_message": result.error_message}
+        ev = m.AuditEventType.CUTOVER_ROLLED_BACK
+        info: dict[str, object] = {"error_message": result.error_message}
         await self._audit_cutover(migration.id, ev, m.MigrationPhase.DUAL_WRITE, info)
         await self._notify_status_update(migration.id)
 

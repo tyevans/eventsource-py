@@ -159,13 +159,15 @@ class SubscriptionMigratorExecutionMixin:
                     "is_exact": translation.is_exact,
                 }
                 logger.info("Subscription checkpoint migrated", extra=ok_ctx)
-                pos_pair = (current_position, target_pos)
-                meta = (
-                    translation.is_exact,
-                    translation.nearest_source_position,
-                    datetime.now(UTC),
+                return SubscriptionMigrationResult(
+                    subscription_name,
+                    True,
+                    current_position,
+                    target_pos,
+                    is_exact_translation=translation.is_exact,
+                    nearest_source_position=translation.nearest_source_position,
+                    migrated_at=datetime.now(UTC),
                 )
-                return SubscriptionMigrationResult(subscription_name, True, *pos_pair, *meta)
             except Exception as e:
                 logger.error("Failed to update checkpoint", extra={**log_ctx, "error": str(e)})
                 err_msg = f"Checkpoint update failed: {e}"

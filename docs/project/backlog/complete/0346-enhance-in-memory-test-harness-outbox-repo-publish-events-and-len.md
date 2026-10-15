@@ -1,7 +1,7 @@
 ---
 id: TASK-0346
 title: "Add outbox_repo, publish_events(*events, persist=...), and __len__ to InMemoryTestHarness"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

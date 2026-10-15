@@ -1,7 +1,7 @@
 ---
 id: TASK-0345
 title: "Optimize InMemoryDLQRepository O(1) ID lookup and add __len__ to in-memory repositories"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
