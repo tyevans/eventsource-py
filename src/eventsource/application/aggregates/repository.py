@@ -21,7 +21,6 @@ from eventsource.application.aggregates.snapshotting import (
 )
 from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
-from eventsource.domain.exceptions import AggregateNotFoundError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_AGGREGATE_ID,
@@ -60,13 +59,10 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
     ) -> None:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._event_store = event_store
-        self._aggregate_factory = aggregate_factory
-        self._event_publisher = event_publisher
+        self._event_store, self._aggregate_factory = event_store, aggregate_factory
+        self._event_publisher, self._snapshot_store = event_publisher, snapshot_store
         self._aggregate_type = self._infer_aggregate_type(aggregate_factory)
-        self._snapshot_store = snapshot_store
-        self._snapshot_threshold = snapshot_threshold
-        self._snapshot_mode = snapshot_mode
+        self._snapshot_threshold, self._snapshot_mode = snapshot_threshold, snapshot_mode
 
         if (snapshot_policy is not None or snapshot_scheduler is not None) and (
             snapshot_threshold is not None or snapshot_mode != "sync"
@@ -116,40 +112,26 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
     def event_publisher(self) -> EventPublisher | None:
         return self._event_publisher
 
-    async def get_or_none(self, aggregate_id: UUID) -> TAggregate | None:
-        try:
-            return await self.load(aggregate_id)
-        except AggregateNotFoundError:
-            return None
-
-    async def exists(self, aggregate_id: UUID) -> bool:
-        return await super().exists(aggregate_id)
-
     async def execute(
-        self, aggregate_id: UUID, command: Any, *, create_if_missing: bool = True
+        self, aggregate_id: UUID, command: Any, *more_commands: Any, create_if_missing: bool = True
     ) -> TAggregate:
-        """Load (or create) an aggregate, execute a command on it, and save."""
-        aggregate = (
-            await self.load_or_create(aggregate_id)
-            if create_if_missing
-            else await self.load(aggregate_id)
-        )
-        if callable(command) and not isinstance(command, type):
-            command(aggregate)
-        else:
-            runner = getattr(aggregate, "execute", None) or getattr(
-                aggregate, "apply_command", None
-            )
-            if not callable(runner):
-                raise TypeError(
-                    f"{type(aggregate).__name__} does not support execute(); "
-                    "pass a callable (e.g. lambda agg: agg.do_something()) or use "
-                    "an aggregate supporting execute(command) or apply_command(command), "
-                    "such as DeciderAggregate."
-                )
-            runner(command)
-        await self.save(aggregate)
-        return aggregate
+        """Load (or create) an aggregate, execute one or more commands on it, and save."""
+        agg = await (self.load_or_create(aggregate_id) if create_if_missing else self.load(aggregate_id))  # fmt: skip
+        for cmd in (command, *more_commands):
+            if callable(cmd) and not isinstance(cmd, type):
+                cmd(agg)
+            else:
+                runner = getattr(agg, "execute", None) or getattr(agg, "apply_command", None)
+                if not callable(runner):
+                    raise TypeError(
+                        f"{type(agg).__name__} does not support execute(); "
+                        "pass a callable (e.g. lambda agg: agg.do_something()) or use "
+                        "an aggregate supporting execute(command) or apply_command(command), "
+                        "such as DeciderAggregate."
+                    )
+                runner(cmd)
+        await self.save(agg)
+        return agg
 
 
 __all__ = [
