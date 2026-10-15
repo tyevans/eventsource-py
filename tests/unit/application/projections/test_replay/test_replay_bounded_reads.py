@@ -146,6 +146,22 @@ class TestTheScopedReplaySeesOnlyThatSlice:
         report = await replay(InMemoryEventStore(event_registry=_REGISTRY), [Collecting()])
         assert report.last_position is None and report.applied == 0
 
+    async def test_event_types_filters_by_string_or_class_while_advancing_position(self) -> None:
+        order1 = OrderPlaced(aggregate_id=uuid4())
+        invoice = InvoiceIssued(aggregate_id=uuid4())
+        order2 = OrderPlaced(aggregate_id=uuid4())
+        store = await _store_with(order1, invoice, order2)
+        whole = await replay(store, [Collecting()])
+
+        by_name, by_cls = Collecting(), Collecting()
+        rep_name = await replay(store, [by_name], event_types=["InvoiceIssued"])
+        rep_cls = await replay(store, [by_cls], event_types=(InvoiceIssued,))
+
+        assert [e.event_id for e in by_name.seen] == [invoice.event_id]
+        assert [e.event_id for e in by_cls.seen] == [invoice.event_id]
+        assert rep_name.applied == rep_cls.applied == 1
+        assert rep_name.last_position == rep_cls.last_position == whole.last_position
+
 
 class TestMaxEventsGuardsAgainstANonAdvancingCursor:
     async def test_it_raises_rather_than_hanging(self) -> None:

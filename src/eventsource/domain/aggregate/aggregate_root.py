@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -12,34 +12,21 @@ from pydantic import BaseModel
 from eventsource.domain.aggregate.provenance import AggregateProvenanceMixin
 from eventsource.domain.aggregate.snapshot import AggregateSnapshotMixin
 from eventsource.domain.event import DomainEvent
-from eventsource.domain.exceptions import (
-    AggregateTypeNotSetError,
-    EventVersionError,
-)
+from eventsource.domain.exceptions import AggregateTypeNotSetError, EventVersionError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
 
 class AggregateRoot[TState: BaseModel](
-    AggregateSnapshotMixin[TState],
-    AggregateProvenanceMixin,
-    ABC,
+    AggregateSnapshotMixin[TState], AggregateProvenanceMixin, ABC
 ):
-    """Base class for event-sourced aggregate roots.
+    """Base class for event-sourced aggregate roots."""
 
-    Aggregates maintain state by applying events, track uncommitted events to
-    persist, and enforce business rule invariants. Generic `TState` defines the
-    Pydantic BaseModel state shape.
-
-    Subclasses must set `aggregate_type` and implement `_apply(event)` and
-    `_get_initial_state()`.
-    """
-
-    # Aggregate type identifier -- REQUIRED. Becomes the stream category;
-    # construction raises AggregateTypeNotSetError if a concrete subclass
-    # does not set it. (Annotated ClassVar, deliberately no default.)
+    # Required stream category; construction raises AggregateTypeNotSetError if unset.
     aggregate_type: ClassVar[str]
-
     schema_version: int = 1
     validate_versions: bool = True
 
@@ -78,57 +65,52 @@ class AggregateRoot[TState: BaseModel](
         return len(self._uncommitted_events) > 0
 
     def apply_event(self, event: DomainEvent, is_new: bool = True) -> None:
-        """Apply an event to the aggregate.
-
-        Validates aggregate_id and version (when `is_new=True`), updates version,
-        invokes `_apply()`, and records uncommitted events when `is_new=True`.
-        """
+        """Apply an event to the aggregate, validating version and tracking when `is_new=True`."""
         if is_new:
             self._reject_foreign_aggregate_id(event, None)
-            expected_version = self._version + 1
-            if event.aggregate_version != expected_version:
+            expected = self._version + 1
+            if event.aggregate_version != expected:
                 if self.validate_versions:
                     raise EventVersionError(
-                        expected_version=expected_version,
-                        actual_version=event.aggregate_version,
-                        event_id=event.event_id,
-                        aggregate_id=self._aggregate_id,
+                        expected, event.aggregate_version, event.event_id, self._aggregate_id
                     )
                 logger.warning(
                     "Version mismatch (validation disabled): expected %d, got %d "
                     "for aggregate %s, event %s",
-                    expected_version,
+                    expected,
                     event.aggregate_version,
                     self._aggregate_id,
                     event.event_id,
                     extra={
                         "aggregate_id": str(self._aggregate_id),
-                        "expected_version": expected_version,
+                        "expected_version": expected,
                         "actual_version": event.aggregate_version,
                         "event_id": str(event.event_id),
                     },
                 )
-
         self._version = event.aggregate_version
         self._apply(event)
         if is_new:
             self._uncommitted_events.append(event)
 
+    def apply_events(self, *events: DomainEvent, is_new: bool = True) -> None:
+        """Apply multiple events sequentially to the aggregate."""
+        for event in events:
+            self.apply_event(event, is_new=is_new)
+
     @abstractmethod
     def _apply(self, event: DomainEvent) -> None:
         """Apply event to update aggregate state."""
-        pass
 
     @abstractmethod
     def _get_initial_state(self) -> TState | None:
         """Get the initial state for a new aggregate."""
-        pass
 
     def mark_events_as_committed(self) -> None:
         """Mark all uncommitted events as committed."""
         self._uncommitted_events.clear()
 
-    def load_from_history(self, events: list[DomainEvent]) -> None:
+    def load_from_history(self, events: Iterable[DomainEvent]) -> None:
         """Reconstitute aggregate state from chronological event history."""
         for event in events:
             self.apply_event(event, is_new=False)
@@ -150,17 +132,17 @@ class AggregateRoot[TState: BaseModel](
     def __repr__(self) -> str:
         """String representation of aggregate."""
         return (
-            f"{self.__class__.__name__}("
-            f"id={self._aggregate_id}, "
-            f"version={self._version}, "
-            f"uncommitted={len(self._uncommitted_events)})"
+            f"{self.__class__.__name__}(id={self._aggregate_id}, "
+            f"version={self._version}, uncommitted={len(self._uncommitted_events)})"
         )
 
     def __eq__(self, other: object) -> bool:
         """Check equality based on aggregate ID."""
-        if not isinstance(other, AggregateRoot):
-            return NotImplemented
-        return self._aggregate_id == other._aggregate_id
+        return (
+            self._aggregate_id == other._aggregate_id
+            if isinstance(other, AggregateRoot)
+            else NotImplemented
+        )
 
     def __hash__(self) -> int:
         """Hash based on aggregate ID."""

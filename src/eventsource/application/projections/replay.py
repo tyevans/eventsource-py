@@ -1,11 +1,4 @@
-"""Driving projections over the global event feed to rebuild them.
-
-Foreground rebuild runner over `GlobalEventFeed`. By default, `replay` catches,
-records, and continues past projection errors so one poison event does not deny
-subsequent events (`strict=True` raises `ReplayFailedError` on the first error).
-`max_failures` bounds retained `ReplayFailure` items (`failures_truncated`
-counts dropped ones), while `on_failure` receives every failure.
-"""
+"""Driving projections over the global event feed to rebuild them."""
 
 from __future__ import annotations
 
@@ -16,9 +9,10 @@ from eventsource.domain.exceptions import ProjectionError
 from eventsource.ports.envelopes import FeedReadOptions
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable
     from uuid import UUID
 
+    from eventsource.domain.event import DomainEvent
     from eventsource.ports.handlers import EventSubscriber
     from eventsource.ports.positions import Position
     from eventsource.ports.store import GlobalEventFeed
@@ -33,9 +27,7 @@ __all__ = [
     "replay",
 ]
 
-REPLAY_BATCH_SIZE = 1000
-MAX_EVENTS_PER_REPLAY = 10_000_000
-MAX_FAILURES_PER_REPLAY = 1000
+REPLAY_BATCH_SIZE, MAX_EVENTS_PER_REPLAY, MAX_FAILURES_PER_REPLAY = 1000, 10_000_000, 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,21 +52,24 @@ class ReplayReport:
 
     @property
     def failed(self) -> int:
-        """Events at least one retained failure names (distinct by `event_id`)."""
         return len({failure.event_id for failure in self.failures})
 
     @property
+    def total_processed(self) -> int:
+        return self.applied + self.failed
+
+    @property
     def succeeded(self) -> bool:
-        """Whether the replay completed without any failures."""
         return len(self.failures) == 0 and self.failures_truncated == 0
 
+    def __bool__(self) -> bool:
+        return self.succeeded
+
     def raise_for_failures(self) -> None:
-        """Raise ReplayFailedError if any failure occurred during replay."""
         if self.succeeded:
             return
         if self.failures:
-            first = self.failures[0]
-            raise ReplayFailedError(failure=first) from first.error
+            raise ReplayFailedError(failure=self.failures[0]) from self.failures[0].error
         raise RuntimeError(f"replay failed with {self.failures_truncated} truncated failure(s)")
 
 
@@ -83,20 +78,18 @@ class ReplayFailedError(ProjectionError):
 
     def __init__(self, *, failure: ReplayFailure) -> None:
         self.failure = failure
-        super().__init__(
-            failure.projection,
-            failure.event_id,
-            f"rejected {failure.event_type} at {failure.position}: {failure.error}",
-        )
+        msg = f"rejected {failure.event_type} at {failure.position}: {failure.error}"
+        super().__init__(failure.projection, failure.event_id, msg)
 
 
 async def replay(
     feed: GlobalEventFeed,
-    projections: Sequence[EventSubscriber] | EventSubscriber,
+    projections: Iterable[EventSubscriber] | EventSubscriber,
     *,
     from_position: Position | None = None,
     tenant_id: UUID | None = None,
     aggregate_type: str | None = None,
+    event_types: Iterable[str | type[DomainEvent]] | None = None,
     strict: bool = False,
     batch_size: int = REPLAY_BATCH_SIZE,
     max_events: int = MAX_EVENTS_PER_REPLAY,
@@ -104,55 +97,49 @@ async def replay(
     on_failure: Callable[[ReplayFailure], None] | None = None,
 ) -> ReplayReport:
     """Read the feed from `from_position` (exclusive) and fold into every projection."""
-    projection_list: tuple[EventSubscriber, ...] = (
+    subs = (
         (cast("EventSubscriber", projections),)
         if hasattr(projections, "handle")
         else tuple(projections)
     )
-    applied = seen = truncated = 0
-    failures: list[ReplayFailure] = []
-    last_position: Position | None = None
-    cursor = from_position
+    allowed = (
+        frozenset(
+            t if isinstance(t, str) else getattr(t, "event_type", t.__name__) for t in event_types
+        )
+        if event_types is not None
+        else None
+    )
+    applied, seen, truncated, failures = 0, 0, 0, list[ReplayFailure]()
+    last_position, cursor = None, from_position
+    options = FeedReadOptions(tenant_id=tenant_id, aggregate_type=aggregate_type, limit=batch_size)
 
     while True:
-        options = FeedReadOptions(
-            tenant_id=tenant_id,
-            aggregate_type=aggregate_type,
-            limit=batch_size,
-        )
         batch_count = 0
-
-        async for envelope in feed.read_all(cursor, options):
-            batch_count += 1
-            seen += 1
+        async for env in feed.read_all(cursor, options):
+            batch_count, seen = batch_count + 1, seen + 1
             if seen > max_events:
                 raise RuntimeError(
-                    f"replay read more than {max_events} events without the feed "
-                    f"ending; the adapter's cursor is probably not advancing "
-                    f"(last position: {last_position})"
+                    f"replay read more than {max_events} events without the feed ending; "
+                    f"the adapter's cursor is probably not advancing (last position: {last_position})"
                 )
-            if envelope.position is not None:
-                last_position = envelope.position
-                cursor = envelope.position
+            pos, ev = env.position, env.event
+            if pos is not None:
+                last_position = cursor = pos
+            if allowed is not None and ev.event_type not in allowed:
+                continue
 
             rejected = False
-            for projection in projection_list:
+            for sub in subs:
                 try:
-                    await projection.handle(envelope.event)
+                    await sub.handle(ev)
                 except Exception as exc:
-                    failure = ReplayFailure(
-                        position=envelope.position,
-                        event_id=envelope.event.event_id,
-                        event_type=envelope.event.event_type,
-                        projection=type(projection).__name__,
-                        error=exc,
-                    )
+                    err = ReplayFailure(pos, ev.event_id, ev.event_type, type(sub).__name__, exc)
                     if on_failure is not None:
-                        on_failure(failure)
+                        on_failure(err)
                     if strict:
-                        raise ReplayFailedError(failure=failure) from exc
+                        raise ReplayFailedError(failure=err) from exc
                     if len(failures) < max_failures:
-                        failures.append(failure)
+                        failures.append(err)
                     else:
                         truncated += 1
                     rejected = True
@@ -162,9 +149,4 @@ async def replay(
         if batch_count < batch_size or (batch_count > 0 and cursor is None):
             break
 
-    return ReplayReport(
-        applied=applied,
-        last_position=last_position,
-        failures=tuple(failures),
-        failures_truncated=truncated,
-    )
+    return ReplayReport(applied, last_position, tuple(failures), truncated)
