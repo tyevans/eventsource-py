@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from eventsource.application.migration.error_classification import (
+from eventsource.application.migration.error_classification import (  # fmt: skip
     ErrorClassification,
     ErrorRecoverability,
     ErrorSeverity,
@@ -28,20 +28,9 @@ class MigrationError(EventSourceError):
         "Review migration logs and contact support if issue persists",
     )
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        migration_id: UUID | None = None,
-        tenant_id: UUID | None = None,
-        recoverable: bool = False,
-        suggested_action: str | None = None,
-    ) -> None:
-        self.message = message
-        self.migration_id = migration_id
-        self.tenant_id = tenant_id
-        self.recoverable = recoverable
-        self.suggested_action = suggested_action
+    def __init__(self, message: str, *, migration_id: UUID | None = None, tenant_id: UUID | None = None, recoverable: bool = False, suggested_action: str | None = None) -> None:  # fmt: skip
+        self.message, self.migration_id, self.tenant_id = message, migration_id, tenant_id
+        self.recoverable, self.suggested_action = recoverable, suggested_action
         super().__init__(message)
 
     def __str__(self) -> str:
@@ -116,12 +105,9 @@ class MigrationAlreadyExistsError(MigrationError):
 
     def __init__(self, tenant_id: UUID, existing_migration_id: UUID) -> None:
         self.existing_migration_id = existing_migration_id
-        super().__init__(
-            f"Active migration already exists for tenant {tenant_id}: {existing_migration_id}",
-            migration_id=existing_migration_id,
-            tenant_id=tenant_id,
-            suggested_action="Wait for existing migration to complete or abort it",
-        )
+        msg = f"Active migration already exists for tenant {tenant_id}: {existing_migration_id}"
+        act = "Wait for existing migration to complete or abort it"
+        super().__init__(msg, migration_id=existing_migration_id, tenant_id=tenant_id, suggested_action=act)  # fmt: skip
 
 
 class MigrationStateError(MigrationError):
@@ -135,14 +121,7 @@ class MigrationStateError(MigrationError):
         "Ensure migration is in the correct phase before attempting this operation",
     )
 
-    def __init__(
-        self,
-        message: str,
-        migration_id: UUID,
-        current_phase: MigrationPhase,
-        expected_phases: list[MigrationPhase] | None = None,
-        operation: str | None = None,
-    ) -> None:
+    def __init__(self, message: str, migration_id: UUID, current_phase: MigrationPhase, expected_phases: list[MigrationPhase] | None = None, operation: str | None = None) -> None:  # fmt: skip
         self.current_phase = current_phase
         self.expected_phases = expected_phases or []
         self.operation = operation
@@ -160,25 +139,10 @@ class InvalidPhaseTransitionError(MigrationStateError):
         "Review the migration state machine and ensure valid transitions",
     )
 
-    def __init__(
-        self,
-        migration_id: UUID,
-        current_phase: MigrationPhase,
-        target_phase: MigrationPhase,
-    ) -> None:
+    def __init__(self, migration_id: UUID, current_phase: MigrationPhase, target_phase: MigrationPhase) -> None:  # fmt: skip
         self.target_phase = target_phase
-        super().__init__(
-            f"Invalid phase transition: {current_phase.value} -> {target_phase.value}",
-            migration_id=migration_id,
-            current_phase=current_phase,
-            operation="phase_transition",
-        )
+        msg = f"Invalid phase transition: {current_phase.value} -> {target_phase.value}"
+        super().__init__(msg, migration_id, current_phase, operation="phase_transition")
 
 
-__all__ = [
-    "InvalidPhaseTransitionError",
-    "MigrationAlreadyExistsError",
-    "MigrationError",
-    "MigrationNotFoundError",
-    "MigrationStateError",
-]
+__all__ = ["InvalidPhaseTransitionError", "MigrationAlreadyExistsError", "MigrationError", "MigrationNotFoundError", "MigrationStateError"]  # fmt: skip

@@ -44,8 +44,7 @@ _AnyAgg = AggregateRoot[Any]
 def _get_miss_counter() -> Any:
     global _meter, _miss_counter
     if _miss_counter is None and OTEL_METRICS_AVAILABLE and _otel_metrics is not None:
-        if _meter is None:
-            _meter = _otel_metrics.get_meter("eventsource.application.aggregates", version="1.0.0")
+        _meter = _meter or _otel_metrics.get_meter("eventsource.application.aggregates", version="1.0.0")  # fmt: skip
         desc = "Snapshot reads that fell back to full event replay, by reason"
         _miss_counter = _meter.create_counter(_MISS_COUNTER_NAME, unit="1", description=desc)
     return _miss_counter
@@ -91,36 +90,25 @@ class Never:
 
 async def take_snapshot(aggregate: _AnyAgg, aggregate_type: str, store: SnapshotStore) -> Snapshot:
     schema_ver, agg_id = getattr(type(aggregate), "schema_version", 1), aggregate.aggregate_id
-    state, now = aggregate._serialize_state(), datetime.now(UTC)
-    snapshot = Snapshot(agg_id, aggregate_type, aggregate.version, state, schema_ver, now)
+    snapshot = Snapshot(agg_id, aggregate_type, aggregate.version, aggregate._serialize_state(), schema_ver, datetime.now(UTC))  # fmt: skip
     await store.save_snapshot(snapshot)
     logger.info(f"Created snapshot for {aggregate_type}/{agg_id} at v{snapshot.version}")
     return snapshot
 
 
-async def read_valid_snapshot(
-    store: SnapshotStore,
-    aggregate_id: UUID,
-    aggregate_type: str,
-    aggregate_factory: type[_AnyAgg],
-) -> Snapshot | None:
+async def read_valid_snapshot(store: SnapshotStore, aggregate_id: UUID, aggregate_type: str, aggregate_factory: type[_AnyAgg]) -> Snapshot | None:  # fmt: skip
     target = f"{aggregate_type}/{aggregate_id}"
     try:
         snapshot = await store.get_snapshot(aggregate_id, aggregate_type)
     except Exception as e:
         is_deser = isinstance(e, SnapshotDeserializationError)
-        miss = (
-            SnapshotMissReason.DESERIALIZATION_ERROR if is_deser else SnapshotMissReason.STORE_ERROR
-        )
-        record_snapshot_miss(miss, aggregate_type)
+        record_snapshot_miss(SnapshotMissReason.DESERIALIZATION_ERROR if is_deser else SnapshotMissReason.STORE_ERROR, aggregate_type)  # fmt: skip
         logger.warning(f"{'Corrupt' if is_deser else 'Error loading'} snapshot for {target}: {e}.")
         return None
-    if snapshot is None:
-        record_snapshot_miss(SnapshotMissReason.MISSING, aggregate_type)
-        return None
-    if snapshot.schema_version != getattr(aggregate_factory, "schema_version", 1):
-        record_snapshot_miss(SnapshotMissReason.SCHEMA_MISMATCH, aggregate_type)
-        logger.info(f"Snapshot schema mismatch for {target}: v{snapshot.schema_version}")
+    if snapshot is None or snapshot.schema_version != getattr(aggregate_factory, "schema_version", 1):  # fmt: skip
+        record_snapshot_miss(SnapshotMissReason.MISSING if snapshot is None else SnapshotMissReason.SCHEMA_MISMATCH, aggregate_type)  # fmt: skip
+        if snapshot is not None:
+            logger.info(f"Snapshot schema mismatch for {target}: v{snapshot.schema_version}")
         return None
     logger.debug(f"Loaded valid snapshot for {target} at version {snapshot.version}")
     return snapshot
@@ -128,9 +116,7 @@ async def read_valid_snapshot(
 
 @runtime_checkable
 class SnapshotScheduler(Protocol):
-    async def schedule(
-        self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID
-    ) -> Snapshot | None: ...
+    async def schedule(self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID) -> Snapshot | None: ...  # fmt: skip
     @property
     def pending_count(self) -> int: ...
     async def await_pending(self) -> int: ...
@@ -139,28 +125,22 @@ class SnapshotScheduler(Protocol):
 class ImmediateScheduler:
     pending_count = 0
 
-    async def schedule(
-        self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID
-    ) -> Snapshot | None:
+    async def schedule(self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID) -> Snapshot | None:  # fmt: skip
         try:
             return await write
         except Exception as e:
-            logger.warning(
-                f"Failed to create snapshot for {aggregate_type}/{aggregate_id}: {e}", exc_info=True
-            )
+            logger.warning(f"Failed to create snapshot for {aggregate_type}/{aggregate_id}: {e}", exc_info=True)  # fmt: skip
             return None
 
     async def await_pending(self) -> int:
-        return 0
+        return 0  # fmt: skip
 
 
 class BackgroundScheduler:
     def __init__(self) -> None:
-        self._tasks = BackgroundTaskManager()
+        self._tasks = BackgroundTaskManager()  # fmt: skip
 
-    async def schedule(
-        self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID
-    ) -> Snapshot | None:
+    async def schedule(self, write: _WriteCoro, *, aggregate_type: str, aggregate_id: UUID) -> Snapshot | None:  # fmt: skip
         self._tasks.submit(self._guarded(write, f"{aggregate_type}/{aggregate_id}"))
         return None
 
@@ -173,11 +153,10 @@ class BackgroundScheduler:
 
     @property
     def pending_count(self) -> int:
-        return self._tasks.pending_count
+        return self._tasks.pending_count  # fmt: skip
 
     async def await_pending(self) -> int:
-        return await self._tasks.await_all()
+        return await self._tasks.await_all()  # fmt: skip
 
 
-__all__ = ["BackgroundScheduler", "EveryNEvents", "ImmediateScheduler", "Never"]
-__all__ += ["SnapshotPolicy", "SnapshotScheduler", "read_valid_snapshot", "take_snapshot"]
+__all__ = ["BackgroundScheduler", "EveryNEvents", "ImmediateScheduler", "Never", "SnapshotPolicy", "SnapshotScheduler", "read_valid_snapshot", "take_snapshot"]  # fmt: skip
