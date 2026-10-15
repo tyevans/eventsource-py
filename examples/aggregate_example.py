@@ -1,11 +1,4 @@
-"""
-Aggregate Example
-
-This example demonstrates advanced aggregate patterns:
-- DeclarativeAggregate with @handles decorators
-- Complex state management
-- Multi-event commands
-- Aggregate-to-aggregate interaction via correlation
+"""Aggregate Example: DeclarativeAggregate with @handles decorators and state management.
 
 Run with: python -m eventsource.examples.aggregate_example
 """
@@ -99,7 +92,7 @@ class ShoppingCartState(BaseModel):
 
     cart_id: UUID
     customer_id: UUID | None = None
-    items: dict[str, CartItem] = Field(default_factory=dict)  # product_id -> CartItem
+    items: dict[str, CartItem] = Field(default_factory=dict)
     status: str = "empty"  # empty, active, checked_out, abandoned
     checked_out_at: datetime | None = None
     order_id: UUID | None = None
@@ -114,11 +107,7 @@ class ShoppingCartState(BaseModel):
 
 
 class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
-    """
-    Event-sourced shopping cart using declarative event handlers.
-
-    Uses @handles decorator instead of if/elif chains in _apply().
-    """
+    """Event-sourced shopping cart using declarative @handles event handlers."""
 
     aggregate_type = "ShoppingCart"
 
@@ -128,51 +117,40 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
     @handles(CartCreated)
     def _on_cart_created(self, event: CartCreated) -> None:
         self._state = ShoppingCartState(
-            cart_id=self.aggregate_id,
-            customer_id=event.customer_id,
-            status="empty",
+            cart_id=self.aggregate_id, customer_id=event.customer_id, status="empty"
         )
 
     @handles(ItemAddedToCart)
     def _on_item_added(self, event: ItemAddedToCart) -> None:
         if self._state:
-            new_items = dict(self._state.items)
-            product_key = str(event.product_id)
-            qty = (
-                new_items[product_key].quantity + event.quantity
-                if product_key in new_items
-                else event.quantity
-            )
-            new_items[product_key] = CartItem(
+            items = dict(self._state.items)
+            key = str(event.product_id)
+            qty = items[key].quantity + event.quantity if key in items else event.quantity
+            items[key] = CartItem(
                 product_id=event.product_id,
                 product_name=event.product_name,
                 quantity=qty,
                 unit_price=event.unit_price,
             )
-            self._state = self._state.model_copy(update={"items": new_items, "status": "active"})
+            self._state = self._state.model_copy(update={"items": items, "status": "active"})
 
     @handles(ItemRemovedFromCart)
     def _on_item_removed(self, event: ItemRemovedFromCart) -> None:
         if self._state:
-            new_items = dict(self._state.items)
-            new_items.pop(str(event.product_id), None)
-            status = "active" if new_items else "empty"
-            self._state = self._state.model_copy(update={"items": new_items, "status": status})
+            items = dict(self._state.items)
+            items.pop(str(event.product_id), None)
+            self._state = self._state.model_copy(
+                update={"items": items, "status": "active" if items else "empty"}
+            )
 
     @handles(ItemQuantityChanged)
     def _on_quantity_changed(self, event: ItemQuantityChanged) -> None:
         if self._state:
-            new_items = dict(self._state.items)
-            product_key = str(event.product_id)
-            if product_key in new_items:
-                existing = new_items[product_key]
-                new_items[product_key] = CartItem(
-                    product_id=existing.product_id,
-                    product_name=existing.product_name,
-                    quantity=event.new_quantity,
-                    unit_price=existing.unit_price,
-                )
-            self._state = self._state.model_copy(update={"items": new_items})
+            items = dict(self._state.items)
+            key = str(event.product_id)
+            if key in items:
+                items[key] = items[key].model_copy(update={"quantity": event.new_quantity})
+            self._state = self._state.model_copy(update={"items": items})
 
     @handles(CartCheckedOut)
     def _on_cart_checked_out(self, event: CartCheckedOut) -> None:
@@ -190,30 +168,29 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
         if self._state:
             self._state = self._state.model_copy(update={"status": "abandoned"})
 
+    def _require_state(self, verb: str = "modify") -> ShoppingCartState:
+        if not self.state:
+            raise ValueError("Cart does not exist")
+        if self.state.status not in ("empty", "active"):
+            raise ValueError(f"Cannot {verb} {self.state.status} cart")
+        return self.state
+
     def create(self, customer_id: UUID) -> None:
         """Create a new shopping cart."""
         if self.version > 0:
             raise ValueError("Cart already exists")
+        ver = self.get_next_version()
         self.apply_event(
             CartCreated(
-                aggregate_id=self.aggregate_id,
-                customer_id=customer_id,
-                aggregate_version=self.get_next_version(),
+                aggregate_id=self.aggregate_id, customer_id=customer_id, aggregate_version=ver
             )
         )
 
     def add_item(
-        self,
-        product_id: UUID,
-        product_name: str,
-        quantity: int,
-        unit_price: float,
+        self, product_id: UUID, product_name: str, quantity: int, unit_price: float
     ) -> None:
         """Add an item to the cart."""
-        if not self.state:
-            raise ValueError("Cart does not exist")
-        if self.state.status not in ("empty", "active"):
-            raise ValueError(f"Cannot add items to {self.state.status} cart")
+        self._require_state("add items to")
         if quantity <= 0:
             raise ValueError("Quantity must be positive")
         if unit_price < 0:
@@ -231,28 +208,21 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
 
     def remove_item(self, product_id: UUID) -> None:
         """Remove an item from the cart."""
-        if not self.state:
-            raise ValueError("Cart does not exist")
-        if self.state.status not in ("empty", "active"):
-            raise ValueError(f"Cannot remove items from {self.state.status} cart")
-        if str(product_id) not in self.state.items:
+        state = self._require_state("remove items from")
+        if str(product_id) not in state.items:
             raise ValueError("Item not in cart")
+        ver = self.get_next_version()
         self.apply_event(
             ItemRemovedFromCart(
-                aggregate_id=self.aggregate_id,
-                product_id=product_id,
-                aggregate_version=self.get_next_version(),
+                aggregate_id=self.aggregate_id, product_id=product_id, aggregate_version=ver
             )
         )
 
     def change_quantity(self, product_id: UUID, new_quantity: int) -> None:
         """Change the quantity of an item."""
-        if not self.state:
-            raise ValueError("Cart does not exist")
-        if self.state.status not in ("empty", "active"):
-            raise ValueError(f"Cannot modify {self.state.status} cart")
-        product_key = str(product_id)
-        if product_key not in self.state.items:
+        state = self._require_state("modify")
+        key = str(product_id)
+        if key not in state.items:
             raise ValueError("Item not in cart")
         if new_quantity <= 0:
             raise ValueError("Quantity must be positive (use remove_item to delete)")
@@ -260,7 +230,7 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
             ItemQuantityChanged(
                 aggregate_id=self.aggregate_id,
                 product_id=product_id,
-                old_quantity=self.state.items[product_key].quantity,
+                old_quantity=state.items[key].quantity,
                 new_quantity=new_quantity,
                 aggregate_version=self.get_next_version(),
             )
@@ -274,13 +244,13 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
             raise ValueError(f"Cannot checkout {self.state.status} cart")
         if not self.state.items:
             raise ValueError("Cannot checkout empty cart")
-        order_id = uuid4()
+        order_id, ver = uuid4(), self.get_next_version()
         self.apply_event(
             CartCheckedOut(
                 aggregate_id=self.aggregate_id,
                 order_id=order_id,
                 total_amount=self.state.total_amount,
-                aggregate_version=self.get_next_version(),
+                aggregate_version=ver,
             )
         )
         return order_id
@@ -291,21 +261,15 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
             raise ValueError("Cart does not exist")
         if self.state.status in ("checked_out", "abandoned"):
             raise ValueError(f"Cannot abandon {self.state.status} cart")
+        ver = self.get_next_version()
         self.apply_event(
-            CartAbandoned(
-                aggregate_id=self.aggregate_id,
-                reason=reason,
-                aggregate_version=self.get_next_version(),
-            )
+            CartAbandoned(aggregate_id=self.aggregate_id, reason=reason, aggregate_version=ver)
         )
 
 
-async def main():
+async def main() -> None:
     """Demonstrate advanced aggregate patterns."""
-    print("=" * 60)
-    print("Shopping Cart Aggregate Example")
-    print("=" * 60)
-
+    print("=" * 60 + "\nShopping Cart Aggregate Example\n" + "=" * 60)
     event_store = InMemoryEventStore()
     repo = AggregateRepository(event_store=event_store, aggregate_factory=ShoppingCartAggregate)
     cart_id, customer_id = uuid4(), uuid4()
@@ -314,7 +278,7 @@ async def main():
     cart = repo.create_new(cart_id)
     cart.create(customer_id)
     await repo.save(cart)
-    print(f"   Cart ID: {cart_id}\n   Status: {cart.state.status}")
+    print(f"   Cart ID: {cart_id} (Status: {cart.state.status})")
 
     print("\n2. Adding items to cart")
     products = [
@@ -327,28 +291,20 @@ async def main():
         cart.add_item(product_id, name, qty, price)
         print(f"   Added: {qty}x {name} @ ${price:.2f}")
     await repo.save(cart)
-    print(f"\n   Cart total: ${cart.state.total_amount:.2f}")
-    print(f"   Item count: {cart.state.item_count}\n   Status: {cart.state.status}")
+    print(f"   Cart total: ${cart.state.total_amount:.2f} ({cart.state.item_count} items)")
 
-    print("\n3. Changing quantity")
+    print("\n3. Changing quantity & 4. Removing item")
     cart = await repo.load(cart_id)
     cart.change_quantity(products[0][0], 3)
-    await repo.save(cart)
-    print(f"   Updated mouse quantity to 3\n   New total: ${cart.state.total_amount:.2f}")
-
-    print("\n4. Removing item")
-    cart = await repo.load(cart_id)
     cart.remove_item(products[1][0])
     await repo.save(cart)
-    print(f"   Removed USB-C Hub\n   New total: ${cart.state.total_amount:.2f}")
-    print(f"   Remaining items: {len(cart.state.items)}")
+    print(f"   Updated mouse to 3 & removed USB-C Hub -> Total: ${cart.state.total_amount:.2f}")
 
     print("\n5. Checking out")
     cart = await repo.load(cart_id)
     order_id = cart.checkout()
     await repo.save(cart)
-    print(f"   Order created: {order_id}\n   Total charged: ${cart.state.total_amount:.2f}")
-    print(f"   Status: {cart.state.status}")
+    print(f"   Order {order_id} created (${cart.state.total_amount:.2f}, {cart.state.status})")
 
     print("\n6. Event history:")
     stream_id = StreamId(aggregate_id=cart_id, category="ShoppingCart")
@@ -356,21 +312,19 @@ async def main():
     for i, envelope in enumerate(envelopes, 1):
         print(f"   [{i}] {envelope.event.event_type}")
 
-    print("\n7. Business rule validation:")
+    print("\n7. Business rule validation & 8. Cart abandonment:")
     cart = await repo.load(cart_id)
     try:
         cart.add_item(uuid4(), "New Item", 1, 9.99)
     except ValueError as e:
         print(f"   Add item blocked: {e}")
 
-    print("\n8. Cart abandonment:")
     abandoned_cart = repo.create_new(uuid4())
     abandoned_cart.create(customer_id)
     abandoned_cart.add_item(uuid4(), "Some Product", 1, 19.99)
     abandoned_cart.abandon("Session timeout")
     await repo.save(abandoned_cart)
-    print(f"   Cart abandoned\n   Status: {abandoned_cart.state.status}")
-
+    print(f"   Cart abandoned -> Status: {abandoned_cart.state.status}")
     print("\n" + "=" * 60 + "\nExample completed successfully!\n" + "=" * 60)
 
 

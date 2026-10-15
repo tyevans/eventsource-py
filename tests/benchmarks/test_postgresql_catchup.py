@@ -5,11 +5,7 @@ the wraparound-safe `txid` horizon predicate efficiently use the primary
 `global_position` index (events_pkey) and composite indexes, avoiding table
 scans and heapsort degradation even under concurrent write load.
 
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0003 (Blackbox Frontdoor Verification)
-- ADR-0002 (File Length Limits <500 lines)
-- TASK-0004
+Governed by: ADR-0007, ADR-0003, ADR-0002, TASK-0004.
 """
 
 from __future__ import annotations
@@ -18,6 +14,7 @@ import asyncio
 import subprocess
 import time
 from collections.abc import AsyncGenerator
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -52,8 +49,7 @@ except ImportError:
 
 def _is_docker_available() -> bool:
     try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
-        return result.returncode == 0
+        return subprocess.run(["docker", "info"], capture_output=True, timeout=5).returncode == 0
     except Exception:
         return False
 
@@ -91,9 +87,10 @@ async def pg_bench_engine() -> AsyncGenerator[AsyncEngine]:
     """Start PostgreSQL container, initialize schema, and pre-populate 50,000 events."""
     container = PostgresContainer("postgres:16")
     container.start()
-    raw_url = container.get_connection_url()
-    async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://").replace(
-        "psycopg2", "asyncpg"
+    async_url = (
+        container.get_connection_url()
+        .replace("postgresql://", "postgresql+asyncpg://")
+        .replace("psycopg2", "asyncpg")
     )
     engine = create_async_engine(async_url, pool_size=20, max_overflow=10)
 
@@ -124,150 +121,103 @@ async def pg_bench_engine() -> AsyncGenerator[AsyncEngine]:
     container.stop()
 
 
+async def _run_explain(engine: AsyncEngine, query_body: str, **params: Any) -> list[str]:
+    """Execute EXPLAIN (ANALYZE, BUFFERS) with the current txid horizon."""
+    session_factory = async_sessionmaker(engine, class_=AsyncSession)
+    async with session_factory() as session:
+        horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
+        sql = f"EXPLAIN (ANALYZE, BUFFERS) {query_body}"
+        result = await session.execute(text(sql), {"txid_horizon": horizon, **params})
+        return [row[0] for row in result.fetchall()]
+
+
 class TestPostgreSQLCatchupIndexUtilization:
     """Verifies EXPLAIN execution plans use index scans and avoid seq scans."""
 
     async def test_catchup_range_query_plan_uses_primary_index(
         self, pg_bench_engine: AsyncEngine
     ) -> None:
-        """Range query (global_position > :from_position ORDER BY global_position ASC LIMIT :limit)
-
-        must use Index Scan on events_pkey and avoid Seq Scan.
-        """
-        session_factory = async_sessionmaker(pg_bench_engine, class_=AsyncSession)
-        async with session_factory() as session:
-            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
-
-            query = f"""
-            EXPLAIN (ANALYZE, BUFFERS)
-            SELECT {_SELECT_COLUMNS} FROM events
-            WHERE {_HORIZON_PREDICATE}
-              AND global_position > :from_position
-            ORDER BY global_position ASC
-            LIMIT :limit
-            """
-            result = await session.execute(
-                text(query), {"txid_horizon": horizon, "from_position": 25000, "limit": 500}
-            )
-            plan_lines = [row[0] for row in result.fetchall()]
-            plan_text = "\n".join(plan_lines)
-
-            assert "Index Scan using events_pkey on events" in plan_text
-            assert "Seq Scan" not in plan_text
-            assert "Sort" not in plan_text
+        """Range query must use Index Scan on events_pkey and avoid Seq Scan."""
+        plan_lines = await _run_explain(
+            pg_bench_engine,
+            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
+            "AND global_position > :from_position ORDER BY global_position ASC LIMIT :limit",
+            from_position=25000,
+            limit=500,
+        )
+        plan_text = "\n".join(plan_lines)
+        assert "Index Scan using events_pkey on events" in plan_text
+        assert "Seq Scan" not in plan_text
+        assert "Sort" not in plan_text
 
     async def test_catchup_from_beginning_plan_uses_index(
         self, pg_bench_engine: AsyncEngine
     ) -> None:
         """Catch-up from the beginning (no from_position) must also use events_pkey."""
-        session_factory = async_sessionmaker(pg_bench_engine, class_=AsyncSession)
-        async with session_factory() as session:
-            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
-
-            query = f"""
-            EXPLAIN (ANALYZE, BUFFERS)
-            SELECT {_SELECT_COLUMNS} FROM events
-            WHERE {_HORIZON_PREDICATE}
-            ORDER BY global_position ASC
-            LIMIT :limit
-            """
-            result = await session.execute(text(query), {"txid_horizon": horizon, "limit": 500})
-            plan_lines = [row[0] for row in result.fetchall()]
-            plan_text = "\n".join(plan_lines)
-
-            assert "Index Scan using events_pkey on events" in plan_text
-            assert "Seq Scan" not in plan_text
+        plan_lines = await _run_explain(
+            pg_bench_engine,
+            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
+            "ORDER BY global_position ASC LIMIT :limit",
+            limit=500,
+        )
+        plan_text = "\n".join(plan_lines)
+        assert "Index Scan using events_pkey on events" in plan_text
+        assert "Seq Scan" not in plan_text
 
     async def test_catchup_with_aggregate_type_filter_plan(
         self, pg_bench_engine: AsyncEngine
     ) -> None:
         """When filtering by aggregate_type, query must use an index scan."""
-        session_factory = async_sessionmaker(pg_bench_engine, class_=AsyncSession)
-        async with session_factory() as session:
-            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
-
-            query = f"""
-            EXPLAIN (ANALYZE, BUFFERS)
-            SELECT {_SELECT_COLUMNS} FROM events
-            WHERE {_HORIZON_PREDICATE}
-              AND aggregate_type = :aggregate_type
-              AND global_position > :from_position
-            ORDER BY global_position ASC
-            LIMIT :limit
-            """
-            result = await session.execute(
-                text(query),
-                {
-                    "txid_horizon": horizon,
-                    "aggregate_type": "BenchmarkEntity",
-                    "from_position": 10000,
-                    "limit": 500,
-                },
+        plan_lines = await _run_explain(
+            pg_bench_engine,
+            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
+            "AND aggregate_type = :aggregate_type AND global_position > :from_position "
+            "ORDER BY global_position ASC LIMIT :limit",
+            aggregate_type="BenchmarkEntity",
+            from_position=10000,
+            limit=500,
+        )
+        plan_text = "\n".join(plan_lines)
+        has_index_scan = any(
+            idx in plan_text
+            for idx in (
+                "Index Scan using events_pkey on events",
+                "Index Scan using idx_events_type_position on events",
+                "Index Scan using idx_events_aggregate_type on events",
             )
-            plan_lines = [row[0] for row in result.fetchall()]
-            plan_text = "\n".join(plan_lines)
-
-            has_index_scan = (
-                "Index Scan using events_pkey on events" in plan_text
-                or "Index Scan using idx_events_type_position on events" in plan_text
-                or "Index Scan using idx_events_aggregate_type on events" in plan_text
-            )
-            assert has_index_scan
-            assert "Seq Scan" not in plan_text
+        )
+        assert has_index_scan
+        assert "Seq Scan" not in plan_text
 
     async def test_current_position_backward_index_scan(self, pg_bench_engine: AsyncEngine) -> None:
         """current_position MAX(global_position) must use Index Scan Backward on events_pkey."""
-        session_factory = async_sessionmaker(pg_bench_engine, class_=AsyncSession)
-        async with session_factory() as session:
-            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
-
-            query = f"""
-            EXPLAIN (ANALYZE, BUFFERS)
-            SELECT MAX(global_position) FROM events
-            WHERE {_HORIZON_PREDICATE}
-            """
-            result = await session.execute(text(query), {"txid_horizon": horizon})
-            plan_lines = [row[0] for row in result.fetchall()]
-            plan_text = "\n".join(plan_lines)
-
-            assert "Index Scan Backward using events_pkey on events" in plan_text
-            assert "Seq Scan" not in plan_text
+        plan_lines = await _run_explain(
+            pg_bench_engine,
+            f"SELECT MAX(global_position) FROM events WHERE {_HORIZON_PREDICATE}",
+        )
+        plan_text = "\n".join(plan_lines)
+        assert "Index Scan Backward using events_pkey on events" in plan_text
+        assert "Seq Scan" not in plan_text
 
     async def test_catchup_buffer_access_is_bounded(self, pg_bench_engine: AsyncEngine) -> None:
         """Buffer access for 500-event batch must be proportional to limit, O(limit), not table."""
-        session_factory = async_sessionmaker(pg_bench_engine, class_=AsyncSession)
-        async with session_factory() as session:
-            horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
+        plan_lines = await _run_explain(
+            pg_bench_engine,
+            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
+            "AND global_position > :from_position ORDER BY global_position ASC LIMIT 500",
+            from_position=20000,
+        )
+        buffer_lines = [line for line in plan_lines if "Buffers:" in line]
+        assert buffer_lines, "Expected buffer statistics in EXPLAIN output"
 
-            query = f"""
-            EXPLAIN (ANALYZE, BUFFERS)
-            SELECT {_SELECT_COLUMNS} FROM events
-            WHERE {_HORIZON_PREDICATE}
-              AND global_position > :from_position
-            ORDER BY global_position ASC
-            LIMIT 500
-            """
-            result = await session.execute(
-                text(query), {"txid_horizon": horizon, "from_position": 20000}
-            )
-            plan_lines = [row[0] for row in result.fetchall()]
+        total_buffers = 0
+        for line in buffer_lines:
+            tokens = line.replace(",", "").split()
+            for i, token in enumerate(tokens):
+                if token in ("hit=", "read=") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
+                    total_buffers += int(tokens[i + 1])
 
-            # Extract shared hit/read buffers
-            buffer_lines = [line for line in plan_lines if "Buffers:" in line]
-            assert buffer_lines, "Expected buffer statistics in EXPLAIN output"
-
-            # Parse buffer count from the inner index scan node
-            total_buffers = 0
-            for line in buffer_lines:
-                tokens = line.replace(",", "").split()
-                for i, token in enumerate(tokens):
-                    if token in ("hit=", "read=") and i + 1 < len(tokens):
-                        val = tokens[i + 1]
-                        if val.isdigit():
-                            total_buffers += int(val)
-
-            # Table has 50k rows (~1500 pages); a 500 row batch should touch < 50 pages
-            assert total_buffers < 100, f"Expected < 100 buffers, got {total_buffers}"
+        assert total_buffers < 100, f"Expected < 100 buffers, got {total_buffers}"
 
 
 class TestPostgreSQLCatchupScaleAndConcurrency:
@@ -287,8 +237,7 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
                 stream = StreamId(uuid4(), "BenchmarkEntity")
                 events = [
                     BenchmarkCatchupEvent(
-                        aggregate_id=stream.aggregate_id,
-                        data=f"worker_{worker_id}_{count}",
+                        aggregate_id=stream.aggregate_id, data=f"worker_{worker_id}_{count}"
                     )
                 ]
                 await worker_store.append(stream, events, ExpectedVersion.no_stream())
@@ -296,31 +245,24 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
                 await asyncio.sleep(0.002)
             return count
 
-        # Launch 3 concurrent background writer workers
         writer_tasks = [asyncio.create_task(writer_worker(i)) for i in range(3)]
-
         events_read = 0
         batch_times: list[float] = []
         current_pos = None
-        limit = 500
         start_time = time.perf_counter()
 
-        # Catch up through at least 25,000 events
-        target_events = 25000
-        while events_read < target_events:
+        while events_read < 25000:
             t0 = time.perf_counter()
-            batch = []
-            async for envelope in store.read_all(
-                from_position=current_pos, options=FeedReadOptions(limit=limit)
-            ):
-                batch.append(envelope)
-            t1 = time.perf_counter()
-            batch_times.append(t1 - t0)
-
+            batch = [
+                env
+                async for env in store.read_all(
+                    from_position=current_pos, options=FeedReadOptions(limit=500)
+                )
+            ]
+            batch_times.append(time.perf_counter() - t0)
             if not batch:
                 await asyncio.sleep(0.01)
                 continue
-
             events_read += len(batch)
             current_pos = batch[-1].position
 
@@ -330,21 +272,15 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
 
         throughput = events_read / elapsed
         median_batch_time_ms = (sorted(batch_times)[len(batch_times) // 2]) * 1000.0
-
-        # High-throughput assertions
         assert throughput > 5000, f"Expected throughput > 5000 events/s, got {throughput:.1f}"
-        assert median_batch_time_ms < 50.0, (
-            f"Expected median batch time < 50ms, got {median_batch_time_ms:.2f}ms"
-        )
+        assert median_batch_time_ms < 50.0, f"Median batch >= 50ms: {median_batch_time_ms:.2f}ms"
 
     async def test_catchup_monotonic_ordering(
         self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
     ) -> None:
         """Verifies that all envelopes returned by read_all are strictly monotonically increasing."""
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
-        envelopes = []
-        async for env in store.read_all(options=FeedReadOptions(limit=1000)):
-            envelopes.append(env)
+        envelopes = [env async for env in store.read_all(options=FeedReadOptions(limit=1000))]
 
         assert len(envelopes) == 1000
         positions = [env.position for env in envelopes]
@@ -358,7 +294,6 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
         """Safe horizon holds back higher positions while lower txid is in-flight."""
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         conn = await pg_bench_engine.connect()
-        parked_id = uuid4()
         await conn.execute(
             text("""
                 INSERT INTO events (
@@ -369,22 +304,18 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
                     NULL, NULL, 1, NOW(), '{}'::jsonb, NOW(), pg_current_xact_id()
                 )
             """),
-            {"eid": parked_id, "aid": uuid4()},
+            {"eid": uuid4(), "aid": uuid4()},
         )
 
         stream2 = StreamId(uuid4(), "BenchmarkEntity")
         ev2 = [BenchmarkCatchupEvent(aggregate_id=stream2.aggregate_id, data="after")]
         res2 = await store.append(stream2, ev2, ExpectedVersion.no_stream())
 
-        # Reader must not see ev2 while conn is uncommitted
         pos = await store.current_position()
-        assert pos is not None
-        assert pos < res2.position
+        assert pos is not None and pos < res2.position
 
         await conn.commit()
         await conn.close()
 
-        # After commit, new position reaches or exceeds res2
         pos_after = await store.current_position()
-        assert pos_after is not None
-        assert pos_after >= res2.position
+        assert pos_after is not None and pos_after >= res2.position
