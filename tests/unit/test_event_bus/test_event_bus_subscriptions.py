@@ -9,7 +9,6 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.memory.bus import InMemoryEventBus
-from eventsource.domain.event import DomainEvent
 from tests.unit.test_event_bus._fixtures import (
     OrderCancelled,
     OrderCreated,
@@ -118,7 +117,6 @@ class TestInMemoryEventBusSubscriberManagement:
         event_bus.subscribe(OrderCreated, h1)
         assert event_bus.get_subscriber_count(OrderCreated) == 1
         event_bus.subscribe(OrderCreated, h2)
-        assert event_bus.get_subscriber_count(OrderCreated) == 2
         event_bus.subscribe(OrderShipped, h1)
         assert event_bus.get_subscriber_count(OrderCreated) == 2
         assert event_bus.get_subscriber_count(OrderShipped) == 1
@@ -174,6 +172,14 @@ class TestInMemoryEventBusStatistics:
         stats1["events_published"] = 999
         assert event_bus.get_stats()["events_published"] == 1
 
+    @pytest.mark.asyncio
+    async def test_len_bool_and_clear(self, event_bus, sample_order_created) -> None:
+        assert len(event_bus) == 0 and bool(event_bus) is True
+        await event_bus.publish([sample_order_created])
+        assert len(event_bus) == 1 and bool(event_bus) is True
+        event_bus.clear()
+        assert len(event_bus) == 0 and event_bus.published_events == []
+
 
 class TestInMemoryEventBusThreadSafety:
     def test_subscribe_from_multiple_threads(self, event_bus: InMemoryEventBus) -> None:
@@ -203,12 +209,7 @@ class TestEventOrdering:
     @pytest.mark.asyncio
     async def test_events_processed_in_order(self, event_bus: InMemoryEventBus) -> None:
         order: list[str] = []
-
-        class OrderTrackingHandler:
-            async def handle(self, event: DomainEvent) -> None:
-                order.append(event.event_type)
-
-        event_bus.subscribe_to_all_events(OrderTrackingHandler())
+        event_bus.subscribe_to_all_events(lambda e: order.append(e.event_type))
         e1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id="cust-1")
         e2 = OrderShipped(aggregate_id=uuid4(), order_number="ORD-001", tracking_number="TRK-1")
         e3 = OrderCancelled(aggregate_id=uuid4(), order_number="ORD-001", reason="Test")
