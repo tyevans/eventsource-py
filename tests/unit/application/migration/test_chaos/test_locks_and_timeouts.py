@@ -50,12 +50,27 @@ async def _prepare_cutover(
         enable_tracing=False,
     )
     cutover_manager = CutoverManager(
-        lock_manager=lock_manager,
-        router=router,
-        routing_repo=routing_repo,
-        enable_tracing=False,
+        lock_manager=lock_manager, router=router, routing_repo=routing_repo, enable_tracing=False
     )
     return migration_id, lag_tracker, cutover_manager
+
+
+async def _exec_cutover(
+    cutover_manager: CutoverManager,
+    migration_id: UUID,
+    tenant_id: UUID,
+    lag_tracker: SyncLagTracker,
+    timeout_ms: float = 100.0,
+    config: MigrationConfig | None = None,
+):
+    return await cutover_manager.execute_cutover(
+        migration_id=migration_id,
+        tenant_id=tenant_id,
+        lag_tracker=lag_tracker,
+        target_store_id="dedicated",
+        config=config,
+        timeout_ms=timeout_ms,
+    )
 
 
 class TestLockContentionScenarios:
@@ -78,13 +93,7 @@ class TestLockContentionScenarios:
             tenant_id,
             MockLockManager(should_fail=True),
         )
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=lag_tracker,
-            target_store_id="dedicated",
-            timeout_ms=100.0,
-        )
+        result = await _exec_cutover(cutover_manager, migration_id, tenant_id, lag_tracker, 100.0)
         assert result.success is False
         assert "lock" in result.error_message.lower()
 
@@ -108,24 +117,16 @@ class TestLockContentionScenarios:
 
         async def attempt_cutover(attempt_id: int):
             try:
-                return await cutover_manager.execute_cutover(
-                    migration_id=migration_id,
-                    tenant_id=tenant_id,
-                    lag_tracker=lag_tracker,
-                    target_store_id="dedicated",
-                    timeout_ms=500.0,
+                return await _exec_cutover(
+                    cutover_manager, migration_id, tenant_id, lag_tracker, 500.0
                 )
             except Exception as e:
                 return e
 
         results = await asyncio.gather(
-            attempt_cutover(1),
-            attempt_cutover(2),
-            attempt_cutover(3),
-            return_exceptions=True,
+            attempt_cutover(1), attempt_cutover(2), attempt_cutover(3), return_exceptions=True
         )
-        success_count = sum(1 for r in results if hasattr(r, "success") and r.success)
-        assert success_count <= 1
+        assert sum(1 for r in results if hasattr(r, "success") and r.success) <= 1
 
     @pytest.mark.asyncio
     async def test_lock_released_on_failure(
@@ -139,23 +140,11 @@ class TestLockContentionScenarios:
         lock_manager = MockLockManager()
         config = MigrationConfig(cutover_max_lag_events=10)
         migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
-            source_store,
-            target_store,
-            routing_repo,
-            router,
-            tenant_id,
-            lock_manager,
-            config=config,
+            source_store, target_store, routing_repo, router, tenant_id, lock_manager, config=config
         )
         await create_test_events(source_store, tenant_id, count=200)
-
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=lag_tracker,
-            target_store_id="dedicated",
-            config=config,
-            timeout_ms=500.0,
+        result = await _exec_cutover(
+            cutover_manager, migration_id, tenant_id, lag_tracker, 500.0, config=config
         )
         assert result.success is False
         assert not lock_manager.is_locked(f"migration:cutover:{tenant_id}")
@@ -181,25 +170,14 @@ class TestTimeoutScenarios:
             tenant_id,
             MockLockManager(contention_delay=1.0),
         )
-        result = await cutover_manager.execute_cutover(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            lag_tracker=lag_tracker,
-            target_store_id="dedicated",
-            timeout_ms=100.0,
-        )
+        result = await _exec_cutover(cutover_manager, migration_id, tenant_id, lag_tracker, 100.0)
         if not result.success:
-            assert (
-                result.rolled_back
-                or "timeout" in result.error_message.lower()
-                or "lock" in result.error_message.lower()
-            )
+            msg = result.error_message.lower()
+            assert result.rolled_back or "timeout" in msg or "lock" in msg
 
     @pytest.mark.asyncio
     async def test_write_pause_timeout(
-        self,
-        write_pause_manager: WritePauseManager,
-        tenant_id: UUID,
+        self, write_pause_manager: WritePauseManager, tenant_id: UUID
     ) -> None:
         await write_pause_manager.pause_writes(tenant_id)
         with pytest.raises(WritePausedError) as exc_info:
@@ -226,10 +204,8 @@ class TestTimeoutScenarios:
                 [event],
                 ExpectedVersion.no_stream(),
             )
-
         source_count = sum(
             [1 async for env in source_store.read_all() if env.event.tenant_id == tenant_id]
         )
-        target_count = await count_tenant_events(target_store, tenant_id)
         assert source_count == 10
-        assert target_count == 10
+        assert await count_tenant_events(target_store, tenant_id) == 10

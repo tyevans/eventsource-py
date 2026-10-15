@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -20,6 +21,16 @@ from tests.unit.test_redis_event_bus_tracing._fixtures import (
     RedisTracingTestEvent,
     TracingTestHandler,
 )
+
+
+def _grep_count(pattern: str) -> int:
+    result = subprocess.run(
+        ["grep", "-c", pattern, "src/eventsource/adapters/redis/bus.py"],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[3],
+    )
+    return int(result.stdout.strip())
 
 
 class TestRedisEventBusTracerComposition:
@@ -154,59 +165,16 @@ class TestRedisEventBusStandardAttributes:
     """Tests for standard attribute usage in RedisEventBus."""
 
     def test_no_duplicate_otel_available(self):
-        import subprocess
-
-        result = subprocess.run(
-            ["grep", "-c", "OTEL_AVAILABLE = ", "src/eventsource/adapters/redis/bus.py"],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).resolve().parents[3],
-        )
-        assert result.stdout.strip() == "0", (
-            f"Found {result.stdout.strip()} definitions of OTEL_AVAILABLE in redis.py"
-        )
+        assert _grep_count("OTEL_AVAILABLE = ") == 0
 
     def test_imports_from_observability_module(self):
-        import subprocess
-
-        result = subprocess.run(
-            [
-                "grep",
-                "-c",
-                "from eventsource.observability import",
-                "src/eventsource/adapters/redis/bus.py",
-            ],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).resolve().parents[3],
-        )
-        assert int(result.stdout.strip()) >= 1, (
-            "RedisEventBus should import from eventsource.observability"
-        )
+        assert _grep_count("from eventsource.observability import") >= 1
 
     def test_uses_standard_attribute_constants(self):
-        import subprocess
-
-        result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/adapters/redis/bus.py"],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).resolve().parents[3],
-        )
-        count = int(result.stdout.strip())
-        assert count >= 10, f"Expected at least 10 ATTR_* usages, found {count}"
+        assert _grep_count("ATTR_") >= 10
 
     def test_uses_tracer_span(self):
-        import subprocess
-
-        result = subprocess.run(
-            ["grep", "-c", "_tracer.span", "src/eventsource/adapters/redis/bus.py"],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).resolve().parents[3],
-        )
-        count = int(result.stdout.strip())
-        assert count >= 3, f"Expected at least 3 _tracer.span usages, found {count}"
+        assert _grep_count("_tracer.span") >= 3
 
 
 class TestRedisEventBusSpanNaming:

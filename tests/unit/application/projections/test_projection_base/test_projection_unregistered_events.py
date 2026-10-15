@@ -19,31 +19,38 @@ from tests.unit.application.projections.test_projection_base._fixtures import (
 )
 
 
+def _shipped_event() -> OrderShipped:
+    return OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+
+
+class _BaseCreatedProjection(DeclarativeProjection):
+    @handles(OrderCreated)
+    async def _handle_order_created(self, event: OrderCreated) -> None:
+        pass
+
+
+class _StrictCreatedProjection(_BaseCreatedProjection):
+    unregistered_event_handling = "error"
+    MAX_RETRIES = 1
+    RETRY_BACKOFF_BASE = 0
+
+
 class TestProjectionUnregisteredEventHandling:
     """Tests for configurable unregistered event handling in projections (TD-012)."""
 
     def test_default_mode_is_ignore(self, checkpoint_repo: InMemoryCheckpointRepository) -> None:
-        class TestProjection(DeclarativeProjection):
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
-
-        projection = TestProjection(checkpoint_repo=checkpoint_repo)
-        assert projection.unregistered_event_handling == "ignore"
+        proj = _BaseCreatedProjection(checkpoint_repo=checkpoint_repo)
+        assert proj.unregistered_event_handling == "ignore"
 
     @pytest.mark.asyncio
     async def test_ignore_mode_silently_accepts_unknown_events(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        class IgnoreProjection(DeclarativeProjection):
+        class IgnoreProjection(_BaseCreatedProjection):
             unregistered_event_handling = "ignore"
 
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
-
         projection = IgnoreProjection(checkpoint_repo=checkpoint_repo)
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+        event = _shipped_event()
         await projection.handle(event)
         assert await projection.get_checkpoint() == str(event.event_id)
 
@@ -53,21 +60,12 @@ class TestProjectionUnregisteredEventHandling:
         checkpoint_repo: InMemoryCheckpointRepository,
         dlq_repo: InMemoryDLQRepository,
     ) -> None:
-        class StrictProjection(DeclarativeProjection):
-            unregistered_event_handling = "error"
-            MAX_RETRIES = 1
-            RETRY_BACKOFF_BASE = 0
-
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
+        class StrictProjection(_StrictCreatedProjection):
+            pass
 
         projection = StrictProjection(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-
         with pytest.raises(UnhandledEventError) as exc_info:
-            await projection.handle(event)
-
+            await projection.handle(_shipped_event())
         assert "OrderShipped" in str(exc_info.value)
         assert "StrictProjection" in str(exc_info.value)
 
@@ -77,19 +75,13 @@ class TestProjectionUnregisteredEventHandling:
         checkpoint_repo: InMemoryCheckpointRepository,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        class WarnProjection(DeclarativeProjection):
+        class WarnProjection(_BaseCreatedProjection):
             unregistered_event_handling = "warn"
 
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
-
         projection = WarnProjection(checkpoint_repo=checkpoint_repo)
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-
+        event = _shipped_event()
         with caplog.at_level(logging.WARNING):
             await projection.handle(event)
-
         assert "No handler registered" in caplog.text
         assert "OrderShipped" in caplog.text
         assert await projection.get_checkpoint() == str(event.event_id)
@@ -100,25 +92,14 @@ class TestProjectionUnregisteredEventHandling:
         checkpoint_repo: InMemoryCheckpointRepository,
         dlq_repo: InMemoryDLQRepository,
     ) -> None:
-        class MultiHandlerProjection(DeclarativeProjection):
-            unregistered_event_handling = "error"
-            MAX_RETRIES = 1
-            RETRY_BACKOFF_BASE = 0
-
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
-
+        class MultiHandlerProjection(_StrictCreatedProjection):
             @handles(OrderCancelled)
             async def _handle_order_cancelled(self, event: OrderCancelled) -> None:
                 pass
 
         projection = MultiHandlerProjection(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-
         with pytest.raises(UnhandledEventError) as exc_info:
-            await projection.handle(event)
-
+            await projection.handle(_shipped_event())
         error = exc_info.value
         assert "OrderCreated" in error.available_handlers
         assert "OrderCancelled" in error.available_handlers
@@ -145,12 +126,8 @@ class TestProjectionUnregisteredEventHandling:
     def test_subclass_can_override_handling_mode(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        class BaseProjection(DeclarativeProjection):
+        class BaseProjection(_BaseCreatedProjection):
             unregistered_event_handling = "ignore"
-
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
 
         class StrictSubclass(BaseProjection):
             unregistered_event_handling = "error"
@@ -168,17 +145,9 @@ class TestProjectionUnregisteredEventHandling:
         checkpoint_repo: InMemoryCheckpointRepository,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        class LegacyProjection(DeclarativeProjection):
-            @handles(OrderCreated)
-            async def _handle_order_created(self, event: OrderCreated) -> None:
-                pass
-
-        projection = LegacyProjection(checkpoint_repo=checkpoint_repo)
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-
+        projection = _BaseCreatedProjection(checkpoint_repo=checkpoint_repo)
         with caplog.at_level(logging.WARNING):
-            await projection.handle(event)
-
+            await projection.handle(_shipped_event())
         assert "No handler registered" not in caplog.text
 
 
@@ -206,11 +175,8 @@ class TestDatabaseProjectionUnregisteredEventHandling:
         projection = StrictDBProjection(
             session_factory=factory, checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo
         )
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
-
         with pytest.raises(UnhandledEventError) as exc_info:
-            await projection.handle(event)
-
+            await projection.handle(_shipped_event())
         assert "OrderShipped" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -229,6 +195,6 @@ class TestDatabaseProjectionUnregisteredEventHandling:
                 pass
 
         projection = IgnoreDBProjection(session_factory=factory, checkpoint_repo=checkpoint_repo)
-        event = OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001")
+        event = _shipped_event()
         await projection.handle(event)
         assert await projection.get_checkpoint() == str(event.event_id)

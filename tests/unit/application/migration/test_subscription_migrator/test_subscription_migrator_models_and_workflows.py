@@ -25,32 +25,26 @@ from tests.unit.application.migration.test_subscription_migrator._fixtures impor
 
 class TestSubscriptionMigrationResultDataclass:
     def test_result_success(self) -> None:
-        result = SubscriptionMigrationResult(
+        r = SubscriptionMigrationResult(
             "OrderProjection", True, source_pos(1000), target_pos(500), True, datetime.now(UTC)
         )
-        assert result.subscription_name == "OrderProjection"
-        assert result.success is True
-        assert result.source_position == source_pos(1000)
-        assert result.target_position == target_pos(500)
-        assert result.is_exact_translation is True
-        assert result.error_message is None
+        assert r.subscription_name == "OrderProjection" and r.success is True
+        assert r.source_position == source_pos(1000) and r.target_position == target_pos(500)
+        assert r.is_exact_translation is True and r.error_message is None
 
     def test_result_failure(self) -> None:
-        result = SubscriptionMigrationResult(
+        r = SubscriptionMigrationResult(
             "OrderProjection", False, source_pos(1000), error_message="Translation failed"
         )
-        assert result.success is False
-        assert result.error_message == "Translation failed"
-        assert result.target_position is None
+        assert r.success is False and r.error_message == "Translation failed"
+        assert r.target_position is None
 
     def test_result_to_dict(self) -> None:
         now = datetime.now(UTC)
-        result = SubscriptionMigrationResult(
+        d = SubscriptionMigrationResult(
             "OrderProjection", True, source_pos(1000), target_pos(500), migrated_at=now
-        )
-        d = result.to_dict()
-        assert d["subscription_name"] == "OrderProjection"
-        assert d["success"] is True
+        ).to_dict()
+        assert d["subscription_name"] == "OrderProjection" and d["success"] is True
         assert d["source_position"] == source_pos(1000).to_str()
         assert d["target_position"] == target_pos(500).to_str()
         assert d["migrated_at"] == now.isoformat()
@@ -63,29 +57,20 @@ class TestSubscriptionMigrationResultDataclass:
 
 class TestPlannedMigrationDataclass:
     def test_planned_migration_exact(self) -> None:
-        planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500), True)
-        assert planned.subscription_name == "OrderProjection"
-        assert planned.current_position == source_pos(1000)
-        assert planned.planned_target_position == target_pos(500)
-        assert planned.is_exact_translation is True
-        assert planned.warning is None
+        p = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500), True)
+        assert p.subscription_name == "OrderProjection" and p.is_exact_translation is True
+        assert p.current_position == source_pos(1000) and p.warning is None
+        assert p.planned_target_position == target_pos(500)
 
     def test_planned_migration_with_warning(self) -> None:
-        planned = PlannedMigration(
-            "OrderProjection",
-            source_pos(1050),
-            target_pos(500),
-            False,
-            source_pos(1000),
-            "Using nearest position mapping",
+        p = PlannedMigration(
+            "OrderProjection", source_pos(1050), target_pos(500), False, source_pos(1000), "Warn"
         )
-        assert planned.is_exact_translation is False
-        assert planned.nearest_source_position == source_pos(1000)
-        assert planned.warning is not None
+        assert p.is_exact_translation is False and p.nearest_source_position == source_pos(1000)
+        assert p.warning is not None
 
     def test_planned_migration_to_dict(self) -> None:
-        planned = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500))
-        d = planned.to_dict()
+        d = PlannedMigration("OrderProjection", source_pos(1000), target_pos(500)).to_dict()
         assert d["subscription_name"] == "OrderProjection"
         assert d["current_position"] == source_pos(1000).to_str()
         assert d["planned_target_position"] == target_pos(500).to_str()
@@ -103,65 +88,53 @@ class TestMigrationPlanDataclass:
             migratable_count=1,
             skipped_subscriptions=["NoCheckpoint"],
         )
-        assert plan.migration_id == migration_id
-        assert plan.tenant_id == tenant_id
-        assert plan.migratable_count == 1
-        assert len(plan.skipped_subscriptions) == 1
+        assert plan.migration_id == migration_id and plan.tenant_id == tenant_id
+        assert plan.migratable_count == 1 and len(plan.skipped_subscriptions) == 1
 
     def test_migration_plan_to_dict(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
-        plan = MigrationPlan(migration_id, tenant_id, [], 0, 0)
-        d = plan.to_dict()
-        assert d["migration_id"] == str(migration_id)
-        assert d["tenant_id"] == str(tenant_id)
+        d = MigrationPlan(migration_id, tenant_id, [], 0, 0).to_dict()
+        assert d["migration_id"] == str(migration_id) and d["tenant_id"] == str(tenant_id)
         assert isinstance(d["created_at"], str)
 
 
 class TestMigrationSummaryDataclass:
     def test_migration_summary_creation(self) -> None:
         migration_id, tenant_id = uuid4(), uuid4()
-        result = SubscriptionMigrationResult(
+        res = SubscriptionMigrationResult(
             "OrderProjection", True, source_pos(1000), target_pos(500)
         )
-        summary = MigrationSummary(migration_id, tenant_id, [result], 1, 0, duration_ms=100.0)
-        assert summary.migration_id == migration_id
-        assert summary.all_successful is True
+        summary = MigrationSummary(migration_id, tenant_id, [res], 1, 0, duration_ms=100.0)
+        assert summary.migration_id == migration_id and summary.all_successful is True
 
     def test_migration_summary_not_all_successful(self) -> None:
-        summary = MigrationSummary(uuid4(), uuid4(), [], 1, 1)
-        assert summary.all_successful is False
+        assert MigrationSummary(uuid4(), uuid4(), [], 1, 1).all_successful is False
 
     def test_migration_summary_empty(self) -> None:
-        summary = MigrationSummary(uuid4(), uuid4(), [], 0, 0)
-        assert summary.all_successful is False
+        assert MigrationSummary(uuid4(), uuid4(), [], 0, 0).all_successful is False
 
     def test_migration_summary_to_dict(self) -> None:
         migration_id, tenant_id, now = uuid4(), uuid4(), datetime.now(UTC)
-        summary = MigrationSummary(
+        d = MigrationSummary(
             migration_id, tenant_id, [], 1, 0, started_at=now, completed_at=now, duration_ms=100.0
-        )
-        d = summary.to_dict()
-        assert d["migration_id"] == str(migration_id)
-        assert d["all_successful"] is True
+        ).to_dict()
+        assert d["migration_id"] == str(migration_id) and d["all_successful"] is True
         assert d["duration_ms"] == 100.0
 
 
 class TestSubscriptionMigrationErrorException:
     def test_exception_creation(self) -> None:
         migration_id = uuid4()
-        error = SubscriptionMigrationError(
+        e = SubscriptionMigrationError(
             "Migration failed", migration_id, "OrderProjection", "translation_failed"
         )
-        assert error.subscription_name == "OrderProjection"
-        assert error.reason == "translation_failed"
-        assert error.migration_id == migration_id
-        assert error.recoverable is True
+        assert e.subscription_name == "OrderProjection" and e.reason == "translation_failed"
+        assert e.migration_id == migration_id and e.recoverable is True
 
     def test_exception_str(self) -> None:
         migration_id = uuid4()
         error = SubscriptionMigrationError("Migration failed", migration_id, "OrderProjection")
-        assert "Migration failed" in str(error)
-        assert str(migration_id) in str(error)
+        assert "Migration failed" in str(error) and str(migration_id) in str(error)
 
 
 class TestSubscriptionMigratorWorkflows:
@@ -187,8 +160,7 @@ class TestSubscriptionMigratorWorkflows:
         assert plan.planned_migrations[0].planned_target_position == target_pos(500)
 
         summary = await migrator.migrate_subscriptions(migration_id, tenant_id, ["OrderProjection"])
-        assert summary.successful_count == 1
-        assert summary.all_successful
+        assert summary.successful_count == 1 and summary.all_successful
 
         mock_checkpoint_repo.get_position = AsyncMock(return_value=source_pos(500))
         verification = await migrator.verify_migration(migration_id, ["OrderProjection"])
@@ -228,7 +200,6 @@ class TestSubscriptionMigratorWorkflows:
         summary = await migrator.migrate_subscriptions(
             migration_id, tenant_id, ["OrderProjection", "FailingProjection"]
         )
-        assert summary.successful_count == 1
-        assert summary.failed_count == 1
+        assert summary.successful_count == 1 and summary.failed_count == 1
         assert not summary.all_successful
         mock_checkpoint_repo.save_position.assert_called_once()
