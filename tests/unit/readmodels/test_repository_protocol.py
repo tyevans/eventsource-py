@@ -1,5 +1,7 @@
 """Unit tests for ReadModelRepository protocol."""
 
+from collections.abc import Iterable
+from typing import Any
 from uuid import UUID
 
 from eventsource.ports.readmodels.model import ReadModel
@@ -11,10 +13,6 @@ class TestReadModelRepositoryProtocol:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         """Test that protocol can be used with isinstance()."""
-        # `_is_runtime_protocol` is the attribute @runtime_checkable itself
-        # sets, stable across Python versions -- unlike `__protocol_attrs__`
-        # (a CPython 3.12+ implementation detail unrelated to isinstance
-        # support).
         assert getattr(ReadModelRepository, "_is_runtime_protocol", False)
 
     def test_protocol_methods_exist(self) -> None:
@@ -31,6 +29,7 @@ class TestReadModelRepositoryProtocol:
             "find_deleted",
             "exists",
             "find",
+            "find_one",
             "count",
             "truncate",
             "save_with_version_check",
@@ -50,13 +49,13 @@ class TestReadModelRepositoryProtocol:
             async def get(self, id: UUID) -> SimpleModel | None:
                 return None
 
-            async def get_many(self, ids: list[UUID]) -> list[SimpleModel]:
+            async def get_many(self, ids: Iterable[UUID]) -> list[SimpleModel]:
                 return []
 
             async def save(self, model: SimpleModel) -> None:
                 pass
 
-            async def save_many(self, models: list[SimpleModel]) -> None:
+            async def save_many(self, models: Iterable[SimpleModel]) -> None:
                 pass
 
             async def delete(self, id: UUID) -> bool:
@@ -77,10 +76,13 @@ class TestReadModelRepositoryProtocol:
             async def exists(self, id: UUID) -> bool:
                 return False
 
-            async def find(self, query: object = None) -> list[SimpleModel]:
+            async def find(self, query: object = None, **eq_filters: Any) -> list[SimpleModel]:
                 return []
 
-            async def count(self, query: object = None) -> int:
+            async def find_one(self, query: object = None, **eq_filters: Any) -> SimpleModel | None:
+                return None
+
+            async def count(self, query: object = None, **eq_filters: Any) -> int:
                 return 0
 
             async def truncate(self) -> int:
@@ -89,7 +91,6 @@ class TestReadModelRepositoryProtocol:
             async def save_with_version_check(self, model: SimpleModel) -> None:
                 pass
 
-        # Should not raise - MockRepository satisfies protocol
         assert isinstance(MockRepository(), ReadModelRepository)
 
     def test_incomplete_implementation_does_not_satisfy_protocol(self) -> None:
@@ -101,8 +102,4 @@ class TestReadModelRepositoryProtocol:
             async def get(self, id: UUID) -> None:
                 return None
 
-        # Should not satisfy protocol due to missing methods
-        _ = IncompleteRepository()
-        # Note: runtime_checkable only checks method existence, not signatures
-        # This will pass if get exists, regardless of other methods
-        # We test the positive case above
+        assert not isinstance(IncompleteRepository(), ReadModelRepository)

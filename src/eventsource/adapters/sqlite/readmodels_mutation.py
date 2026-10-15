@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -74,19 +75,20 @@ class SQLiteReadModelMutationMixin[TModel: _BaseReadModel]:
             )
             await self._connection.commit()
 
-    async def save_many(self, models: list[TModel]) -> None:
+    async def save_many(self, models: Iterable[TModel]) -> None:
         """Save multiple read models in a batch within a single transaction."""
-        if not models:
+        model_list = list(models)
+        if not model_list:
             return
         attrs = {
             ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_BATCH_SIZE: len(models),
+            ATTR_BATCH_SIZE: len(model_list),
             ATTR_DB_SYSTEM: "sqlite",
             ATTR_DB_OPERATION: "UPSERT",
         }
         with self._tracer.span("eventsource.readmodel.save_many", attrs):
             now, query = datetime.now(UTC), self._build_upsert_query()
-            for model in models:
+            for model in model_list:
                 await self._connection.execute(query, self._model_to_values(model, now))
             await self._connection.commit()
 

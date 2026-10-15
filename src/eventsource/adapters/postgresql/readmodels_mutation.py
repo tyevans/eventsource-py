@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -63,16 +64,17 @@ class PostgreSQLReadModelMutationMixin[TModel: ReadModel]:
             async with sql_connection(self._conn, write=True) as conn:
                 await conn.execute(self._build_upsert_query(), data)
 
-    async def save_many(self, models: list[TModel]) -> None:
+    async def save_many(self, models: Iterable[TModel]) -> None:
         """Save multiple read models in a batch within a single transaction."""
-        if not models:
+        model_list = list(models)
+        if not model_list:
             return
 
         with self._tracer.span(
             "eventsource.readmodel.save_many",
             {
                 ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_BATCH_SIZE: len(models),
+                ATTR_BATCH_SIZE: len(model_list),
                 ATTR_DB_SYSTEM: "postgresql",
                 ATTR_DB_OPERATION: "UPSERT",
             },
@@ -80,7 +82,7 @@ class PostgreSQLReadModelMutationMixin[TModel: ReadModel]:
             now = datetime.now(UTC)
             query = self._build_upsert_query()
             async with sql_connection(self._conn, write=True) as conn:
-                for model in models:
+                for model in model_list:
                     data = model.model_dump(mode="python")
                     data["updated_at"] = now
                     await conn.execute(query, data)

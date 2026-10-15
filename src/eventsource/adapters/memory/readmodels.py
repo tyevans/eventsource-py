@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -66,14 +67,15 @@ class InMemoryReadModelRepository[TModel: ReadModel](
             raise ReadModelNotFoundError(id)
         return model
 
-    async def get_many(self, ids: list[UUID]) -> list[TModel]:
+    async def get_many(self, ids: Iterable[UUID]) -> list[TModel]:
         """Get multiple read models by their IDs (excluding soft-deleted)."""
-        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_BATCH_SIZE: len(ids)}
+        id_list = list(ids)
+        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_BATCH_SIZE: len(id_list)}
         with self._tracer.span("eventsource.readmodel.get_many", attrs):
             async with self._lock:
                 return [
                     self._detach(model)
-                    for id_ in ids
+                    for id_ in id_list
                     if (model := self._models.get(id_)) is not None and not model.is_deleted()
                 ]
 
@@ -84,13 +86,14 @@ class InMemoryReadModelRepository[TModel: ReadModel](
             async with self._lock:
                 self._store_unlocked(model, datetime.now(UTC))
 
-    async def save_many(self, models: list[TModel]) -> None:
+    async def save_many(self, models: Iterable[TModel]) -> None:
         """Save multiple read models in a batch."""
-        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_BATCH_SIZE: len(models)}
+        model_list = list(models)
+        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_BATCH_SIZE: len(model_list)}
         with self._tracer.span("eventsource.readmodel.save_many", attrs):
             async with self._lock:
                 now = datetime.now(UTC)
-                for model in models:
+                for model in model_list:
                     self._store_unlocked(model, now)
 
     async def delete(self, id: UUID) -> bool:
