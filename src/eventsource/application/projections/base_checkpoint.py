@@ -40,46 +40,12 @@ logger = logging.getLogger(__name__)
 
 class CheckpointTrackingProjection(EventSubscriber, ABC):
     """
-    Base class for projections with automatic checkpoint tracking.
-
-    Provides:
-    - Automatic checkpoint management after each event
-    - Idempotent event processing
-    - Retry logic with exponential backoff (configurable via ProjectionRetryPolicy)
-    - Dead letter queue for permanent failures
-    - Lag monitoring support
-    - Optional OpenTelemetry tracing support (disabled by default)
+    Base class for projections with automatic checkpoint tracking, retry, and DLQ.
 
     Subclasses must implement:
     - subscribed_to(): List of event types to handle
     - _process_event(): Actual projection logic
-    - _truncate_read_models(): Table truncation for reset
-
-    Configuration:
-    - retry_policy: ProjectionRetryPolicy instance for configurable retry behavior
-
-    Tracing:
-    - Tracing is disabled by default for projections (high-frequency processing)
-    - Enable with enable_tracing=True in constructor
-    - Emits spans: eventsource.projection.handle
-
-    Example:
-        >>> class OrderProjection(CheckpointTrackingProjection):
-        ...     def subscribed_to(self) -> list[type[DomainEvent]]:
-        ...         return [OrderCreated, OrderShipped]
-        ...
-        ...     async def _process_event(self, conn, event: DomainEvent) -> None:
-        ...         if isinstance(event, OrderCreated):
-        ...             await self._handle_created(conn, event)
-        ...
-        ...     async def _truncate_read_models(self, conn) -> None:
-        ...         await conn.execute(text("TRUNCATE TABLE orders"))
-        >>>
-        >>> # With custom retry policy
-        >>> from eventsource.application.projections.retry import ExponentialBackoffRetryPolicy
-        >>> from eventsource.application.subscriptions.retry import RetryConfig
-        >>> policy = ExponentialBackoffRetryPolicy(RetryConfig(max_retries=5))
-        >>> projection = OrderProjection(retry_policy=policy, enable_tracing=True)
+    - _truncate_read_models(): Optional table truncation for reset
     """
 
     def __init__(
@@ -94,30 +60,19 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         Initialize the checkpoint-tracking projection.
 
         Args:
-            checkpoint_repo: Repository for checkpoint storage.
-                           If None, checkpoint tracking is disabled: no checkpoint
-                           is written, and `get_checkpoint()` / `get_lag_metrics()`
-                           return None.
-            dlq_repo: Repository for dead letter queue.
-                     If None, DLQ capture is disabled: permanent failures are
-                     logged at critical and re-raised, as before.
-            retry_policy: Policy for retry behavior.
-                         If None, uses ExponentialBackoffRetryPolicy with defaults.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: If True and OpenTelemetry is available, emit traces.
-                          Default is False (tracing off for high-frequency projections).
-                          Ignored if tracer is explicitly provided.
+            checkpoint_repo: Repository for checkpoint storage (None disables tracking).
+            dlq_repo: Repository for dead letter queue (None disables DLQ capture).
+            retry_policy: Policy for retry behavior (defaults to ExponentialBackoffRetryPolicy).
+            tracer: Optional custom Tracer instance.
+            enable_tracing: Emit traces if True and OpenTelemetry is available.
         """
         self._projection_name = self.__class__.__name__
-        # Composition-based tracing (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
 
         self._checkpoint_repo: ProjectionCheckpoints | None = checkpoint_repo
         self._dlq_repo: DLQRepository | None = dlq_repo
 
-        # Use provided retry policy or create default
         if retry_policy is not None:
             self._retry_policy = retry_policy
         else:
@@ -125,26 +80,15 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
             self._retry_policy = ExponentialBackoffRetryPolicy(
                 config=RetryConfig(
-                    max_retries=2,  # 3 total attempts
-                    initial_delay=2.0,  # 2 second base backoff
+                    max_retries=2,
+                    initial_delay=2.0,
                     exponential_base=2.0,
                     jitter=0.1,
                 )
             )
 
     async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle event with retry logic and DLQ fallback.
-
-        This method wraps the projection logic with:
-        1. Retry with exponential backoff for transient failures
-        2. Dead letter queue for permanent failures
-        3. Checkpoint tracking for successful processing
-        4. Optional tracing (when enable_tracing=True)
-
-        Args:
-            event: The domain event to process
-        """
+        """Handle event with retry logic, DLQ fallback, and checkpoint tracking."""
         with self._tracer.span(
             "eventsource.projection.handle",
             {
@@ -156,23 +100,13 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
             await self._handle_with_retry(event, span)
 
     async def _handle_with_retry(self, event: DomainEvent, span: Span | None) -> None:
-        """
-        Internal method that implements retry logic for event handling.
-
-        Uses the configured ProjectionRetryPolicy for backoff and retry decisions.
-
-        Args:
-            event: The domain event to process
-            span: Optional OpenTelemetry span for adding attributes
-        """
-        max_attempts = self._retry_policy.max_retries + 1  # Include initial attempt
+        """Execute event handling with configured retry policy."""
+        max_attempts = self._retry_policy.max_retries + 1
 
         for attempt in range(max_attempts):
             try:
-                # Process the event in projection-specific logic. Nothing else
-                # belongs in this `try`: the retry loop treats every exception
-                # raised here as "the handler rejected this event", so widening
-                # the block makes an unrelated failure look like a poison event.
+                # Only _process_event belongs in this try block so unrelated failures
+                # are not treated as poison events.
                 await self._process_event(event)
 
             except Exception as e:
