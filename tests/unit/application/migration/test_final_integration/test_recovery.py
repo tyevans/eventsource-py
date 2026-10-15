@@ -70,8 +70,6 @@ def _audit_entry(
 
 
 class TestRecoveryAfterSimulatedFailures:
-    """Tests for recovery after simulated failures."""
-
     async def test_recovery_from_bulk_copy_failure(
         self,
         source_store,
@@ -82,26 +80,21 @@ class TestRecoveryAfterSimulatedFailures:
         lock_manager,
         audit_log_repo,
         tenant_id,
-    ) -> None:
+    ):
         await create_test_events(source_store, tenant_id, count=10)
         deps = (source_store, target_store, migration_repo, routing_repo, router, lock_manager)
         _, migration = await _start_dedicated(*deps, tenant_id)
-        await migration_repo.record_error(migration.id, error="Simulated bulk copy failure")
-        await audit_log_repo.record(
-            MigrationAuditEntry.error_occurred(
-                migration_id=migration.id,
-                occurred_at=datetime.now(UTC),
-                error_message="Simulated bulk copy failure",
-                error_type="BulkCopyError",
-            )
+        err_msg = "Simulated bulk copy failure"
+        await migration_repo.record_error(migration.id, error=err_msg)
+        err_entry = MigrationAuditEntry.error_occurred(
+            migration.id, datetime.now(UTC), err_msg, "BulkCopyError"
         )
+        await audit_log_repo.record(err_entry)
         migration = await migration_repo.get(migration.id)
         assert migration is not None and migration.error_count == 1
         assert "bulk copy" in migration.last_error.lower() and not migration.phase.is_terminal
-        errors = await audit_log_repo.get_by_migration(
-            migration.id, event_types=[AuditEventType.ERROR_OCCURRED]
-        )
-        assert len(errors) == 1
+        types = [AuditEventType.ERROR_OCCURRED]
+        assert len(await audit_log_repo.get_by_migration(migration.id, event_types=types)) == 1
 
     async def test_recovery_from_cutover_rollback(
         self,
@@ -113,17 +106,14 @@ class TestRecoveryAfterSimulatedFailures:
         audit_log_repo,
         tenant_id,
         migration_id,
-    ) -> None:
+    ):
         await create_test_events(source_store, tenant_id, count=5)
         await copy_events_between_stores(source_store, target_store, tenant_id)
         for i in range(200):
             agg_id = uuid4()
             event = SampleTestEvent(aggregate_id=agg_id, tenant_id=tenant_id, value=f"extra-{i}")
-            await source_store.append(
-                StreamId(aggregate_id=agg_id, category="TestAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
+            stream = StreamId(aggregate_id=agg_id, category="TestAggregate")
+            await source_store.append(stream, [event], ExpectedVersion.no_stream())
         await routing_repo.set_migration_state(
             tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
         )
@@ -137,11 +127,12 @@ class TestRecoveryAfterSimulatedFailures:
             migration_id, tenant_id, lag_tracker, "dedicated", config=cfg, timeout_ms=500.0
         )
         assert result.success is False and result.rolled_back is True
+        details = {"reason": result.error_message, "duration_ms": result.duration_ms}
         await audit_log_repo.record(
             _audit_entry(
                 migration_id,
                 AuditEventType.CUTOVER_ROLLED_BACK,
-                {"reason": result.error_message, "duration_ms": result.duration_ms},
+                details,
                 old_phase=MigrationPhase.CUTOVER,
                 new_phase=MigrationPhase.DUAL_WRITE,
                 operator="system",
@@ -149,10 +140,8 @@ class TestRecoveryAfterSimulatedFailures:
         )
         routing = await routing_repo.get_routing(tenant_id)
         assert routing is not None and routing.migration_state == TenantMigrationState.DUAL_WRITE
-        rollback_entries = await audit_log_repo.get_by_migration(
-            migration_id, event_types=[AuditEventType.CUTOVER_ROLLED_BACK]
-        )
-        assert len(rollback_entries) == 1
+        types = [AuditEventType.CUTOVER_ROLLED_BACK]
+        assert len(await audit_log_repo.get_by_migration(migration_id, event_types=types)) == 1
 
     async def test_pause_resume_recovery(
         self,
@@ -164,26 +153,21 @@ class TestRecoveryAfterSimulatedFailures:
         lock_manager,
         audit_log_repo,
         tenant_id,
-    ) -> None:
+    ):
         deps = (source_store, target_store, migration_repo, routing_repo, router, lock_manager)
         coordinator, migration = await _start_dedicated(*deps, tenant_id)
         await coordinator.pause_migration(migration.id)
         await audit_log_repo.record(
             _audit_entry(migration.id, AuditEventType.MIGRATION_PAUSED, {"reason": "Maintenance"})
         )
-        migration = await coordinator.get_migration(migration.id)
-        assert migration is not None and migration.is_paused
+        assert (await coordinator.get_migration(migration.id)).is_paused
         await coordinator.resume_migration(migration.id)
         await audit_log_repo.record(
             _audit_entry(migration.id, AuditEventType.MIGRATION_RESUMED, {"resumed_by": "admin"})
         )
-        migration = await coordinator.get_migration(migration.id)
-        assert migration is not None and not migration.is_paused
-        entries = await audit_log_repo.get_by_migration(
-            migration.id,
-            event_types=[AuditEventType.MIGRATION_PAUSED, AuditEventType.MIGRATION_RESUMED],
-        )
-        assert len(entries) == 2
+        assert not (await coordinator.get_migration(migration.id)).is_paused
+        types = [AuditEventType.MIGRATION_PAUSED, AuditEventType.MIGRATION_RESUMED]
+        assert len(await audit_log_repo.get_by_migration(migration.id, event_types=types)) == 2
 
     async def test_abort_recovery(
         self,
@@ -195,7 +179,7 @@ class TestRecoveryAfterSimulatedFailures:
         lock_manager,
         audit_log_repo,
         tenant_id,
-    ) -> None:
+    ):
         deps = (source_store, target_store, migration_repo, routing_repo, router, lock_manager)
         coordinator, migration = await _start_dedicated(*deps, tenant_id)
         result = await coordinator.abort_migration(migration.id, reason="Test abort for recovery")
@@ -209,14 +193,12 @@ class TestRecoveryAfterSimulatedFailures:
             )
         )
         assert result.success is False and result.final_phase == MigrationPhase.ABORTED
-        migration = await coordinator.get_migration(result.migration_id)
-        assert migration is not None and migration.phase == MigrationPhase.ABORTED
-        routing = await routing_repo.get_routing(tenant_id)
-        assert routing is not None and routing.migration_state == TenantMigrationState.NORMAL
-        new_migration = await coordinator.start_migration(
-            tenant_id=tenant_id, target_store=target_store, target_store_id="dedicated"
-        )
-        assert new_migration is not None and new_migration.id != migration.id
+        mig = await coordinator.get_migration(result.migration_id)
+        assert mig is not None and mig.phase == MigrationPhase.ABORTED
+        rt = await routing_repo.get_routing(tenant_id)
+        assert rt is not None and rt.migration_state == TenantMigrationState.NORMAL
+        new_mig = await coordinator.start_migration(tenant_id, target_store, "dedicated")
+        assert new_mig is not None and new_mig.id != migration.id
 
 
 __all__ = ["TestRecoveryAfterSimulatedFailures"]  # pragma: allowlist secret

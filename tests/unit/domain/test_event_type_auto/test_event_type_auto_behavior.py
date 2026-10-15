@@ -13,19 +13,17 @@ class TestEventTypeMismatchWarning:
     """Tests for mismatch warning behavior."""
 
     def test_warning_logged_on_mismatch(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Warning logged when event_type differs from class name."""
         with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class OrderCreated(DomainEvent):
                 aggregate_type: str = "Order"
-                event_type: str = "OrderCreatedEvent"  # Different from class name
+                event_type: str = "OrderCreatedEvent"
 
         assert "OrderCreated" in caplog.text
         assert "OrderCreatedEvent" in caplog.text
         assert "differs from class name" in caplog.text
 
     def test_warning_suppressed(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Warning suppressed with suppress_event_type_warning=True."""
         with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class OrderCreated(DomainEvent):
@@ -36,7 +34,6 @@ class TestEventTypeMismatchWarning:
         assert "differs from class name" not in caplog.text
 
     def test_no_warning_when_matching(self, caplog: pytest.LogCaptureFixture) -> None:
-        """No warning when event_type matches class name."""
         with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class OrderCreated(DomainEvent):
@@ -45,12 +42,10 @@ class TestEventTypeMismatchWarning:
         assert "differs from class name" not in caplog.text
 
     def test_no_warning_for_auto_derived(self, caplog: pytest.LogCaptureFixture) -> None:
-        """No warning when event_type is auto-derived."""
         with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class AutoDerivedEvent(DomainEvent):
                 aggregate_type: str = "Test"
-                # No explicit event_type
 
         assert "differs from class name" not in caplog.text
 
@@ -59,16 +54,12 @@ class TestSuppressEventTypeWarningAttribute:
     """Tests for the suppress_event_type_warning class attribute."""
 
     def test_suppress_warning_default_is_false(self) -> None:
-        """Default value of suppress_event_type_warning is False."""
-
         class TestEvent(DomainEvent):
             aggregate_type: str = "Test"
 
         assert TestEvent.suppress_event_type_warning is False
 
     def test_suppress_warning_can_be_set_true(self) -> None:
-        """suppress_event_type_warning can be set to True."""
-
         class TestEvent(DomainEvent):
             aggregate_type: str = "Test"
             event_type: str = "different_name"
@@ -77,22 +68,17 @@ class TestSuppressEventTypeWarningAttribute:
         assert TestEvent.suppress_event_type_warning is True
 
     def test_suppress_warning_is_class_variable(self) -> None:
-        """suppress_event_type_warning is a class variable, not instance."""
-
         class TestEvent(DomainEvent):
             aggregate_type: str = "Test"
             suppress_event_type_warning = True
 
         event = TestEvent(aggregate_id=uuid4(), aggregate_version=1)
-
-        # Should not be in instance dict (serialized data)
         data = event.to_dict()
         assert "suppress_event_type_warning" not in data
 
     def test_suppress_warning_inherited_but_can_override(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Subclasses inherit suppress_event_type_warning but can override."""
         with caplog.at_level(logging.WARNING, logger="eventsource.domain.event"):
 
             class ParentEvent(DomainEvent):
@@ -101,7 +87,7 @@ class TestSuppressEventTypeWarningAttribute:
 
             class ChildEventWithWarning(ParentEvent):
                 event_type: str = "different"
-                suppress_event_type_warning = False  # Override to show warning
+                suppress_event_type_warning = False
 
         assert "ChildEventWithWarning" in caplog.text
         assert "differs from class name" in caplog.text
@@ -111,8 +97,6 @@ class TestInheritanceBehavior:
     """Tests for inheritance and subclass behavior."""
 
     def test_subclasses_get_own_event_type(self) -> None:
-        """Each subclass gets its own auto-derived event_type."""
-
         class BaseOrderEvent(DomainEvent):
             aggregate_type: str = "Order"
 
@@ -122,23 +106,14 @@ class TestInheritanceBehavior:
         class OrderShipped(BaseOrderEvent):
             tracking_number: str
 
-        created = OrderCreated(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            customer_id=uuid4(),
-        )
+        created = OrderCreated(aggregate_id=uuid4(), aggregate_version=1, customer_id=uuid4())
         shipped = OrderShipped(
-            aggregate_id=uuid4(),
-            aggregate_version=2,
-            tracking_number="TRACK123",
+            aggregate_id=uuid4(), aggregate_version=2, tracking_number="TRACK123"
         )
-
         assert created.event_type == "OrderCreated"
         assert shipped.event_type == "OrderShipped"
 
     def test_intermediate_base_class_gets_own_type(self) -> None:
-        """Intermediate base classes also get auto-derived event_type."""
-
         class BaseEvent(DomainEvent):
             aggregate_type: str = "Base"
 
@@ -150,13 +125,10 @@ class TestInheritanceBehavior:
 
         middle = MiddleEvent(aggregate_id=uuid4(), aggregate_version=1)
         final = FinalEvent(aggregate_id=uuid4(), aggregate_version=1)
-
         assert middle.event_type == "MiddleEvent"
         assert final.event_type == "FinalEvent"
 
     def test_subclass_can_override_parent_event_type(self) -> None:
-        """Subclass can override parent's explicit event_type."""
-
         class ParentEvent(DomainEvent):
             aggregate_type: str = "Test"
             event_type: str = "parent_event"
@@ -168,7 +140,6 @@ class TestInheritanceBehavior:
 
         parent = ParentEvent(aggregate_id=uuid4(), aggregate_version=1)
         child = ChildEvent(aggregate_id=uuid4(), aggregate_version=1)
-
         assert parent.event_type == "parent_event"
         assert child.event_type == "child_event"
 
@@ -201,7 +172,6 @@ class TestSubclassingDoesNotCorruptParent:
         class OrderPlacedSpecial(OrderPlaced):
             pass
 
-        # Register parent AFTER child exists — the corruption trigger.
         registry.register(OrderPlaced)
         registry.register(OrderPlacedSpecial)
         assert registry.get("OrderPlaced") is OrderPlaced
@@ -216,7 +186,5 @@ class TestSubclassingDoesNotCorruptParent:
         class LegacyChildEvent(LegacyEvent):
             pass
 
-        # Inherited explicit default is what instances serialize, so the
-        # registry must agree (registering both then raises Duplicate).
         assert LegacyEvent.event_type_name() == "legacy.v1"
         assert LegacyChildEvent.event_type_name() == "legacy.v1"

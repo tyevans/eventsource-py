@@ -25,8 +25,6 @@ from tests.unit.application.subscriptions.test_live_runner._fixtures import (
 
 
 class TestLiveRunnerEventProcessing:
-    """Tests for event processing behavior."""
-
     @pytest.mark.asyncio
     async def test_processes_published_events(
         self,
@@ -36,15 +34,12 @@ class TestLiveRunnerEventProcessing:
         subscriber: MockLiveSubscriber,
     ):
         await runner.start()
-        event = LiveTestEvent(aggregate_id=uuid4(), data="test_data")
-        await append_event(event_store, event)
+        await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data="test_data"))
         await wake(event_bus)
         await asyncio.sleep(0.01)
-
         assert len(subscriber.handled_events) == 1
         assert subscriber.handled_events[0].data == "test_data"
-        assert runner.stats.events_received == 1
-        assert runner.stats.events_processed == 1
+        assert runner.stats.events_received == 1 and runner.stats.events_processed == 1
 
     @pytest.mark.asyncio
     async def test_processes_multiple_event_types(
@@ -59,9 +54,7 @@ class TestLiveRunnerEventProcessing:
         await append_event(event_store, AnotherTestEvent(aggregate_id=uuid4(), value=42))
         await wake(event_bus)
         await asyncio.sleep(0.01)
-
-        assert len(subscriber.handled_events) == 2
-        assert runner.stats.events_processed == 2
+        assert len(subscriber.handled_events) == 2 and runner.stats.events_processed == 2
 
     @pytest.mark.asyncio
     async def test_statistics_updated_correctly(
@@ -75,16 +68,12 @@ class TestLiveRunnerEventProcessing:
             await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"event_{i}"))
         await wake(event_bus)
         await asyncio.sleep(0.01)
-
         stats = runner.stats
-        assert stats.events_received == 5
-        assert stats.events_processed == 5
+        assert stats.events_received == 5 and stats.events_processed == 5
         assert stats.events_failed == 0
 
 
 class TestLiveRunnerBufferMode:
-    """Tests for buffer mode during catch-up to live transition."""
-
     @pytest.mark.asyncio
     async def test_buffers_wake_ups_when_enabled(
         self,
@@ -95,16 +84,11 @@ class TestLiveRunnerBufferMode:
     ):
         await runner.start(buffer_events=True)
         for i in range(3):
-            await append_event(
-                event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"buffered_{i}")
-            )
+            await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"buf_{i}"))
             await wake(event_bus)
         await asyncio.sleep(0.01)
-
-        assert len(subscriber.handled_events) == 0
-        assert runner.buffer_size == 3
-        assert runner.stats.events_received == 0
-        assert runner.stats.events_processed == 0
+        assert len(subscriber.handled_events) == 0 and runner.buffer_size == 3
+        assert runner.stats.events_received == 0 and runner.stats.events_processed == 0
 
     @pytest.mark.asyncio
     async def test_process_buffer_drains_the_feed(
@@ -116,17 +100,12 @@ class TestLiveRunnerBufferMode:
     ):
         await runner.start(buffer_events=True)
         for i in range(3):
-            await append_event(
-                event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"buffered_{i}")
-            )
+            await append_event(event_store, LiveTestEvent(aggregate_id=uuid4(), data=f"buf_{i}"))
         await wake(event_bus)
         await asyncio.sleep(0.01)
         assert runner.buffer_size == 1
-
-        processed = await runner.process_buffer()
-        assert processed == 3
-        assert len(subscriber.handled_events) == 3
-        assert runner.buffer_size == 0
+        assert await runner.process_buffer() == 3
+        assert len(subscriber.handled_events) == 3 and runner.buffer_size == 0
 
     @pytest.mark.asyncio
     async def test_disable_buffer_transitions_to_live(
@@ -135,8 +114,7 @@ class TestLiveRunnerBufferMode:
         await runner.start(buffer_events=True)
         assert subscription.state == SubscriptionState.STARTING
         await runner.disable_buffer()
-        assert subscription.state == SubscriptionState.LIVE
-        assert runner._buffer_enabled is False
+        assert subscription.state == SubscriptionState.LIVE and runner._buffer_enabled is False
 
     @pytest.mark.asyncio
     async def test_events_processed_directly_after_buffer_disabled(
@@ -155,8 +133,6 @@ class TestLiveRunnerBufferMode:
 
 
 class TestLiveRunnerFeedOrdering:
-    """Tests that draining only ever moves forward from the checkpoint."""
-
     @pytest.mark.asyncio
     async def test_drains_only_events_past_the_checkpoint(
         self,
@@ -169,7 +145,6 @@ class TestLiveRunnerFeedOrdering:
         events = [LiveTestEvent(aggregate_id=uuid4(), data=f"e{i}") for i in range(3)]
         positions = [await append_event(event_store, e) for e in events]
         subscription.last_processed_position = positions[0]
-
         await runner.start()
         await wake(event_bus)
         await asyncio.sleep(0.01)
@@ -193,8 +168,6 @@ class TestLiveRunnerFeedOrdering:
 
 
 class TestLiveRunnerBoundedDrain:
-    """Test the live drain bounds each read instead of materializing the feed."""
-
     @pytest.mark.asyncio
     async def test_drain_passes_a_limit_from_batch_size(
         self,

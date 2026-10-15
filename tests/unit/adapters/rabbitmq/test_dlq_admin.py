@@ -27,61 +27,50 @@ def make_admin(
     channel: AsyncMock | None = None,
     exchange: AsyncMock | None = None,
 ) -> tuple[RabbitMQDLQAdmin, MagicMock, MagicMock]:
-    """Build a RabbitMQDLQAdmin with mocked connection/topology collaborators."""
     cfg = config or make_config()
     connection = MagicMock(_connected=connected, channel=channel)
     connection.require_channel.return_value = channel
     topology = MagicMock(exchange=exchange)
     admin = RabbitMQDLQAdmin(
-        config=cfg,
-        connection=connection,
-        topology=topology,
-        stats=RabbitMQEventBusStats(),
+        config=cfg, connection=connection, topology=topology, stats=RabbitMQEventBusStats()
     )
     return admin, connection, topology
 
 
 class TestGetMessages:
     async def test_returns_empty_when_not_connected(self) -> None:
-        admin, _, _ = make_admin(connected=False, channel=AsyncMock())
-        assert await admin.get_messages(limit=10) == []
+        assert (
+            await make_admin(connected=False, channel=AsyncMock())[0].get_messages(limit=10) == []
+        )
 
     async def test_returns_empty_when_dlq_disabled(self) -> None:
-        admin, _, _ = make_admin(config=make_config(enable_dlq=False), channel=AsyncMock())
-        assert await admin.get_messages(limit=10) == []
+        cfg = make_config(enable_dlq=False)
+        assert await make_admin(config=cfg, channel=AsyncMock())[0].get_messages(limit=10) == []
 
     async def test_returns_empty_when_channel_not_initialized(self) -> None:
-        admin, _, _ = make_admin(channel=None)
-        assert await admin.get_messages(limit=10) == []
+        assert await make_admin(channel=None)[0].get_messages(limit=10) == []
 
     async def test_returns_dlq_messages_and_honors_limit(self) -> None:
         mock_channel, mock_queue = AsyncMock(), AsyncMock()
-        messages = []
-        for i in range(5):
-            msg = AsyncMock(
-                message_id=f"msg-{i}",
-                routing_key="Test.Event",
-                body=b'{"data": "test"}',
-                headers={"event_type": "TestEvent", "x-dlq-reason": "Handler error"},
-            )
-            messages.append(msg)
-
+        hdrs = {"event_type": "TestEvent", "x-dlq-reason": "Handler error"}
+        body = b'{"data": "test"}'
+        messages = [
+            AsyncMock(message_id=f"msg-{i}", routing_key="Test.Event", body=body, headers=hdrs)
+            for i in range(5)
+        ]
         mock_queue.get.side_effect = messages + [None]
         mock_channel.get_queue.return_value = mock_queue
         admin, _, _ = make_admin(channel=mock_channel)
 
         result = await admin.get_messages(limit=3)
-        assert len(result) == 3
-        assert all(isinstance(m, DLQMessage) for m in result)
-        assert result[0].message_id == "msg-0"
-        assert result[0].dlq_reason == "Handler error"
+        assert len(result) == 3 and all(isinstance(m, DLQMessage) for m in result)
+        assert result[0].message_id == "msg-0" and result[0].dlq_reason == "Handler error"
         messages[0].reject.assert_called_once_with(requeue=True)
 
     async def test_handles_exception(self) -> None:
         mock_channel = AsyncMock()
         mock_channel.get_queue.side_effect = Exception("Queue not found")
-        admin, _, _ = make_admin(channel=mock_channel)
-        assert await admin.get_messages(limit=10) == []
+        assert await make_admin(channel=mock_channel)[0].get_messages(limit=10) == []
 
 
 class TestGetMessageCount:
@@ -89,26 +78,22 @@ class TestGetMessageCount:
         mock_channel, queue_info = AsyncMock(), AsyncMock()
         queue_info.declaration_result.message_count = 7
         mock_channel.declare_queue.return_value = queue_info
-        admin, _, _ = make_admin(channel=mock_channel)
-        assert await admin.get_message_count() == 7
+        assert await make_admin(channel=mock_channel)[0].get_message_count() == 7
 
     async def test_returns_zero_when_not_connected(self) -> None:
-        admin, _, _ = make_admin(connected=False, channel=AsyncMock())
-        assert await admin.get_message_count() == 0
+        assert await make_admin(connected=False, channel=AsyncMock())[0].get_message_count() == 0
 
     async def test_returns_zero_when_dlq_disabled(self) -> None:
-        admin, _, _ = make_admin(config=make_config(enable_dlq=False), channel=AsyncMock())
-        assert await admin.get_message_count() == 0
+        cfg = make_config(enable_dlq=False)
+        assert await make_admin(config=cfg, channel=AsyncMock())[0].get_message_count() == 0
 
     async def test_returns_zero_when_channel_not_initialized(self) -> None:
-        admin, _, _ = make_admin(channel=None)
-        assert await admin.get_message_count() == 0
+        assert await make_admin(channel=None)[0].get_message_count() == 0
 
     async def test_handles_exception(self) -> None:
         mock_channel = AsyncMock()
         mock_channel.declare_queue.side_effect = Exception("boom")
-        admin, _, _ = make_admin(channel=mock_channel)
-        assert await admin.get_message_count() == 0
+        assert await make_admin(channel=mock_channel)[0].get_message_count() == 0
 
 
 class TestPurge:
@@ -117,45 +102,40 @@ class TestPurge:
         purge_result.message_count = 15
         mock_queue.purge.return_value = purge_result
         mock_channel.get_queue.return_value = mock_queue
-        admin, _, _ = make_admin(channel=mock_channel)
-
-        assert await admin.purge() == 15
+        assert await make_admin(channel=mock_channel)[0].purge() == 15
         mock_queue.purge.assert_called_once()
 
     async def test_returns_zero_when_not_connected(self) -> None:
-        admin, _, _ = make_admin(connected=False, channel=AsyncMock())
-        assert await admin.purge() == 0
+        assert await make_admin(connected=False, channel=AsyncMock())[0].purge() == 0
 
     async def test_returns_zero_when_channel_not_initialized(self) -> None:
-        admin, _, _ = make_admin(channel=None)
-        assert await admin.purge() == 0
+        assert await make_admin(channel=None)[0].purge() == 0
 
     async def test_handles_exception(self) -> None:
         mock_channel = AsyncMock()
         mock_channel.get_queue.side_effect = Exception("boom")
-        admin, _, _ = make_admin(channel=mock_channel)
-        assert await admin.purge() == 0
+        assert await make_admin(channel=mock_channel)[0].purge() == 0
 
 
 class TestReplayMessage:
     async def test_republishes_to_main_exchange_and_acks_dlq_message(self) -> None:
         mock_channel, mock_exchange, mock_queue = AsyncMock(), AsyncMock(), AsyncMock()
+        hdrs = {
+            "event_type": "TestEvent",
+            "x-dlq-reason": "Error",
+            "x-original-routing-key": "Test.TestEvent",
+        }
         mock_message = AsyncMock(
             message_id="target-id",
             routing_key="dlq-routing-key",
             body=b'{"data": "test"}',
             content_type="application/json",
             content_encoding="utf-8",
-            headers={
-                "event_type": "TestEvent",
-                "x-dlq-reason": "Error",
-                "x-original-routing-key": "Test.TestEvent",
-            },
+            headers=hdrs,
         )
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
         admin, _, _ = make_admin(channel=mock_channel, exchange=mock_exchange)
-
         assert await admin.replay_message("target-id") is True
         mock_exchange.publish.assert_called_once()
         assert mock_exchange.publish.call_args.kwargs["routing_key"] == "Test.TestEvent"
@@ -167,7 +147,6 @@ class TestReplayMessage:
         mock_queue.get.side_effect = [mock_message, None]
         mock_channel.get_queue.return_value = mock_queue
         admin, _, _ = make_admin(channel=mock_channel, exchange=mock_exchange)
-
         assert await admin.replay_message("non-existent-id") is False
         mock_message.reject.assert_called_once_with(requeue=True)
 
@@ -176,12 +155,16 @@ class TestReplayMessage:
         assert await admin.replay_message("test-id") is False
 
     async def test_returns_false_when_exchange_not_initialized(self) -> None:
-        admin, _, _ = make_admin(channel=AsyncMock(), exchange=None)
-        assert await admin.replay_message("test-id") is False
+        assert (
+            await make_admin(channel=AsyncMock(), exchange=None)[0].replay_message("test-id")
+            is False
+        )
 
     async def test_returns_false_when_channel_not_initialized(self) -> None:
-        admin, _, _ = make_admin(channel=None, exchange=AsyncMock())
-        assert await admin.replay_message("test-id") is False
+        assert (
+            await make_admin(channel=None, exchange=AsyncMock())[0].replay_message("test-id")
+            is False
+        )
 
     async def test_handles_exception(self) -> None:
         mock_channel, mock_exchange = AsyncMock(), AsyncMock()
@@ -199,24 +182,23 @@ class TestReplayMessageHelper:
     async def test_removes_dlq_headers_and_resets_retry_count(self) -> None:
         mock_exchange = AsyncMock()
         admin, _, _ = make_admin(channel=AsyncMock(), exchange=mock_exchange)
+        hdrs = {
+            "event_type": "TestEvent",
+            "x-dlq-reason": "Error",
+            "x-death": [{"queue": "test"}],
+            "x-retry-count": 5,
+        }
         mock_message = AsyncMock(
             body=b'{"data": "test"}',
             content_type="application/json",
             content_encoding="utf-8",
             message_id="test-id",
             routing_key="dlq-key",
-            headers={
-                "event_type": "TestEvent",
-                "x-dlq-reason": "Error",
-                "x-death": [{"queue": "test"}],
-                "x-retry-count": 5,
-            },
+            headers=hdrs,
         )
         await admin._replay_message(mock_message)
-
         replay_msg = mock_exchange.publish.call_args[0][0]
-        assert "x-dlq-reason" not in replay_msg.headers
-        assert "x-death" not in replay_msg.headers
+        assert "x-dlq-reason" not in replay_msg.headers and "x-death" not in replay_msg.headers
         assert replay_msg.headers["x-retry-count"] == 0
         assert "x-replayed-from-dlq" in replay_msg.headers
         assert replay_msg.headers["event_type"] == "TestEvent"
