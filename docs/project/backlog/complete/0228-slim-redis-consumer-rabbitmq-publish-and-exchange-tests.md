@@ -1,7 +1,7 @@
 ---
 id: TASK-0228
 title: "Slim redis consumer, rabbitmq publish, and rabbitmq exchange type tests below 320 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

@@ -1,7 +1,7 @@
 ---
 id: TASK-0233
 title: "Slim migration error_classification, status_streamer_core, coordinator_cutover, and subscription shutdown modules below 315 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

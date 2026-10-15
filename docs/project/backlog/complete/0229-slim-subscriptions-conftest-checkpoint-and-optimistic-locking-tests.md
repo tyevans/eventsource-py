@@ -1,7 +1,7 @@
 ---
 id: TASK-0229
 title: "Slim integration subscriptions conftest, checkpoint repository, and optimistic locking tests below 320 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

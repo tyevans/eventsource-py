@@ -1,7 +1,7 @@
 ---
 id: TASK-0232
 title: "Slim rabbitmq/consumer.py, rabbitmq/bus_health.py, rabbitmq/consumer_dispatch.py, and kafka/dlq.py below 315 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

@@ -1,7 +1,7 @@
 ---
 id: TASK-0230
 title: "Slim migration consistency verifier, position mapper, write pause, and cutover manager tests below 320 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

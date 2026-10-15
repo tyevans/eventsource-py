@@ -1,7 +1,7 @@
 ---
 id: TASK-0226
 title: "Slim migration lag tracker, recovery, and coordinator subscription verification tests below 320 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
