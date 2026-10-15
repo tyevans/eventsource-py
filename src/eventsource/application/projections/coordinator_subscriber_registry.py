@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Self
 
 from eventsource.domain.event import DomainEvent
 from eventsource.ports.handlers import EventSubscriber
@@ -16,80 +17,77 @@ logger = logging.getLogger(__name__)
 
 class SubscriberRegistry:
     """
-    Registry for EventSubscriber instances.
-
-    Provides a more specific registry for subscribers that implement
-    the EventSubscriber protocol, with filtering by event type.
+    Registry for EventSubscriber instances with O(1) event-type lookup.
 
     Example:
-        >>> registry = SubscriberRegistry()
-        >>> registry.register(order_projection)
+        >>> registry = SubscriberRegistry(subscribers=[order_projection])
+        >>> registry.register(shipping_subscriber, audit_subscriber)
         >>> subscribers = registry.get_subscribers_for(OrderCreated)
-        >>>
-        >>> # Cap fan-out concurrency for a large registry
-        >>> registry = SubscriberRegistry(max_concurrency=16)
     """
 
-    def __init__(self, max_concurrency: int | None = None) -> None:
+    def __init__(
+        self,
+        max_concurrency: int | None = None,
+        *,
+        subscribers: Sequence[EventSubscriber] | None = None,
+    ) -> None:
         """
         Initialize the subscriber registry.
 
         Args:
             max_concurrency: Maximum number of subscribers dispatched
-                          concurrently for a single event. `None` (the
-                          default) leaves fan-out uncapped. Enforced with one
-                          semaphore owned by this instance -- see
-                          `ProjectionRegistry.__init__` for why it must not
-                          be constructed per call.
+                concurrently for a single event (`None` leaves fan-out uncapped).
+            subscribers: Optional initial sequence of subscribers to register.
         """
         self._subscribers: list[EventSubscriber] = []
+        self._by_event_type: dict[type[DomainEvent], list[EventSubscriber]] = {}
         self._semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+        if subscribers:
+            self.register(*subscribers)
 
-    def register(self, subscriber: EventSubscriber) -> None:
+    def register(self, *subscribers: EventSubscriber) -> Self:
         """
-        Register an event subscriber.
+        Register one or more event subscribers and return ``self`` for chaining.
 
         Args:
-            subscriber: The subscriber to register
+            *subscribers: Subscribers to register.
         """
-        self._subscribers.append(subscriber)
-        logger.debug(
-            "Registered subscriber %s for events: %s",
-            subscriber.__class__.__name__,
-            [et.__name__ for et in subscriber.subscribed_to()],
-            extra={
-                "subscriber": subscriber.__class__.__name__,
-                "event_types": [et.__name__ for et in subscriber.subscribed_to()],
-            },
-        )
+        for subscriber in subscribers:
+            self._subscribers.append(subscriber)
+            event_types = subscriber.subscribed_to()
+            for et in event_types:
+                self._by_event_type.setdefault(et, []).append(subscriber)
+            event_names = [et.__name__ for et in event_types]
+            logger.debug(
+                "Registered subscriber %s for events: %s",
+                subscriber.__class__.__name__,
+                event_names,
+                extra={
+                    "subscriber": subscriber.__class__.__name__,
+                    "event_types": event_names,
+                },
+            )
+        return self
 
     def unregister(self, subscriber: EventSubscriber) -> bool:
         """
         Unregister a subscriber.
 
-        Args:
-            subscriber: The subscriber to unregister
-
         Returns:
-            True if subscriber was found and removed, False otherwise
+            True if subscriber was found and removed, False otherwise.
         """
         try:
             self._subscribers.remove(subscriber)
-            return True
         except ValueError:
             return False
+        for subs in self._by_event_type.values():
+            if subscriber in subs:
+                subs.remove(subscriber)
+        return True
 
     def get_subscribers_for(self, event_type: type[DomainEvent]) -> list[EventSubscriber]:
-        """
-        Get all subscribers interested in an event type.
-
-        Args:
-            event_type: The event type to look up
-
-        Returns:
-            List of subscribers that handle this event type
-        """
-        return [s for s in self._subscribers if event_type in s.subscribed_to()]
+        """Get all subscribers interested in ``event_type`` via O(1) index lookup."""
+        return list(self._by_event_type.get(event_type, ()))
 
     async def _bounded(self, coro: Any) -> Any:
         """Run `coro` under the fan-out semaphore, if one is configured."""
