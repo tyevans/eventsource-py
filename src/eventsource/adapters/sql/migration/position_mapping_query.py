@@ -17,13 +17,8 @@ if TYPE_CHECKING:
 
     from eventsource.observability import Tracer
 
-_SELECT_COLUMNS = (
-    "id, migration_id, source_position_token, target_position_token, event_id, mapped_at"
-)
-_SELECT_PREFIX = (
-    "SELECT id, migration_id, source_position_token, target_position_token, "
-    "event_id, mapped_at FROM migration_position_mappings"
-)
+_SELECT_COLUMNS = "id, migration_id, source_position_token, target_position_token, event_id, mapped_at"  # fmt: skip
+_SELECT_PREFIX = "SELECT id, migration_id, source_position_token, target_position_token, event_id, mapped_at FROM migration_position_mappings"  # fmt: skip
 _SPAN_PREFIX = "eventsource.position_mapping_repo"
 
 
@@ -46,15 +41,9 @@ class PostgreSQLPositionMappingQueryMixin:
 
     if TYPE_CHECKING:
 
-        async def _get_by_ordinal(
-            self, migration_id: UUID, ordinal: int
-        ) -> PositionMapping | None: ...
-        async def _find_first_ordinal_gte(
-            self, migration_id: UUID, source_position: Position, total: int
-        ) -> int | None: ...
-        async def _find_last_ordinal_lte(
-            self, migration_id: UUID, source_position: Position, total: int
-        ) -> int | None: ...
+        async def _get_by_ordinal(self, migration_id: UUID, ordinal: int) -> PositionMapping | None: ...  # fmt: skip
+        async def _find_first_ordinal_gte(self, migration_id: UUID, source_position: Position, total: int) -> int | None: ...  # fmt: skip
+        async def _find_last_ordinal_lte(self, migration_id: UUID, source_position: Position, total: int) -> int | None: ...  # fmt: skip
 
     async def _fetch_one_mapping(
         self, query_str: str, params: dict[str, Any]
@@ -67,71 +56,51 @@ class PostgreSQLPositionMappingQueryMixin:
         """Get a position mapping by its database ID."""
         attrs = {"mapping.id": mapping_id, ATTR_DB_SYSTEM: "postgresql"}
         with self._tracer.span(f"{_SPAN_PREFIX}.get", attrs):
-            return await self._fetch_one_mapping(
-                f"{_SELECT_PREFIX} WHERE id = :id", {"id": mapping_id}
-            )
+            return await self._fetch_one_mapping(f"{_SELECT_PREFIX} WHERE id = :id", {"id": mapping_id})  # fmt: skip
 
     async def find_by_source_position(
         self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
         """Find mapping by exact source position via unique index."""
         tok = source_position.to_str()
-        attrs = {"migration.id": str(migration_id), "source_position": tok}
-        attrs[ATTR_DB_SYSTEM] = "postgresql"
+        attrs = {"migration.id": str(migration_id), "source_position": tok, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span(f"{_SPAN_PREFIX}.find_by_source_position", attrs):
-            sql = (
-                f"{_SELECT_PREFIX} WHERE migration_id = :migration_id "
-                "AND source_position_token = :source_position_token"
-            )
-            params = {"migration_id": migration_id, "source_position_token": tok}
-            return await self._fetch_one_mapping(sql, params)
+            sql = f"{_SELECT_PREFIX} WHERE migration_id = :migration_id AND source_position_token = :source_position_token"  # fmt: skip
+            return await self._fetch_one_mapping(sql, {"migration_id": migration_id, "source_position_token": tok})  # fmt: skip
 
     async def find_by_target_position(
         self, migration_id: UUID, target_position: Position
     ) -> PositionMapping | None:
         """Find mapping by exact target position."""
         tok = target_position.to_str()
-        attrs = {"migration.id": str(migration_id), "target_position": tok}
-        attrs[ATTR_DB_SYSTEM] = "postgresql"
+        attrs = {"migration.id": str(migration_id), "target_position": tok, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span(f"{_SPAN_PREFIX}.find_by_target_position", attrs):
-            sql = (
-                f"{_SELECT_PREFIX} WHERE migration_id = :migration_id "
-                "AND target_position_token = :target_position_token LIMIT 1"
-            )
-            params = {"migration_id": migration_id, "target_position_token": tok}
-            return await self._fetch_one_mapping(sql, params)
+            sql = f"{_SELECT_PREFIX} WHERE migration_id = :migration_id AND target_position_token = :target_position_token LIMIT 1"  # fmt: skip
+            return await self._fetch_one_mapping(sql, {"migration_id": migration_id, "target_position_token": tok})  # fmt: skip
 
     async def find_by_event_id(self, migration_id: UUID, event_id: UUID) -> PositionMapping | None:
         """Find mapping by event ID."""
-        attrs = {"migration.id": str(migration_id), "event.id": str(event_id)}
-        attrs[ATTR_DB_SYSTEM] = "postgresql"
+        attrs = {"migration.id": str(migration_id), "event.id": str(event_id), ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span(f"{_SPAN_PREFIX}.find_by_event_id", attrs):
             sql = f"{_SELECT_PREFIX} WHERE migration_id = :migration_id AND event_id = :event_id"
-            params = {"migration_id": migration_id, "event_id": event_id}
-            return await self._fetch_one_mapping(sql, params)
+            return await self._fetch_one_mapping(sql, {"migration_id": migration_id, "event_id": event_id})  # fmt: skip
 
     async def list_by_migration(
         self, migration_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[PositionMapping]:
         """List mappings for a migration with pagination ordered by id ascending."""
-        attrs = {"migration.id": str(migration_id), "limit": limit, "offset": offset}
-        attrs[ATTR_DB_SYSTEM] = "postgresql"
+        attrs = {"migration.id": str(migration_id), "limit": limit, "offset": offset, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span(f"{_SPAN_PREFIX}.list_by_migration", attrs):
-            sql = (
-                f"{_SELECT_PREFIX} WHERE migration_id = :migration_id "
-                "ORDER BY id ASC LIMIT :limit OFFSET :offset"
-            )
+            sql = f"{_SELECT_PREFIX} WHERE migration_id = :migration_id ORDER BY id ASC LIMIT :limit OFFSET :offset"  # fmt: skip
             async with _get_sql_connection()(self._conn, write=False) as conn:
-                params = {"migration_id": migration_id, "limit": limit, "offset": offset}
-                rows = (await conn.execute(text(sql), params)).fetchall()
+                rows = (await conn.execute(text(sql), {"migration_id": migration_id, "limit": limit, "offset": offset})).fetchall()  # fmt: skip
             return [row_to_mapping(row) for row in rows]
 
     async def list_in_source_range(
         self, migration_id: UUID, start_position: Position, end_position: Position
     ) -> list[PositionMapping]:
         """List mappings within an inclusive source position range."""
-        attrs = {"migration.id": str(migration_id), "start_position": start_position.to_str()}
-        attrs.update({"end_position": end_position.to_str(), ATTR_DB_SYSTEM: "postgresql"})
+        attrs = {"migration.id": str(migration_id), "start_position": start_position.to_str(), "end_position": end_position.to_str(), ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span(f"{_SPAN_PREFIX}.list_in_source_range", attrs):
             total = await self.count_by_migration(migration_id)
             lo = await self._find_first_ordinal_gte(migration_id, start_position, total)

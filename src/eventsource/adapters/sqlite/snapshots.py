@@ -33,22 +33,13 @@ class SQLiteNotAvailableError(ImportError):
     """Raised when aiosqlite is not installed."""
 
     def __init__(self) -> None:
-        super().__init__(
-            "aiosqlite is required for SQLiteSnapshotStore. Install it with: pip install eventsource[sqlite]"
-        )
+        super().__init__("aiosqlite is required for SQLiteSnapshotStore. Install it with: pip install eventsource[sqlite]")  # fmt: skip
 
 
 class SQLiteSnapshotStore:
     """SQLite implementation of `SnapshotStore`."""
 
-    def __init__(
-        self,
-        database_path: str,
-        *,
-        tracer: Tracer | None = None,
-        enable_tracing: bool = True,
-        busy_timeout: int = 5000,
-    ) -> None:
+    def __init__(self, database_path: str, *, tracer: Tracer | None = None, enable_tracing: bool = True, busy_timeout: int = 5000) -> None:  # fmt: skip
         if not AIOSQLITE_AVAILABLE:
             raise SQLiteNotAvailableError()
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
@@ -59,18 +50,16 @@ class SQLiteSnapshotStore:
         logger.debug("SQLiteSnapshotStore initialized with %s", database_path)
 
     async def _conn(self) -> aiosqlite.Connection:
-        if self._connection is not None:
-            return self._connection
-        async with self._init_lock:
-            if self._connection is not None:
-                return self._connection
-            conn = await aiosqlite.connect(self._database_path)
-            await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
-            conn.row_factory = aiosqlite.Row
-            await conn.executescript(get_schema("snapshots", backend="sqlite"))
-            await conn.commit()
-            self._connection = conn
-            return conn
+        if self._connection is None:
+            async with self._init_lock:
+                if self._connection is None:
+                    conn = await aiosqlite.connect(self._database_path)
+                    await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
+                    conn.row_factory = aiosqlite.Row
+                    await conn.executescript(get_schema("snapshots", backend="sqlite"))
+                    await conn.commit()
+                    self._connection = conn
+        return self._connection
 
     async def close(self) -> None:
         if self._connection is not None:
@@ -93,16 +82,15 @@ class SQLiteSnapshotStore:
         return {ATTR_AGGREGATE_ID: str(aggregate_id), ATTR_AGGREGATE_TYPE: aggregate_type}
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
-        s = snapshot
-        attrs = {**self._agg_attrs(s.aggregate_id, s.aggregate_type), ATTR_VERSION: s.version}
+        attrs = {**self._agg_attrs(snapshot.aggregate_id, snapshot.aggregate_type), ATTR_VERSION: snapshot.version}  # fmt: skip
         sql = "INSERT OR REPLACE INTO snapshots (aggregate_id, aggregate_type, version, schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)"  # fmt: skip
-        params = (str(s.aggregate_id), s.aggregate_type, s.version, s.schema_version, json_dumps(s.state), s.created_at.isoformat())  # fmt: skip
+        params = (str(snapshot.aggregate_id), snapshot.aggregate_type, snapshot.version, snapshot.schema_version, json_dumps(snapshot.state), snapshot.created_at.isoformat())  # fmt: skip
         with self._tracer.span("eventsource.snapshot.save", attrs):
             conn = await self._conn()
             async with self._lock:
                 await conn.execute(sql, params)
                 await conn.commit()
-            logger.debug("Saved snapshot for %s/%s", s.aggregate_type, s.aggregate_id)
+            logger.debug("Saved snapshot for %s/%s", snapshot.aggregate_type, snapshot.aggregate_id)
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
         sql = "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"  # fmt: skip
@@ -122,11 +110,10 @@ class SQLiteSnapshotStore:
             return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], datetime.fromisoformat(row["created_at"]))  # fmt: skip
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
-        sql = "DELETE FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"
         with self._tracer.span("eventsource.snapshot.delete", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
-                cursor = await conn.execute(sql, (str(aggregate_id), aggregate_type))
+                cursor = await conn.execute("DELETE FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?", (str(aggregate_id), aggregate_type))  # fmt: skip
                 await conn.commit()
                 deleted: bool = cursor.rowcount > 0
             logger.debug("%s snapshot for %s/%s", "Deleted" if deleted else "No", aggregate_type, aggregate_id)  # fmt: skip
@@ -140,17 +127,13 @@ class SQLiteSnapshotStore:
                 row = await (await conn.execute(sql, (str(aggregate_id), aggregate_type))).fetchone()  # fmt: skip
                 return bool(row[0]) if row else False
 
-    async def delete_snapshots_by_type(
-        self, aggregate_type: str, schema_version_below: int | None = None
-    ) -> int:
+    async def delete_snapshots_by_type(self, aggregate_type: str, schema_version_below: int | None = None) -> int:  # fmt: skip
         with self._tracer.span("eventsource.snapshot.delete_by_type", {ATTR_AGGREGATE_TYPE: aggregate_type}):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
-                if schema_version_below is not None:
-                    sql = "DELETE FROM snapshots WHERE aggregate_type = ? AND schema_version < ?"
-                    cursor = await conn.execute(sql, (aggregate_type, schema_version_below))
-                else:
-                    cursor = await conn.execute("DELETE FROM snapshots WHERE aggregate_type = ?", (aggregate_type,))  # fmt: skip
+                sql = "DELETE FROM snapshots WHERE aggregate_type = ? AND schema_version < ?" if schema_version_below is not None else "DELETE FROM snapshots WHERE aggregate_type = ?"  # fmt: skip
+                params = (aggregate_type, schema_version_below) if schema_version_below is not None else (aggregate_type,)  # fmt: skip
+                cursor = await conn.execute(sql, params)
                 await conn.commit()
                 count: int = cursor.rowcount
             if count > 0:
