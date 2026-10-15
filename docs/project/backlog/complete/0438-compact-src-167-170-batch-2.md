@@ -1,7 +1,7 @@
 ---
 id: TASK-0438
 title: "Compact 13 src/ modules (167-170 lines) below 155 lines (Batch 2)"
-status: Refined
+status: Complete
 target_bc: architecture
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md

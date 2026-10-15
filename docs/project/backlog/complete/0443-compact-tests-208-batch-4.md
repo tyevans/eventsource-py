@@ -1,7 +1,7 @@
 ---
 id: TASK-0443
 title: "Compact 13 test modules (208 lines) below 195 lines (Batch 4)"
-status: Refined
+status: Complete
 target_bc: testing
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md

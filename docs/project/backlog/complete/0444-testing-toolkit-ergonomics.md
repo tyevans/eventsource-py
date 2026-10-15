@@ -1,7 +1,7 @@
 ---
 id: TASK-0444
 title: "Add container dunders and builder call/override ergonomics to testing toolkit"
-status: Refined
+status: Complete
 target_bc: testing
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md
