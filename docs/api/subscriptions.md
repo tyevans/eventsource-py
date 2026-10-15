@@ -544,7 +544,13 @@ consumed by `EventFilter.from_config()` and
 `eventsource.application.subscriptions.filtering`, which copy them straight across. All
 configured dimensions must match for an event to pass — the filter ANDs them.
 
-Matching semantics, as implemented by `EventFilter`:
+When constructing `EventFilter` directly, `event_types`, `event_type_patterns`,
+and `aggregate_types` accept any `Iterable` (such as a `list` or `set`) and
+normalize it to a `tuple` in `__post_init__` (a bare `str` passed to
+`event_type_patterns` or `aggregate_types` is wrapped as a single-element
+tuple `(value,)` rather than split into characters).
+
+Matching semantics and ergonomics, as implemented by `EventFilter`:
 
 - `event_types` matches on **exact class identity** (`type(event) in event_types`).
   A subclass of a listed event type does **not** match. If you need name-pattern
@@ -554,6 +560,13 @@ Matching semantics, as implemented by `EventFilter`:
 - `tenant_id` matches `event.tenant_id == tenant_id`, which is how you scope a
   subscription to one tenant for multi-tenant streaming or a tenant-by-tenant
   migration.
+- **Callable predicate (`event_filter(event_or_envelope) -> bool`)**: calling an
+  `EventFilter` instance directly dispatches to `matches_envelope()` when given an
+  `EventEnvelope` and `matches()` when given a `DomainEvent`, making `EventFilter`
+  directly usable as a predicate with `filter(event_filter, items)`.
+- **Batch filtering (`event_filter.filter(items) -> list`)**: accepts any
+  `Iterable[DomainEvent]` or `Iterable[EventEnvelope]` and returns a filtered
+  `list` of matching items while updating `event_filter.stats`.
 
 `from_config_and_subscriber()` adds one fallback: when `config.event_types` is
 `None`, the subscriber's `subscribed_to()` types are used instead. A config that
