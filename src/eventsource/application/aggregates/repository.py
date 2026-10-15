@@ -219,26 +219,37 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         """
         Load (or create) an aggregate, execute a command on it, and save.
 
+        ``command`` may be either a callable ``(TAggregate) -> Any`` invoked
+        directly with the loaded aggregate (works with any ``AggregateRoot``
+        or ``DeclarativeAggregate``), or a command value dispatched via
+        ``aggregate.execute(command)`` / ``aggregate.apply_command(command)``
+        (e.g. ``DeciderAggregate``).
+
         Raises:
             AggregateNotFoundError: If ``create_if_missing=False`` and missing.
-            TypeError: If the aggregate does not define ``execute`` or ``apply_command``.
+            TypeError: If ``command`` is not callable and the aggregate does
+                not define ``execute`` or ``apply_command``.
         """
         if create_if_missing:
             aggregate = await self.load_or_create(aggregate_id)
         else:
             aggregate = await self.load(aggregate_id)
 
-        runner = getattr(aggregate, "execute", None)
-        if not callable(runner):
-            runner = getattr(aggregate, "apply_command", None)
-        if not callable(runner):
-            raise TypeError(
-                f"{type(aggregate).__name__} does not support execute(); "
-                "execute() requires an aggregate supporting execute(command) "
-                "or apply_command(command), such as DeciderAggregate."
-            )
+        if callable(command) and not isinstance(command, type):
+            command(aggregate)
+        else:
+            runner = getattr(aggregate, "execute", None)
+            if not callable(runner):
+                runner = getattr(aggregate, "apply_command", None)
+            if not callable(runner):
+                raise TypeError(
+                    f"{type(aggregate).__name__} does not support execute(); "
+                    "pass a callable (e.g. lambda agg: agg.do_something()) or use "
+                    "an aggregate supporting execute(command) or apply_command(command), "
+                    "such as DeciderAggregate."
+                )
+            runner(command)
 
-        runner(command)
         await self.save(aggregate)
         return aggregate
 

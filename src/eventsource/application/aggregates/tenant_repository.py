@@ -168,7 +168,7 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
 
         Args:
             aggregate_id: ID of the aggregate to target
-            command: Command to execute against the aggregate
+            command: Callable ``(TAggregate) -> Any`` or command value to execute
             create_if_missing: If True (default), uses ``load_or_create``;
                 if False, uses ``load``.
 
@@ -180,17 +180,21 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         else:
             aggregate = await self.load(aggregate_id)
 
-        runner = getattr(aggregate, "execute", None)
-        if not callable(runner):
-            runner = getattr(aggregate, "apply_command", None)
-        if not callable(runner):
-            raise TypeError(
-                f"{type(aggregate).__name__} does not support execute(); "
-                "execute() requires an aggregate supporting execute(command) "
-                "or apply_command(command), such as DeciderAggregate."
-            )
+        if callable(command) and not isinstance(command, type):
+            command(aggregate)
+        else:
+            runner = getattr(aggregate, "execute", None)
+            if not callable(runner):
+                runner = getattr(aggregate, "apply_command", None)
+            if not callable(runner):
+                raise TypeError(
+                    f"{type(aggregate).__name__} does not support execute(); "
+                    "pass a callable (e.g. lambda agg: agg.do_something()) or use "
+                    "an aggregate supporting execute(command) or apply_command(command), "
+                    "such as DeciderAggregate."
+                )
+            runner(command)
 
-        runner(command)
         await self.save(aggregate)
         return aggregate
 
