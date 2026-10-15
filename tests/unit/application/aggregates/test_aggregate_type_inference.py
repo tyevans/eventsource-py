@@ -20,33 +20,28 @@ class OrderCreated(DomainEvent):
     aggregate_type: str = "Order"
 
 
-class OrderAggregate(DeclarativeAggregate[OrderState]):
-    aggregate_type = "Order"
-
+class _BaseOrderTestAggregate(DeclarativeAggregate[OrderState]):
     def _get_initial_state(self) -> OrderState:
         return OrderState(order_id=self.aggregate_id)
+
+    def _apply(self, event: DomainEvent) -> None:
+        pass
+
+
+class OrderAggregate(_BaseOrderTestAggregate):
+    aggregate_type = "Order"
 
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, OrderCreated):
             self._state = OrderState(order_id=self.aggregate_id, status="created")
 
 
-class AggregateWithoutType(DeclarativeAggregate[OrderState]):
-    def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
-
-    def _apply(self, event: DomainEvent) -> None:
-        pass
+class AggregateWithoutType(_BaseOrderTestAggregate):
+    pass
 
 
-class AggregateWithEmptyType(DeclarativeAggregate[OrderState]):
+class AggregateWithEmptyType(_BaseOrderTestAggregate):
     aggregate_type = ""
-
-    def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
-
-    def _apply(self, event: DomainEvent) -> None:
-        pass
 
 
 class AggregateWithUnknownType(AggregateRoot[OrderState]):
@@ -59,14 +54,8 @@ class AggregateWithUnknownType(AggregateRoot[OrderState]):
         pass
 
 
-class InvoiceAggregate(DeclarativeAggregate[OrderState]):
+class InvoiceAggregate(_BaseOrderTestAggregate):
     aggregate_type = "Invoice"
-
-    def _get_initial_state(self) -> OrderState:
-        return OrderState(order_id=self.aggregate_id)
-
-    def _apply(self, event: DomainEvent) -> None:
-        pass
 
 
 class TestAggregateTypeInference:
@@ -87,29 +76,27 @@ class TestAggregateTypeInference:
             AggregateRepository(event_store=mock_store, aggregate_factory=AggregateWithoutType)
         error_msg = str(exc_info.value)
         assert "Cannot infer aggregate_type" in error_msg
-        assert "AggregateWithoutType" in error_msg
-        assert "aggregate_type =" in error_msg
+        assert "AggregateWithoutType" in error_msg and "aggregate_type =" in error_msg
 
     def test_raises_when_explicit_unknown(self, mock_store: MagicMock) -> None:
         with pytest.raises(ValueError) as exc_info:
             AggregateRepository(event_store=mock_store, aggregate_factory=AggregateWithUnknownType)
         error_msg = str(exc_info.value)
-        assert "Cannot infer aggregate_type" in error_msg
-        assert "AggregateWithUnknownType" in error_msg
+        assert (
+            "Cannot infer aggregate_type" in error_msg and "AggregateWithUnknownType" in error_msg
+        )
 
     def test_raises_when_empty_string(self, mock_store: MagicMock) -> None:
         with pytest.raises(ValueError) as exc_info:
             AggregateRepository(event_store=mock_store, aggregate_factory=AggregateWithEmptyType)
         error_msg = str(exc_info.value)
-        assert "Cannot infer aggregate_type" in error_msg
-        assert "AggregateWithEmptyType" in error_msg
+        assert "Cannot infer aggregate_type" in error_msg and "AggregateWithEmptyType" in error_msg
 
     def test_error_message_includes_class_name(self, mock_store: MagicMock) -> None:
         with pytest.raises(ValueError) as exc_info:
             AggregateRepository(event_store=mock_store, aggregate_factory=AggregateWithoutType)
         error_msg = str(exc_info.value)
-        assert "AggregateWithoutType" in error_msg
-        assert "aggregate_type =" in error_msg
+        assert "AggregateWithoutType" in error_msg and "aggregate_type =" in error_msg
 
     def test_different_aggregates_infer_correctly(self, mock_store: MagicMock) -> None:
         order_repo: AggregateRepository[OrderAggregate] = AggregateRepository(
@@ -144,14 +131,8 @@ class TestEdgeCases:
         return MagicMock()
 
     def test_aggregate_type_with_special_characters(self, mock_store: MagicMock) -> None:
-        class SpecialAggregate(DeclarativeAggregate[OrderState]):
+        class SpecialAggregate(_BaseOrderTestAggregate):
             aggregate_type = "Order_V2-Beta"
-
-            def _get_initial_state(self) -> OrderState:
-                return OrderState(order_id=self.aggregate_id)
-
-            def _apply(self, event: DomainEvent) -> None:
-                pass
 
         repo: AggregateRepository[SpecialAggregate] = AggregateRepository(
             event_store=mock_store, aggregate_factory=SpecialAggregate
@@ -159,14 +140,8 @@ class TestEdgeCases:
         assert repo.aggregate_type == "Order_V2-Beta"
 
     def test_aggregate_type_with_whitespace_only_rejected(self, mock_store: MagicMock) -> None:
-        class WhitespaceAggregate(DeclarativeAggregate[OrderState]):
+        class WhitespaceAggregate(_BaseOrderTestAggregate):
             aggregate_type = "   "
-
-            def _get_initial_state(self) -> OrderState:
-                return OrderState(order_id=self.aggregate_id)
-
-            def _apply(self, event: DomainEvent) -> None:
-                pass
 
         repo: AggregateRepository[WhitespaceAggregate] = AggregateRepository(
             event_store=mock_store, aggregate_factory=WhitespaceAggregate
@@ -174,14 +149,8 @@ class TestEdgeCases:
         assert repo.aggregate_type == "   "
 
     def test_aggregate_type_inference_with_inheritance(self, mock_store: MagicMock) -> None:
-        class BaseOrderAggregate(DeclarativeAggregate[OrderState]):
+        class BaseOrderAggregate(_BaseOrderTestAggregate):
             aggregate_type = "BaseOrder"
-
-            def _get_initial_state(self) -> OrderState:
-                return OrderState(order_id=self.aggregate_id)
-
-            def _apply(self, event: DomainEvent) -> None:
-                pass
 
         class DerivedOrderAggregate(BaseOrderAggregate):
             pass
@@ -192,14 +161,8 @@ class TestEdgeCases:
         assert repo.aggregate_type == "BaseOrder"
 
     def test_aggregate_type_override_in_derived(self, mock_store: MagicMock) -> None:
-        class BaseOrderAggregate(DeclarativeAggregate[OrderState]):
+        class BaseOrderAggregate(_BaseOrderTestAggregate):
             aggregate_type = "BaseOrder"
-
-            def _get_initial_state(self) -> OrderState:
-                return OrderState(order_id=self.aggregate_id)
-
-            def _apply(self, event: DomainEvent) -> None:
-                pass
 
         class DerivedOrderAggregate(BaseOrderAggregate):
             aggregate_type = "DerivedOrder"

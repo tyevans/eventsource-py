@@ -8,51 +8,32 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource import (
-    DomainEvent,
-    RedisEventBus,
-)
+from eventsource import DomainEvent, RedisEventBus
 from tests.integration.conftest import (
     TestItemCreated,
     TestOrderCreated,
     skip_if_no_redis_infra,
 )
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.redis,
-    skip_if_no_redis_infra,
-]
+pytestmark = [pytest.mark.integration, pytest.mark.redis, skip_if_no_redis_infra]
 
 
 class TestRedisEventBusSubscription:
     """Tests for event subscription."""
 
-    async def test_subscribe_and_receive(
-        self,
-        redis_event_bus: RedisEventBus,
-    ) -> None:
-        """Test subscribing to events and receiving them."""
+    async def test_subscribe_and_receive(self, redis_event_bus: RedisEventBus) -> None:
         received_events: list[DomainEvent] = []
 
         async def handler(event: DomainEvent) -> None:
             received_events.append(event)
 
         redis_event_bus.subscribe(TestItemCreated, handler)
-
-        # Publish an event
         event = TestItemCreated(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            name="Test Item",
-            quantity=10,
+            aggregate_id=uuid4(), aggregate_version=1, name="Test Item", quantity=10
         )
         await redis_event_bus.publish([event])
 
-        # Start consuming in background
         consume_task = asyncio.create_task(redis_event_bus.start_consuming())
-
-        # Wait for event to be processed
         try:
             await asyncio.wait_for(
                 asyncio.create_task(self._wait_for_events(received_events, 1)),
@@ -68,20 +49,11 @@ class TestRedisEventBusSubscription:
         assert len(received_events) == 1
         assert received_events[0].event_type == "TestItemCreated"
 
-    async def _wait_for_events(
-        self,
-        events: list[DomainEvent],
-        count: int,
-    ) -> None:
-        """Helper to wait for events to be received."""
+    async def _wait_for_events(self, events: list[DomainEvent], count: int) -> None:
         while len(events) < count:
             await asyncio.sleep(0.1)
 
-    async def test_subscribe_multiple_handlers(
-        self,
-        redis_event_bus: RedisEventBus,
-    ) -> None:
-        """Test multiple handlers for same event type."""
+    async def test_subscribe_multiple_handlers(self, redis_event_bus: RedisEventBus) -> None:
         handler1_events: list[DomainEvent] = []
         handler2_events: list[DomainEvent] = []
 
@@ -93,19 +65,12 @@ class TestRedisEventBusSubscription:
 
         redis_event_bus.subscribe(TestItemCreated, handler1)
         redis_event_bus.subscribe(TestItemCreated, handler2)
-
-        # Publish an event
         event = TestItemCreated(
-            aggregate_id=uuid4(),
-            aggregate_version=1,
-            name="Multi Handler Test",
-            quantity=5,
+            aggregate_id=uuid4(), aggregate_version=1, name="Multi Handler Test", quantity=5
         )
         await redis_event_bus.publish([event])
 
-        # Start consuming
         consume_task = asyncio.create_task(redis_event_bus.start_consuming())
-
         try:
             await asyncio.wait_for(
                 asyncio.create_task(self._wait_for_events(handler1_events, 1)),
@@ -118,31 +83,20 @@ class TestRedisEventBusSubscription:
             except TimeoutError:
                 consume_task.cancel()
 
-        # Both handlers should have received the event
         assert len(handler1_events) == 1
         assert len(handler2_events) == 1
 
     async def test_subscribe_to_all_events(
-        self,
-        redis_event_bus: RedisEventBus,
-        sample_customer_id: Any,
+        self, redis_event_bus: RedisEventBus, sample_customer_id: Any
     ) -> None:
-        """Test wildcard subscription to all events."""
         all_events: list[DomainEvent] = []
 
         async def wildcard_handler(event: DomainEvent) -> None:
             all_events.append(event)
 
         redis_event_bus.subscribe_to_all_events(wildcard_handler)
-
-        # Publish different event types
         events = [
-            TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name="Item",
-                quantity=1,
-            ),
+            TestItemCreated(aggregate_id=uuid4(), aggregate_version=1, name="Item", quantity=1),
             TestOrderCreated(
                 aggregate_id=uuid4(),
                 aggregate_version=1,
@@ -152,9 +106,7 @@ class TestRedisEventBusSubscription:
         ]
         await redis_event_bus.publish(events)
 
-        # Start consuming
         consume_task = asyncio.create_task(redis_event_bus.start_consuming())
-
         try:
             await asyncio.wait_for(
                 asyncio.create_task(self._wait_for_events(all_events, 2)),
@@ -169,70 +121,40 @@ class TestRedisEventBusSubscription:
 
         assert len(all_events) == 2
 
-    async def test_unsubscribe(
-        self,
-        redis_event_bus: RedisEventBus,
-    ) -> None:
-        """Test unsubscribing a handler."""
+    async def test_unsubscribe(self, redis_event_bus: RedisEventBus) -> None:
         events: list[DomainEvent] = []
 
         async def handler(event: DomainEvent) -> None:
             events.append(event)
 
         redis_event_bus.subscribe(TestItemCreated, handler)
-
-        # Unsubscribe
-        result = redis_event_bus.unsubscribe(TestItemCreated, handler)
-        assert result is True
-
-        # Second unsubscribe should return False
-        result = redis_event_bus.unsubscribe(TestItemCreated, handler)
-        assert result is False
+        assert redis_event_bus.unsubscribe(TestItemCreated, handler) is True
+        assert redis_event_bus.unsubscribe(TestItemCreated, handler) is False
 
 
 class TestRedisEventBusConsumerGroups:
     """Tests for consumer group functionality."""
 
-    async def test_get_stream_info(
-        self,
-        redis_event_bus: RedisEventBus,
-    ) -> None:
-        """Test getting stream information."""
-        # Publish some events
+    async def test_get_stream_info(self, redis_event_bus: RedisEventBus) -> None:
         events: list[DomainEvent] = [
-            TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Item {i}",
-                quantity=i,
-            )
+            TestItemCreated(aggregate_id=uuid4(), aggregate_version=1, name=f"Item {i}", quantity=i)
             for i in range(3)
         ]
         await redis_event_bus.publish(events)
 
         info = await redis_event_bus.get_stream_info()
-
         assert info["connected"] is True
         assert info["stream"]["length"] == 3
         assert len(info["consumer_groups"]) >= 1
 
-    async def test_stats_tracking(
-        self,
-        redis_event_bus: RedisEventBus,
-    ) -> None:
-        """Test that statistics are tracked correctly."""
+    async def test_stats_tracking(self, redis_event_bus: RedisEventBus) -> None:
         initial_stats = redis_event_bus.get_stats_dict()
 
-        # Publish events
         for i in range(5):
             event = TestItemCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                name=f"Stats Item {i}",
-                quantity=i,
+                aggregate_id=uuid4(), aggregate_version=1, name=f"Stats Item {i}", quantity=i
             )
             await redis_event_bus.publish([event])
 
         new_stats = redis_event_bus.get_stats_dict()
-
         assert new_stats["events_published"] == initial_stats["events_published"] + 5
