@@ -1,7 +1,7 @@
 ---
 id: TASK-0367
 title: "Ensure __bool__ returns True across all __len__-bearing stores, repositories, and testing helpers"
-status: Refined
+status: Complete
 target_bc: adapters
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md

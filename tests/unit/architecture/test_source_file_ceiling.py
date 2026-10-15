@@ -14,8 +14,8 @@ import pytest
 
 import eventsource
 
-MAX_SRC_LINES = 220
-MAX_TEST_EXAMPLE_LINES = 257
+MAX_SRC_LINES = 213
+MAX_TEST_EXAMPLE_LINES = 251
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_EVENTSOURCE_DIR = Path(eventsource.__file__).resolve().parent
@@ -56,7 +56,7 @@ def format_violation_report(
 
 
 def test_source_files_strictly_below_220_lines() -> None:
-    """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< 220`` lines."""
+    """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< MAX_SRC_LINES`` lines."""
     py_files = list(SRC_EVENTSOURCE_DIR.rglob("*.py"))
     assert py_files, f"Expected Python files under {SRC_EVENTSOURCE_DIR}"
 
@@ -67,7 +67,7 @@ def test_source_files_strictly_below_220_lines() -> None:
 
 
 def test_test_and_example_files_strictly_below_257_lines() -> None:
-    """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< 257`` lines."""
+    """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< MAX_TEST_EXAMPLE_LINES`` lines."""
     violations: list[tuple[Path, int]] = []
     for directory in (TESTS_DIR, EXAMPLES_DIR):
         py_files = list(directory.rglob("*.py"))
@@ -82,12 +82,12 @@ def test_test_and_example_files_strictly_below_257_lines() -> None:
 @pytest.mark.parametrize(
     ("max_lines", "line_count", "expected_violation"),
     [
-        (MAX_SRC_LINES, 219, False),
-        (MAX_SRC_LINES, 220, True),
-        (MAX_SRC_LINES, 221, True),
-        (MAX_TEST_EXAMPLE_LINES, 256, False),
-        (MAX_TEST_EXAMPLE_LINES, 257, True),
-        (MAX_TEST_EXAMPLE_LINES, 258, True),
+        (MAX_SRC_LINES, MAX_SRC_LINES - 1, False),
+        (MAX_SRC_LINES, MAX_SRC_LINES, True),
+        (MAX_SRC_LINES, MAX_SRC_LINES + 1, True),
+        (MAX_TEST_EXAMPLE_LINES, MAX_TEST_EXAMPLE_LINES - 1, False),
+        (MAX_TEST_EXAMPLE_LINES, MAX_TEST_EXAMPLE_LINES, True),
+        (MAX_TEST_EXAMPLE_LINES, MAX_TEST_EXAMPLE_LINES + 1, True),
     ],
 )
 def test_find_ceiling_violations_boundary(

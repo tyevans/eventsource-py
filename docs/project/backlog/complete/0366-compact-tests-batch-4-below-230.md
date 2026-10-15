@@ -1,8 +1,8 @@
 ---
-id: TASK-0369
-title: "Sync Diataxis testing guide for EventAssertions.for_aggregate and assert_events_for_aggregate"
-status: Refined
-target_bc: documentation
+id: TASK-0366
+title: "Compact 10 test modules at 250-251 lines below 230 lines"
+status: Complete
+target_bc: testing
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md
 story: docs/project/user_stories/accepted/US-0008-ergonomic-aggregate-testing-and-compact-adapters.md
@@ -13,7 +13,7 @@ adrs:
 dependencies: []
 ---
 
-# TASK-0369: Sync Diataxis testing guide for EventAssertions.for_aggregate and assert_events_for_aggregate
+# TASK-0366: Compact 10 test modules at 250-251 lines below 230 lines
 
 ## Summary
-Update `docs/guides/testing.md` to document `assertions.for_aggregate(aggregate_id)` and `assertions.assert_events_for_aggregate(aggregate_id, expected_count=...)`.
+Compact 10 test modules at 250-251 lines strictly below 230 lines while preserving every test assertion.

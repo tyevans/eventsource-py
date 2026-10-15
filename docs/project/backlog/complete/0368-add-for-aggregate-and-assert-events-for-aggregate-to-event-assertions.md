@@ -1,7 +1,7 @@
 ---
 id: TASK-0368
 title: "Add for_aggregate(aggregate_id) and assert_events_for_aggregate() to EventAssertions"
-status: Refined
+status: Complete
 target_bc: testing
 prd: docs/project/product/accepted/PRD-0008-ergonomic-aggregate-testing-and-compact-adapters.md
 persona: docs/project/user_stories/PERSONAS.md
