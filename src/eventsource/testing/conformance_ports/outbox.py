@@ -8,10 +8,10 @@ here -- exact cutoff boundaries belong in the backend-specific modules,
 following the pattern `dlq.py` established.
 """
 
-import json
 from abc import ABC, abstractmethod
 from uuid import uuid4
 
+import orjson
 import pytest
 
 from eventsource.ports.outbox import OutboxRepository, outbox_event_data
@@ -52,7 +52,7 @@ class OutboxRepositoryConformance(ABC):
 
         (entry,) = await store.get_pending_events()
         data = entry.event_data
-        parsed = json.loads(data) if isinstance(data, str) else data
+        parsed = orjson.loads(data) if isinstance(data, str) else data
 
         assert set(parsed.keys()) == set(outbox_event_data(event).keys())
         assert parsed["payload"] == event.model_dump(mode="json")

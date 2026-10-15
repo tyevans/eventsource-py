@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import zlib
 from dataclasses import dataclass
 from typing import Any
+
+import orjson
 
 from eventsource.domain.exceptions import EventSourceError
 
@@ -107,7 +108,7 @@ class DeltaCodec:
             return data
         if isinstance(data, str):
             return data.encode("utf-8")
-        return json.dumps(data, sort_keys=True).encode("utf-8")
+        return orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
 
     def compress(
         self,
@@ -218,7 +219,7 @@ class DeltaCodec:
     ) -> Any:
         """Decompress delta payload and parse back into Python JSON object."""
         raw_bytes = self.decompress(delta, base_payload=base_payload)
-        return json.loads(raw_bytes.decode("utf-8"))
+        return orjson.loads(raw_bytes)
 
 
 def is_delta_dict(val: Any) -> bool:
