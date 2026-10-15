@@ -43,7 +43,6 @@ class TestMemoryUsage:
 
     @pytest.mark.asyncio
     async def test_bulk_copy_memory_usage(self) -> None:
-        """Verify memory usage scales linearly with batch size, not total event count."""
         tenant_id = uuid4()
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
@@ -51,7 +50,6 @@ class TestMemoryUsage:
         event_count = 10_000
 
         await create_test_events(source_store, tenant_id, event_count)
-
         migration = Migration(
             id=uuid4(),
             tenant_id=tenant_id,
@@ -61,7 +59,6 @@ class TestMemoryUsage:
             config=MigrationConfig(batch_size=1_000, max_bulk_copy_rate=1_000_000),
         )
         await migration_repo.create(migration)
-
         copier = BulkCopier(
             source_store=source_store,
             target_store=target_store,
@@ -87,7 +84,6 @@ class TestMemoryUsage:
 
     @pytest.mark.asyncio
     async def test_position_mapping_memory_scaling(self) -> None:
-        """Verify position mappings scale linearly with count."""
         migration_id = uuid4()
         repo = InMemoryPositionMappingRepository()
         mapping_counts = [1_000, 5_000, 10_000]
@@ -98,15 +94,15 @@ class TestMemoryUsage:
             tracemalloc.start()
             now = datetime.now(UTC)
             for i in range(count):
-                mapping = PositionMapping(
-                    migration_id=migration_id,
-                    source_position=src_pos(i),
-                    target_position=tgt_pos(i // 2),
-                    event_id=uuid4(),
-                    mapped_at=now,
+                await repo.create(
+                    PositionMapping(
+                        migration_id=migration_id,
+                        source_position=src_pos(i),
+                        target_position=tgt_pos(i // 2),
+                        event_id=uuid4(),
+                        mapped_at=now,
+                    )
                 )
-                await repo.create(mapping)
-
             _current, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
             memory_results.append((count, peak / (1024 * 1024)))
@@ -123,7 +119,6 @@ class TestConcurrentMigrations:
 
     @pytest.mark.asyncio
     async def test_concurrent_bulk_copies(self) -> None:
-        """Verify concurrent migrations don't significantly degrade performance."""
         num_migrations = 5
         events_per_migration = 2_000
 
@@ -132,7 +127,6 @@ class TestConcurrentMigrations:
             source_store = InMemoryEventStore(event_registry=_REGISTRY)
             target_store = InMemoryEventStore(event_registry=_REGISTRY)
             migration_repo = InMemoryMigrationRepository()
-
             await create_test_events(source_store, tenant_id, events_per_migration)
 
             migration = Migration(
@@ -144,7 +138,6 @@ class TestConcurrentMigrations:
                 config=MigrationConfig(batch_size=500, max_bulk_copy_rate=1_000_000),
             )
             await migration_repo.create(migration)
-
             copier = BulkCopier(
                 source_store=source_store,
                 target_store=target_store,
@@ -156,12 +149,10 @@ class TestConcurrentMigrations:
             events_copied = 0
             async for progress in copier.run(migration):
                 events_copied = progress.events_copied
-            end_time = time.monotonic()
-
             return BenchmarkResult.from_timing(
                 name=f"concurrent_migration_{index}",
                 start_time=start_time,
-                end_time=end_time,
+                end_time=time.monotonic(),
                 operations_count=events_copied,
             )
 
@@ -171,19 +162,14 @@ class TestConcurrentMigrations:
 
         total_events = sum(r.operations_count for r in results)
         overall_throughput = total_events / (overall_end - overall_start)
-
         for result in results:
             assert result.operations_per_second > 500
         assert overall_throughput > 1_000
 
     @pytest.mark.asyncio
     async def test_concurrent_dual_writes(self) -> None:
-        """Test concurrent dual-write operations."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
-        num_tenants = 5
-        ops_per_tenant = 100
-
         interceptors = [
             DualWriteInterceptor(
                 source_store=source_store,
@@ -191,32 +177,24 @@ class TestConcurrentMigrations:
                 tenant_id=uuid4(),
                 enable_tracing=False,
             )
-            for _ in range(num_tenants)
+            for _ in range(5)
         ]
 
         async def tenant_writes(interceptor: DualWriteInterceptor, count: int) -> list[float]:
             latencies: list[float] = []
             for _ in range(count):
                 aggregate_id = uuid4()
-                event = BenchmarkEvent(
-                    aggregate_id=aggregate_id,
-                    tenant_id=interceptor.tenant_id,
-                )
+                event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=interceptor.tenant_id)
                 start = time.monotonic()
                 await interceptor.append(
                     StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
                     [event],
                     ExpectedVersion.no_stream(),
                 )
-                end = time.monotonic()
-                latencies.append((end - start) * 1000)
+                latencies.append((time.monotonic() - start) * 1000)
             return latencies
 
-        all_latencies = await asyncio.gather(
-            *[tenant_writes(i, ops_per_tenant) for i in interceptors]
-        )
+        all_latencies = await asyncio.gather(*[tenant_writes(i, 100) for i in interceptors])
         combined_latencies = [lat for tenant_lats in all_latencies for lat in tenant_lats]
         result = LatencyResult.from_samples("concurrent_dual_writes", combined_latencies)
-
-        assert result.mean_ms < 5.0
-        assert result.p95_ms < 15.0
+        assert result.mean_ms < 5.0 and result.p95_ms < 15.0

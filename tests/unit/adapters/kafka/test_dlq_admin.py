@@ -1,10 +1,4 @@
-"""Unit tests for the extracted ``KafkaDLQAdmin``.
-
-Covers DLQ message-count aggregation across partitions, the ``get_messages``
-limit, replay routing to the main topic via ``require_producer()``, and the
-throwaway-consumer helper's guarantee that ``stop()`` always runs -- even
-when the wrapped body raises -- in isolation from ``KafkaEventBus``.
-"""
+"""Unit tests for the extracted ``KafkaDLQAdmin``."""
 
 from __future__ import annotations
 
@@ -27,24 +21,18 @@ def _make_dlq_admin(producer: Any = None) -> KafkaDLQAdmin:
     with patch.object(KafkaEventBusConfig, "_validate_security_config"):
         config = KafkaEventBusConfig(bootstrap_servers="localhost:9092")  # type: ignore[arg-type]
     stats = KafkaEventBusStats()
-
     connection = KafkaConnectionManager(config=config, stats=stats, metrics=None)
     connection._connected = True
     if producer is not None:
         connection._producer = producer
-
     return KafkaDLQAdmin(
-        config=config,
-        connection=connection,
-        serializer=EventSerializer(),
-        stats=stats,
+        config=config, connection=connection, serializer=EventSerializer(), stats=stats
     )
 
 
 class TestGetMessageCount:
     async def test_sums_end_minus_beginning_offsets_across_partitions(self) -> None:
         admin = _make_dlq_admin()
-
         mock_consumer = AsyncMock()
         mock_consumer.partitions_for_topic = MagicMock(return_value={0, 1})
 
@@ -63,14 +51,12 @@ class TestGetMessageCount:
         with patch("eventsource.adapters.kafka.dlq.AIOKafkaConsumer", return_value=mock_consumer):
             count = await admin.get_message_count()
 
-        # partition 0: 12 - 5 = 7, partition 1: 30 - 10 = 20 -> total 27
         assert count == 27
         mock_consumer.start.assert_awaited_once()
         mock_consumer.stop.assert_awaited_once()
 
     async def test_returns_zero_when_topic_has_no_partitions(self) -> None:
         admin = _make_dlq_admin()
-
         mock_consumer = AsyncMock()
         mock_consumer.partitions_for_topic = MagicMock(return_value=None)
 
@@ -83,7 +69,6 @@ class TestGetMessageCount:
     async def test_raises_when_not_connected(self) -> None:
         admin = _make_dlq_admin()
         admin._connection._connected = False
-
         with pytest.raises(EventBusConnectionError, match="Not connected"):
             await admin.get_message_count()
 
@@ -91,17 +76,11 @@ class TestGetMessageCount:
 class TestGetMessages:
     async def test_honors_limit(self) -> None:
         admin = _make_dlq_admin()
-
         raw_messages = []
         for i in range(5):
             msg = MagicMock()
-            msg.topic = "events.dlq"
-            msg.partition = 0
-            msg.offset = i
-            msg.key = None
-            msg.timestamp = 1000 + i
-            msg.headers = []
-            msg.value = b'{"foo": "bar"}'
+            msg.topic, msg.partition, msg.offset, msg.key = "events.dlq", 0, i, None
+            msg.timestamp, msg.headers, msg.value = 1000 + i, [], b'{"foo": "bar"}'
             raw_messages.append(msg)
 
         mock_consumer = AsyncMock()
@@ -122,7 +101,6 @@ class TestGetMessages:
     async def test_raises_when_not_connected(self) -> None:
         admin = _make_dlq_admin()
         admin._connection._connected = False
-
         with pytest.raises(EventBusConnectionError, match="Not connected"):
             await admin.get_messages()
 
@@ -157,7 +135,6 @@ class TestReplayMessage:
     async def test_raises_when_not_connected(self) -> None:
         admin = _make_dlq_admin(producer=AsyncMock())
         admin._connection._connected = False
-
         with pytest.raises(EventBusConnectionError, match="Not connected"):
             await admin.replay_message(partition=0, offset=0)
 
@@ -165,7 +142,6 @@ class TestReplayMessage:
 class TestDlqConsumerHelper:
     async def test_always_stops_consumer_even_when_body_raises(self) -> None:
         admin = _make_dlq_admin()
-
         mock_consumer = AsyncMock()
 
         with (
@@ -179,16 +155,7 @@ class TestDlqConsumerHelper:
         mock_consumer.stop.assert_awaited_once()
 
     async def test_ssl_check_hostname_reaches_dlq_consumer_kwargs(self) -> None:
-        """A DLQ consumer must honor ssl_check_hostname like the main consumer.
-
-        Regression test for the security-config drift: DLQ consumers were
-        built from a separate, incomplete security dict
-        (``KafkaConnectionManager.get_security_config()``) that omitted
-        ``ssl_check_hostname`` entirely, so setting it False on the config
-        (the documented escape hatch for self-signed / hostname-mismatched
-        certs) was silently dropped for every DLQ client while still being
-        honored by the main producer/consumer.
-        """
+        """A DLQ consumer must honor ssl_check_hostname like the main consumer."""
         with patch.object(KafkaEventBusConfig, "_validate_security_config"):
             config = KafkaEventBusConfig(  # type: ignore[arg-type]
                 bootstrap_servers="localhost:9092",
@@ -198,12 +165,8 @@ class TestDlqConsumerHelper:
         stats = KafkaEventBusStats()
         connection = KafkaConnectionManager(config=config, stats=stats, metrics=None)
         connection._connected = True
-
         admin = KafkaDLQAdmin(
-            config=config,
-            connection=connection,
-            serializer=EventSerializer(),
-            stats=stats,
+            config=config, connection=connection, serializer=EventSerializer(), stats=stats
         )
 
         mock_consumer = AsyncMock()

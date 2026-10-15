@@ -15,8 +15,6 @@ from tests.unit.application.migration.test_sync_lag_tracker._fixtures import see
 
 
 class TestCalculateLag:
-    """Tests for calculate_lag method."""
-
     async def test_calculate_lag_basic(
         self,
         tracker: SyncLagTracker,
@@ -28,8 +26,7 @@ class TestCalculateLag:
         assert lag.events == 50
         assert lag.source_position == await source_store.current_position()
         assert lag.target_position == await target_store.current_position()
-        assert lag.timestamp is not None
-        assert lag.count_is_bounded is False
+        assert lag.timestamp is not None and lag.count_is_bounded is False
 
     async def test_calculate_lag_updates_current(
         self, tracker: SyncLagTracker, source_store: InMemoryEventStore
@@ -48,10 +45,7 @@ class TestCalculateLag:
         assert len(tracker._lag_samples) == 1
 
     async def test_calculate_lag_records_metric_when_migration_id_set(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         clear_metrics_registry()
         migration_id = uuid4()
@@ -73,14 +67,10 @@ class TestCalculateLag:
     ) -> None:
         clear_metrics_registry()
         await seed_events(source_store, 3)
-        lag = await tracker.calculate_lag()
-        assert lag.events == 3
+        assert (await tracker.calculate_lag()).events == 3
 
     async def test_calculate_lag_zero_when_since_is_head(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         last_position = await seed_events(source_store, 25)
@@ -88,20 +78,14 @@ class TestCalculateLag:
         assert lag.events == 0 and lag.is_converged is True
 
     async def test_calculate_lag_empty_source(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         lag = await tracker.calculate_lag()
         assert lag.events == 0 and lag.count_is_bounded is False
 
     async def test_calculate_lag_at_bound_reports_and_stops(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        strict_config: MigrationConfig,
+        self, source_store, target_store, strict_config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(
             source_store, target_store, config=strict_config, enable_tracing=False
@@ -112,10 +96,7 @@ class TestCalculateLag:
         assert lag.count_is_bounded is True
 
     async def test_calculate_lag_multiple_calls(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         await seed_events(source_store, 50)
@@ -126,16 +107,11 @@ class TestCalculateLag:
 
 
 class TestConvergenceDetection:
-    """Tests for convergence detection methods."""
-
     async def test_is_converged_no_measurement(self, tracker: SyncLagTracker) -> None:
         assert tracker.is_converged() is False
 
     async def test_is_converged_within_threshold(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         await seed_events(source_store, 50)
@@ -143,10 +119,7 @@ class TestConvergenceDetection:
         assert tracker.is_converged() is True
 
     async def test_is_converged_exceeds_threshold(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        strict_config: MigrationConfig,
+        self, source_store, target_store, strict_config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(
             source_store, target_store, config=strict_config, enable_tracing=False
@@ -177,10 +150,7 @@ class TestConvergenceDetection:
         assert tracker.is_sync_ready() is False
 
     async def test_is_sync_ready_within_threshold(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         await seed_events(source_store, 50)
@@ -188,10 +158,7 @@ class TestConvergenceDetection:
         assert tracker.is_sync_ready() is True
 
     async def test_is_sync_ready_exceeds_threshold(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        strict_config: MigrationConfig,
+        self, source_store, target_store, strict_config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(
             source_store, target_store, config=strict_config, enable_tracing=False
@@ -211,10 +178,7 @@ class TestConvergenceDetection:
         assert tracker.is_fully_converged() is False
 
     async def test_is_fully_converged_zero_lag(
-        self,
-        source_store: InMemoryEventStore,
-        target_store: InMemoryEventStore,
-        config: MigrationConfig,
+        self, source_store, target_store, config: MigrationConfig
     ) -> None:
         tracker = SyncLagTracker(source_store, target_store, config=config, enable_tracing=False)
         last_position = await seed_events(source_store, 25)

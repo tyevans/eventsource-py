@@ -78,20 +78,16 @@ class TestSQLiteSnapshotStore(SnapshotStoreConformance, SnapshotDeserializationC
         await store.close()
 
     async def _write_raw_state(
-        self,
-        store: SQLiteSnapshotStore,  # type: ignore[override]
-        *,
-        aggregate_id: UUID,
-        aggregate_type: str,
-        raw_state: str,
-    ) -> None:
+        self, store: SQLiteSnapshotStore, *, aggregate_id: UUID, aggregate_type: str, raw_state: str
+    ) -> None:  # type: ignore[override]
         conn = await store._conn()
         async with store._lock:
-            await conn.execute(
+            sql = (
                 "INSERT INTO snapshots (aggregate_id, aggregate_type, version, "
-                "schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(aggregate_id), aggregate_type, 1, 1, raw_state, datetime.now(UTC).isoformat()),
+                "schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)"
             )
+            now = datetime.now(UTC).isoformat()
+            await conn.execute(sql, (str(aggregate_id), aggregate_type, 1, 1, raw_state, now))
             await conn.commit()
 
 
@@ -100,15 +96,13 @@ class TestSQLiteCheckpointRepository(CheckpointRepositoryConformance):
     async def store(self, tmp_path) -> AsyncIterator[SQLCheckpointRepository]:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/checkpoint_repo.db")
         async with engine.begin() as conn:
-            raw = await conn.get_raw_connection()
-            await raw.driver_connection.executescript(get_schema("checkpoints", backend="sqlite"))
-            await raw.driver_connection.executescript(get_schema("events", backend="sqlite"))
+            raw = (await conn.get_raw_connection()).driver_connection
+            for tbl in ("checkpoints", "events"):
+                await raw.executescript(get_schema(tbl, backend="sqlite"))
         yield SQLCheckpointRepository(engine)
         await engine.dispose()
 
-    async def write_legacy_int_row(
-        self, store: SQLCheckpointRepository, subscription_id: str, value: int
-    ) -> None:
+    async def write_legacy_int_row(self, store, subscription_id: str, value: int) -> None:
         sql = (
             "INSERT INTO projection_checkpoints "
             "(projection_name, global_position, events_processed) VALUES (:name, :value, 1)"
@@ -136,17 +130,13 @@ class TestSQLiteOutboxRepository(OutboxRepositoryConformance):
             await conn.commit()
             yield SQLiteOutboxRepository(conn)
 
-    async def test_sqlite_cleanup_published_removes_entries_past_the_cutoff(
-        self, store: SQLiteOutboxRepository
-    ) -> None:
+    async def test_sqlite_cleanup_published_removes_entries_past_the_cutoff(self, store) -> None:
         from eventsource.testing.conformance_ports._fixtures import make_event
 
         outbox_id = await store.add_event(make_event(aggregate_id=uuid4()))
         await store.mark_published(outbox_id)
-        await store._connection.execute(
-            "UPDATE event_outbox SET published_at = datetime('now', '-10 days') WHERE id = ?",
-            (str(outbox_id),),
-        )
+        sql = "UPDATE event_outbox SET published_at = datetime('now', '-10 days') WHERE id = ?"
+        await store._connection.execute(sql, (str(outbox_id),))
         await store._connection.commit()
         assert await store.cleanup_published(days=7) == 1
 
@@ -167,9 +157,7 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
     from eventsource.ports import CategoryReadOptions
 
     store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
-    stream = make_stream()
-    original_json_dumps = sqlite_store_module.json_dumps
-    call_count = 0
+    stream, original_json_dumps, call_count = make_stream(), sqlite_store_module.json_dumps, 0
 
     def flaky_json_dumps(obj):
         nonlocal call_count
@@ -179,28 +167,21 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
         return original_json_dumps(obj)
 
     monkeypatch.setattr(sqlite_store_module, "json_dumps", flaky_json_dumps)
-    events = [
-        ConformanceEvent(aggregate_id=stream.aggregate_id, payload="1"),
-        ConformanceEvent(aggregate_id=stream.aggregate_id, payload="2"),
-    ]
+    events = [ConformanceEvent(aggregate_id=stream.aggregate_id, payload=p) for p in ("1", "2")]
     with pytest.raises(RuntimeError, match="boom"):
         await store.append(stream, events, ExpectedVersion.any_())
-
     monkeypatch.setattr(sqlite_store_module, "json_dumps", original_json_dumps)
     assert [e async for e in store.read_category(stream.category, CategoryReadOptions())] == []
     ev3 = [ConformanceEvent(aggregate_id=stream.aggregate_id, payload="3")]
-    result = await store.append(stream, ev3, ExpectedVersion.any_())
-    assert result.new_version == 1
+    assert (await store.append(stream, ev3, ExpectedVersion.any_())).new_version == 1
     await store.close()
 
 
 def test_sync_facade_close_closes_underlying_store() -> None:
     store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
-    facade = SyncStoreFacade(store)
-    stream = make_stream()
-    facade.append(
-        stream, [ConformanceEvent(aggregate_id=stream.aggregate_id)], ExpectedVersion.any_()
-    )
+    facade, stream = SyncStoreFacade(store), make_stream()
+    ev = [ConformanceEvent(aggregate_id=stream.aggregate_id)]
+    facade.append(stream, ev, ExpectedVersion.any_())
     del stream
     worker = store._connection
     assert worker is not None and worker.is_alive()
@@ -216,7 +197,6 @@ async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(tm
     for _ in range(2):
         store = SQLiteEventStore(db_path, event_registry=make_conformance_registry())
         conn = await store._conn()
-        async with conn.execute("PRAGMA table_info(projection_checkpoints)") as cursor:
-            columns = {row[1] for row in await cursor.fetchall()}
-        assert "position_token" in columns
+        async with conn.execute("PRAGMA table_info(projection_checkpoints)") as cur:
+            assert "position_token" in {row[1] for row in await cur.fetchall()}
         await store.close()

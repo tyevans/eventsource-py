@@ -17,13 +17,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres, skip_if_no_postgres
 
 
 class TestSQLCheckpointRepositoryBasics:
-    """Basic checkpoint repository operations."""
-
     async def test_get_checkpoint_nonexistent(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
-        result = await postgres_checkpoint_repo.get_checkpoint("NonExistentProjection")
-        assert result is None
+        assert await postgres_checkpoint_repo.get_checkpoint("NonExistentProjection") is None
 
     async def test_update_and_get_checkpoint(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
@@ -32,8 +29,7 @@ class TestSQLCheckpointRepositoryBasics:
         await postgres_checkpoint_repo.update_checkpoint(
             projection_name=projection_name, event_id=event_id, event_type=event_type
         )
-        result = await postgres_checkpoint_repo.get_checkpoint(projection_name)
-        assert result == event_id
+        assert await postgres_checkpoint_repo.get_checkpoint(projection_name) == event_id
 
     async def test_update_checkpoint_increments_count(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
@@ -47,8 +43,7 @@ class TestSQLCheckpointRepositoryBasics:
         checkpoint = next(
             (c for c in all_checkpoints if c.projection_name == projection_name), None
         )
-        assert checkpoint is not None
-        assert checkpoint.events_processed == 5
+        assert checkpoint is not None and checkpoint.events_processed == 5
 
     async def test_update_checkpoint_upsert_behavior(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
@@ -64,13 +59,10 @@ class TestSQLCheckpointRepositoryBasics:
         )
         assert await postgres_checkpoint_repo.get_checkpoint(projection_name) == event_id_2
         all_checkpoints = await postgres_checkpoint_repo.get_all_checkpoints()
-        matching = [c for c in all_checkpoints if c.projection_name == projection_name]
-        assert len(matching) == 1
+        assert len([c for c in all_checkpoints if c.projection_name == projection_name]) == 1
 
 
 class TestSQLCheckpointRepositoryReset:
-    """Tests for checkpoint reset operations."""
-
     async def test_reset_checkpoint(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
@@ -89,13 +81,10 @@ class TestSQLCheckpointRepositoryReset:
 
 
 class TestSQLCheckpointRepositoryAllCheckpoints:
-    """Tests for getting all checkpoints."""
-
     async def test_get_all_checkpoints_empty(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
-        result = await postgres_checkpoint_repo.get_all_checkpoints()
-        assert result == []
+        assert await postgres_checkpoint_repo.get_all_checkpoints() == []
 
     async def test_get_all_checkpoints_multiple(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
@@ -120,22 +109,16 @@ class TestSQLCheckpointRepositoryAllCheckpoints:
         checkpoint = next(
             (c for c in all_checkpoints if c.projection_name == projection_name), None
         )
-        assert checkpoint is not None
-        assert checkpoint.projection_name == projection_name
-        assert checkpoint.last_event_id == event_id
-        assert checkpoint.last_event_type == event_type
-        assert checkpoint.last_processed_at is not None
-        assert checkpoint.events_processed == 1
+        assert checkpoint is not None and checkpoint.projection_name == projection_name
+        assert checkpoint.last_event_id == event_id and checkpoint.last_event_type == event_type
+        assert checkpoint.last_processed_at is not None and checkpoint.events_processed == 1
 
 
 class TestSQLCheckpointRepositoryLagMetrics:
-    """Tests for lag metrics calculation."""
-
     async def test_get_lag_metrics_no_checkpoint(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
     ) -> None:
-        result = await postgres_checkpoint_repo.get_lag_metrics("NonExistent")
-        assert result is None
+        assert await postgres_checkpoint_repo.get_lag_metrics("NonExistent") is None
 
     async def test_get_lag_metrics_with_checkpoint(
         self, postgres_checkpoint_repo: SQLCheckpointRepository
@@ -145,11 +128,9 @@ class TestSQLCheckpointRepositoryLagMetrics:
             projection_name=projection_name, event_id=event_id, event_type="TestEvent"
         )
         result = await postgres_checkpoint_repo.get_lag_metrics(projection_name)
-        assert result is not None
-        assert result.projection_name == projection_name
+        assert result is not None and result.projection_name == projection_name
         assert result.last_event_id == str(event_id)
-        assert result.events_processed == 1
-        assert result.last_processed_at is not None
+        assert result.events_processed == 1 and result.last_processed_at is not None
 
     async def test_get_lag_metrics_with_event_types_filter(
         self,
@@ -169,8 +150,7 @@ class TestSQLCheckpointRepositoryLagMetrics:
         result = await postgres_checkpoint_repo.get_lag_metrics(
             projection_name, event_types=["TestItemCreated"]
         )
-        assert result is not None
-        assert result.lag_seconds >= 0
+        assert result is not None and result.lag_seconds >= 0
 
     async def test_get_lag_metrics_without_event_types_uses_latest_event(
         self,
@@ -188,8 +168,7 @@ class TestSQLCheckpointRepositoryLagMetrics:
             projection_name=projection_name, event_id=event.event_id, event_type="TestItemCreated"
         )
         result = await postgres_checkpoint_repo.get_lag_metrics(projection_name)
-        assert result is not None
-        assert result.latest_event_id == str(event.event_id)
+        assert result is not None and result.latest_event_id == str(event.event_id)
 
     async def test_get_lag_metrics_reports_nonzero_lag_for_stale_checkpoint(
         self,
@@ -216,7 +195,5 @@ class TestSQLCheckpointRepositoryLagMetrics:
         result = await postgres_checkpoint_repo.get_lag_metrics(
             projection_name, event_types=["TestItemCreated"]
         )
-        assert result is not None
-        assert result.last_event_id != result.latest_event_id
-        assert result.latest_event_id == str(newer_event.event_id)
-        assert result.lag_seconds >= 1.0
+        assert result is not None and result.last_event_id != result.latest_event_id
+        assert result.latest_event_id == str(newer_event.event_id) and result.lag_seconds >= 1.0
