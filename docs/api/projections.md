@@ -567,7 +567,7 @@ configuration type is shared with the subscription machinery.
 ```python
 async def replay(
     feed: GlobalEventFeed,
-    projections: Sequence[EventSubscriber],
+    projections: EventSubscriber | Sequence[EventSubscriber],
     *,
     from_position: Position | None = None,
     tenant_id: UUID | None = None,
@@ -579,17 +579,25 @@ async def replay(
 ) -> ReplayReport: ...
 ```
 
-Reads the global feed from `from_position` and folds every event into every projection,
-returning a report (ADR 0054). This is the answer to "how do I rebuild a projection from
-the log" — a live subscription runner does the other job, catch-up on a timer via
-`ProjectionCoordinator`/`ProjectionRegistry`, and the coordinator's `rebuild_projection()`
-takes the events as a materialized list you have already read and filtered yourself.
+Reads the global feed from `from_position` and folds every event into the target
+projection (or sequence of projections), returning a report (ADR 0054). This is the
+answer to "how do I rebuild a projection from the log" — a live subscription runner does
+the other job, catch-up on a timer via `ProjectionCoordinator`/`ProjectionRegistry`, and
+the coordinator's `rebuild_projection()` takes the events as a materialized list you have
+already read and filtered yourself.
+
+You can pass either a single projection directly or a sequence of projections:
 
 ```python
 from eventsource.application.projections import replay
 
+# Single projection passed directly
+single_report = await replay(event_store, orders)
+assert single_report.succeeded
+
+# Multiple projections rebuilt in one pass
 report = await replay(event_store, [orders, invoices])
-print(f"{report.applied} applied, {report.failed} failed")
+print(f"{report.applied} applied, {report.failed} failed (succeeded={report.succeeded})")
 ```
 
 `feed` is type-hinted `GlobalEventFeed`, the narrowest port that suffices: `replay`
@@ -616,13 +624,14 @@ This is narrower than `tenant_filter` on the projection, which is applied *after
 delivery and therefore pays for the whole read either way.
 
 ```python
-report = await replay(event_store, [orders], tenant_id=tenant, aggregate_type="Order")
+report = await replay(event_store, orders, tenant_id=tenant, aggregate_type="Order")
 ```
 
 ### `ReplayReport`
 
 | Field | Meaning |
 | --- | --- |
+| `succeeded` (property) | `True` when `len(failures) == 0` and `failures_truncated == 0`; `False` if any projection rejected an event. |
 | `applied` | Events delivered that no projection rejected. An event every projection ignores still counts. |
 | `last_position` | The last position the (possibly filtered) read reached; `None` for an empty feed. |
 | `failures` | One `ReplayFailure` per *rejection*, capped at `max_failures`. |

@@ -5,7 +5,8 @@ domain behavior through public frontdoors without database or broker setup:
 
 - **`Scenario` / `DeciderScenario`** for synchronous, zero-I/O Given-When-Then
   testing of `DeciderAggregate`s and pure `(decide, evolve, initial_state)`
-  triples, including `.then_event_types(*EventClasses)` and `.then_events(*EventClasses)`.
+  triples, including `.then_event_types(*EventClasses)`, `.then_events(*EventClasses)`,
+  `.then_event(EventCls, **expected_fields)`, and `.then_no_events()`.
 - **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
   `harness.snapshot_store`, and `harness.assertions` (`EventAssertions` wrapper
   over `harness.published_events`) for pre-wired repository and bus testing.
@@ -69,7 +70,7 @@ def test_mixed_given_events_and_commands() -> None:
 Use `.when_all(*commands)` when the action under test is a sequence of commands.
 Each command runs against the state evolved by the previous command, and all
 emitted events are collected in order for `.then_events(...)`,
-`.then_event_types(...)`, and `.then_state(...)`:
+`.then_event_types(...)`, `.then_event(...)`, and `.then_state(...)`:
 
 ```python
 def test_multiple_commands_in_when_all() -> None:
@@ -136,6 +137,67 @@ def test_then_event_types() -> None:
         .given_commands(OpenAccount(account_id=account_id, owner="alice"))
         .when(DepositMoney(account_id=account_id, amount=10.0))
         .then_event_types(MoneyDeposited)
+    )
+```
+
+### Asserting event type and field values with `then_event`
+
+Use `.then_event(EventCls, **expected_fields)` to assert that an event of type
+`EventCls` was emitted by `when(...)` or `when_all(...)` and that its attributes
+match every `field=expected_value` pair. Like `.then_events(...)` and
+`.then_event_types(...)`, `.then_event(...)` returns the `Scenario` instance so
+you can chain multiple `.then_event(...)` assertions or follow up with
+`.then_state(...)`:
+
+```python
+def test_then_event_with_fields_and_state() -> None:
+    account_id = uuid4()
+
+    (
+        Scenario(Account)
+        .given_commands(OpenAccount(account_id=account_id, owner="alice"))
+        .when(DepositMoney(account_id=account_id, amount=25.0))
+        .then_event(MoneyDeposited, aggregate_id=account_id, amount=25.0)
+        .then_state(AccountState(owner="alice", balance=25.0, is_open=True))
+    )
+```
+
+When `when_all(...)` emits multiple events, chain `.then_event(...)` calls to
+inspect specific events and their payloads without breaking the fluent pipeline:
+
+```python
+def test_chained_then_event_assertions() -> None:
+    account_id = uuid4()
+
+    (
+        Scenario(Account)
+        .when_all(
+            OpenAccount(account_id=account_id, owner="alice"),
+            DepositMoney(account_id=account_id, amount=40.0),
+        )
+        .then_event(AccountOpened, owner="alice")
+        .then_event(MoneyDeposited, amount=40.0)
+        .then_state(lambda state: state.balance == 40.0 and state.is_open)
+    )
+```
+
+### Asserting no-op commands with `then_no_events`
+
+When an idempotent or no-op command succeeds without raising an error and
+intentionally emits zero domain events (`decide(...)` returns `[]`), use
+`.then_no_events()` to verify both that no exception was raised and that no
+events were produced:
+
+```python
+def test_idempotent_command_emits_no_events() -> None:
+    account_id = uuid4()
+
+    (
+        Scenario(Account)
+        .given_commands(OpenAccount(account_id=account_id, owner="alice"))
+        .when(DepositMoney(account_id=account_id, amount=0.0))
+        .then_no_events()
+        .then_state(AccountState(owner="alice", balance=0.0, is_open=True))
     )
 ```
 
