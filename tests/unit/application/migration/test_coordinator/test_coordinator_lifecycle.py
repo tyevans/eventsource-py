@@ -30,7 +30,6 @@ class TestMigrationCoordinatorInit:
     """Tests for MigrationCoordinator initialization."""
 
     def test_init_with_required_args(self) -> None:
-        """Test initialization with required arguments."""
         source_store, migration_repo = MagicMock(), MagicMock()
         routing_repo, router = MagicMock(), MagicMock()
         coordinator = MigrationCoordinator(
@@ -50,16 +49,12 @@ class TestMigrationCoordinatorInit:
         assert coordinator._status_queues == {}
 
     def test_init_with_custom_source_store_id(self) -> None:
-        """Test initialization with custom source store ID."""
         coordinator = MigrationCoordinator(
-            **create_coordinator_deps(),
-            source_store_id="shared-postgres",
-            enable_tracing=False,
+            **create_coordinator_deps(), source_store_id="shared-postgres", enable_tracing=False
         )
         assert coordinator._source_store_id == "shared-postgres"
 
     def test_init_with_tracing_disabled(self) -> None:
-        """Test initialization with tracing disabled."""
         coordinator = MigrationCoordinator(**create_coordinator_deps(), enable_tracing=False)
         assert coordinator._enable_tracing is False
 
@@ -69,12 +64,10 @@ class TestStartMigration:
 
     @pytest.fixture
     def coordinator_deps(self) -> dict:
-        """Create coordinator dependencies."""
         return create_coordinator_deps()
 
     @pytest.mark.asyncio
     async def test_start_migration_creates_migration(self, coordinator_deps: dict) -> None:
-        """Test start_migration creates and returns migration."""
         tenant_id, target_store, target_store_id = uuid4(), AsyncMock(), "dedicated-tenant"
         created_migration = create_test_migration(
             tenant_id=tenant_id,
@@ -84,12 +77,10 @@ class TestStartMigration:
             started_at=datetime.now(UTC),
         )
         coordinator = setup_start_migration(coordinator_deps, tenant_id, created_migration)
-
         with patch.object(coordinator, "_run_bulk_copy", new_callable=AsyncMock):
             migration = await coordinator.start_migration(
                 tenant_id=tenant_id, target_store=target_store, target_store_id=target_store_id
             )
-
         assert migration.tenant_id == tenant_id
         assert migration.target_store_id == target_store_id
         coordinator_deps["migration_repo"].create.assert_called_once()
@@ -99,18 +90,12 @@ class TestStartMigration:
 
     @pytest.mark.asyncio
     async def test_start_migration_with_config(self, coordinator_deps: dict) -> None:
-        """Test start_migration with custom configuration."""
         tenant_id = uuid4()
         config = MigrationConfig(batch_size=500, max_bulk_copy_rate=5000)
-        created_migration = create_test_migration(
-            tenant_id=tenant_id,
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.BULK_COPY,
-            config=config,
+        created = create_test_migration(
+            tenant_id=tenant_id, target_store_id="dedicated", config=config
         )
-        coordinator = setup_start_migration(coordinator_deps, tenant_id, created_migration)
-
+        coordinator = setup_start_migration(coordinator_deps, tenant_id, created)
         with patch.object(coordinator, "_run_bulk_copy", new_callable=AsyncMock):
             migration = await coordinator.start_migration(
                 tenant_id=tenant_id,
@@ -118,7 +103,6 @@ class TestStartMigration:
                 target_store_id="dedicated",
                 config=config,
             )
-
         assert migration.config.batch_size == 500
         assert migration.config.max_bulk_copy_rate == 5000
 
@@ -126,45 +110,26 @@ class TestStartMigration:
     async def test_start_migration_raises_if_active_migration_exists(
         self, coordinator_deps: dict
     ) -> None:
-        """Test start_migration raises if active migration exists."""
         tenant_id = uuid4()
-        existing_migration = create_test_migration(
-            tenant_id=tenant_id,
-            source_store_id="default",
-            target_store_id="existing",
-            phase=MigrationPhase.BULK_COPY,
-        )
-        coordinator_deps["migration_repo"].get_by_tenant = AsyncMock(
-            return_value=existing_migration
-        )
+        existing = create_test_migration(tenant_id=tenant_id, target_store_id="existing")
+        coordinator_deps["migration_repo"].get_by_tenant = AsyncMock(return_value=existing)
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-
         with pytest.raises(MigrationAlreadyExistsError) as exc_info:
             await coordinator.start_migration(
                 tenant_id=tenant_id, target_store=AsyncMock(), target_store_id="new-target"
             )
-
         assert exc_info.value.tenant_id == tenant_id
-        assert exc_info.value.existing_migration_id == existing_migration.id
+        assert exc_info.value.existing_migration_id == existing.id
 
     @pytest.mark.asyncio
     async def test_start_migration_updates_routing_state(self, coordinator_deps: dict) -> None:
-        """Test start_migration updates routing state to BULK_COPY."""
         tenant_id = uuid4()
-        created_migration = create_test_migration(
-            id=uuid4(),
-            tenant_id=tenant_id,
-            source_store_id="default",
-            target_store_id="dedicated",
-            phase=MigrationPhase.BULK_COPY,
-        )
-        coordinator = setup_start_migration(coordinator_deps, tenant_id, created_migration)
-
+        created = create_test_migration(id=uuid4(), tenant_id=tenant_id)
+        coordinator = setup_start_migration(coordinator_deps, tenant_id, created)
         with patch.object(coordinator, "_run_bulk_copy", new_callable=AsyncMock):
             await coordinator.start_migration(
                 tenant_id=tenant_id, target_store=AsyncMock(), target_store_id="dedicated"
             )
-
         coordinator_deps["routing_repo"].set_migration_state.assert_called()
         call_args = coordinator_deps["routing_repo"].set_migration_state.call_args
         assert call_args[0][0] == tenant_id
@@ -176,16 +141,13 @@ class TestPauseMigration:
 
     @pytest.mark.asyncio
     async def test_pause_migration_pauses_copier(self) -> None:
-        """Test pause_migration pauses the active copier."""
         migration_id = uuid4()
         migration = create_test_migration(id=migration_id, is_paused=False)
         migration_repo = AsyncMock(get=AsyncMock(return_value=migration), set_paused=AsyncMock())
         coordinator = create_coordinator(migration_repo=migration_repo)
         mock_copier = MagicMock()
         coordinator._active_copiers[migration_id] = mock_copier
-
         await coordinator.pause_migration(migration_id)
-
         mock_copier.pause.assert_called_once()
         migration_repo.set_paused.assert_called_once_with(
             migration_id, paused=True, reason="Operator requested"
@@ -193,25 +155,20 @@ class TestPauseMigration:
 
     @pytest.mark.asyncio
     async def test_pause_migration_raises_if_terminal(self) -> None:
-        """Test pause_migration raises if migration is terminal."""
         migration_id = uuid4()
         migration = create_test_migration(id=migration_id, phase=MigrationPhase.COMPLETED)
-        coordinator = create_coordinator(
-            migration_repo=AsyncMock(get=AsyncMock(return_value=migration))
-        )
-
+        repo = AsyncMock(get=AsyncMock(return_value=migration))
+        coordinator = create_coordinator(migration_repo=repo)
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.pause_migration(migration_id)
         assert "Cannot pause a completed migration" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_pause_migration_noop_if_already_paused(self) -> None:
-        """Test pause_migration is noop if already paused."""
         migration_id = uuid4()
         migration = create_test_migration(id=migration_id, is_paused=True)
         migration_repo = AsyncMock(get=AsyncMock(return_value=migration), set_paused=AsyncMock())
         coordinator = create_coordinator(migration_repo=migration_repo)
-
         await coordinator.pause_migration(migration_id)
         migration_repo.set_paused.assert_not_called()
 
@@ -221,28 +178,22 @@ class TestResumeMigration:
 
     @pytest.mark.asyncio
     async def test_resume_migration_resumes_copier(self) -> None:
-        """Test resume_migration resumes the active copier."""
         migration_id = uuid4()
         migration = create_test_migration(id=migration_id, is_paused=True)
         migration_repo = AsyncMock(get=AsyncMock(return_value=migration), set_paused=AsyncMock())
         coordinator = create_coordinator(migration_repo=migration_repo)
         mock_copier = MagicMock()
         coordinator._active_copiers[migration_id] = mock_copier
-
         await coordinator.resume_migration(migration_id)
-
         mock_copier.resume.assert_called_once()
         migration_repo.set_paused.assert_called_once_with(migration_id, paused=False)
 
     @pytest.mark.asyncio
     async def test_resume_migration_raises_if_not_paused(self) -> None:
-        """Test resume_migration raises if migration is not paused."""
         migration_id = uuid4()
         migration = create_test_migration(id=migration_id, is_paused=False)
-        coordinator = create_coordinator(
-            migration_repo=AsyncMock(get=AsyncMock(return_value=migration))
-        )
-
+        repo = AsyncMock(get=AsyncMock(return_value=migration))
+        coordinator = create_coordinator(migration_repo=repo)
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.resume_migration(migration_id)
         assert "Migration is not paused" in str(exc_info.value)
@@ -253,7 +204,6 @@ class TestAbortMigration:
 
     @pytest.mark.asyncio
     async def test_abort_migration_cancels_copier_and_task(self) -> None:
-        """Test abort_migration cancels copier and background task."""
         migration_id, tenant_id = uuid4(), uuid4()
         migration = create_test_migration(
             id=migration_id, tenant_id=tenant_id, events_copied=100, started_at=datetime.now(UTC)
@@ -267,13 +217,10 @@ class TestAbortMigration:
         coordinator = create_coordinator(
             migration_repo=migration_repo, routing_repo=routing_repo, router=router
         )
-
         mock_copier, task = MagicMock(), asyncio.create_task(asyncio.sleep(100))
         coordinator._active_copiers[migration_id] = mock_copier
         coordinator._active_tasks[migration_id] = task
-
         result = await coordinator.abort_migration(migration_id, reason="Test abort")
-
         assert isinstance(result, MigrationResult)
         assert result.success is False
         assert result.final_phase == MigrationPhase.ABORTED
@@ -286,13 +233,10 @@ class TestAbortMigration:
 
     @pytest.mark.asyncio
     async def test_abort_migration_raises_if_terminal(self) -> None:
-        """Test abort_migration raises if migration is terminal."""
         migration_id = uuid4()
         migration = create_test_migration(id=migration_id, phase=MigrationPhase.COMPLETED)
-        coordinator = create_coordinator(
-            migration_repo=AsyncMock(get=AsyncMock(return_value=migration))
-        )
-
+        repo = AsyncMock(get=AsyncMock(return_value=migration))
+        coordinator = create_coordinator(migration_repo=repo)
         with pytest.raises(MigrationError) as exc_info:
             await coordinator.abort_migration(migration_id)
         assert "Cannot abort a completed migration" in str(exc_info.value)
@@ -303,15 +247,12 @@ class TestFailMigration:
 
     @pytest.mark.asyncio
     async def test_fail_migration_updates_phase_and_clears_routing(self) -> None:
-        """Test _fail_migration updates phase and clears routing."""
         migration_id, tenant_id = uuid4(), uuid4()
         migration = create_test_migration(id=migration_id, tenant_id=tenant_id)
         migration_repo = AsyncMock(update_phase=AsyncMock(), record_error=AsyncMock())
         routing_repo = AsyncMock(clear_migration_state=AsyncMock())
         coordinator = create_coordinator(migration_repo=migration_repo, routing_repo=routing_repo)
-
         await coordinator._fail_migration(migration, "Test error")
-
         migration_repo.update_phase.assert_called_once_with(migration_id, MigrationPhase.FAILED)
         migration_repo.record_error.assert_called_once_with(migration_id, "Test error")
         routing_repo.clear_migration_state.assert_called_once_with(tenant_id)
