@@ -219,3 +219,31 @@ class TestHarnessIntegration:
         assert loaded1.state.step_count == 2
         assert loaded2.version == 1
         assert loaded2.state.step_count == 1
+
+    @pytest.mark.asyncio
+    async def test_replay_applies_stored_events_to_projection(
+        self, harness: InMemoryTestHarness
+    ) -> None:
+        """harness.replay replays stored events into a single projection or sequence."""
+        from eventsource import DeclarativeProjection, handles
+
+        class StepCountProjection(DeclarativeProjection):
+            def __init__(self) -> None:
+                super().__init__()
+                self.count = 0
+
+            @handles(HarnessSampleEvent)
+            async def _on_step(self, event: HarnessSampleEvent) -> None:
+                self.count += 1
+
+        agg_id = uuid4()
+        e1 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
+        e2 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2)
+        await harness.append_events(e1, e2)
+
+        proj = StepCountProjection()
+        report = await harness.replay(proj)
+
+        assert report.succeeded is True
+        assert report.applied == 2
+        assert proj.count == 2
