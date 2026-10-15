@@ -1,6 +1,4 @@
-"""
-Position mapping recording, batching, and lifecycle operations.
-"""
+"""Position mapping recording, batching, and lifecycle operations."""
 
 from __future__ import annotations
 
@@ -35,27 +33,7 @@ class PositionMapperRecordingMixin:
         *,
         mapped_at: datetime | None = None,
     ) -> None:
-        """
-        Record a position mapping during bulk copy or dual-write.
-
-        Creates a mapping between a source store position and the
-        corresponding target store position. These mappings are used
-        for checkpoint translation during subscription migration.
-
-        Callers must record mappings in ascending source-position order
-        for a given migration; the repository's nearest-match lookups
-        depend on that ordering (see `PostgreSQLPositionMappingRepository`).
-
-        Args:
-            migration_id: ID of the migration.
-            source_position: Position in the source store.
-            target_position: Corresponding position in the target store.
-            event_id: ID of the event at this position.
-            mapped_at: When the mapping was created (defaults to now).
-
-        Raises:
-            PositionMappingError: If recording the mapping fails.
-        """
+        """Record a position mapping during bulk copy or dual-write."""
         with self._tracer.span(
             "eventsource.position_mapper.record_mapping",
             {
@@ -72,7 +50,6 @@ class PositionMapperRecordingMixin:
                 event_id=event_id,
                 mapped_at=mapped_at or datetime.now(UTC),
             )
-
             try:
                 await self._repo.create(mapping)
                 logger.debug(
@@ -97,23 +74,7 @@ class PositionMapperRecordingMixin:
         *,
         mapped_at: datetime | None = None,
     ) -> int:
-        """
-        Record multiple position mappings in a single batch.
-
-        Optimized for bulk copy operations where many mappings need
-        to be recorded efficiently.
-
-        Args:
-            migration_id: ID of the migration.
-            mappings: List of (source_position, target_position, event_id) tuples.
-            mapped_at: When the mappings were created (defaults to now).
-
-        Returns:
-            Number of mappings successfully recorded.
-
-        Raises:
-            PositionMappingError: If recording the batch fails.
-        """
+        """Record multiple position mappings in a single batch."""
         if not mappings:
             return 0
 
@@ -135,7 +96,6 @@ class PositionMapperRecordingMixin:
                 )
                 for source_pos, target_pos, event_id in mappings
             ]
-
             try:
                 count = await self._repo.create_batch(position_mappings)
                 logger.debug(
@@ -157,18 +117,7 @@ class PositionMapperRecordingMixin:
         migration_id: UUID,
         event_id: UUID,
     ) -> PositionMapping | None:
-        """
-        Get a position mapping by event ID.
-
-        Useful for debugging and verification.
-
-        Args:
-            migration_id: ID of the migration.
-            event_id: ID of the event.
-
-        Returns:
-            PositionMapping if found, None otherwise.
-        """
+        """Get a position mapping by event ID."""
         with self._tracer.span(
             "eventsource.position_mapper.get_mapping_by_event_id",
             {
@@ -182,18 +131,7 @@ class PositionMapperRecordingMixin:
         self,
         migration_id: UUID,
     ) -> tuple[Position, Position] | None:
-        """
-        Get the first and last source positions mapped for a migration.
-
-        Useful for understanding the range of positions that have
-        been mapped during migration.
-
-        Args:
-            migration_id: ID of the migration.
-
-        Returns:
-            Tuple of (min_position, max_position) or None if no mappings.
-        """
+        """Get the first and last source positions mapped for a migration."""
         with self._tracer.span(
             "eventsource.position_mapper.get_position_bounds",
             {"migration.id": str(migration_id)},
@@ -204,15 +142,7 @@ class PositionMapperRecordingMixin:
         self,
         migration_id: UUID,
     ) -> int:
-        """
-        Get the total number of position mappings for a migration.
-
-        Args:
-            migration_id: ID of the migration.
-
-        Returns:
-            Number of mappings recorded.
-        """
+        """Get the total number of position mappings for a migration."""
         with self._tracer.span(
             "eventsource.position_mapper.get_mapping_count",
             {"migration.id": str(migration_id)},
@@ -223,17 +153,7 @@ class PositionMapperRecordingMixin:
         self,
         migration_id: UUID,
     ) -> int:
-        """
-        Delete all position mappings for a migration.
-
-        Called during migration cleanup or when restarting a failed migration.
-
-        Args:
-            migration_id: ID of the migration.
-
-        Returns:
-            Number of mappings deleted.
-        """
+        """Delete all position mappings for a migration."""
         with self._tracer.span(
             "eventsource.position_mapper.clear_mappings",
             {"migration.id": str(migration_id)},

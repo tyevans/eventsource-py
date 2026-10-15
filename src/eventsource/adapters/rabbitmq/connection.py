@@ -1,14 +1,4 @@
-"""RabbitMQ connection lifecycle management.
-
-Extracted from ``RabbitMQEventBus`` (bus.py) as part of the bus god-class
-decomposition. Owns the aio-pika robust connection/channel, the connect
-lock, SSL context creation, URL sanitizing for logging, and the aio-pika
-close/reconnect callbacks.
-
-Topology (exchange/queue declaration) and consumer resumption are not yet
-extracted (see Tasks 5/7 of the decomposition). Callers that need those
-behaviors to run after a (re)connect register them via :meth:`on_reconnect`.
-"""
+"""RabbitMQ connection lifecycle management."""
 
 from __future__ import annotations
 
@@ -32,8 +22,6 @@ try:
 except ImportError:  # pragma: no cover - guarded by RabbitMQEventBus construction
     aio_pika = None  # type: ignore[assignment]
 
-# Named explicitly so the logger name is stable and independent of the
-# facade's "eventsource.adapters.rabbitmq" logger.
 logger = logging.getLogger("eventsource.adapters.rabbitmq.connection")
 
 
@@ -43,19 +31,13 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
     def __init__(self, config: RabbitMQEventBusConfig, stats: RabbitMQEventBusStats) -> None:
         self._config = config
         self._stats = stats
-
         self._connection: AbstractRobustConnection | None = None
         self._channel: AbstractChannel | None = None
         self._connected = False
         self._reconnecting: bool = False
         self._was_consuming: bool = False
-
         self._lock = asyncio.Lock()
-
         self._reconnect_callbacks: list[Callable[[], Awaitable[None]]] = []
-
-        # Optional hook set by the facade so close-callback bookkeeping can
-        # still observe consumer state that hasn't been extracted yet.
         self._is_consuming: Callable[[], bool] | None = None
 
     @property
@@ -85,11 +67,11 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
         return self._channel
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
-        """Create SSL context from configuration (delegates to :func:`create_ssl_context`)."""
+        """Create SSL context from configuration."""
         return create_ssl_context(self._config)
 
     def _sanitize_url(self, url: str) -> str:
-        """Remove credentials from URL for logging (delegates to :func:`sanitize_url`)."""
+        """Remove credentials from URL for logging."""
         return sanitize_url(url)
 
     async def connect(self) -> None:
@@ -98,7 +80,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             if self._connected:
                 logger.warning("RabbitMQEventBus already connected")
                 return
-
             ssl_context: ssl.SSLContext | None = None
             try:
                 ssl_context = self._create_ssl_context()
@@ -110,22 +91,17 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                     connect_kwargs["ssl_context"] = ssl_context
                 if self._config.ssl_options:
                     connect_kwargs.update(self._config.ssl_options)
-
                 self._connection = await aio_pika.connect_robust(
-                    self._config.rabbitmq_url,
-                    **connect_kwargs,
+                    self._config.rabbitmq_url, **connect_kwargs
                 )
                 self._connection.reconnect_callbacks.add(self._on_reconnect)  # type: ignore[arg-type]
                 self._connection.close_callbacks.add(self._on_connection_close)  # type: ignore[arg-type]
-
                 self._channel = await self._connection.channel()
                 self._channel.close_callbacks.add(self._on_channel_close)
                 await self._channel.set_qos(prefetch_count=self._config.prefetch_count)
                 await self._run_reconnect_callbacks()
-
                 self._connected = True
                 self._stats.connected_at = datetime.now(UTC)
-
                 tls_status = "TLS" if ssl_context is not None else "plaintext"
                 logger.info(
                     f"Connected to RabbitMQ ({tls_status}) and initialized topology",
@@ -138,7 +114,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                         "tls_enabled": ssl_context is not None,
                     },
                 )
-
             except ssl.SSLError as e:
                 logger.error(
                     f"SSL error connecting to RabbitMQ: {e}",
@@ -152,7 +127,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                 )
                 await self.disconnect()
                 raise
-
             except Exception as e:
                 logger.error(
                     f"Failed to connect to RabbitMQ: {e}",
@@ -172,14 +146,11 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
         if self._channel and not self._channel.is_closed:
             await self._channel.close()
             self._channel = None
-
         if self._connection and not self._connection.is_closed:
             await self._connection.close()
             self._connection = None
-
         self._connected = False
         self._stats.connected_at = None
-
         logger.info(
             "Disconnected from RabbitMQ",
             extra={
@@ -198,7 +169,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             except Exception:  # nosec B110 - intentionally suppress during force disconnect
                 pass
             self._channel = None
-
         if self._connection:
             try:
                 if not self._connection.is_closed:
@@ -206,14 +176,12 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             except Exception:  # nosec B110 - intentionally suppress during force disconnect
                 pass
             self._connection = None
-
         self._connected = False
 
     def health_slice(self) -> dict[str, Any]:
         """Connection/channel health used by ``RabbitMQEventBus.health_check()``."""
         healthy = True
         errors: list[str] = []
-
         if not self._connection:
             connection_status = "disconnected"
             healthy = False
@@ -224,7 +192,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             errors.append("RabbitMQ connection is closed")
         else:
             connection_status = "connected"
-
         if not self._channel:
             channel_status = "not_initialized"
             healthy = False
@@ -235,7 +202,6 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             errors.append("AMQP channel is closed")
         else:
             channel_status = "open"
-
         return {
             "healthy": healthy,
             "connection_status": connection_status,

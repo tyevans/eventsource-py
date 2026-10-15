@@ -43,13 +43,7 @@ logger = logging.getLogger("eventsource.bus.kafka")
 
 
 class KafkaPublisher:
-    """Owns the send/ack mechanics for publishing events to Kafka.
-
-    Publishing is split into two phases: every event is handed to
-    ``producer.send()`` sequentially to preserve per-aggregate ordering,
-    then acknowledgments are awaited (or tracked via done-callback for
-    background publishes).
-    """
+    """Owns the send/ack mechanics for publishing events to Kafka."""
 
     def __init__(
         self,
@@ -81,32 +75,27 @@ class KafkaPublisher:
             await asyncio.gather(*(self._await_publish_ack(handle) for handle in pending))
 
     def _record_publish_error(self, event: DomainEvent, span: Any, error: Exception) -> None:
-        """Record span status, error metrics, and stats on publish failure."""
         if span:
             span.set_status(Status(StatusCode.ERROR, str(error)))
             span.record_exception(error)
         if self._metrics:
-            self._metrics.publish_errors.add(
-                1,
-                attributes={
-                    "messaging.system": "kafka",
-                    "messaging.destination": self._config.topic_name,
-                    "event.type": event.event_type,
-                    "error.type": type(error).__name__,
-                },
-            )
+            attrs = {
+                "messaging.system": "kafka",
+                "messaging.destination": self._config.topic_name,
+                "event.type": event.event_type,
+                "error.type": type(error).__name__,
+            }
+            self._metrics.publish_errors.add(1, attributes=attrs)
         logger.error("Failed to publish event", extra={"error": str(error)}, exc_info=True)
         self._stats.last_error_at = datetime.now(UTC)
 
     async def _begin_publish_single_event(
         self, event: DomainEvent, background: bool
     ) -> tuple[Any, DomainEvent, Any]:
-        """Serialize and hand a single event to the producer."""
         producer = self._connection.require_producer()
         key = self._get_partition_key(event)
         value = self._serialize_event(event)
         headers = self._create_headers(event)
-
         span: Any = None
         if self._enable_tracing:
             span = self._tracer.start_span(
@@ -127,7 +116,6 @@ class KafkaPublisher:
                 carrier: dict[str, str] = {}
                 inject(carrier)
                 headers.extend((k, v.encode("utf-8")) for k, v in carrier.items())
-
         try:
             future = await producer.send(
                 topic=self._config.topic_name, key=key, value=value, headers=headers
@@ -137,11 +125,9 @@ class KafkaPublisher:
             if span:
                 span.end()
             raise
-
         return future, event, span
 
     async def _await_publish_ack(self, handle: tuple[Any, DomainEvent, Any]) -> None:
-        """Await broker acknowledgment for a single previously-sent event."""
         future, event, span = handle
         try:
             record_metadata = await future
@@ -151,23 +137,19 @@ class KafkaPublisher:
                     span.set_attribute("messaging.kafka.offset", record_metadata.offset)
                 span.set_status(Status(StatusCode.OK))
             if record_metadata is not None:
-                logger.debug(
-                    "Event published",
-                    extra={
-                        "topic": record_metadata.topic,
-                        "partition": record_metadata.partition,
-                        "offset": record_metadata.offset,
-                    },
-                )
+                meta = {
+                    "topic": record_metadata.topic,
+                    "partition": record_metadata.partition,
+                    "offset": record_metadata.offset,
+                }
+                logger.debug("Event published", extra=meta)
             if self._metrics:
-                self._metrics.messages_published.add(
-                    1,
-                    attributes={
-                        "messaging.system": "kafka",
-                        "messaging.destination": self._config.topic_name,
-                        "event.type": event.event_type,
-                    },
-                )
+                attrs = {
+                    "messaging.system": "kafka",
+                    "messaging.destination": self._config.topic_name,
+                    "event.type": event.event_type,
+                }
+                self._metrics.messages_published.add(1, attributes=attrs)
         except Exception as e:
             self._record_publish_error(event, span, e)
             raise
@@ -176,13 +158,10 @@ class KafkaPublisher:
                 span.end()
 
     def _track_background_publish(self, future: Any, event: DomainEvent, span: Any) -> None:
-        """Track a background publish using a done-callback on the future."""
-        event_type = event.event_type
-        event_id = str(event.event_id)
-        topic = self._config.topic_name
+        event_type, event_id = event.event_type, str(event.event_id)
         base_attrs = {
             "messaging.system": "kafka",
-            "messaging.destination": topic,
+            "messaging.destination": self._config.topic_name,
             "event.type": event_type,
         }
 
@@ -227,15 +206,12 @@ class KafkaPublisher:
         future.add_done_callback(on_done)
 
     def _get_partition_key(self, event: DomainEvent) -> bytes:
-        """Return aggregate_id encoded as UTF-8 bytes for partition ordering."""
         return str(event.aggregate_id).encode("utf-8")
 
     def _serialize_event(self, event: DomainEvent) -> bytes:
-        """Serialize an event to bytes using the configured serializer."""
         return self._serializer.serialize(event)
 
     def _create_headers(self, event: DomainEvent) -> list[tuple[str, bytes]]:
-        """Create Kafka headers from event metadata."""
         headers: list[tuple[str, bytes]] = [
             ("event_id", str(event.event_id).encode("utf-8")),
             ("event_type", event.event_type.encode("utf-8")),
