@@ -417,12 +417,13 @@ directly—including `bus.assertions.assert_event_published(...)`,
 
 ```python
 from uuid import uuid4
-from eventsource import AggregateRepository, InMemoryEventBus, InMemoryEventStore
+from eventsource import AggregateRepository, InMemoryEventStore
 from eventsource.testing import RecordingEventBus
 
 
 async def test_recording_event_bus_assertions() -> None:
-    bus = RecordingEventBus(InMemoryEventBus())
+    # Omit `wrapped` to use a default InMemoryEventBus(enable_tracing=False):
+    bus = RecordingEventBus()
 
     async with InMemoryEventStore() as store:
         repo = AggregateRepository(
@@ -441,6 +442,7 @@ async def test_recording_event_bus_assertions() -> None:
             DepositMoney(account_id=account_id, amount=50.0),
         )
 
+    assert len(bus) == 2
     bus.assertions.assert_event_count(2)
     opened = bus.assertions.assert_event_published(AccountOpened)
     assert opened.owner == "alice"
