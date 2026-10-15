@@ -23,11 +23,10 @@ from eventsource.ports import (
     StreamReadOptions,
 )
 
-_SELECT_COLUMNS = """
-    global_position, event_id, event_type, aggregate_type, aggregate_id,
-    tenant_id, actor_id, version, timestamp, payload, created_at
-"""
-
+_SELECT_COLUMNS = (
+    "global_position, event_id, event_type, aggregate_type, aggregate_id, "
+    "tenant_id, actor_id, version, timestamp, payload, created_at"
+)
 # Defer rows whose inserting transaction is not yet committed to avoid skipping
 # out-of-order global_position commits.
 _HORIZON_PREDICATE = "(txid IS NULL OR txid < CAST(:txid_horizon AS text)::xid8)"
@@ -43,7 +42,6 @@ class PostgreSQLEventStoreReadMixin:
 
     async def _ensure_schema(self) -> None:
         """Ensures schema is initialized (implemented in PostgreSQLEventStore)."""
-        pass
 
     def read_stream(
         self,
@@ -72,18 +70,14 @@ class PostgreSQLEventStoreReadMixin:
         if options.to_version is not None:
             query_parts.append("AND version <= :to_version")
             params["to_version"] = options.to_version
-
         order = "DESC" if options.direction == ReadDirection.BACKWARD else "ASC"
         query_parts.append(f"ORDER BY version {order}")
-
         if options.limit is not None:
             query_parts.append("LIMIT :limit")
             params["limit"] = options.limit
-
         async with self._session_factory() as session:
             result = await session.execute(text("\n".join(query_parts)), params)
             rows = result.mappings().all()
-
         for row in rows:
             yield self._row_to_envelope(row)
 
@@ -135,18 +129,15 @@ class PostgreSQLEventStoreReadMixin:
         if options.aggregate_type is not None:
             query_parts.append("AND aggregate_type = :aggregate_type")
             params["aggregate_type"] = options.aggregate_type
-
         query_parts.append("ORDER BY global_position ASC")
         if options.limit is not None:
             query_parts.append("LIMIT :limit")
             params["limit"] = options.limit
-
         async with self._session_factory() as session:
             horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
             params["txid_horizon"] = horizon
             result = await session.execute(text("\n".join(query_parts)), params)
             rows = result.mappings().all()
-
         for row in rows:
             yield self._row_to_envelope(row)
 
@@ -188,28 +179,20 @@ class PostgreSQLEventStoreReadMixin:
         if options.from_timestamp is not None:
             query_parts.append("AND created_at >= :from_timestamp")
             params["from_timestamp"] = options.from_timestamp
-
         query_parts.append("ORDER BY created_at ASC, global_position ASC")
         if options.limit is not None:
             query_parts.append("LIMIT :limit")
             params["limit"] = options.limit
-
         async with self._session_factory() as session:
             result = await session.execute(text("\n".join(query_parts)), params)
             rows = result.mappings().all()
-
         for row in rows:
             yield self._row_to_envelope(row)
 
     def _row_to_envelope(self, row: Any) -> EventEnvelope:
-        event = self._deserialize_event(row["event_type"], row["payload"])
-        stream_id = StreamId(
-            aggregate_id=row["aggregate_id"],
-            category=row["aggregate_type"],
-        )
         return EventEnvelope(
-            event=event,
-            stream_id=stream_id,
+            event=self._deserialize_event(row["event_type"], row["payload"]),
+            stream_id=StreamId(aggregate_id=row["aggregate_id"], category=row["aggregate_type"]),
             stream_version=row["version"],
             position=self._codec.encode(row["global_position"]),
             stored_at=row["created_at"],

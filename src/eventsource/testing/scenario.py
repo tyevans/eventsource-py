@@ -9,14 +9,13 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from eventsource.domain.event import DomainEvent
-from eventsource.domain.exceptions import CommandRejectedError
+from eventsource.domain import CommandRejectedError, DomainEvent
 from eventsource.testing.assertions import EventAssertions
 
 
 class DeciderScenario:
     _NON_AGGREGATE_ID_FIELDS = frozenset(
-        {"command_id", "correlation_id", "causation_id", "tenant_id", "actor_id"}
+        ("command_id", "correlation_id", "causation_id", "tenant_id", "actor_id")
     )
 
     def __init__(
@@ -64,15 +63,20 @@ class DeciderScenario:
             return self.state
         return self._states.get(aggregate_id, self._initial_state())
 
+    def _set_state(self, agg_id: UUID | None, state: Any) -> None:
+        if agg_id is not None:
+            self._states[agg_id] = state
+        else:
+            self._default_state = state
+
     def given(self, *events: DomainEvent | Iterable[DomainEvent]) -> DeciderScenario:
         for item in events:
             for ev in (item,) if isinstance(item, DomainEvent) else item:
                 if isinstance(ev, DomainEvent):
-                    agg_id = getattr(ev, "aggregate_id", None)
-                    if isinstance(agg_id, UUID):
-                        self._states[agg_id] = self._evolve(self.get_state(agg_id), ev)
-                    else:
-                        self._default_state = self._evolve(self._default_state, ev)
+                    agg = getattr(ev, "aggregate_id", None)
+                    aid = agg if isinstance(agg, UUID) else None
+                    base = self.get_state(aid) if aid else self._default_state
+                    self._set_state(aid, self._evolve(base, ev))
         return self
 
     def given_commands(self, *commands: object, aggregate_id: UUID | None = None) -> Self:
@@ -82,11 +86,7 @@ class DeciderScenario:
             for event in self._decide(command, state):
                 state = self._evolve(state, event)
                 ev_id = getattr(event, "aggregate_id", None)
-                eff_id = target_id or (ev_id if isinstance(ev_id, UUID) else None)
-                if eff_id is not None:
-                    self._states[eff_id] = state
-                else:
-                    self._default_state = state
+                self._set_state(target_id or (ev_id if isinstance(ev_id, UUID) else None), state)
         return self
 
     def _resolve_target_id(self, command: object, explicit_id: UUID | None = None) -> UUID | None:
@@ -99,8 +99,8 @@ class DeciderScenario:
         elif hasattr(command, "__dict__"):
             fields = list(command.__dict__.items())
         else:
-            dc_fields = getattr(command, "__dataclass_fields__", ())
-            fields = [(k, getattr(command, k)) for k in dc_fields]
+            dc = getattr(command, "__dataclass_fields__", ())
+            fields = [(k, getattr(command, k)) for k in dc]
         uuid_candidates: list[UUID] = []
         for name, val in fields:
             if name not in self._NON_AGGREGATE_ID_FIELDS and isinstance(val, UUID):
@@ -110,10 +110,8 @@ class DeciderScenario:
                     uuid_candidates.append(val)
         if len(uuid_candidates) == 1:
             return uuid_candidates[0]
-        if len(self._states) == 1:
-            return next(iter(self._states.keys()))
-        if not self._states:
-            return None
+        if len(self._states) <= 1:
+            return next(iter(self._states.keys()), None)
         msg = f"Multiple aggregates exist in scenario ({list(self._states.keys())}). Please specify which aggregate to evaluate via when(command, aggregate_id=...) or set an aggregate ID on the command."
         raise ValueError(msg)
 
@@ -134,20 +132,20 @@ class DeciderScenario:
                 return self
             for event in emitted:
                 state = self._evolve(state, event)
-            if target_id is not None:
-                self._states[target_id] = state
-            else:
-                self._default_state = state
+            self._set_state(target_id, state)
             collected.extend(emitted)
         self._events = collected
         return self
 
-    def then_no_error(self) -> DeciderScenario:
+    def _ensure_acted(self, method: str, err_prefix: str | None = None) -> list[DomainEvent]:
         if self._events is None and self._error is None:
-            raise AssertionError("call when() before then_no_error()")
-        if self._error is not None:
-            err = self._error
-            raise AssertionError(f"expected command to succeed, but it was rejected: {err!r}")
+            raise AssertionError(f"call when() before {method}()")
+        if err_prefix is not None and self._error is not None:
+            raise AssertionError(f"{err_prefix} {self._error!r}")
+        return self._events or []
+
+    def then_no_error(self) -> DeciderScenario:
+        self._ensure_acted("then_no_error", "expected command to succeed, but it was rejected:")
         return self
 
     def then_no_events(self) -> Self:
@@ -175,29 +173,17 @@ class DeciderScenario:
         return self
 
     def then_events(self, *event_types: type[DomainEvent]) -> DeciderScenario:
-        if self._events is None and self._error is None:
-            raise AssertionError("call when() before then_events()")
         expected = [t.__name__ for t in event_types]
-        if self._error is not None:
-            err = self._error
-            raise AssertionError(
-                f"expected events {expected} but the command was rejected: {err!r}"
-            )
-        assert self._events is not None
-        actual = [type(e).__name__ for e in self._events]
+        msg = f"expected events {expected} but the command was rejected:"
+        actual = [type(e).__name__ for e in self._ensure_acted("then_events", msg)]
         if actual != expected:
             raise AssertionError(f"expected events {expected}, got {actual}")
         return self
 
     def then_event_types(self, *expected_types: type[DomainEvent]) -> Self:
-        if self._events is None and self._error is None:
-            raise AssertionError("call when() before then_event_types()")
         exp_names = [t.__name__ for t in expected_types]
-        if self._error is not None:
-            err = self._error
-            raise AssertionError(f"Expected event types {exp_names}, but command raised {err!r}")
-        assert self._events is not None
-        actual_types = [type(e) for e in self._events]
+        msg = f"Expected event types {exp_names}, but command raised"
+        actual_types = [type(e) for e in self._ensure_acted("then_event_types", msg)]
         if actual_types != list(expected_types):
             got = [t.__name__ for t in actual_types]
             raise AssertionError(f"Expected event types {exp_names}, got {got}")
@@ -206,13 +192,12 @@ class DeciderScenario:
     def then_rejected(
         self, exc_type: type[BaseException] = CommandRejectedError, match: str | None = None
     ) -> DeciderScenario:
-        if self._events is None and self._error is None:
-            raise AssertionError("call when() before then_rejected()")
+        self._ensure_acted("then_rejected")
         if self._error is None:
             raise AssertionError(f"expected rejection but command produced {self.events!r}")
         if not isinstance(self._error, exc_type):
-            got_name = type(self._error).__name__
-            raise AssertionError(f"expected {exc_type.__name__}, got {got_name}: {self._error}")
+            got = type(self._error).__name__
+            raise AssertionError(f"expected {exc_type.__name__}, got {got}: {self._error}")
         if match is not None and not re.search(match, str(self._error)):
             raise AssertionError(f"rejection message {str(self._error)!r} does not match {match!r}")
         return self
