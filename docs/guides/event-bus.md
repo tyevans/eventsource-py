@@ -46,6 +46,7 @@ backend implements exactly that surface:
 | `subscribe(event_type, handler)` | Register a handler for one event class. |
 | `unsubscribe(event_type, handler)` | Remove it; returns `True` if it was found. |
 | `subscribe_all(subscriber)` | Register a subscriber for each type in its `subscribed_to()`. |
+| `unsubscribe_all(subscriber)` | Unregister a subscriber from each type in its `subscribed_to()` (returns count removed). |
 | `subscribe_to_all_events(handler)` | Wildcard: receive every published event. |
 | `unsubscribe_from_all_events(handler)` | Remove a wildcard handler; returns `True` if found. |
 
@@ -759,18 +760,27 @@ everything from the previous section still applies:
 
 ### Removing it again
 
-There is no `unsubscribe_all()`. Undo a `subscribe_all()` by unsubscribing the
-same object from each type it declared:
+Undo a `subscribe_all()` with `unsubscribe_all()`, which removes one
+registration per event type in `subscribed_to()` and returns the number of
+registrations removed:
 
 ```python
-for event_type in projection.subscribed_to():
-    bus.unsubscribe(event_type, projection)
+removed = bus.unsubscribe_all(order_projection)
 ```
 
-This works because `unsubscribe()` matches on object identity, and
-`subscribe_all()` registered the identical object under every type. Keep the
-reference to the subscriber instance if you intend to detach it later. On
-`InMemoryEventBus`, `clear_subscribers()` is the blunter option in tests.
+Individual `bus.unsubscribe(EventType, order_projection)` calls also still work
+when detaching a single event type:
+
+```python
+for event_type in order_projection.subscribed_to():
+    bus.unsubscribe(event_type, order_projection)
+```
+
+This works because `unsubscribe_all()` and `unsubscribe()` match on object
+identity, and `subscribe_all()` registered the identical object under every
+type. Keep the reference to the subscriber instance if you intend to detach it
+later. On `InMemoryEventBus`, `clear_subscribers()` is the blunter option in
+tests.
 
 ### Pairing it with DeclarativeProjection
 
