@@ -43,13 +43,12 @@ class RedisBusDLQMixin:
         if not self._redis:
             raise RuntimeError("Redis client not initialized")
 
-        min_idle = self._config.pending_idle_ms if min_idle_time_ms is None else min_idle_time_ms
-        max_ret = self._config.max_retries if max_retries is None else max_retries
-        read_cnt = (
-            self._config.stream_read_count if stream_read_count is None else stream_read_count
-        )
+        cfg = self._config
+        min_idle = cfg.pending_idle_ms if min_idle_time_ms is None else min_idle_time_ms
+        max_ret = cfg.max_retries if max_retries is None else max_retries
+        read_cnt = cfg.stream_read_count if stream_read_count is None else stream_read_count
         stats = {"checked": 0, "claimed": 0, "reprocessed": 0, "dlq": 0, "failed": 0}
-        stream, group = self._config.stream_name, self._config.consumer_group
+        stream, group = cfg.stream_name, cfg.consumer_group
         try:
             pending_info = await self._redis.xpending(stream, group)
             if not pending_info or not isinstance(pending_info, dict):
@@ -67,80 +66,72 @@ class RedisBusDLQMixin:
             raw_pending = await self._redis.xpending_range(
                 stream, group, min="-", max="+", count=read_cnt
             )
-            pending_messages = cast(DecodedPending, raw_pending)
-            for pending_msg in pending_messages:
-                message_id = pending_msg["message_id"]
-                idle_time_ms = pending_msg["time_since_delivered"]
-                times_delivered = pending_msg["times_delivered"]
-                if idle_time_ms < min_idle:
+            for pending_msg in cast(DecodedPending, raw_pending):
+                msg_id = pending_msg["message_id"]
+                idle_ms = pending_msg["time_since_delivered"]
+                delivered = pending_msg["times_delivered"]
+                if idle_ms < min_idle:
                     continue
-                logger.info(
-                    f"Processing pending message {message_id}",
-                    extra={
-                        "message_id": message_id,
-                        "idle_time_ms": idle_time_ms,
-                        "times_delivered": times_delivered,
-                    },
-                )
-                retry_key = self._config.get_retry_key(message_id)
-                retry_count_str = await self._redis.get(retry_key)
-                retry_count = int(retry_count_str) if retry_count_str else times_delivered - 1
+                pending_extra = {
+                    "message_id": msg_id,
+                    "idle_time_ms": idle_ms,
+                    "times_delivered": delivered,
+                }
+                logger.info(f"Processing pending message {msg_id}", extra=pending_extra)
+                retry_key = cfg.get_retry_key(msg_id)
+                retry_str = await self._redis.get(retry_key)
+                retry_cnt = int(retry_str) if retry_str else delivered - 1
                 try:
                     raw_claimed = await self._redis.xclaim(
-                        stream, group, "recovery-worker", min_idle, [message_id]
+                        stream, group, "recovery-worker", min_idle, [msg_id]
                     )
                     claimed = cast(list[DecodedEntry], raw_claimed)
                     if not claimed:
-                        logger.warning(f"Failed to claim message {message_id}")
+                        logger.warning(f"Failed to claim message {msg_id}")
                         continue
                     stats["claimed"] += 1
-                    message_data = claimed[0][1]
+                    msg_data = claimed[0][1]
+                    ev_type = msg_data.get("event_type", "unknown")
                     extra_info = {
-                        "message_id": message_id,
-                        "event_type": message_data.get("event_type", "unknown"),
-                        "retry_count": retry_count,
+                        "message_id": msg_id,
+                        "event_type": ev_type,
+                        "retry_count": retry_cnt,
                     }
-                    if retry_count >= max_ret:
-                        if self._config.enable_dlq:
-                            await self._send_to_dlq(message_id, message_data, retry_count)
+                    if retry_cnt >= max_ret:
+                        if cfg.enable_dlq:
+                            await self._send_to_dlq(msg_id, msg_data, retry_cnt)
                             stats["dlq"] += 1
                             self._stats.messages_sent_to_dlq += 1
-                        await self._redis.xack(stream, group, message_id)
+                        await self._redis.xack(stream, group, msg_id)
                         await self._redis.delete(retry_key)
-                        msg = f"Message {message_id} sent to DLQ after {retry_count} retries"
+                        msg = f"Message {msg_id} sent to DLQ after {retry_cnt} retries"
                         logger.warning(msg, extra=extra_info)
                     else:
                         try:
-                            await self._process_message(message_id, message_data, "recovery-worker")
+                            await self._process_message(msg_id, msg_data, "recovery-worker")
                             stats["reprocessed"] += 1
                             self._stats.messages_recovered += 1
                             await self._redis.delete(retry_key)
                             logger.info(
-                                f"Successfully reprocessed message {message_id}", extra=extra_info
+                                f"Successfully reprocessed message {msg_id}", extra=extra_info
                             )
                         except Exception as e:
-                            new_retry = retry_count + 1
+                            new_retry = retry_cnt + 1
                             await self._redis.setex(
-                                retry_key, self._config.retry_key_expiry_seconds, new_retry
+                                retry_key, cfg.retry_key_expiry_seconds, new_retry
                             )
                             stats["failed"] += 1
                             err_extra = {**extra_info, "retry_count": new_retry}
                             logger.error(
-                                f"Failed to reprocess message {message_id}: {e}",
+                                f"Failed to reprocess message {msg_id}: {e}",
                                 exc_info=True,
                                 extra=err_extra,
                             )
                 except Exception as e:
                     stats["failed"] += 1
-                    logger.error(
-                        f"Error recovering message {message_id}: {e}",
-                        exc_info=True,
-                        extra={"message_id": message_id},
-                    )
-            summary = (
-                f"Pending message recovery completed: {stats['reprocessed']} reprocessed, "
-                f"{stats['dlq']} sent to DLQ, {stats['failed']} failed"
-            )
+                    err_msg = f"Error recovering message {msg_id}: {e}"
+                    logger.error(err_msg, exc_info=True, extra={"message_id": msg_id})
+            summary = f"Pending message recovery completed: {stats['reprocessed']} reprocessed, {stats['dlq']} sent to DLQ, {stats['failed']} failed"
             logger.info(summary, extra=stats)
         except Exception as e:
             logger.error(f"Pending message recovery failed: {e}", exc_info=True)
@@ -150,65 +141,53 @@ class RedisBusDLQMixin:
     async def _send_to_dlq(
         self, message_id: str, message_data: dict[str, str], retry_count: int
     ) -> None:
-        """Send a message to the dead letter queue."""
         if not self._redis:
             return
+        now_iso, dlq_stream = datetime.now(UTC).isoformat(), self._config.dlq_stream_name
         dlq_data = {
             **message_data,
             "original_message_id": message_id,
             "retry_count": str(retry_count),
-            "dlq_timestamp": datetime.now(UTC).isoformat(),
+            "dlq_timestamp": now_iso,
         }
-        await self._redis.xadd(
-            name=self._config.dlq_stream_name,
-            fields=dlq_data,  # type: ignore[arg-type]
-        )
-        dlq_extra = {
-            "message_id": message_id,
-            "dlq_stream": self._config.dlq_stream_name,
-            "retry_count": retry_count,
-        }
+        await self._redis.xadd(name=dlq_stream, fields=dlq_data)  # type: ignore[arg-type]
+        dlq_extra = {"message_id": message_id, "dlq_stream": dlq_stream, "retry_count": retry_count}
         logger.info(f"Sent message {message_id} to DLQ", extra=dlq_extra)
 
     async def get_dlq_messages(
         self, count: int = 100, start: str = "-", end: str = "+"
     ) -> list[dict[str, Any]]:
-        """Get messages from the dead letter queue."""
         if not self._connected or not self._redis:
             return []
         try:
-            raw = await self._redis.xrange(
-                name=self._config.dlq_stream_name, min=start, max=end, count=count
-            )
-            messages = cast(list[DecodedEntry], raw)
-            return [{"message_id": msg_id, "data": data} for msg_id, data in messages]
+            dlq_stream = self._config.dlq_stream_name
+            raw = await self._redis.xrange(name=dlq_stream, min=start, max=end, count=count)
+            entries = cast(list[DecodedEntry], raw)
+            return [{"message_id": msg_id, "data": data} for msg_id, data in entries]
         except Exception as e:
             logger.error(f"Failed to get DLQ messages: {e}", exc_info=True)
             return []
 
     async def replay_dlq_message(self, message_id: str) -> bool:
-        """Replay a message from the DLQ back to the main stream."""
         if not self._connected or not self._redis:
             return False
         try:
-            raw = await self._redis.xrange(
-                name=self._config.dlq_stream_name, min=message_id, max=message_id, count=1
-            )
+            dlq_stream = self._config.dlq_stream_name
+            raw = await self._redis.xrange(name=dlq_stream, min=message_id, max=message_id, count=1)
             messages = cast(list[DecodedEntry], raw)
             if not messages:
                 logger.warning(f"DLQ message {message_id} not found")
                 return False
-            _, data = messages[0]
             dlq_keys = ("original_message_id", "retry_count", "dlq_timestamp")
-            replay_data = {k: v for k, v in data.items() if k not in dlq_keys}
-            raw_new_id = await self._redis.xadd(
-                name=self._config.stream_name, fields=cast("dict[Any, Any]", replay_data)
+            replay = {k: v for k, v in messages[0][1].items() if k not in dlq_keys}
+            raw_id = await self._redis.xadd(
+                name=self._config.stream_name, fields=cast("dict[Any, Any]", replay)
             )
-            new_message_id = cast(str, raw_new_id)
-            await self._redis.xdel(self._config.dlq_stream_name, message_id)
+            new_id = cast(str, raw_id)
+            await self._redis.xdel(dlq_stream, message_id)
             logger.info(
-                f"Replayed DLQ message {message_id} as {new_message_id}",
-                extra={"original_message_id": message_id, "new_message_id": new_message_id},
+                f"Replayed DLQ message {message_id} as {new_id}",
+                extra={"original_message_id": message_id, "new_message_id": new_id},
             )
             return True
         except Exception as e:

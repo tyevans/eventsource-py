@@ -13,10 +13,7 @@ from eventsource.application.migration.consistency import (
     VerificationLevel,
     VerificationReport,
 )
-from eventsource.application.migration.exceptions import (
-    MigrationError,
-    MigrationNotFoundError,
-)
+from eventsource.application.migration.exceptions import MigrationError, MigrationNotFoundError
 from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.application.migration.subscription_migrator import (
     MigrationSummary,
@@ -58,7 +55,6 @@ class CoordinatorPostCutoverMixin:
         level: VerificationLevel = VerificationLevel.HASH,
         sample_percentage: float = 100.0,
     ) -> VerificationReport:
-        """Verify data consistency between source and target stores."""
         span_attrs = {
             ATTR_MIGRATION_ID: str(migration_id),
             "level": level.value,
@@ -70,17 +66,14 @@ class CoordinatorPostCutoverMixin:
                 raise MigrationNotFoundError(migration_id)
             target_store = self._target_stores.get(migration_id)
             if target_store is None:
-                raise MigrationError(
+                msg = (
                     "Target store not found for migration. "
-                    "Verify consistency is typically called after migration is started.",
-                    migration_id=migration_id,
+                    "Verify consistency is typically called after migration is started."
                 )
+                raise MigrationError(msg, migration_id=migration_id)
 
-            verifier_cls = getattr(
-                sys.modules.get("eventsource.application.migration.coordinator"),
-                "ConsistencyVerifier",
-                ConsistencyVerifier,
-            )
+            coord_mod = sys.modules.get("eventsource.application.migration.coordinator")
+            verifier_cls = getattr(coord_mod, "ConsistencyVerifier", ConsistencyVerifier)
             verifier = verifier_cls(
                 source_store=self._source_store,
                 target_store=target_store,
@@ -93,9 +86,7 @@ class CoordinatorPostCutoverMixin:
                 level.value,
             )
             report = await verifier.verify_tenant_consistency(
-                tenant_id=migration.tenant_id,
-                level=level,
-                sample_percentage=sample_percentage,
+                tenant_id=migration.tenant_id, level=level, sample_percentage=sample_percentage
             )
             self._consistency_reports[migration_id] = report
 
@@ -121,6 +112,13 @@ class CoordinatorPostCutoverMixin:
                 if report.is_consistent
                 else AuditEventType.VERIFICATION_FAILED
             )
+            details = {
+                "level": level.value,
+                "is_consistent": report.is_consistent,
+                "source_event_count": report.source_event_count,
+                "target_event_count": report.target_event_count,
+                "violation_count": len(report.violations),
+            }
             await self._record_audit(
                 MigrationAuditEntry(
                     id=None,
@@ -128,13 +126,7 @@ class CoordinatorPostCutoverMixin:
                     event_type=event_type,
                     old_phase=None,
                     new_phase=None,
-                    details={
-                        "level": level.value,
-                        "is_consistent": report.is_consistent,
-                        "source_event_count": report.source_event_count,
-                        "target_event_count": report.target_event_count,
-                        "violation_count": len(report.violations),
-                    },
+                    details=details,
                     operator=None,
                     occurred_at=datetime.now(UTC),
                 )
@@ -148,30 +140,20 @@ class CoordinatorPostCutoverMixin:
         *,
         dry_run: bool = False,
     ) -> MigrationSummary:
-        """Migrate subscription checkpoints to target store positions."""
-        with self._tracer.span(
-            "eventsource.coordinator.migrate_subscriptions",
-            {ATTR_MIGRATION_ID: str(migration_id), "dry_run": dry_run},
-        ):
+        span_attrs = {ATTR_MIGRATION_ID: str(migration_id), "dry_run": dry_run}
+        with self._tracer.span("eventsource.coordinator.migrate_subscriptions", span_attrs):
             migration = await self._migration_repo.get(migration_id)
             if migration is None:
                 raise MigrationNotFoundError(migration_id)
             if self._position_mapper is None:
-                raise MigrationError(
-                    "Cannot migrate subscriptions: position_mapper not provided to coordinator.",
-                    migration_id=migration_id,
-                )
+                msg = "Cannot migrate subscriptions: position_mapper not provided to coordinator."
+                raise MigrationError(msg, migration_id=migration_id)
             if self._checkpoint_repo is None:
-                raise MigrationError(
-                    "Cannot migrate subscriptions: checkpoint_repo not provided to coordinator.",
-                    migration_id=migration_id,
-                )
+                msg = "Cannot migrate subscriptions: checkpoint_repo not provided to coordinator."
+                raise MigrationError(msg, migration_id=migration_id)
 
-            migrator_cls = getattr(
-                sys.modules.get("eventsource.application.migration.coordinator"),
-                "SubscriptionMigrator",
-                SubscriptionMigrator,
-            )
+            coord_mod = sys.modules.get("eventsource.application.migration.coordinator")
+            migrator_cls = getattr(coord_mod, "SubscriptionMigrator", SubscriptionMigrator)
             migrator = migrator_cls(
                 position_mapper=self._position_mapper,
                 checkpoint_repo=self._checkpoint_repo,
@@ -189,7 +171,6 @@ class CoordinatorPostCutoverMixin:
                 dry_run=dry_run,
             )
             self._subscription_summaries[migration_id] = summary
-
             if summary.all_successful:
                 logger.info(
                     "Subscription migration completed for migration %s: %d subscriptions migrated",
@@ -198,8 +179,7 @@ class CoordinatorPostCutoverMixin:
                 )
             else:
                 logger.warning(
-                    "Subscription migration completed with failures for migration %s: "
-                    "%d successful, %d failed, %d skipped",
+                    "Subscription migration completed with failures for migration %s: %d successful, %d failed, %d skipped",
                     migration_id,
                     summary.successful_count,
                     summary.failed_count,
