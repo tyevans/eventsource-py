@@ -54,33 +54,13 @@ class CatchUpBatchMixin:
         async def _maybe_save_periodic_checkpoint(self, envelope: EventEnvelope) -> None: ...
 
     async def _process_batch(self, target_position: Position) -> _BatchOutcome:
-        """
-        Process a single batch of events.
-
-        Dispatches to `_process_batch_grouped` when the subscriber supports
-        batch handling (`supports_batch_handling()`, checked once at
-        construction), otherwise to `_process_batch_single`.
-
-        Args:
-            target_position: Position to stop at
-
-        Returns:
-            A `_BatchOutcome` with envelopes read and events delivered.
-        """
+        """Process a single batch of events via grouped or single delivery."""
         if self._batch_capable:
             return await self._process_batch_grouped(target_position)
         return await self._process_batch_single(target_position)
 
     async def _process_batch_single(self, target_position: Position) -> _BatchOutcome:
-        """
-        Process a single batch of events, delivering one event at a time.
-
-        Args:
-            target_position: Position to stop at
-
-        Returns:
-            A `_BatchOutcome` with envelopes read and events delivered.
-        """
+        """Process a single batch of events, delivering one event at a time."""
         current_position = self.subscription.last_processed_position
 
         envelopes = await self._read_batch_with_retry(current_position, self.config.batch_size)
@@ -103,15 +83,12 @@ class CatchUpBatchMixin:
                     self._reached_target = True
                     break
 
-                # Check for pause within batch processing
                 await self.subscription.wait_if_paused(self._stop_event)
                 if self._stop_requested:
                     break
 
-                # Apply event type filtering early before delivery
                 if not self._filter.matches(envelope.event):
                     events_filtered += 1
-                    # Still update position to track progress through the stream
                     await self.subscription.record_event_processed(
                         position=envelope.position,
                         event_id=envelope.event.event_id,
@@ -121,12 +98,8 @@ class CatchUpBatchMixin:
                     last_envelope = envelope
                     continue
 
-                # Acquire flow control slot (may block if at capacity)
                 async with await self._flow_controller.acquire():
-                    # Deliver event to subscriber
                     await self._deliver_event(envelope)
-
-                    # Update subscription position
                     await self.subscription.record_event_processed(
                         position=envelope.position,
                         event_id=envelope.event.event_id,
@@ -137,7 +110,6 @@ class CatchUpBatchMixin:
                 events_in_batch += 1
                 delivered_this_batch += 1
 
-                # Handle checkpoint strategies
                 if self.config.checkpoint_strategy == CheckpointStrategy.EVERY_EVENT:
                     await self._save_checkpoint_with_retry(envelope)
                 elif self.config.checkpoint_strategy == CheckpointStrategy.PERIODIC:
@@ -147,7 +119,6 @@ class CatchUpBatchMixin:
             if undelivered > 0:
                 await self.subscription.record_events_unseen(undelivered)
 
-        # Checkpoint after batch if configured
         if (
             (events_in_batch > 0 or events_filtered > 0)
             and last_envelope is not None
@@ -168,15 +139,7 @@ class CatchUpBatchMixin:
         return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
     async def _process_batch_grouped(self, target_position: Position) -> _BatchOutcome:
-        """
-        Process a batch of events through the subscriber's `handle_batch()`.
-
-        Args:
-            target_position: Position to stop at
-
-        Returns:
-            A `_BatchOutcome` with envelopes read and events delivered.
-        """
+        """Process a batch of events through the subscriber's `handle_batch()`."""
         current_position = self.subscription.last_processed_position
 
         envelopes = await self._read_batch_with_retry(current_position, self.config.batch_size)
@@ -215,7 +178,6 @@ class CatchUpBatchMixin:
 
             for envelope, passes in included:
                 if passes and not batch_succeeded:
-                    # Fall back to single-event delivery for this envelope.
                     async with await self._flow_controller.acquire():
                         await self._deliver_event(envelope)
                         await self._record_and_checkpoint(envelope, passes)
@@ -233,7 +195,6 @@ class CatchUpBatchMixin:
             if undelivered > 0:
                 await self.subscription.record_events_unseen(undelivered)
 
-        # Checkpoint after batch if configured
         if (
             (events_in_batch > 0 or events_filtered > 0)
             and last_envelope is not None
@@ -254,9 +215,7 @@ class CatchUpBatchMixin:
         return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=events_in_batch)
 
     async def _record_and_checkpoint(self, envelope: EventEnvelope, passes_filter: bool) -> None:
-        """
-        Record one envelope's position and checkpoint if appropriate.
-        """
+        """Record one envelope's position and checkpoint if appropriate."""
         await self.subscription.record_event_processed(
             position=envelope.position,
             event_id=envelope.event.event_id,

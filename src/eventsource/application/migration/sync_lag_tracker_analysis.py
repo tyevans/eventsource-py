@@ -40,31 +40,8 @@ class SyncLagAnalysisMixin:
         """
         Check if stores are synchronized within the specified threshold.
 
-        A bounded count NEVER converges: it is a lower bound standing for
-        an unknown larger backlog, and a lower bound cannot satisfy a
-        threshold.
-
-        `max_lag` may only TIGHTEN the configured threshold, for the same
-        reason -- a looser override could otherwise be satisfied by a
-        bounded count.
-
-        Args:
-            max_lag: Maximum acceptable lag in events. If None, uses
-                the configured cutover_max_lag_events threshold.
-
-        Returns:
-            True if current lag is within the threshold.
-
-        Raises:
-            ValueError: If max_lag exceeds the configured threshold.
-
-        Example:
-            >>> if tracker.is_converged():
-            ...     print("Stores are synchronized!")
-            >>>
-            >>> # Use a tighter threshold
-            >>> if tracker.is_converged(max_lag=10):
-            ...     print("Within 10 events!")
+        A bounded count NEVER converges. `max_lag` may only tighten the
+        configured threshold; raises ValueError if `max_lag` exceeds it.
         """
         threshold = self._config.cutover_max_lag_events
         if max_lag is not None:
@@ -83,22 +60,7 @@ class SyncLagAnalysisMixin:
         return self._current_lag.is_within_threshold(threshold)
 
     def is_sync_ready(self) -> bool:
-        """
-        Check if synchronization is ready for cutover.
-
-        This is the primary check for cutover eligibility. It verifies
-        that the current lag is within the configured threshold.
-
-        The method uses the cutover_max_lag_events from MigrationConfig
-        as the threshold.
-
-        Returns:
-            True if lag is within cutover_max_lag_events threshold.
-
-        Example:
-            >>> if tracker.is_sync_ready():
-            ...     await cutover_manager.execute_cutover()
-        """
+        """Check if synchronization lag is within cutover_max_lag_events threshold."""
         with self._tracer.span(
             "eventsource.sync_lag.is_sync_ready",
             {
@@ -119,37 +81,13 @@ class SyncLagAnalysisMixin:
             return ready
 
     def is_fully_converged(self) -> bool:
-        """
-        Check if stores are fully synchronized (zero lag).
-
-        Returns:
-            True if current lag is exactly zero.
-
-        Example:
-            >>> if tracker.is_fully_converged():
-            ...     print("Perfect sync achieved!")
-        """
+        """Check if stores are fully synchronized (zero lag)."""
         if self._current_lag is None:
             return False
         return self._current_lag.is_converged
 
     def get_lag_stats(self) -> LagStats:
-        """
-        Get aggregate statistics about sync lag over the sample window.
-
-        Calculates average, max, and min lag from the sample history.
-        Also determines if lag is trending downward (converging).
-
-        Returns:
-            LagStats with summary metrics.
-
-        Example:
-            >>> stats = tracker.get_lag_stats()
-            >>> print(f"Average lag: {stats.average_lag:.1f} events")
-            >>> print(f"Max lag: {stats.max_lag} events")
-            >>> if stats.is_converging:
-            ...     print("Lag is decreasing!")
-        """
+        """Get aggregate statistics about sync lag over the sample window."""
         if not self._lag_samples:
             return LagStats(
                 current_lag=0,
@@ -183,16 +121,7 @@ class SyncLagAnalysisMixin:
         )
 
     def _is_converging(self) -> bool:
-        """
-        Determine if lag is trending downward.
-
-        Compares the average of the first half of samples to the
-        average of the second half. If the second half is lower,
-        lag is considered to be converging.
-
-        Returns:
-            True if lag is decreasing over time.
-        """
+        """Determine if lag is trending downward across the sample window."""
         if len(self._lag_samples) < 4:
             return False
 
@@ -208,57 +137,18 @@ class SyncLagAnalysisMixin:
         return second_avg < first_avg
 
     def get_sample_history(self) -> list[SyncLag]:
-        """
-        Get the history of lag samples.
-
-        Returns:
-            List of SyncLag measurements in chronological order.
-
-        Example:
-            >>> history = tracker.get_sample_history()
-            >>> for lag in history[-5:]:  # Last 5 samples
-            ...     print(f"{lag.timestamp}: {lag.events} events")
-        """
+        """Get the history of lag samples in chronological order."""
         return [s.lag for s in self._lag_samples]
 
     def clear_history(self) -> int:
-        """
-        Clear the lag sample history.
-
-        Useful when starting a new measurement period.
-
-        Returns:
-            Number of samples cleared.
-
-        Example:
-            >>> cleared = tracker.clear_history()
-            >>> print(f"Cleared {cleared} samples")
-        """
+        """Clear the lag sample history and return the number of samples cleared."""
         count = len(self._lag_samples)
         self._lag_samples.clear()
         self._current_lag = None
         return count
 
     def record_lag(self, lag: SyncLag) -> None:
-        """
-        Manually record a lag measurement.
-
-        Allows external components (like DualWriteInterceptor) to
-        provide lag updates without querying stores.
-
-        Args:
-            lag: The lag measurement to record.
-
-        Example:
-            >>> # DualWriteInterceptor can update lag after writes
-            >>> lag = SyncLag(
-            ...     events=5,
-            ...     source_position=source_pos,
-            ...     target_position=target_pos,
-            ...     timestamp=datetime.now(UTC),
-            ... )
-            >>> tracker.record_lag(lag)
-        """
+        """Manually record a lag measurement."""
         self._current_lag = lag
         self._add_sample(lag)
 

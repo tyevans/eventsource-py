@@ -203,23 +203,7 @@ class ErrorHandler:
         [Callable[..., Coroutine[Any, Any, T]]],
         Callable[..., Coroutine[Any, Any, T]],
     ]:
-        """
-        Decorator for automatic retry on transient errors.
-
-        Args:
-            operation_name: Name for logging and metrics.
-            retry_config: Override retry configuration.
-
-        Returns:
-            Decorator function.
-
-        Example:
-            >>> handler = ErrorHandler()
-            >>>
-            >>> @handler.with_retry(operation_name="process_batch")
-            ... async def process_batch(batch_id: str):
-            ...     ...
-        """
+        """Decorator for automatic retry on transient errors."""
 
         def decorator(
             func: Callable[..., Coroutine[Any, Any, T]],
@@ -238,26 +222,7 @@ class ErrorHandler:
 
 
 def classify_exception(exc: Exception) -> ErrorClassification:
-    """
-    Classify any exception and return its error classification.
-
-    For MigrationError subclasses, returns their specific classification.
-    For other exceptions, returns a generic classification.
-
-    Args:
-        exc: The exception to classify.
-
-    Returns:
-        ErrorClassification for the exception.
-
-    Example:
-        >>> try:
-        ...     await risky_operation()
-        ... except Exception as e:
-        ...     classification = classify_exception(e)
-        ...     if classification.severity.should_alert:
-        ...         send_alert(e, classification)
-    """
+    """Classify any exception and return its ErrorClassification."""
     if isinstance(exc, MigrationError):
         return exc.classification
 
