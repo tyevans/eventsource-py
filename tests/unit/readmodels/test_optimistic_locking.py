@@ -15,8 +15,6 @@ from eventsource.ports.readmodels import (
 
 
 class TestModel(ReadModel):
-    """Test model for optimistic locking tests."""
-
     name: str
     value: int = 0
 
@@ -26,7 +24,6 @@ type Repo = InMemoryReadModelRepository[TestModel]
 
 @pytest.fixture
 def repo() -> Repo:
-    """Create a fresh in-memory repository for each test."""
     return InMemoryReadModelRepository(TestModel, enable_tracing=False)
 
 
@@ -34,7 +31,6 @@ class TestReadModelVersionConflictErrorException:
     """Tests for ReadModelVersionConflictError exception."""
 
     def test_optimistic_lock_error_with_actual_version(self) -> None:
-        """Test ReadModelVersionConflictError includes model_id and versions."""
         model_id = uuid4()
         error = ReadModelVersionConflictError(model_id, expected_version=1, actual_version=2)
         assert error.model_id == model_id
@@ -45,7 +41,6 @@ class TestReadModelVersionConflictErrorException:
         assert str(model_id) in str(error)
 
     def test_optimistic_lock_error_without_actual_version(self) -> None:
-        """Test ReadModelVersionConflictError when actual version is unknown."""
         model_id = uuid4()
         error = ReadModelVersionConflictError(model_id, expected_version=1, actual_version=None)
         assert error.model_id == model_id
@@ -55,7 +50,6 @@ class TestReadModelVersionConflictErrorException:
         assert "was not found or was modified" in str(error)
 
     def test_optimistic_lock_error_is_read_model_error(self) -> None:
-        """Test ReadModelVersionConflictError inherits from ReadModelError."""
         error = ReadModelVersionConflictError(uuid4(), expected_version=1)
         assert isinstance(error, ReadModelError)
         assert isinstance(error, Exception)
@@ -65,7 +59,6 @@ class TestReadModelNotFoundErrorException:
     """Tests for ReadModelNotFoundError exception."""
 
     def test_read_model_not_found_error(self) -> None:
-        """Test ReadModelNotFoundError includes model_id."""
         model_id = uuid4()
         error = ReadModelNotFoundError(model_id)
         assert error.model_id == model_id
@@ -73,7 +66,6 @@ class TestReadModelNotFoundErrorException:
         assert "not found" in str(error)
 
     def test_read_model_not_found_error_is_read_model_error(self) -> None:
-        """Test ReadModelNotFoundError inherits from ReadModelError."""
         error = ReadModelNotFoundError(uuid4())
         assert isinstance(error, ReadModelError)
         assert isinstance(error, Exception)
@@ -84,15 +76,11 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_save_with_correct_version_succeeds(self, repo: Repo) -> None:
-        """Test save_with_version_check succeeds with correct version."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="original", value=1)
-        await repo.save(model)
-        # Load and modify
+        await repo.save(TestModel(id=model_id, name="original", value=1))
         loaded = await repo.get(model_id)
         assert loaded is not None
         loaded.name = "updated"
-        # Should succeed
         await repo.save_with_version_check(loaded)
         result = await repo.get(model_id)
         assert result is not None
@@ -101,19 +89,13 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_save_with_wrong_version_raises_optimistic_lock_error(self, repo: Repo) -> None:
-        """Test save_with_version_check fails with wrong version."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="original", value=1)
-        await repo.save(model)
-        # Load model and create a copy (simulating separate processes)
+        await repo.save(TestModel(id=model_id, name="original", value=1))
         reader1 = await repo.get(model_id)
         assert reader1 is not None
-        # Create a separate model instance with same data to simulate separate process
         reader2 = reader1.model_copy()
-        # First reader succeeds and increments version to 2
         reader1.name = "updated"
         await repo.save_with_version_check(reader1)
-        # Second reader still has version 1 - should fail
         reader2.name = "conflict"
         with pytest.raises(ReadModelVersionConflictError) as exc_info:
             await repo.save_with_version_check(reader2)
@@ -123,7 +105,6 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_save_nonexistent_model_raises_not_found_error(self, repo: Repo) -> None:
-        """Test save_with_version_check fails for nonexistent model."""
         model_id = uuid4()
         model = TestModel(id=model_id, name="new", value=1)
         with pytest.raises(ReadModelNotFoundError) as exc_info:
@@ -132,10 +113,8 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_version_incremented_after_successful_save(self, repo: Repo) -> None:
-        """Test version is incremented after successful save_with_version_check."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="original", value=1)
-        await repo.save(model)
+        await repo.save(TestModel(id=model_id, name="original", value=1))
         loaded = await repo.get(model_id)
         assert loaded is not None
         assert loaded.version == 1
@@ -152,10 +131,8 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_updated_at_changed_on_successful_save(self, repo: Repo) -> None:
-        """Test updated_at is changed on successful save_with_version_check."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="original", value=1)
-        await repo.save(model)
+        await repo.save(TestModel(id=model_id, name="original", value=1))
         loaded = await repo.get(model_id)
         assert loaded is not None
         original_updated_at = loaded.updated_at
@@ -168,17 +145,9 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_version_advances_in_storage_not_on_the_callers_object(self, repo: Repo) -> None:
-        """The version bump lands in storage; the writer's object is its own.
-
-        This asserted `loaded.version == 2` while the memory adapter still
-        mutated the caller's model in place -- a memory-only behavior the
-        SQL adapters never had, since their bump happens in the row. The
-        contract is now pinned for all three backends by
-        `ReadModelRepositoryConformance`.
-        """
+        """The version bump lands in storage; the writer's object is its own."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="original", value=1)
-        await repo.save(model)
+        await repo.save(TestModel(id=model_id, name="original", value=1))
         loaded = await repo.get(model_id)
         assert loaded is not None
         assert loaded.version == 1
@@ -191,28 +160,20 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_concurrent_updates_one_succeeds_one_fails(self, repo: Repo) -> None:
-        """Test that concurrent updates result in one success and one failure."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="original", value=1)
-        await repo.save(model)
-        # Simulate two concurrent reads - create copies with the same version
+        await repo.save(TestModel(id=model_id, name="original", value=1))
         reader1 = await repo.get(model_id)
         assert reader1 is not None
-        # Create a separate model instance with same data to simulate separate process
         reader2 = reader1.model_copy()
-        # Both have version 1
         assert reader1.version == 1
         assert reader2.version == 1
-        # First update succeeds
         reader1.name = "update1"
         await repo.save_with_version_check(reader1)
-        # Second update should fail - reader2 still has version 1
         reader2.name = "update2"
         with pytest.raises(ReadModelVersionConflictError) as exc_info:
             await repo.save_with_version_check(reader2)
         assert exc_info.value.expected_version == 1
         assert exc_info.value.actual_version == 2
-        # Verify final state
         final = await repo.get(model_id)
         assert final is not None
         assert final.name == "update1"
@@ -220,10 +181,8 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_multiple_sequential_updates_succeed(self, repo: Repo) -> None:
-        """Test multiple sequential updates with version checks succeed."""
         model_id = uuid4()
-        model = TestModel(id=model_id, name="v1", value=1)
-        await repo.save(model)
+        await repo.save(TestModel(id=model_id, name="v1", value=1))
         for i in range(2, 6):
             loaded = await repo.get(model_id)
             assert loaded is not None
@@ -238,22 +197,16 @@ class TestInMemoryOptimisticLocking:
 
     @pytest.mark.asyncio
     async def test_catch_read_model_error_catches_both(self, repo: Repo) -> None:
-        """Test catching ReadModelError catches both exception types."""
         model_id = uuid4()
         model = TestModel(id=model_id, name="original", value=1)
-        # Test catching ReadModelNotFoundError via ReadModelError
         with pytest.raises(ReadModelError):
             await repo.save_with_version_check(model)
-        # Save the model first
         await repo.save(model)
-        # Load and save with version check to increment to version 2
         loaded = await repo.get(model_id)
         assert loaded is not None
         loaded.name = "updated"
         await repo.save_with_version_check(loaded)
-        # Create model with old version to simulate stale read
-        stale_model = TestModel(id=model_id, name="stale", value=1, version=1)  # Old version
-        # Test catching ReadModelVersionConflictError via ReadModelError
+        stale_model = TestModel(id=model_id, name="stale", value=1, version=1)
         with pytest.raises(ReadModelError):
             await repo.save_with_version_check(stale_model)
 
@@ -262,7 +215,6 @@ class TestOptimisticLockingExports:
     """Test that optimistic locking classes are properly exported."""
 
     def test_exceptions_exported_from_readmodels(self) -> None:
-        """Test exceptions can be imported from eventsource.ports.readmodels."""
         from eventsource.ports.readmodels import (
             ReadModelError,
             ReadModelNotFoundError,
@@ -274,7 +226,6 @@ class TestOptimisticLockingExports:
         assert ReadModelNotFoundError is not None
 
     def test_exceptions_in_all(self) -> None:
-        """Test exceptions are in __all__."""
         from eventsource.ports import readmodels
 
         assert "ReadModelVersionConflictError" in readmodels.__all__
