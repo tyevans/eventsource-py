@@ -37,24 +37,19 @@ def _make_snapshot(
 
 
 class TestSQLiteSnapshotStoreOperations:
-    """Tests for SQLiteSnapshotStore CRUD operations."""
-
     @pytest.fixture
     async def db_path(self):
-        """Create temporary database path."""
         with tempfile.TemporaryDirectory() as tmpdir:
             yield os.path.join(tmpdir, "test_snapshots.db")
 
     @pytest.fixture
     async def store(self, db_path):
-        """Create a store; it applies its own schema on first use."""
         store = SQLiteSnapshotStore(db_path)
         yield store
         await store.close()
 
     @pytest.fixture
     def sample_snapshot(self):
-        """Create a sample snapshot for testing."""
         return _make_snapshot(
             version=100,
             state={"status": "shipped", "items": ["item1", "item2"]},
@@ -62,7 +57,6 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_save_and_get_snapshot(self, store, sample_snapshot):
-        """Test basic save and retrieve cycle."""
         await store.save_snapshot(sample_snapshot)
         loaded = await store.get_snapshot(
             sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
@@ -76,16 +70,13 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_snapshot_returns_none(self, store):
-        """Test that getting missing snapshot returns None."""
         assert await store.get_snapshot(uuid4(), "Order") is None
 
     @pytest.mark.asyncio
     async def test_save_overwrites_existing_snapshot(self, store):
-        """Test upsert behavior - new snapshot replaces old."""
         aggregate_id = uuid4()
         snapshot_v1 = _make_snapshot(aggregate_id, "Order", 50, {"status": "pending"})
         snapshot_v2 = _make_snapshot(aggregate_id, "Order", 100, {"status": "shipped"})
-
         await store.save_snapshot(snapshot_v1)
         await store.save_snapshot(snapshot_v2)
 
@@ -96,7 +87,6 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_delete_snapshot_returns_true_when_exists(self, store, sample_snapshot):
-        """Test delete returns True when snapshot exists."""
         await store.save_snapshot(sample_snapshot)
         result = await store.delete_snapshot(
             sample_snapshot.aggregate_id, sample_snapshot.aggregate_type
@@ -109,12 +99,10 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_delete_snapshot_returns_false_when_missing(self, store):
-        """Test delete returns False when no snapshot."""
         assert await store.delete_snapshot(uuid4(), "Order") is False
 
     @pytest.mark.asyncio
     async def test_snapshot_exists_returns_true(self, store, sample_snapshot):
-        """Test snapshot_exists returns True when present."""
         await store.save_snapshot(sample_snapshot)
         assert (
             await store.snapshot_exists(
@@ -125,15 +113,12 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_snapshot_exists_returns_false(self, store):
-        """Test snapshot_exists returns False when missing."""
         assert await store.snapshot_exists(uuid4(), "Order") is False
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type(self, store):
-        """Test bulk deletion by aggregate type."""
         order_ids = [uuid4() for _ in range(3)]
         user_ids = [uuid4() for _ in range(2)]
-
         for agg_id in order_ids:
             await store.save_snapshot(_make_snapshot(agg_id, "Order"))
         for agg_id in user_ids:
@@ -146,7 +131,6 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type_with_schema_version_filter(self, store):
-        """Test bulk deletion with schema version filter."""
         agg_ids = []
         for schema_v in [1, 2, 3]:
             agg_id = uuid4()
@@ -161,29 +145,23 @@ class TestSQLiteSnapshotStoreOperations:
 
     @pytest.mark.asyncio
     async def test_delete_snapshots_by_type_no_matches(self, store):
-        """Test bulk deletion when no snapshots match."""
         await store.save_snapshot(_make_snapshot(aggregate_type="Order"))
-        deleted = await store.delete_snapshots_by_type("User")
-        assert deleted == 0
+        assert await store.delete_snapshots_by_type("User") == 0
 
     @pytest.mark.asyncio
     async def test_different_aggregate_types_are_separate(self, store):
-        """Test that same ID with different types are separate."""
         aggregate_id = uuid4()
         await store.save_snapshot(_make_snapshot(aggregate_id, "Order", 10, {"type": "order"}))
         await store.save_snapshot(_make_snapshot(aggregate_id, "User", 20, {"type": "user"}))
 
         order_loaded = await store.get_snapshot(aggregate_id, "Order")
         user_loaded = await store.get_snapshot(aggregate_id, "User")
-
-        assert order_loaded is not None
-        assert user_loaded is not None
+        assert order_loaded is not None and user_loaded is not None
         assert order_loaded.state["type"] == "order"
         assert user_loaded.state["type"] == "user"
 
     @pytest.mark.asyncio
     async def test_complex_state_serialization(self, store):
-        """Test that complex nested state is properly serialized/deserialized."""
         aggregate_id = uuid4()
         complex_state = {
             "string": "value",
@@ -196,15 +174,12 @@ class TestSQLiteSnapshotStoreOperations:
         }
         await store.save_snapshot(_make_snapshot(aggregate_id, "Complex", 1, complex_state))
         loaded = await store.get_snapshot(aggregate_id, "Complex")
-        assert loaded is not None
-        assert loaded.state == complex_state
+        assert loaded is not None and loaded.state == complex_state
 
     @pytest.mark.asyncio
     async def test_datetime_serialization(self, store):
-        """Test that datetime is properly serialized/deserialized."""
         aggregate_id = uuid4()
         created_time = datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
         await store.save_snapshot(_make_snapshot(aggregate_id, "Order", created_at=created_time))
         loaded = await store.get_snapshot(aggregate_id, "Order")
-        assert loaded is not None
-        assert loaded.created_at == created_time
+        assert loaded is not None and loaded.created_at == created_time

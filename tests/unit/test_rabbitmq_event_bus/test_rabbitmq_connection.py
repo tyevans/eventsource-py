@@ -10,9 +10,14 @@ import pytest
 from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
 
 
-class TestRabbitMQEventBusConnection:
-    """Tests for RabbitMQEventBus connect and disconnect methods."""
+def _mock_conn_and_chan(mock_aio_pika: MagicMock) -> tuple[AsyncMock, AsyncMock]:
+    mock_connection, mock_channel = AsyncMock(is_closed=False), AsyncMock(is_closed=False)
+    mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
+    mock_connection.channel = AsyncMock(return_value=mock_channel)
+    return mock_connection, mock_channel
 
+
+class TestRabbitMQEventBusConnection:
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
         return RabbitMQEventBusConfig(
@@ -26,11 +31,7 @@ class TestRabbitMQEventBusConnection:
     async def test_connect_creates_connection(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -46,11 +47,7 @@ class TestRabbitMQEventBusConnection:
     async def test_connect_creates_channel(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        mock_connection, mock_channel = _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -62,11 +59,7 @@ class TestRabbitMQEventBusConnection:
     async def test_connect_sets_prefetch(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        _, mock_channel = _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -77,11 +70,7 @@ class TestRabbitMQEventBusConnection:
     async def test_connect_when_already_connected_logs_warning(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
         mock_aio_pika.connect_robust.reset_mock()
@@ -106,11 +95,7 @@ class TestRabbitMQEventBusConnection:
     async def test_disconnect_closes_connection(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        mock_connection, mock_channel = _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
         await bus.disconnect()
@@ -124,11 +109,7 @@ class TestRabbitMQEventBusConnection:
     async def test_disconnect_clears_references(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
         await bus.disconnect()
@@ -154,11 +135,7 @@ class TestRabbitMQEventBusConnection:
     async def test_disconnect_cancels_consumer_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-
+        _mock_conn_and_chan(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -171,8 +148,6 @@ class TestRabbitMQEventBusConnection:
 
 
 class TestRabbitMQConnectionStateTransitions:
-    """Tests for connection state transitions."""
-
     def test_initial_state_is_disconnected(self) -> None:
         bus = RabbitMQEventBus()
         assert bus.is_connected is False
@@ -187,10 +162,7 @@ class TestRabbitMQConnectionStateTransitions:
     async def test_connection_state_after_connect_then_disconnect(
         self, mock_aio_pika: MagicMock
     ) -> None:
-        mock_connection = AsyncMock(is_closed=False)
-        mock_channel = AsyncMock(is_closed=False)
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
+        _, mock_channel = _mock_conn_and_chan(mock_aio_pika)
         mock_channel.declare_exchange = AsyncMock(return_value=AsyncMock())
         mock_channel.declare_queue = AsyncMock(return_value=AsyncMock())
 

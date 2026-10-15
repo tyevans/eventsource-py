@@ -16,13 +16,10 @@ from eventsource.application.subscriptions import (
     SubscriptionConfig,
 )
 from eventsource.application.subscriptions.runners import LiveRunner
-from eventsource.domain import StreamId
-from eventsource.domain.event import DomainEvent
-from eventsource.domain.event_registry import EventRegistry, register_event
+from eventsource.domain import DomainEvent, EventRegistry, StreamId, register_event
 from eventsource.ports.positions import ExpectedVersion
 
-_REGISTRY = EventRegistry()
-BOUND = 5.0
+_REGISTRY, BOUND = EventRegistry(), 5.0
 
 
 @register_event(registry=_REGISTRY)
@@ -95,8 +92,9 @@ async def add_events(store: InMemoryEventStore, count: int) -> None:
     for i in range(count):
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="LiveGroupAggregate")
-        evt = LiveGroupEvent(aggregate_id=agg_id, data=f"e{i}")
-        await store.append(stream, [evt], ExpectedVersion.no_stream())
+        await store.append(
+            stream, [LiveGroupEvent(aggregate_id=agg_id, data=f"e{i}")], ExpectedVersion.no_stream()
+        )
 
 
 def make_config(**overrides: object) -> SubscriptionConfig:
@@ -109,101 +107,80 @@ def make_runner(bus, store, repo, sub, name: str, cfg=None) -> LiveRunner:
     return LiveRunner(event_bus=bus, checkpoint_repo=repo, event_feed=store, subscription=s)
 
 
-class TestLiveGroupedDispatch:
-    async def test_available_events_are_delivered_as_one_batch(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
-        sub = RecordingBatchSubscriber()
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-grouped")
-        await runner.start()
-        try:
-            await add_events(event_store, 3)
-            await event_bus.publish([LiveGroupEvent(aggregate_id=uuid4(), data="__wake__")])
-            await asyncio.wait_for(sub.saw_batch.wait(), timeout=BOUND)
-        finally:
-            await runner.stop()
-        assert [[e.data for e in b] for b in sub.batch_calls] == [["e0", "e1", "e2"]]
-        assert (runner.stats.events_processed, runner.stats.events_failed) == (3, 0)
+async def _start_with_events(bus, store, repo, sub, name: str, n: int = 3, cfg=None) -> LiveRunner:
+    r = make_runner(bus, store, repo, sub, name, cfg)
+    await r.start()
+    await add_events(store, n)
+    return r
 
-    async def test_batch_is_a_page_not_an_accumulator(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
-        sub = RecordingBatchSubscriber()
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-one")
-        await runner.start()
-        try:
-            await add_events(event_store, 1)
-            await event_bus.publish([LiveGroupEvent(aggregate_id=uuid4(), data="__wake__")])
+
+async def _run_and_stop(bus, store, repo, sub, name: str, n: int, wake: bool = False, cfg=None):
+    r = await _start_with_events(bus, store, repo, sub, name, n, cfg)
+    try:
+        if wake:
+            await bus.publish([LiveGroupEvent(aggregate_id=uuid4(), data="__wake__")])
             await asyncio.wait_for(sub.saw_batch.wait(), timeout=BOUND)
-        finally:
-            await runner.stop()
+        else:
+            await asyncio.wait_for(r._drain_feed(), timeout=BOUND)
+    finally:
+        await r.stop()
+    return r
+
+
+class TestLiveGroupedDispatch:
+    @pytest.fixture(autouse=True)
+    def _setup(self, event_bus, event_store, checkpoint_repo) -> None:
+        self.bus, self.store, self.repo = event_bus, event_store, checkpoint_repo
+        self.deps = (event_bus, event_store, checkpoint_repo)
+
+    async def test_available_events_are_delivered_as_one_batch(self) -> None:
+        sub = RecordingBatchSubscriber()
+        r = await _run_and_stop(*self.deps, sub, "live-grouped", 3, True)
+        assert [[e.data for e in b] for b in sub.batch_calls] == [["e0", "e1", "e2"]]
+        assert (r.stats.events_processed, r.stats.events_failed) == (3, 0)
+
+    async def test_batch_is_a_page_not_an_accumulator(self) -> None:
+        sub = RecordingBatchSubscriber()
+        await _run_and_stop(*self.deps, sub, "live-one", 1, True)
         assert len(sub.batch_calls) == 1 and len(sub.batch_calls[0]) == 1
 
-    async def test_stop_before_dispatch_delivers_nothing(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
+    async def test_stop_before_dispatch_delivers_nothing(self) -> None:
         sub = RecordingBatchSubscriber()
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-stopped")
-        await runner.start()
-        await add_events(event_store, 3)
-        await runner.stop()
-        assert await runner._drain_feed() == 0 and sub.batch_calls == []
+        r = await _start_with_events(*self.deps, sub, "live-stopped")
+        await r.stop()
+        assert await r._drain_feed() == 0 and sub.batch_calls == []
 
-    async def test_stop_interrupts_a_paused_grouped_drain(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
+    async def test_stop_interrupts_a_paused_grouped_drain(self) -> None:
         sub = RecordingBatchSubscriber()
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-paused")
-        await runner.start()
-        await add_events(event_store, 3)
-        await runner.subscription.pause()
-        drain = asyncio.create_task(runner._drain_feed())
+        r = await _start_with_events(*self.deps, sub, "live-paused")
+        await r.subscription.pause()
+        drain = asyncio.create_task(r._drain_feed())
         await asyncio.sleep(0)
         assert not drain.done()
-        await runner.stop()
+        await r.stop()
         await asyncio.wait_for(drain, timeout=BOUND)
-        assert sub.batch_calls == [] and runner.subscription.is_paused
+        assert sub.batch_calls == [] and r.subscription.is_paused
 
-    async def test_processing_timeout_bounds_the_batch_call(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
+    async def test_processing_timeout_bounds_the_batch_call(self) -> None:
         sub, cfg = HangingBatchSubscriber(), make_config(processing_timeout=0.05)
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-timeout", cfg)
-        await runner.start()
-        try:
-            await add_events(event_store, 3)
-            await asyncio.wait_for(runner._drain_feed(), timeout=BOUND)
-        finally:
-            await runner.stop()
-        assert sub.entered.is_set() and runner.stats.events_failed == 3
+        r = await _run_and_stop(*self.deps, sub, "live-timeout", 3, cfg=cfg)
+        assert sub.entered.is_set() and r.stats.events_failed == 3
 
-    async def test_raising_batch_handler_falls_back_to_per_event(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
+    async def test_raising_batch_handler_falls_back_to_per_event(self) -> None:
         sub = RaisingBatchSubscriber()
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-raise")
-        await runner.start()
-        try:
-            await add_events(event_store, 3)
-            await asyncio.wait_for(runner._drain_feed(), timeout=BOUND)
-        finally:
-            await runner.stop()
-        assert sub.batch_attempts == [3] and runner.stats.events_processed == 3
+        r = await _run_and_stop(*self.deps, sub, "live-raise", 3)
+        assert sub.batch_attempts == [3] and r.stats.events_processed == 3
         assert [e.data for e in sub.single_calls] == ["e0", "e1", "e2"]
 
-    async def test_grouped_drain_checkpoints_the_page(
-        self, event_bus, event_store, checkpoint_repo
-    ) -> None:
+    async def test_grouped_drain_checkpoints_the_page(self) -> None:
         sub = GatedBatchSubscriber()
         cfg = make_config(checkpoint_strategy=CheckpointStrategy.EVERY_BATCH)
-        runner = make_runner(event_bus, event_store, checkpoint_repo, sub, "live-checkpoint", cfg)
-        await runner.start()
-        await add_events(event_store, 3)
-        drain = asyncio.create_task(runner._drain_feed())
+        r = await _start_with_events(*self.deps, sub, "live-checkpoint", cfg=cfg)
+        drain = asyncio.create_task(r._drain_feed())
         await asyncio.wait_for(sub.entered.wait(), timeout=BOUND)
-        assert await checkpoint_repo.get_position("live-checkpoint") is None
+        assert await self.repo.get_position("live-checkpoint") is None
         sub.release.set()
         await asyncio.wait_for(drain, timeout=BOUND)
-        await runner.stop()
+        await r.stop()
         assert len(sub.batch_calls) == 1
-        assert await checkpoint_repo.get_position("live-checkpoint") is not None
+        assert await self.repo.get_position("live-checkpoint") is not None
