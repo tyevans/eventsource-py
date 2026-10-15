@@ -4,10 +4,12 @@ from typing import Any
 
 import pytest
 
-from eventsource.adapters.memory.bus import InMemoryEventBus
-from eventsource.adapters.memory.checkpoints import InMemoryCheckpointRepository
-from eventsource.adapters.memory.coordination import InMemoryLeaderElector
-from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.adapters.memory import (
+    InMemoryCheckpointRepository,
+    InMemoryEventBus,
+    InMemoryEventStore,
+    InMemoryLeaderElector,
+)
 from eventsource.application.subscriptions import (
     Subscription,
     SubscriptionConfig,
@@ -42,45 +44,35 @@ class DummySubscriber:
 
 
 class ExpiringLeaseLeaderElector:
-    """Test double implementing LeaderElector protocol to simulate lease expiration."""
-
     def __init__(self, identity: str, *, initial_leader: bool = True) -> None:
-        self._identity = identity
-        self._is_leader = initial_leader
+        self.identity = identity
+        self.is_leader = initial_leader
         self._renew_succeeds = True
         self._raise_on_renew: Exception | None = None
         self._callbacks: list[LeaderChangeCallback] = []
 
     @property
-    def identity(self) -> str:
-        return self._identity
-
-    @property
-    def is_leader(self) -> bool:
-        return self._is_leader
-
-    @property
     def current_leader(self) -> str | None:
-        return self._identity if self._is_leader else None
+        return self.identity if self.is_leader else None
 
     async def try_acquire(self, timeout: float = 10.0) -> bool:
-        self._is_leader = True
+        self.is_leader = True
         return True
 
     async def release(self) -> None:
-        self._is_leader = False
+        self.is_leader = False
 
     async def renew(self) -> bool:
         if self._raise_on_renew is not None:
             raise self._raise_on_renew
         if not self._renew_succeeds:
-            self._is_leader = False
+            self.is_leader = False
             return False
-        return self._is_leader
+        return self.is_leader
 
     def expire_lease(self) -> None:
         self._renew_succeeds = False
-        self._is_leader = False
+        self.is_leader = False
 
     def simulate_backend_error(self, exc: Exception) -> None:
         self._raise_on_renew = exc
@@ -105,97 +97,82 @@ def _make_lifecycle(leader_elector: Any = None) -> SubscriptionLifecycleManager:
 
 
 @pytest.fixture
-def test_subscription() -> Subscription:
-    return Subscription(
-        name="test-projection",
-        subscriber=DummySubscriber(),
-        config=SubscriptionConfig(start_from="beginning"),
-    )
+def sub() -> Subscription:
+    cfg = SubscriptionConfig(start_from="beginning")
+    return Subscription(name="test-projection", subscriber=DummySubscriber(), config=cfg)
 
 
 class TestSubscriptionLifecycleManagerLeadership:
-    """Verifies that leadership lease renewal guards cluster transitions in lifecycle management."""
-
-    async def test_uncoordinated_lifecycle_succeeds(self, test_subscription: Subscription) -> None:
+    async def test_uncoordinated_lifecycle_succeeds(self, sub: Subscription) -> None:
         lifecycle = _make_lifecycle(leader_elector=None)
         assert await lifecycle.verify_leadership_lease() is True
-        await lifecycle.start_subscription(test_subscription)
-        assert test_subscription.state == SubscriptionState.LIVE
-        await lifecycle.stop_all([test_subscription])
+        await lifecycle.start_subscription(sub)
+        assert sub.state == SubscriptionState.LIVE
+        await lifecycle.stop_all([sub])
 
     async def test_coordinated_start_with_active_leader_lease_succeeds(
-        self, test_subscription: Subscription
+        self, sub: Subscription
     ) -> None:
         elector = InMemoryLeaderElector("instance-alpha")
         await elector.try_acquire()
         lifecycle = _make_lifecycle(leader_elector=elector)
-        await lifecycle.start_subscription(test_subscription)
-        assert test_subscription.state == SubscriptionState.LIVE
-        await lifecycle.stop_all([test_subscription])
+        await lifecycle.start_subscription(sub)
+        assert sub.state == SubscriptionState.LIVE
+        await lifecycle.stop_all([sub])
 
-    async def test_coordinated_start_blocks_when_not_leader(
-        self, test_subscription: Subscription
-    ) -> None:
+    async def test_coordinated_start_blocks_when_not_leader(self, sub: Subscription) -> None:
         elector = ExpiringLeaseLeaderElector("follower-node", initial_leader=False)
-        lifecycle = _make_lifecycle(leader_elector=elector)
         with pytest.raises(TransitionError) as exc_info:
-            await lifecycle.start_subscription(test_subscription)
+            await _make_lifecycle(leader_elector=elector).start_subscription(sub)
         assert "unauthorized cluster transition blocked" in str(exc_info.value)
         assert "follower-node" in str(exc_info.value)
-        assert test_subscription.state == SubscriptionState.ERROR
+        assert sub.state == SubscriptionState.ERROR
 
     async def test_coordinated_start_blocks_when_lease_renewal_fails(
-        self, test_subscription: Subscription
+        self, sub: Subscription
     ) -> None:
         elector = ExpiringLeaseLeaderElector("leader-expired", initial_leader=True)
         elector.expire_lease()
-        lifecycle = _make_lifecycle(leader_elector=elector)
         with pytest.raises(TransitionError) as exc_info:
-            await lifecycle.start_subscription(test_subscription)
+            await _make_lifecycle(leader_elector=elector).start_subscription(sub)
         assert "unauthorized cluster transition blocked" in str(exc_info.value)
-        assert test_subscription.state == SubscriptionState.ERROR
+        assert sub.state == SubscriptionState.ERROR
 
     async def test_coordinated_start_blocks_after_force_lose_leadership(
-        self, test_subscription: Subscription
+        self, sub: Subscription
     ) -> None:
         elector = InMemoryLeaderElector("worker-1")
         await elector.try_acquire()
         await elector.force_lose_leadership()
-        lifecycle = _make_lifecycle(leader_elector=elector)
         with pytest.raises(TransitionError):
-            await lifecycle.start_subscription(test_subscription)
-        assert test_subscription.state == SubscriptionState.ERROR
+            await _make_lifecycle(leader_elector=elector).start_subscription(sub)
+        assert sub.state == SubscriptionState.ERROR
 
-    async def test_start_all_captures_lease_expiration_error(
-        self, test_subscription: Subscription
-    ) -> None:
+    async def test_start_all_captures_lease_expiration_error(self, sub: Subscription) -> None:
         elector = ExpiringLeaseLeaderElector("cluster-leader", initial_leader=True)
         elector.expire_lease()
-        lifecycle = _make_lifecycle(leader_elector=elector)
-        results = await lifecycle.start_all([test_subscription])
-        assert test_subscription.name in results
-        assert isinstance(results[test_subscription.name], TransitionError)
+        results = await _make_lifecycle(leader_elector=elector).start_all([sub])
+        assert sub.name in results
+        assert isinstance(results[sub.name], TransitionError)
 
     async def test_verify_leadership_lease_handles_backend_exception(
-        self, test_subscription: Subscription
+        self, sub: Subscription
     ) -> None:
         elector = ExpiringLeaseLeaderElector("failing-backend", initial_leader=True)
         elector.simulate_backend_error(ConnectionError("Advisory lock lost connection to Postgres"))
         lifecycle = _make_lifecycle(leader_elector=elector)
         assert await lifecycle.verify_leadership_lease() is False
         with pytest.raises(TransitionError):
-            await lifecycle.start_subscription(test_subscription)
+            await lifecycle.start_subscription(sub)
 
 
 class TestWorkRedistributionCoordinatorLeadership:
-    """Verifies that leadership lease renewal guards work assignments and handoffs."""
-
     async def test_create_work_assignment_succeeds_when_leader(self) -> None:
         elector = InMemoryLeaderElector("leader-node")
         await elector.try_acquire()
         coordinator = WorkRedistributionCoordinator("leader-node", leader_elector=elector)
         assignment = await coordinator.create_work_assignment(
-            target_instance_id="worker-node-1", subscriptions=["projection-orders"], priority=5
+            "worker-node-1", ["projection-orders"], priority=5
         )
         assert assignment.target_instance_id == "worker-node-1"
         assert assignment.subscriptions == ("projection-orders",)
@@ -204,9 +181,7 @@ class TestWorkRedistributionCoordinatorLeadership:
 
     async def test_create_work_assignment_uncoordinated_succeeds(self) -> None:
         coordinator = WorkRedistributionCoordinator("standalone-node", leader_elector=None)
-        assignment = await coordinator.create_work_assignment(
-            target_instance_id="peer-1", subscriptions=["projection-1"]
-        )
+        assignment = await coordinator.create_work_assignment("peer-1", ["projection-1"])
         assert assignment.target_instance_id == "peer-1"
 
     async def test_create_work_assignment_raises_when_lease_expired(self) -> None:
@@ -214,9 +189,7 @@ class TestWorkRedistributionCoordinatorLeadership:
         elector.expire_lease()
         coordinator = WorkRedistributionCoordinator("split-brain-leader", leader_elector=elector)
         with pytest.raises(TransitionError) as exc_info:
-            await coordinator.create_work_assignment(
-                target_instance_id="worker-2", subscriptions=["orders"]
-            )
+            await coordinator.create_work_assignment("worker-2", ["orders"])
         assert "cannot issue work assignment" in str(exc_info.value)
 
     async def test_initiate_leadership_handoff_verifies_renewal(self) -> None:
@@ -234,8 +207,6 @@ class TestWorkRedistributionCoordinatorLeadership:
 
 
 class TestVerifyLeadershipLeaseHelper:
-    """Verifies the standalone verify_leadership_lease function."""
-
     async def test_verify_none_elector_returns_true(self) -> None:
         assert await verify_leadership_lease(None) is True
 
@@ -245,8 +216,7 @@ class TestVerifyLeadershipLeaseHelper:
         assert await verify_leadership_lease(elector) is True
 
     async def test_verify_non_leader_returns_false(self) -> None:
-        elector = InMemoryLeaderElector("follower-1")
-        assert await verify_leadership_lease(elector) is False
+        assert await verify_leadership_lease(InMemoryLeaderElector("follower-1")) is False
 
     async def test_verify_expired_lease_returns_false(self) -> None:
         elector = ExpiringLeaseLeaderElector("node-1", initial_leader=True)
