@@ -9,6 +9,9 @@ For distributed deployments, use RedisEventBus instead.
 
 import asyncio
 import logging
+import threading
+from collections import deque
+from typing import TypeVar
 
 from eventsource.adapters._bus.base import DEFAULT_MAX_BACKGROUND_TASKS, BaseEventBus
 from eventsource.adapters._bus.handler_adapter import HandlerAdapter
@@ -25,6 +28,8 @@ from eventsource.observability.attributes import (
 )
 
 logger = logging.getLogger(__name__)
+
+TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class InMemoryEventBus(BaseEventBus):
@@ -82,9 +87,26 @@ class InMemoryEventBus(BaseEventBus):
             "background_tasks_created": 0,
             "background_tasks_completed": 0,
         }
+        self._published: deque[DomainEvent] = deque(maxlen=10_000)
+        self._published_lock = threading.RLock()
 
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
+
+    @property
+    def published_events(self) -> list[DomainEvent]:
+        """Get a copy of the published events in publication order."""
+        with self._published_lock:
+            return list(self._published)
+
+    def clear_published_events(self) -> None:
+        """Clear the recorded published events."""
+        with self._published_lock:
+            self._published.clear()
+
+    def published_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
+        """Return published events matching ``event_type`` in publication order."""
+        return [e for e in self.published_events if isinstance(e, event_type)]
 
     async def publish(
         self,
@@ -132,6 +154,8 @@ class InMemoryEventBus(BaseEventBus):
             events: Events to publish
         """
         for event in events:
+            with self._published_lock:
+                self._published.append(event)
             await self._dispatch_event(event)
             self._stats["events_published"] += 1
 
