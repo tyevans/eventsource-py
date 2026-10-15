@@ -9,9 +9,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.adapters.serialization import json_dumps
-from eventsource.adapters.sql.migration.audit_log import (
-    PostgreSQLMigrationAuditLogRepository,
-)
+from eventsource.adapters.sql.migration.audit_log import PostgreSQLMigrationAuditLogRepository
 from eventsource.ports.migration.models import (
     AuditEventType,
     MigrationAuditEntry,
@@ -24,27 +22,23 @@ class TestPostgreSQLMigrationAuditLogRepositoryHelpers:
 
     @pytest.fixture
     def repo(self) -> PostgreSQLMigrationAuditLogRepository:
-        """Create a repository for testing."""
         mock_conn = MagicMock()
         return PostgreSQLMigrationAuditLogRepository(mock_conn, enable_tracing=False)
 
     def test_row_to_entry_with_all_fields(
-        self,
-        repo: PostgreSQLMigrationAuditLogRepository,
+        self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        """Test converting a complete row to entry."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         row = (
-            1,  # id
-            migration_id,  # migration_id
-            "phase_changed",  # event_type
-            "pending",  # old_phase
-            "bulk_copy",  # new_phase
-            json_dumps({"key": "value"}),  # details (JSON string)
-            "admin@example.com",  # operator
-            now,  # occurred_at
+            1,
+            migration_id,
+            "phase_changed",
+            "pending",
+            "bulk_copy",
+            json_dumps({"key": "value"}),
+            "admin@example.com",
+            now,
         )
 
         entry = repo._row_to_entry(row)
@@ -59,61 +53,32 @@ class TestPostgreSQLMigrationAuditLogRepositoryHelpers:
         assert entry.occurred_at == now
 
     def test_row_to_entry_with_dict_details(
-        self,
-        repo: PostgreSQLMigrationAuditLogRepository,
+        self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        """Test converting row with details already as dict."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
-        row = (
-            1,
-            migration_id,
-            "error_occurred",
-            None,
-            None,
-            {"error": "test"},  # dict instead of JSON string
-            "system",
-            now,
-        )
+        row = (1, migration_id, "error_occurred", None, None, {"error": "test"}, "system", now)
 
         entry = repo._row_to_entry(row)
-
         assert entry.details == {"error": "test"}
 
     def test_row_to_entry_with_null_phases(
-        self,
-        repo: PostgreSQLMigrationAuditLogRepository,
+        self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        """Test converting row with null phases."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
-        row = (
-            1,
-            migration_id,
-            "error_occurred",
-            None,  # old_phase
-            None,  # new_phase
-            None,  # details
-            "system",
-            now,
-        )
+        row = (1, migration_id, "error_occurred", None, None, None, "system", now)
 
         entry = repo._row_to_entry(row)
-
         assert entry.old_phase is None
         assert entry.new_phase is None
         assert entry.details is None
 
     def test_row_to_entry_with_all_event_types(
-        self,
-        repo: PostgreSQLMigrationAuditLogRepository,
+        self, repo: PostgreSQLMigrationAuditLogRepository
     ) -> None:
-        """Test converting rows with different event types."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         event_types = [
             "migration_started",
             "phase_changed",
@@ -142,10 +107,8 @@ class TestMigrationAuditEntryFactoryMethods:
     """Tests for MigrationAuditEntry factory methods."""
 
     def test_phase_change_factory(self) -> None:
-        """Test phase_change factory method."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         entry = MigrationAuditEntry.phase_change(
             migration_id=migration_id,
             old_phase=MigrationPhase.PENDING,
@@ -161,13 +124,11 @@ class TestMigrationAuditEntryFactoryMethods:
         assert entry.new_phase == MigrationPhase.BULK_COPY
         assert entry.operator == "admin"
         assert entry.details == {"reason": "Manual start"}
-        assert entry.id is None  # ID not set until persisted
+        assert entry.id is None
 
     def test_migration_started_factory(self) -> None:
-        """Test migration_started factory method."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         entry = MigrationAuditEntry.migration_started(
             migration_id=migration_id,
             occurred_at=now,
@@ -183,10 +144,8 @@ class TestMigrationAuditEntryFactoryMethods:
         assert entry.details == {"config": {"batch_size": 1000}}
 
     def test_error_occurred_factory(self) -> None:
-        """Test error_occurred factory method."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         entry = MigrationAuditEntry.error_occurred(
             migration_id=migration_id,
             occurred_at=now,
@@ -205,10 +164,8 @@ class TestMigrationAuditEntryFactoryMethods:
         }
 
     def test_to_dict(self) -> None:
-        """Test to_dict serialization."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         entry = MigrationAuditEntry(
             id=42,
             migration_id=migration_id,
@@ -221,7 +178,6 @@ class TestMigrationAuditEntryFactoryMethods:
         )
 
         data = entry.to_dict()
-
         assert data["id"] == 42
         assert data["migration_id"] == str(migration_id)
         assert data["event_type"] == "phase_changed"
@@ -232,10 +188,8 @@ class TestMigrationAuditEntryFactoryMethods:
         assert data["occurred_at"] == now.isoformat()
 
     def test_to_dict_with_null_phases(self) -> None:
-        """Test to_dict with null phases."""
         migration_id = uuid4()
         now = datetime.now(UTC)
-
         entry = MigrationAuditEntry(
             id=1,
             migration_id=migration_id,
@@ -248,7 +202,6 @@ class TestMigrationAuditEntryFactoryMethods:
         )
 
         data = entry.to_dict()
-
         assert data["old_phase"] is None
         assert data["new_phase"] is None
         assert data["details"] is None
@@ -259,8 +212,6 @@ class TestAuditEventTypeEnum:
     """Tests for AuditEventType enum."""
 
     def test_all_event_types_match_db_constraint(self) -> None:
-        """Test all enum values match the database CHECK constraint."""
-        # These are the values from the migration_audit_log table CHECK constraint
         db_event_types = {
             "migration_started",
             "phase_changed",
@@ -278,13 +229,10 @@ class TestAuditEventTypeEnum:
             "verification_failed",
             "progress_checkpoint",
         }
-
         enum_values = {et.value for et in AuditEventType}
-
         assert enum_values == db_event_types
 
     def test_event_type_values(self) -> None:
-        """Test specific event type values."""
         assert AuditEventType.MIGRATION_STARTED.value == "migration_started"
         assert AuditEventType.PHASE_CHANGED.value == "phase_changed"
         assert AuditEventType.MIGRATION_PAUSED.value == "migration_paused"

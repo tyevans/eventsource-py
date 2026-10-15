@@ -5,15 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from eventsource.application.migration.router import TenantStoreRouter
-from eventsource.ports import (
-    CategoryReadOptions,
-    FeedReadOptions,
-    Position,
-)
-from eventsource.ports.migration.models import (
-    TenantMigrationState,
-    TenantRouting,
-)
+from eventsource.ports import CategoryReadOptions, FeedReadOptions, Position
+from eventsource.ports.migration.models import TenantMigrationState, TenantRouting
 
 from ._fixtures import async_generator_mock, create_mock_store, sid
 
@@ -27,16 +20,13 @@ class TestReadOperationsRouting:
         mock_dedicated_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        """Test read_category routes based on options.tenant_id."""
         tenant_id = uuid4()
-
         routing = TenantRouting(
             tenant_id=tenant_id,
             store_id="dedicated",
             migration_state=TenantMigrationState.NORMAL,
         )
         mock_routing_repo.get_routing.return_value = routing
-
         default_called = False
         dedicated_called = False
 
@@ -68,11 +58,8 @@ class TestReadOperationsRouting:
         assert default_called is False
 
     async def test_read_category_without_tenant_id_routes_to_default(
-        self,
-        router: TenantStoreRouter,
-        mock_default_store: MagicMock,
+        self, router: TenantStoreRouter, mock_default_store: MagicMock
     ) -> None:
-        """Test read_category without tenant routes to default store."""
         read_category_called = False
 
         def tracked_read_category(*args, **kwargs):
@@ -93,9 +80,7 @@ class TestReadOperationsRouting:
         mock_dedicated_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        """Test event_exists checks all stores."""
         event_id = uuid4()
-
         mock_default_store.event_exists.return_value = False
         mock_dedicated_store.event_exists.return_value = True
 
@@ -107,7 +92,6 @@ class TestReadOperationsRouting:
         )
 
         result = await router.event_exists(event_id)
-
         assert result is True
         mock_default_store.event_exists.assert_called_once()
         mock_dedicated_store.event_exists.assert_called_once()
@@ -118,9 +102,7 @@ class TestReadOperationsRouting:
         mock_dedicated_store: MagicMock,
         mock_routing_repo: AsyncMock,
     ) -> None:
-        """Test event_exists returns False if event not in any store."""
         event_id = uuid4()
-
         mock_default_store.event_exists.return_value = False
         mock_dedicated_store.event_exists.return_value = False
 
@@ -132,29 +114,19 @@ class TestReadOperationsRouting:
         )
 
         result = await router.event_exists(event_id)
-
         assert result is False
 
     async def test_get_stream_version(
-        self,
-        router: TenantStoreRouter,
-        mock_default_store: MagicMock,
+        self, router: TenantStoreRouter, mock_default_store: MagicMock
     ) -> None:
-        """Test get_stream_version delegates to default store."""
         stream = sid()
-
         await router.get_stream_version(stream)
-
         mock_default_store.get_stream_version.assert_called_once_with(stream)
 
     async def test_current_position(
-        self,
-        router: TenantStoreRouter,
-        mock_default_store: MagicMock,
+        self, router: TenantStoreRouter, mock_default_store: MagicMock
     ) -> None:
-        """Test current_position delegates to default store."""
         result = await router.current_position()
-
         assert result == Position(store_id="default", key=(100,))
         mock_default_store.current_position.assert_called_once()
 
@@ -163,10 +135,8 @@ class TestStreamOperationsRouting:
     """Tests for read_all and read_stream routing."""
 
     async def test_read_all_routes_to_default_without_tenant(
-        self,
-        mock_routing_repo: AsyncMock,
+        self, mock_routing_repo: AsyncMock
     ) -> None:
-        """Test read_all without tenant routes to default store."""
         read_all_called = False
 
         def tracked_read_all(*args, **kwargs):
@@ -189,19 +159,15 @@ class TestStreamOperationsRouting:
         assert read_all_called is True
 
     async def test_read_all_routes_to_tenant_store_with_tenant_id(
-        self,
-        mock_routing_repo: AsyncMock,
+        self, mock_routing_repo: AsyncMock
     ) -> None:
-        """Test read_all with tenant_id routes to tenant's store."""
         tenant_id = uuid4()
-
         routing = TenantRouting(
             tenant_id=tenant_id,
             store_id="dedicated",
             migration_state=TenantMigrationState.NORMAL,
         )
         mock_routing_repo.get_routing.return_value = routing
-
         default_called = False
         dedicated_called = False
 
@@ -235,12 +201,9 @@ class TestStreamOperationsRouting:
         assert default_called is False
 
     async def test_read_stream_routes_to_default_without_tenant(
-        self,
-        mock_routing_repo: AsyncMock,
+        self, mock_routing_repo: AsyncMock
     ) -> None:
-        """Test read_stream without tenant routes to default store."""
         stream = sid()
-
         read_stream_called = False
 
         def tracked_read_stream(*args, **kwargs):
@@ -266,11 +229,7 @@ class TestStreamOperationsRouting:
 class TestConcurrentOperations:
     """Tests for concurrent operation handling."""
 
-    async def test_concurrent_pause_resume(
-        self,
-        router: TenantStoreRouter,
-    ) -> None:
-        """Test concurrent pause/resume operations are safe."""
+    async def test_concurrent_pause_resume(self, router: TenantStoreRouter) -> None:
         tenant_id = uuid4()
 
         async def pause_resume():
@@ -278,25 +237,15 @@ class TestConcurrentOperations:
             await asyncio.sleep(0.001)
             await router.resume_writes(tenant_id)
 
-        # Run multiple concurrent pause/resume cycles
         tasks = [asyncio.create_task(pause_resume()) for _ in range(10)]
         await asyncio.gather(*tasks)
-
-        # Should end in unparsed state
         assert router.is_paused(tenant_id) is False
 
-    async def test_concurrent_store_registration(
-        self,
-        router: TenantStoreRouter,
-    ) -> None:
-        """Test concurrent store registration is safe."""
-
+    async def test_concurrent_store_registration(self, router: TenantStoreRouter) -> None:
         def register_stores():
             for i in range(100):
                 mock_store = create_mock_store(store_id=f"store-{i}")
                 router.register_store(f"store-{i}", mock_store)
 
-        # Run in executor to simulate concurrency
         register_stores()
-
         assert len(router.list_stores()) >= 100

@@ -23,10 +23,6 @@ from eventsource.ports.migration.models import (
     TenantRouting,
 )
 
-# =============================================================================
-# In-Memory Repository Implementations
-# =============================================================================
-
 
 class InMemoryMigrationRepository:
     """In-memory implementation of MigrationRepository for testing."""
@@ -36,7 +32,6 @@ class InMemoryMigrationRepository:
         self._by_tenant: dict[UUID, UUID] = {}
 
     async def create(self, migration: Migration) -> UUID:
-        """Create a new migration record."""
         existing = await self.get_by_tenant(migration.tenant_id)
         if existing is not None:
             raise MigrationAlreadyExistsError(migration.tenant_id, existing.id)
@@ -48,11 +43,9 @@ class InMemoryMigrationRepository:
         return migration.id
 
     async def get(self, migration_id: UUID) -> Migration | None:
-        """Get a migration by ID."""
         return self._migrations.get(migration_id)
 
     async def get_by_tenant(self, tenant_id: UUID) -> Migration | None:
-        """Get the active migration for a tenant."""
         migration_id = self._by_tenant.get(tenant_id)
         if migration_id is None:
             return None
@@ -62,7 +55,6 @@ class InMemoryMigrationRepository:
         return migration
 
     async def update_phase(self, migration_id: UUID, new_phase: MigrationPhase) -> None:
-        """Update migration phase with validation."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
@@ -80,11 +72,7 @@ class InMemoryMigrationRepository:
             migration.dual_write_started_at = now
         elif new_phase == MigrationPhase.CUTOVER:
             migration.cutover_started_at = now
-        elif new_phase in (
-            MigrationPhase.COMPLETED,
-            MigrationPhase.ABORTED,
-            MigrationPhase.FAILED,
-        ):
+        elif new_phase.is_terminal:
             migration.completed_at = now
 
     async def update_progress(
@@ -94,7 +82,6 @@ class InMemoryMigrationRepository:
         last_source_position: Position | None,
         last_target_position: Position | None = None,
     ) -> None:
-        """Update bulk copy progress."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
@@ -105,7 +92,6 @@ class InMemoryMigrationRepository:
         migration.updated_at = datetime.now(UTC)
 
     async def set_events_total(self, migration_id: UUID, events_total: int) -> None:
-        """Set the total events count."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
@@ -113,7 +99,6 @@ class InMemoryMigrationRepository:
         migration.updated_at = datetime.now(UTC)
 
     async def record_error(self, migration_id: UUID, error: str) -> None:
-        """Record an error occurrence."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
@@ -124,7 +109,6 @@ class InMemoryMigrationRepository:
         migration.updated_at = now
 
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
-        """Set migration pause state."""
         migration = await self.get(migration_id)
         if migration is None:
             raise MigrationNotFoundError(migration_id)
@@ -135,7 +119,6 @@ class InMemoryMigrationRepository:
         migration.updated_at = now
 
     async def list_active(self) -> list[Migration]:
-        """List all active migrations."""
         return [m for m in self._migrations.values() if not m.phase.is_terminal]
 
 
@@ -146,11 +129,9 @@ class InMemoryRoutingRepository:
         self._routing: dict[UUID, TenantRouting] = {}
 
     async def get_routing(self, tenant_id: UUID) -> TenantRouting | None:
-        """Get routing configuration for a tenant."""
         return self._routing.get(tenant_id)
 
     async def get_or_default(self, tenant_id: UUID, default_store_id: str) -> TenantRouting:
-        """Get routing configuration, creating default if not exists."""
         existing = await self.get_routing(tenant_id)
         if existing is not None:
             return existing
@@ -166,7 +147,6 @@ class InMemoryRoutingRepository:
         return routing
 
     async def set_routing(self, tenant_id: UUID, store_id: str) -> None:
-        """Set or update the store for a tenant."""
         now = datetime.now(UTC)
         existing = self._routing.get(tenant_id)
         if existing:
@@ -187,7 +167,6 @@ class InMemoryRoutingRepository:
         state: TenantMigrationState,
         migration_id: UUID | None = None,
     ) -> None:
-        """Update the migration state for routing decisions."""
         routing = self._routing.get(tenant_id)
         now = datetime.now(UTC)
         if routing is None:
@@ -211,26 +190,17 @@ class InMemoryRoutingRepository:
         state: TenantMigrationState = TenantMigrationState.MIGRATED,
         migration_id: UUID | None = None,
     ) -> None:
-        """Atomically update store_id and migration_state for a tenant."""
         await self.set_routing(tenant_id, store_id)
         await self.set_migration_state(tenant_id, state, migration_id=migration_id)
 
     async def clear_migration_state(self, tenant_id: UUID) -> None:
-        """Reset migration state to NORMAL."""
         await self.set_migration_state(tenant_id, TenantMigrationState.NORMAL, migration_id=None)
 
     async def list_by_state(self, state: TenantMigrationState) -> list[TenantRouting]:
-        """List tenants in a specific migration state."""
         return [r for r in self._routing.values() if r.migration_state == state]
 
     async def list_by_store(self, store_id: str) -> list[TenantRouting]:
-        """List tenants routed to a specific store."""
         return [r for r in self._routing.values() if r.store_id == store_id]
-
-
-# =============================================================================
-# Mock Lock Implementations
-# =============================================================================
 
 
 @dataclass
@@ -260,13 +230,11 @@ class MockLockManager:
 
     @asynccontextmanager
     async def acquire(self, key: str, timeout: float | None = None) -> AsyncIterator[MockLockInfo]:
-        """Acquire advisory lock with potential failure injection."""
         self._acquire_count += 1
         if self._should_fail:
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure")
         if self._fail_after is not None and self._acquire_count > self._fail_after:
             raise LockAcquisitionError(key, timeout or 0.0, "Mock failure after threshold")
-        # Simulate lock contention
         if self._contention_delay > 0:
             await asyncio.sleep(self._contention_delay)
         async with self._lock:
@@ -281,7 +249,6 @@ class MockLockManager:
                 self._held_locks.pop(key, None)
 
     async def try_acquire(self, key: str) -> MockLockInfo | None:
-        """Try to acquire lock without blocking."""
         if self._should_fail:
             return None
         async with self._lock:
@@ -290,7 +257,6 @@ class MockLockManager:
             return MockLockInfo(key=key)
 
     async def release(self, key: str) -> bool:
-        """Release advisory lock."""
         async with self._lock:
             if key in self._held_locks:
                 del self._held_locks[key]
@@ -298,5 +264,4 @@ class MockLockManager:
             return False
 
     def is_locked(self, key: str) -> bool:
-        """Check if a key is currently locked."""
         return key in self._held_locks
