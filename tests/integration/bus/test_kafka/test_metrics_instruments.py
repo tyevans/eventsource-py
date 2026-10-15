@@ -36,6 +36,31 @@ pytestmark = [
 ]
 
 
+def _make_config(kafka_container: Any, prefix: str, group: str) -> KafkaEventBusConfig:
+    return KafkaEventBusConfig(
+        bootstrap_servers=kafka_container.get_bootstrap_server(),
+        topic_prefix=f"{prefix}-{uuid4().hex[:8]}",
+        consumer_group=f"{group}-{uuid4().hex[:8]}",
+        enable_metrics=True,
+        enable_tracing=False,
+    )
+
+
+async def _consume_until(bus: KafkaEventBus, handled: list[DomainEvent], target: int) -> None:
+    consume_task = asyncio.create_task(bus.start_consuming())
+    try:
+        for _ in range(50):
+            if len(handled) >= target:
+                break
+            await asyncio.sleep(0.1)
+    finally:
+        await bus.stop_consuming()
+        try:
+            await asyncio.wait_for(consume_task, timeout=5.0)
+        except TimeoutError:
+            consume_task.cancel()
+
+
 class TestKafkaHistogramIntegration:
     """Integration tests for histogram metrics with real Kafka."""
 
@@ -45,17 +70,7 @@ class TestKafkaHistogramIntegration:
         event_registry: EventRegistry,
         metrics_setup: Any,
     ) -> None:
-        """Test publish duration histogram records actual publish times."""
-        bootstrap_servers = kafka_container.get_bootstrap_server()
-
-        config = KafkaEventBusConfig(
-            bootstrap_servers=bootstrap_servers,
-            topic_prefix=f"test-histogram-publish-{uuid4().hex[:8]}",
-            consumer_group=f"test-histogram-group-{uuid4().hex[:8]}",
-            enable_metrics=True,
-            enable_tracing=False,
-        )
-
+        config = _make_config(kafka_container, "test-histogram-publish", "test-histogram-group")
         async with KafkaEventBus(config=config, event_registry=event_registry) as bus:
             for _ in range(3):
                 events: list[DomainEvent] = [
@@ -70,13 +85,9 @@ class TestKafkaHistogramIntegration:
                 await bus.publish(events)
 
         metrics_data = metrics_setup.get_metrics_data()
-
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.publish.duration"), (
-            "Publish duration histogram should have data"
-        )
-
+        assert _has_histogram_data(metrics_data, "kafka.eventbus.publish.duration")
         duration_sum = _get_histogram_sum(metrics_data, "kafka.eventbus.publish.duration")
-        assert duration_sum > 0, f"Expected positive duration sum, got {duration_sum}"
+        assert duration_sum > 0
 
     async def test_handler_duration_recorded(
         self,
@@ -84,17 +95,7 @@ class TestKafkaHistogramIntegration:
         event_registry: EventRegistry,
         metrics_setup: Any,
     ) -> None:
-        """Test handler duration histogram records actual execution times."""
-        bootstrap_servers = kafka_container.get_bootstrap_server()
-
-        config = KafkaEventBusConfig(
-            bootstrap_servers=bootstrap_servers,
-            topic_prefix=f"test-histogram-handler-{uuid4().hex[:8]}",
-            consumer_group=f"test-histogram-group-{uuid4().hex[:8]}",
-            enable_metrics=True,
-            enable_tracing=False,
-        )
-
+        config = _make_config(kafka_container, "test-histogram-handler", "test-histogram-group")
         handled_events: list[DomainEvent] = []
 
         async def slow_handler(event: DomainEvent) -> None:
@@ -103,39 +104,23 @@ class TestKafkaHistogramIntegration:
 
         async with KafkaEventBus(config=config, event_registry=event_registry) as bus:
             bus.subscribe(TestOrderCreated, slow_handler)
-
-            event = TestOrderCreated(
-                aggregate_id=uuid4(),
-                aggregate_version=1,
-                customer_id=uuid4(),
-                total_amount=100.0,
+            await bus.publish(
+                [
+                    TestOrderCreated(
+                        aggregate_id=uuid4(),
+                        aggregate_version=1,
+                        customer_id=uuid4(),
+                        total_amount=100.0,
+                    )
+                ]
             )
-            await bus.publish([event])
+            await _consume_until(bus, handled_events, 1)
 
-            consume_task = asyncio.create_task(bus.start_consuming())
-
-            try:
-                for _ in range(50):
-                    if len(handled_events) >= 1:
-                        break
-                    await asyncio.sleep(0.1)
-            finally:
-                await bus.stop_consuming()
-                try:
-                    await asyncio.wait_for(consume_task, timeout=5.0)
-                except TimeoutError:
-                    consume_task.cancel()
-
-        assert len(handled_events) >= 1, "Handler should have been called at least once"
-
+        assert len(handled_events) >= 1
         metrics_data = metrics_setup.get_metrics_data()
-
-        assert _has_histogram_data(metrics_data, "kafka.eventbus.handler.duration"), (
-            "Handler duration histogram should have data"
-        )
-
+        assert _has_histogram_data(metrics_data, "kafka.eventbus.handler.duration")
         duration_sum = _get_histogram_sum(metrics_data, "kafka.eventbus.handler.duration")
-        assert duration_sum > 0, f"Expected positive duration sum, got {duration_sum}"
+        assert duration_sum > 0
 
 
 class TestKafkaGaugeIntegration:
@@ -147,34 +132,19 @@ class TestKafkaGaugeIntegration:
         event_registry: EventRegistry,
         metrics_setup: Any,
     ) -> None:
-        """Test connection gauge is registered when connecting to Kafka."""
-        bootstrap_servers = kafka_container.get_bootstrap_server()
-
-        config = KafkaEventBusConfig(
-            bootstrap_servers=bootstrap_servers,
-            topic_prefix=f"test-gauge-conn-{uuid4().hex[:8]}",
-            consumer_group=f"test-gauge-group-{uuid4().hex[:8]}",
-            enable_metrics=True,
-            enable_tracing=False,
-        )
-
+        config = _make_config(kafka_container, "test-gauge-conn", "test-gauge-group")
         bus = KafkaEventBus(config=config, event_registry=event_registry)
-
         assert not bus.is_connected
         assert not bus._connection_gauge_registered
 
         await bus.connect()
         assert bus.is_connected
-
-        assert bus._connection_gauge_registered, (
-            "Connection gauge should be registered after connect"
-        )
+        assert bus._connection_gauge_registered
 
         metrics_data = metrics_setup.get_metrics_data()
-
         conn_status = _get_gauge_value(metrics_data, "kafka.eventbus.connections.active")
-        assert conn_status is not None, "Connection gauge should have a value"
-        assert conn_status in (0, 1), f"Connection gauge should be 0 or 1, got {conn_status}"
+        assert conn_status is not None
+        assert conn_status in (0, 1)
 
         await bus.disconnect()
         assert not bus.is_connected
@@ -185,17 +155,7 @@ class TestKafkaGaugeIntegration:
         event_registry: EventRegistry,
         metrics_setup: Any,
     ) -> None:
-        """Test consumer lag gauge is registered when consuming starts."""
-        bootstrap_servers = kafka_container.get_bootstrap_server()
-
-        config = KafkaEventBusConfig(
-            bootstrap_servers=bootstrap_servers,
-            topic_prefix=f"test-gauge-lag-{uuid4().hex[:8]}",
-            consumer_group=f"test-lag-group-{uuid4().hex[:8]}",
-            enable_metrics=True,
-            enable_tracing=False,
-        )
-
+        config = _make_config(kafka_container, "test-gauge-lag", "test-lag-group")
         handled_events: list[DomainEvent] = []
 
         async def handler(event: DomainEvent) -> None:
@@ -203,7 +163,6 @@ class TestKafkaGaugeIntegration:
 
         async with KafkaEventBus(config=config, event_registry=event_registry) as bus:
             bus.subscribe(TestOrderCreated, handler)
-
             events: list[DomainEvent] = [
                 TestOrderCreated(
                     aggregate_id=uuid4(),
@@ -214,21 +173,7 @@ class TestKafkaGaugeIntegration:
                 for i in range(10)
             ]
             await bus.publish(events)
-
-            consume_task = asyncio.create_task(bus.start_consuming())
-
-            try:
-                for _ in range(50):
-                    if len(handled_events) >= 5:
-                        break
-                    await asyncio.sleep(0.1)
-            finally:
-                await bus.stop_consuming()
-                try:
-                    await asyncio.wait_for(consume_task, timeout=5.0)
-                except TimeoutError:
-                    consume_task.cancel()
-
-            assert bus._lag_gauge_registered, "Lag gauge should be registered"
+            await _consume_until(bus, handled_events, 5)
+            assert bus._lag_gauge_registered
 
         _ = metrics_setup.get_metrics_data()

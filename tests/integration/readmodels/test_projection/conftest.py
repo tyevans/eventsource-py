@@ -21,8 +21,6 @@ if TYPE_CHECKING:
 
 
 class OrderCreated(DomainEvent):
-    """Test event for order creation."""
-
     aggregate_type: str = "Order"
     order_number: str
     customer_name: str
@@ -30,28 +28,20 @@ class OrderCreated(DomainEvent):
 
 
 class OrderShipped(DomainEvent):
-    """Test event for order shipping."""
-
     aggregate_type: str = "Order"
     tracking_number: str
 
 
 class OrderCancelled(DomainEvent):
-    """Test event for order cancellation."""
-
     aggregate_type: str = "Order"
     reason: str
 
 
 class OrderCompleted(DomainEvent):
-    """Test event for order completion (no handler defined - tests unhandled events)."""
-
     aggregate_type: str = "Order"
 
 
 class OrderSummary(ReadModel):
-    """Test read model for integration tests."""
-
     order_number: str
     customer_name: str
     status: str
@@ -70,8 +60,6 @@ def _new_order_summary(event: OrderCreated) -> OrderSummary:
 
 
 class OrderProjection(ReadModelProjection[OrderSummary]):
-    """Test projection for integration tests."""
-
     @handles(OrderCreated)
     async def _on_created(self, repo: Any, event: OrderCreated) -> None:
         await repo.save(_new_order_summary(event))
@@ -90,8 +78,6 @@ class OrderProjection(ReadModelProjection[OrderSummary]):
 
 
 class MixedHandlerProjection(ReadModelProjection[OrderSummary]):
-    """Test projection with mixed handler signatures (1-param and 2-param)."""
-
     events_without_repo: list[DomainEvent]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -108,8 +94,6 @@ class MixedHandlerProjection(ReadModelProjection[OrderSummary]):
 
 
 class FailingProjection(ReadModelProjection[OrderSummary]):
-    """Test projection that fails on specific events."""
-
     MAX_RETRIES = 1
     RETRY_BACKOFF_BASE = 0
 
@@ -146,19 +130,23 @@ async def _init_sqlite_engine(tmp_path: Any, db_name: str) -> tuple[Any, Any]:
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
+def _make_projection(cls: type[Any], session_factory: Any, **extra: Any) -> Any:
+    return cls(
+        session_factory=session_factory,
+        model_class=OrderSummary,
+        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
+        enable_tracing=False,
+        **extra,
+    )
+
+
 @pytest_asyncio.fixture
 async def postgresql_projection(
     postgres_engine: AsyncEngine,
     postgres_session_factory: async_sessionmaker[Any],
 ) -> AsyncIterator[OrderProjection]:
-    """Create projection with PostgreSQL backend."""
     await _reset_postgres_table(postgres_engine)
-    yield OrderProjection(
-        session_factory=postgres_session_factory,
-        model_class=OrderSummary,
-        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
-        enable_tracing=False,
-    )
+    yield _make_projection(OrderProjection, postgres_session_factory)
     await _drop_postgres_table(postgres_engine)
 
 
@@ -167,14 +155,8 @@ async def postgresql_mixed_projection(
     postgres_engine: AsyncEngine,
     postgres_session_factory: async_sessionmaker[Any],
 ) -> AsyncIterator[MixedHandlerProjection]:
-    """Create mixed handler projection with PostgreSQL backend."""
     await _reset_postgres_table(postgres_engine)
-    yield MixedHandlerProjection(
-        session_factory=postgres_session_factory,
-        model_class=OrderSummary,
-        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
-        enable_tracing=False,
-    )
+    yield _make_projection(MixedHandlerProjection, postgres_session_factory)
     await _drop_postgres_table(postgres_engine)
 
 
@@ -183,53 +165,29 @@ async def postgresql_failing_projection(
     postgres_engine: AsyncEngine,
     postgres_session_factory: async_sessionmaker[Any],
 ) -> AsyncIterator[FailingProjection]:
-    """Create failing projection with PostgreSQL backend."""
     await _reset_postgres_table(postgres_engine)
-    yield FailingProjection(
-        session_factory=postgres_session_factory,
-        model_class=OrderSummary,
-        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
-        dlq_repo=InMemoryDLQRepository(),
-        enable_tracing=False,
+    yield _make_projection(
+        FailingProjection, postgres_session_factory, dlq_repo=InMemoryDLQRepository()
     )
     await _drop_postgres_table(postgres_engine)
 
 
 @pytest_asyncio.fixture
 async def sqlite_projection(tmp_path: Any) -> AsyncIterator[OrderProjection]:
-    """Create projection with SQLite backend."""
     engine, session_factory = await _init_sqlite_engine(tmp_path, "test_projection.db")
-    yield OrderProjection(
-        session_factory=session_factory,
-        model_class=OrderSummary,
-        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
-        enable_tracing=False,
-    )
+    yield _make_projection(OrderProjection, session_factory)
     await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def sqlite_mixed_projection(tmp_path: Any) -> AsyncIterator[MixedHandlerProjection]:
-    """Create mixed handler projection with SQLite backend."""
     engine, session_factory = await _init_sqlite_engine(tmp_path, "test_mixed_projection.db")
-    yield MixedHandlerProjection(
-        session_factory=session_factory,
-        model_class=OrderSummary,
-        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
-        enable_tracing=False,
-    )
+    yield _make_projection(MixedHandlerProjection, session_factory)
     await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def sqlite_failing_projection(tmp_path: Any) -> AsyncIterator[FailingProjection]:
-    """Create failing projection with SQLite backend."""
     engine, session_factory = await _init_sqlite_engine(tmp_path, "test_failing_projection.db")
-    yield FailingProjection(
-        session_factory=session_factory,
-        model_class=OrderSummary,
-        checkpoint_repo=InMemoryCheckpointRepository(enable_tracing=False),
-        dlq_repo=InMemoryDLQRepository(),
-        enable_tracing=False,
-    )
+    yield _make_projection(FailingProjection, session_factory, dlq_repo=InMemoryDLQRepository())
     await engine.dispose()

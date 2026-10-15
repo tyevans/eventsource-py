@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -35,34 +35,34 @@ from tests.unit.application.migration.test_load_benchmarks._repositories import 
 )
 
 
+async def _measure_appends(store_or_interceptor, tenant_id: UUID, count: int) -> list[float]:
+    latencies: list[float] = []
+    for _ in range(count):
+        aggregate_id = uuid4()
+        event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
+        start = time.monotonic()
+        await store_or_interceptor.append(
+            StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
+            [event],
+            ExpectedVersion.no_stream(),
+        )
+        latencies.append((time.monotonic() - start) * 1000)
+    return latencies
+
+
 class TestPerformanceRegression:
     """Regression tests to catch performance degradation."""
 
     @pytest.mark.asyncio
     async def test_event_store_append_regression(self) -> None:
-        """Ensure InMemoryEventStore append performance hasn't regressed."""
         store = InMemoryEventStore(event_registry=_REGISTRY)
-        tenant_id = uuid4()
-        latencies: list[float] = []
-
-        for _ in range(1_000):
-            aggregate_id = uuid4()
-            event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
-            start = time.monotonic()
-            await store.append(
-                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
-            latencies.append((time.monotonic() - start) * 1000)
-            result = LatencyResult.from_samples("event_store_append_regression", latencies)
-
+        latencies = await _measure_appends(store, uuid4(), 1_000)
+        result = LatencyResult.from_samples("event_store_append_regression", latencies)
         assert result.mean_ms < 0.5
         assert result.p95_ms < 1.0
 
     @pytest.mark.asyncio
     async def test_event_store_read_all_regression(self) -> None:
-        """Ensure InMemoryEventStore read_all performance hasn't regressed."""
         store = InMemoryEventStore(event_registry=_REGISTRY)
         tenant_id = uuid4()
         await create_test_events(store, tenant_id, 10_000)
@@ -83,7 +83,6 @@ class TestPerformanceRegression:
 
     @pytest.mark.asyncio
     async def test_dual_write_regression(self) -> None:
-        """Ensure DualWriteInterceptor performance hasn't regressed."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
         tenant_id = uuid4()
@@ -93,19 +92,7 @@ class TestPerformanceRegression:
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-        latencies: list[float] = []
-
-        for _ in range(500):
-            aggregate_id = uuid4()
-            event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id)
-            start = time.monotonic()
-            await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
-            latencies.append((time.monotonic() - start) * 1000)
-
+        latencies = await _measure_appends(interceptor, tenant_id, 500)
         result = LatencyResult.from_samples("dual_write_regression", latencies)
         assert result.mean_ms < 1.0
         assert result.p95_ms < 2.0
@@ -116,12 +103,7 @@ class TestBenchmarkSummary:
 
     @pytest.mark.asyncio
     async def test_generate_benchmark_summary(self) -> None:
-        """Run a quick benchmark suite and print summary."""
-        summary: list[str] = [
-            "\n" + "=" * 60,
-            "Migration System Benchmark Summary",
-            "=" * 60,
-        ]
+        summary: list[str] = ["\n" + "=" * 60, "Migration System Benchmark Summary", "=" * 60]
         tenant_id = uuid4()
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = InMemoryEventStore(event_registry=_REGISTRY)
@@ -158,27 +140,14 @@ class TestBenchmarkSummary:
             ]
         )
 
-        source_store2 = InMemoryEventStore(event_registry=_REGISTRY)
-        target_store2 = InMemoryEventStore(event_registry=_REGISTRY)
         tenant_id2 = uuid4()
         interceptor = DualWriteInterceptor(
-            source_store=source_store2,
-            target_store=target_store2,
+            source_store=InMemoryEventStore(event_registry=_REGISTRY),
+            target_store=InMemoryEventStore(event_registry=_REGISTRY),
             tenant_id=tenant_id2,
             enable_tracing=False,
         )
-        dual_write_times: list[float] = []
-        for _ in range(200):
-            aggregate_id = uuid4()
-            event = BenchmarkEvent(aggregate_id=aggregate_id, tenant_id=tenant_id2)
-            start = time.monotonic()
-            await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="BenchmarkAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
-            dual_write_times.append((time.monotonic() - start) * 1000)
-
+        dual_write_times = await _measure_appends(interceptor, tenant_id2, 200)
         dual_result = LatencyResult.from_samples("dual_write", dual_write_times)
         summary.extend(
             [
@@ -195,14 +164,15 @@ class TestBenchmarkSummary:
         pos_migration_id = uuid4()
         now = datetime.now(UTC)
         for i in range(1_000):
-            mapping = PositionMapping(
-                migration_id=pos_migration_id,
-                source_position=src_pos(i * 10),
-                target_position=tgt_pos(i * 5),
-                event_id=uuid4(),
-                mapped_at=now,
+            await pos_repo.create(
+                PositionMapping(
+                    migration_id=pos_migration_id,
+                    source_position=src_pos(i * 10),
+                    target_position=tgt_pos(i * 5),
+                    event_id=uuid4(),
+                    mapped_at=now,
+                )
             )
-            await pos_repo.create(mapping)
 
         pos_times: list[float] = []
         for i in range(100):
@@ -219,12 +189,6 @@ class TestBenchmarkSummary:
                 f"  Mean: {pos_result.mean_ms:.3f}ms",
                 f"  P95: {pos_result.p95_ms:.3f}ms",
                 "\n" + "=" * 60,
-                "Performance Targets:",
-                "  Bulk copy: > 10K events/s",
-                "  Dual-write overhead: < 5%",
-                "  Cutover duration: < 100ms p95",
-                "  Memory: < 500MB for 10M events",
-                "=" * 60 + "\n",
             ]
         )
         print("\n".join(summary))
