@@ -79,20 +79,12 @@ class CutoverExecutionMixin:
                     lock_key, timeout=self._lock_acquisition_timeout
                 ):
                     result = await self._execute_cutover_locked(
-                        migration_id,
-                        tenant_id,
-                        lag_tracker,
-                        target_store_id,
-                        cfg,
-                        eff_timeout,
-                        since,
-                    )
+                        migration_id, tenant_id, lag_tracker, target_store_id, cfg, eff_timeout, since
+                    )  # fmt: skip
             except LockAcquisitionError as e:
                 logger.warning("Failed to acquire cutover lock for tenant %s: %s", tenant_id, e)
                 err = f"Failed to acquire cutover lock: {e}"
-                result = CutoverResult(
-                    success=False, duration_ms=0.0, error_message=err, rolled_back=False
-                )
+                result = CutoverResult(False, 0.0, error_message=err, rolled_back=False)
             get_migration_metrics(str(migration_id), str(tenant_id)).record_cutover_duration(
                 result.duration_ms, success=result.success
             )
@@ -108,9 +100,7 @@ class CutoverExecutionMixin:
         timeout_ms: float,
         since: Position | None,
     ) -> CutoverResult:
-        """Execute the cutover sequence while holding the advisory lock."""
-        start_time = time.perf_counter()
-        events_synced = 0
+        start_time, events_synced = time.perf_counter(), 0
         source_routing = await self._routing_repo.get_routing(tenant_id)
         source_store_id = source_routing.store_id if source_routing else None
 
@@ -121,10 +111,8 @@ class CutoverExecutionMixin:
             lag = lag_tracker.current_lag
             if lag is None:
                 raise CutoverError(
-                    "Unable to calculate sync lag",
-                    migration_id=migration_id,
-                    reason="lag_calculation_failed",
-                )
+                    "Unable to calculate sync lag", migration_id=migration_id, reason="lag_calculation_failed"
+                )  # fmt: skip
             max_lag = config.cutover_max_lag_events
             if not lag.is_within_threshold(max_lag):
                 raise CutoverLagError(migration_id, lag.events, max_lag)
@@ -135,8 +123,7 @@ class CutoverExecutionMixin:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             if elapsed_ms >= timeout_ms:
                 raise CutoverTimeoutError(migration_id, elapsed_ms, timeout_ms)
-            remaining_ms = max(0, timeout_ms - elapsed_ms - 10)
-            if remaining_ms > 0:
+            if (remaining_ms := max(0.0, timeout_ms - elapsed_ms - 10)) > 0:
                 await asyncio.sleep(min(remaining_ms / 1000, 0.010))
             await lag_tracker.calculate_lag(since=since)
             if lag_tracker.current_lag:
@@ -145,41 +132,30 @@ class CutoverExecutionMixin:
             if elapsed_ms >= timeout_ms:
                 raise CutoverTimeoutError(migration_id, elapsed_ms, timeout_ms)
             try:
-                target_store = self._router.get_store(target_store_id)
-                if target_store is not None:
+                if (target_store := self._router.get_store(target_store_id)) is not None:
                     await target_store.current_position()
                 else:
                     logger.warning("Target store %s not found in router registry", target_store_id)
             except Exception as e:
                 raise CutoverError(
-                    f"Target store health check failed: {e}",
-                    migration_id=migration_id,
-                    reason="target_health_check_failed",
-                ) from e
+                    f"Target store health check failed: {e}", migration_id=migration_id, reason="target_health_check_failed"
+                ) from e  # fmt: skip
 
             await self._routing_repo.switch_routing(
-                tenant_id,
-                target_store_id,
-                state=TenantMigrationState.MIGRATED,
-                migration_id=migration_id,
-            )
+                tenant_id, target_store_id, state=TenantMigrationState.MIGRATED, migration_id=migration_id
+            )  # fmt: skip
             self._router.clear_dual_write_interceptor(tenant_id)
             final_ms = (time.perf_counter() - start_time) * 1000
             msg = "Cutover completed for tenant %s in %.2fms (synced %d events)"
             logger.info(msg, tenant_id, final_ms, events_synced)
             return CutoverResult(success=True, duration_ms=final_ms, events_synced=events_synced)
         except Exception as e:
-            duration_ms = (
-                e.elapsed_ms
-                if isinstance(e, CutoverTimeoutError)
-                else (time.perf_counter() - start_time) * 1000
-            )
+            elapsed = (time.perf_counter() - start_time) * 1000
+            duration_ms = e.elapsed_ms if isinstance(e, CutoverTimeoutError) else elapsed
             if isinstance(e, CutoverTimeoutError):
-                msg_fmt = "Cutover timeout for tenant %s: %.2fms exceeded %.2fms"
-                logger.warning(msg_fmt, tenant_id, e.elapsed_ms, e.timeout_ms)
+                logger.warning("Cutover timeout for tenant %s: %.2fms exceeded %.2fms", tenant_id, e.elapsed_ms, e.timeout_ms)  # fmt: skip
             elif isinstance(e, CutoverLagError):
-                msg_fmt = "Cutover failed for tenant %s: lag too high (%d > %d)"
-                logger.warning(msg_fmt, tenant_id, e.current_lag, e.max_lag)
+                logger.warning("Cutover failed for tenant %s: lag too high (%d > %d)", tenant_id, e.current_lag, e.max_lag)  # fmt: skip
             elif isinstance(e, CutoverError):
                 logger.error("Cutover error for tenant %s: %s", tenant_id, e)
             else:

@@ -2,11 +2,6 @@
 
 Pure boundary interfaces: stdlib, typing, uuid, datetime, dataclasses only.
 No sqlalchemy, no observability, no implementation code.
-
-The contract splits along its two real consumer groups (ISP, ADR 0019):
-subscription runners persist an opaque global position; projections persist
-a checkpoint plus lag metadata. Both land in one table in the SQL adapter,
-which is why the composed `CheckpointRepository` exists.
 """
 
 from dataclasses import dataclass
@@ -19,18 +14,7 @@ from eventsource.ports.positions import Position
 
 @dataclass(frozen=True)
 class CheckpointData:
-    """
-    Data structure for checkpoint information.
-
-    Attributes:
-        projection_name: Name of the projection
-        last_event_id: Last processed event ID
-        last_event_type: Type of the last processed event
-        last_processed_at: When the last event was processed
-        events_processed: Total count of events processed
-        position: Last processed global-feed position, as an opaque token.
-            None when no position has been recorded.
-    """
+    """Data structure for checkpoint information."""
 
     projection_name: str
     last_event_id: UUID | None = None
@@ -42,17 +26,7 @@ class CheckpointData:
 
 @dataclass(frozen=True)
 class LagMetrics:
-    """
-    Data structure for projection lag metrics.
-
-    Attributes:
-        projection_name: Name of the projection
-        last_event_id: Last event ID processed by the projection
-        latest_event_id: Latest relevant event ID in the event store
-        lag_seconds: Time lag in seconds (0 if up to date)
-        events_processed: Total events processed by this projection
-        last_processed_at: When the projection last processed an event
-    """
+    """Data structure for projection lag metrics."""
 
     projection_name: str
     last_event_id: str | None = None
@@ -67,15 +41,7 @@ class ProjectionCheckpoints(Protocol):
     """Checkpoint persistence for projections: position, lag, reset."""
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
-        """
-        Get the last processed event ID for a projection.
-
-        Args:
-            projection_name: Name of the projection
-
-        Returns:
-            Last processed event ID, or None if no checkpoint exists
-        """
+        """Get the last processed event ID for a projection, or None if none exists."""
         ...
 
     async def update_checkpoint(
@@ -84,27 +50,11 @@ class ProjectionCheckpoints(Protocol):
         event_id: UUID,
         event_type: str,
     ) -> None:
-        """
-        Update the checkpoint for a projection.
-
-        Uses UPSERT pattern for idempotency - safe to call multiple times.
-
-        Args:
-            projection_name: Name of the projection
-            event_id: Event ID that was processed
-            event_type: Type of event processed
-        """
+        """Update the checkpoint for a projection (idempotent UPSERT)."""
         ...
 
     async def reset_checkpoint(self, projection_name: str) -> None:
-        """
-        Reset the checkpoint for a projection.
-
-        Used when rebuilding a projection from scratch.
-
-        Args:
-            projection_name: Name of the projection
-        """
+        """Reset the checkpoint for a projection when rebuilding from scratch."""
         ...
 
     async def get_lag_metrics(
@@ -112,29 +62,11 @@ class ProjectionCheckpoints(Protocol):
         projection_name: str,
         event_types: list[str] | None = None,
     ) -> LagMetrics | None:
-        """
-        Get lag metrics for a projection.
-
-        Compares the checkpoint against the latest relevant events to
-        determine how far behind the projection is.
-
-        Args:
-            projection_name: Name of the projection
-            event_types: List of event types this projection handles.
-                        Used to filter relevant events for lag calculation.
-
-        Returns:
-            LagMetrics if checkpoint exists, None otherwise
-        """
+        """Get lag metrics for a projection, or None if no checkpoint exists."""
         ...
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
-        """
-        Get all projection checkpoints.
-
-        Returns:
-            List of CheckpointData for all projections
-        """
+        """Get all projection checkpoints."""
         ...
 
 
@@ -143,19 +75,7 @@ class SubscriptionPositions(Protocol):
     """Opaque global-feed position persistence for subscription runners."""
 
     async def get_position(self, subscription_id: str) -> Position | None:
-        """
-        Get last processed global-feed position for a subscription.
-
-        The position is an opaque token: implementations store and return
-        it verbatim and never interpret its contents.
-
-        Args:
-            subscription_id: Identifier for the subscription (typically projection name)
-
-        Returns:
-            Last processed position, or None both when no checkpoint exists
-            and when the stored row predates position tokens.
-        """
+        """Get last processed global-feed position for a subscription, or None."""
         ...
 
     async def save_position(
@@ -165,19 +85,7 @@ class SubscriptionPositions(Protocol):
         event_id: UUID,
         event_type: str,
     ) -> None:
-        """
-        Save checkpoint with an opaque global-feed position.
-
-        Updates the position, event_id, and event_type for the checkpoint.
-        Uses UPSERT pattern for idempotency. The position is persisted
-        verbatim; implementations do not validate its `store_id`.
-
-        Args:
-            subscription_id: Identifier for the subscription (typically projection name)
-            position: Opaque global-feed position of the event
-            event_id: Event ID that was processed
-            event_type: Type of event processed
-        """
+        """Save checkpoint with an opaque global-feed position (idempotent UPSERT)."""
         ...
 
 
