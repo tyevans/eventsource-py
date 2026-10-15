@@ -1,7 +1,7 @@
 ---
 id: TASK-0329
 title: "Compact 9 src modules at 237-239 lines below 220 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

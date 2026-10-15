@@ -1,7 +1,7 @@
 ---
 id: TASK-0331
 title: "Compact 9 test modules at 272-273 lines below 245 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

@@ -1,7 +1,7 @@
 ---
 id: TASK-0335
 title: "Default RecordingEventBus wrapped bus to InMemoryEventBus and add __len__"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

@@ -1,7 +1,7 @@
 ---
 id: TASK-0334
 title: "Optimize SubscriberRegistry O(1) lookup by event type and variadic register()"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

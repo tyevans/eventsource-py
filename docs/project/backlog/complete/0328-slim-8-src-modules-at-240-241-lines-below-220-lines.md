@@ -1,7 +1,7 @@
 ---
 id: TASK-0328
 title: "Compact 8 src modules at 240-241 lines below 220 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
