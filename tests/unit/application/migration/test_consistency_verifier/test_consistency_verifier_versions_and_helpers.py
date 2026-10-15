@@ -18,48 +18,38 @@ from tests.unit.application.migration.test_consistency_verifier._fixtures import
 )
 
 
+@pytest.fixture
+def tenant_id() -> UUID:
+    return uuid4()
+
+
+@pytest.fixture
+def source_store() -> AsyncMock:
+    return AsyncMock()
+
+
+@pytest.fixture
+def target_store() -> AsyncMock:
+    return AsyncMock()
+
+
+def _create_events(count: int, tenant_id: UUID, aggregate_id: UUID) -> list[EventEnvelope]:
+    """Create a list of EventEnvelope instances."""
+    stream_id = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+    return [
+        EventEnvelope(
+            event=TestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, value=f"test_{i}"),
+            stream_id=stream_id,
+            stream_version=i + 1,
+            position=None,
+            stored_at=datetime.now(UTC),
+        )
+        for i in range(count)
+    ]
+
+
 class TestConsistencyVerifierSampling:
     """Tests for sampling functionality."""
-
-    @pytest.fixture
-    def tenant_id(self) -> UUID:
-        """Create a tenant ID for testing."""
-        return uuid4()
-
-    @pytest.fixture
-    def source_store(self) -> AsyncMock:
-        """Create a mock source store."""
-        return AsyncMock()
-
-    @pytest.fixture
-    def target_store(self) -> AsyncMock:
-        """Create a mock target store."""
-        return AsyncMock()
-
-    def _create_events(
-        self,
-        count: int,
-        tenant_id: UUID,
-        aggregate_id: UUID,
-    ) -> list[EventEnvelope]:
-        """Create a list of EventEnvelope instances."""
-        events = []
-        stream_id = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-        for i in range(count):
-            event = TestEvent(
-                aggregate_id=aggregate_id,
-                tenant_id=tenant_id,
-                value=f"test_{i}",
-            )
-            envelope = EventEnvelope(
-                event=event,
-                stream_id=stream_id,
-                stream_version=i + 1,
-                position=None,
-                stored_at=datetime.now(UTC),
-            )
-            events.append(envelope)
-        return events
 
     @pytest.mark.asyncio
     async def test_sampling_reduces_verification(
@@ -69,8 +59,7 @@ class TestConsistencyVerifierSampling:
         target_store: AsyncMock,
     ) -> None:
         """Test that sampling verifies only a subset of events."""
-        agg_id = uuid4()
-        events = self._create_events(100, tenant_id, agg_id)
+        events = _create_events(100, tenant_id, uuid4())
 
         async def generator(from_position, options):
             for event in events:
@@ -78,7 +67,6 @@ class TestConsistencyVerifierSampling:
 
         source_store.read_all = generator
         target_store.read_all = generator
-
         verifier = ConsistencyVerifier(
             source_store=source_store,
             target_store=target_store,
@@ -92,52 +80,11 @@ class TestConsistencyVerifierSampling:
         )
 
         assert report.sample_percentage == 10.0
-        # Should still be consistent (same events)
         assert report.is_consistent is True
 
 
 class TestConsistencyVerifierAggregateVersions:
     """Tests for verify_aggregate_versions() method."""
-
-    @pytest.fixture
-    def tenant_id(self) -> UUID:
-        """Create a tenant ID for testing."""
-        return uuid4()
-
-    @pytest.fixture
-    def source_store(self) -> AsyncMock:
-        """Create a mock source store."""
-        return AsyncMock()
-
-    @pytest.fixture
-    def target_store(self) -> AsyncMock:
-        """Create a mock target store."""
-        return AsyncMock()
-
-    def _create_events(
-        self,
-        count: int,
-        tenant_id: UUID,
-        aggregate_id: UUID,
-    ) -> list[EventEnvelope]:
-        """Create a list of EventEnvelope instances."""
-        events = []
-        stream_id = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
-        for i in range(count):
-            event = TestEvent(
-                aggregate_id=aggregate_id,
-                tenant_id=tenant_id,
-                value=f"test_{i}",
-            )
-            envelope = EventEnvelope(
-                event=event,
-                stream_id=stream_id,
-                stream_version=i + 1,
-                position=None,
-                stored_at=datetime.now(UTC),
-            )
-            events.append(envelope)
-        return events
 
     @pytest.mark.asyncio
     async def test_verify_aggregate_versions_match(
@@ -147,8 +94,7 @@ class TestConsistencyVerifierAggregateVersions:
         target_store: AsyncMock,
     ) -> None:
         """Test verify_aggregate_versions when all match."""
-        agg_id = uuid4()
-        events = self._create_events(5, tenant_id, agg_id)
+        events = _create_events(5, tenant_id, uuid4())
 
         async def generator(from_position, options):
             for event in events:
@@ -156,7 +102,6 @@ class TestConsistencyVerifierAggregateVersions:
 
         source_store.read_all = generator
         target_store.read_all = generator
-
         verifier = ConsistencyVerifier(
             source_store=source_store,
             target_store=target_store,
@@ -177,8 +122,8 @@ class TestConsistencyVerifierAggregateVersions:
     ) -> None:
         """Test verify_aggregate_versions with version mismatch."""
         agg_id = uuid4()
-        source_events = self._create_events(10, tenant_id, agg_id)
-        target_events = self._create_events(8, tenant_id, agg_id)
+        source_events = _create_events(10, tenant_id, agg_id)
+        target_events = _create_events(8, tenant_id, agg_id)
 
         async def source_generator(from_position, options):
             for event in source_events:
@@ -190,7 +135,6 @@ class TestConsistencyVerifierAggregateVersions:
 
         source_store.read_all = source_generator
         target_store.read_all = target_generator
-
         verifier = ConsistencyVerifier(
             source_store=source_store,
             target_store=target_store,
@@ -208,21 +152,14 @@ class TestConsistencyVerifierHelperMethods:
 
     def test_compute_event_hash(self) -> None:
         """Test _compute_event_hash produces consistent hashes."""
-        tenant_id = uuid4()
         agg_id = uuid4()
-        event = TestEvent(
-            aggregate_id=agg_id,
-            tenant_id=tenant_id,
-            value="test",
-        )
         envelope = EventEnvelope(
-            event=event,
+            event=TestEvent(aggregate_id=agg_id, tenant_id=uuid4(), value="test"),
             stream_id=StreamId(aggregate_id=agg_id, category="TestAggregate"),
             stream_version=1,
             position=None,
             stored_at=datetime.now(UTC),
         )
-
         verifier = ConsistencyVerifier(
             source_store=MagicMock(),
             target_store=MagicMock(),
@@ -232,38 +169,14 @@ class TestConsistencyVerifierHelperMethods:
         hash1 = verifier._compute_event_hash(envelope)
         hash2 = verifier._compute_event_hash(envelope)
 
-        # Same event should produce same hash
         assert hash1 == hash2
-        # Hash should be 64 characters (SHA-256 hex)
         assert len(hash1) == 64
 
     def test_group_events_by_stream(self) -> None:
-        """Test _group_events_by_stream groups correctly.
-
-        Grouping key is `envelope.stream_id.render()` -- same wire format
-        as the legacy `stream_id` string.
-        """
+        """Test _group_events_by_stream groups correctly by stream_id.render()."""
         tenant_id = uuid4()
-        agg1_id = uuid4()
-        agg2_id = uuid4()
-
-        events = []
-        for agg_id in [agg1_id, agg2_id]:
-            stream_id = StreamId(aggregate_id=agg_id, category="TestAggregate")
-            for i in range(3):
-                event = TestEvent(
-                    aggregate_id=agg_id,
-                    tenant_id=tenant_id,
-                    value=f"test_{i}",
-                )
-                envelope = EventEnvelope(
-                    event=event,
-                    stream_id=stream_id,
-                    stream_version=i + 1,
-                    position=None,
-                    stored_at=datetime.now(UTC),
-                )
-                events.append(envelope)
+        agg1_id, agg2_id = uuid4(), uuid4()
+        events = _create_events(3, tenant_id, agg1_id) + _create_events(3, tenant_id, agg2_id)
 
         verifier = ConsistencyVerifier(
             source_store=MagicMock(),
@@ -286,12 +199,10 @@ class TestConsistencyVerifierHelperMethods:
             target_store=MagicMock(),
             enable_tracing=False,
         )
-
         source = [MagicMock() for _ in range(10)]
         target = [MagicMock() for _ in range(10)]
 
         sampled = verifier._sample_events(source, target, 100.0)
-
         assert len(sampled) == 10
 
     def test_sample_events_partial_sample(self) -> None:
@@ -301,15 +212,12 @@ class TestConsistencyVerifierHelperMethods:
             target_store=MagicMock(),
             enable_tracing=False,
         )
-
         source = [MagicMock() for _ in range(100)]
         target = [MagicMock() for _ in range(100)]
 
         sampled = verifier._sample_events(source, target, 10.0)
-
-        # Should have approximately 10 events (10%)
         assert len(sampled) >= 1
-        assert len(sampled) <= 15  # Allow some variance
+        assert len(sampled) <= 15
 
     def test_sample_events_mismatched_counts_returns_empty(self) -> None:
         """Test _sample_events returns empty when counts mismatch."""
@@ -318,28 +226,18 @@ class TestConsistencyVerifierHelperMethods:
             target_store=MagicMock(),
             enable_tracing=False,
         )
-
         source = [MagicMock() for _ in range(10)]
         target = [MagicMock() for _ in range(8)]
 
         sampled = verifier._sample_events(source, target, 100.0)
-
         assert len(sampled) == 0
 
 
 class TestConsistencyVerifierErrorHandling:
     """Tests for error handling."""
 
-    @pytest.fixture
-    def tenant_id(self) -> UUID:
-        """Create a tenant ID for testing."""
-        return uuid4()
-
     @pytest.mark.asyncio
-    async def test_verify_handles_store_error(
-        self,
-        tenant_id: UUID,
-    ) -> None:
+    async def test_verify_handles_store_error(self, tenant_id: UUID) -> None:
         """Test that store errors are wrapped in ConsistencyError."""
         source_store = AsyncMock()
         target_store = AsyncMock()
@@ -350,7 +248,6 @@ class TestConsistencyVerifierErrorHandling:
 
         source_store.read_all = error_generator
         target_store.read_all = error_generator
-
         verifier = ConsistencyVerifier(
             source_store=source_store,
             target_store=target_store,
