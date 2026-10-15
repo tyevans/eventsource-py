@@ -159,25 +159,32 @@ class TestTheFailureListIsBoundedAndSaysSo:
 
 
 class TestSingleProjectionAndSucceededReport:
-    async def test_replay_accepts_a_bare_single_projection(self) -> None:
+    async def test_replay_accepts_a_bare_single_projection_or_set(self) -> None:
         first, second = OrderPlaced(aggregate_id=uuid4()), OrderPlaced(aggregate_id=uuid4())
         store = await _store_with(first, second)
         projection = Collecting()
         report = await replay(store, projection)
         assert [e.event_id for e in projection.seen] == [first.event_id, second.event_id]
-        assert report.applied == 2 and report.succeeded is True
+        assert report.applied == 2 and report.total_processed == 2
+        assert report.succeeded is True and bool(report) is True
         report.raise_for_failures()
 
-    async def test_succeeded_and_raise_for_failures_when_retained_or_truncated(self) -> None:
-        poison = OrderPlaced(aggregate_id=uuid4())
-        store = await _store_with(poison)
+        left, right = Collecting(), Collecting()
+        set_report = await replay(store, {left, right})
+        assert len(left.seen) == 2 and len(right.seen) == 2 and bool(set_report) is True
+
+    async def test_succeeded_bool_total_processed_and_raise_for_failures(self) -> None:
+        good, poison = OrderPlaced(aggregate_id=uuid4()), OrderPlaced(aggregate_id=uuid4())
+        store = await _store_with(good, poison)
         failed_report = await replay(store, RejectsOne(poison.event_id))
         truncated_report = await replay(store, RejectsOne(poison.event_id), max_failures=0)
-        assert failed_report.succeeded is False
+        assert failed_report.applied == 1 and failed_report.failed == 1
+        assert failed_report.total_processed == 2
+        assert failed_report.succeeded is False and bool(failed_report) is False
         with pytest.raises(ReplayFailedError) as exc_info:
             failed_report.raise_for_failures()
         assert exc_info.value.failure.event_id == poison.event_id
         assert truncated_report.failures == () and truncated_report.failures_truncated == 1
-        assert truncated_report.succeeded is False
+        assert truncated_report.succeeded is False and bool(truncated_report) is False
         with pytest.raises(RuntimeError, match="1 truncated failure"):
             truncated_report.raise_for_failures()

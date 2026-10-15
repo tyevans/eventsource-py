@@ -78,6 +78,26 @@ class TestLoadFromHistory:
         assert aggregate.state.value == 15
         assert len(aggregate.uncommitted_events) == 1
 
+    def test_load_from_history_accepts_tuple_and_generator(self) -> None:
+        agg_id = uuid4()
+        events = (
+            CounterIncremented(
+                aggregate_id=agg_id, aggregate_type="Counter", aggregate_version=1, increment=10
+            ),
+            CounterDecremented(
+                aggregate_id=agg_id, aggregate_type="Counter", aggregate_version=2, decrement=4
+            ),
+        )
+        from_tuple = CounterAggregate(agg_id)
+        from_tuple.load_from_history(events)
+        from_gen = CounterAggregate(agg_id)
+        from_gen.load_from_history(e for e in events)
+
+        assert from_tuple.version == from_gen.version == 2
+        assert from_tuple.state is not None and from_gen.state is not None
+        assert from_tuple.state.value == from_gen.state.value == 6
+        assert not from_tuple.has_uncommitted_events and not from_gen.has_uncommitted_events
+
 
 class TestCommandMethods:
     """Tests for aggregate command methods."""
