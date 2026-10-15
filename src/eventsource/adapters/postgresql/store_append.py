@@ -1,8 +1,4 @@
-"""
-Append operations mixin for PostgreSQLEventStore.
-
-Provides append, outbox writing, and integrity error classification.
-"""
+"""Append operations mixin for PostgreSQLEventStore."""
 
 from __future__ import annotations
 
@@ -27,12 +23,12 @@ from eventsource.ports import (
     outbox_event_data,
 )
 
-# Constraint names from the canonical `adapters/sql/schemas/schemas/events.sql` (verified
-# against a live PostgreSQL 15 by introspecting `asyncpg.exceptions
-# .UniqueViolationError.constraint_name` on both conflict paths -- see
-# `_classify_integrity_error`).
 _EVENT_ID_UNIQUE_CONSTRAINT = "events_event_id_key"
 _AGGREGATE_VERSION_UNIQUE_CONSTRAINT = "uq_events_aggregate_version"
+_MAX_VERSION_SQL = text(
+    "SELECT COALESCE(MAX(version), 0) FROM events "
+    "WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type"
+)
 
 
 class PostgreSQLEventStoreAppendMixin:
@@ -44,24 +40,9 @@ class PostgreSQLEventStoreAppendMixin:
 
     async def _ensure_schema(self) -> None:
         """Ensures schema is initialized (implemented in PostgreSQLEventStore)."""
-        pass
 
     def _classify_integrity_error(self, e: IntegrityError) -> str | None:
-        """Classify an append `IntegrityError` by the real constraint name.
-
-        SQLAlchemy's asyncpg dialect wraps the driver exception in its own
-        DBAPI-compat `IntegrityError` (`e.orig`), which does not itself
-        carry `constraint_name`; the underlying `asyncpg.exceptions
-        .UniqueViolationError` (`e.orig.__cause__`) does. Verified against a
-        live PostgreSQL 15 server: `events_event_id_key` for the `event_id`
-        unique violation, `uq_events_aggregate_version` for the
-        `(aggregate_id, aggregate_type, version)` conflict.
-
-        Falls back to substring-matching the stringified exception only
-        when no `constraint_name` attribute is found on either the DBAPI
-        exception or its cause (e.g. a future driver/dialect change) --
-        this keeps the classification working, just less precisely.
-        """
+        """Classify an append `IntegrityError` by the real constraint name or substring fallback."""
         constraint_name = getattr(e.orig, "constraint_name", None) or getattr(
             getattr(e.orig, "__cause__", None), "constraint_name", None
         )
@@ -72,7 +53,6 @@ class PostgreSQLEventStoreAppendMixin:
         if constraint_name is not None:
             return None
 
-        # Fallback: no constraint_name available anywhere -- substring match.
         error_str = str(e).lower()
         if "event_id" in error_str:
             return "event_id"
@@ -93,21 +73,12 @@ class PostgreSQLEventStoreAppendMixin:
 
         await self._ensure_schema()
         category = stream.category
+        ver_params = {"aggregate_id": stream.aggregate_id, "aggregate_type": category}
 
         async with self._session_factory() as session:
             try:
-                result = await session.execute(
-                    text(
-                        """
-                        SELECT COALESCE(MAX(version), 0)
-                        FROM events
-                        WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type
-                        """
-                    ),
-                    {"aggregate_id": stream.aggregate_id, "aggregate_type": category},
-                )
+                result = await session.execute(_MAX_VERSION_SQL, ver_params)
                 current_version = result.scalar() or 0
-
                 check_expected(current_version, expected, stream)
 
                 seen_in_batch: set[UUID] = set()
@@ -125,17 +96,13 @@ class PostgreSQLEventStoreAppendMixin:
                     version += 1
                     insert_result = await session.execute(
                         text(
-                            """
-                            INSERT INTO events (
-                                event_id, event_type, aggregate_type, aggregate_id,
-                                tenant_id, actor_id, version, timestamp, payload, created_at
-                            )
-                            VALUES (
-                                :event_id, :event_type, :aggregate_type, :aggregate_id,
-                                :tenant_id, :actor_id, :version, :timestamp, :payload, NOW()
-                            )
-                            RETURNING global_position
-                            """
+                            "INSERT INTO events ("
+                            "event_id, event_type, aggregate_type, aggregate_id, "
+                            "tenant_id, actor_id, version, timestamp, payload, created_at"
+                            ") VALUES ("
+                            ":event_id, :event_type, :aggregate_type, :aggregate_id, "
+                            ":tenant_id, :actor_id, :version, :timestamp, :payload, NOW()"
+                            ") RETURNING global_position"
                         ),
                         {
                             "event_id": event.event_id,
@@ -167,16 +134,7 @@ class PostgreSQLEventStoreAppendMixin:
                         f"an event_id in this batch already exists in the store: {e}"
                     ) from e
                 if conflict == "aggregate_version":
-                    result = await session.execute(
-                        text(
-                            """
-                            SELECT COALESCE(MAX(version), 0)
-                            FROM events
-                            WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type
-                            """
-                        ),
-                        {"aggregate_id": stream.aggregate_id, "aggregate_type": category},
-                    )
+                    result = await session.execute(_MAX_VERSION_SQL, ver_params)
                     actual_version = result.scalar() or 0
                     raise OptimisticLockError(
                         stream.aggregate_id, describe_expected(expected), actual_version
@@ -189,42 +147,25 @@ class PostgreSQLEventStoreAppendMixin:
         event: DomainEvent,
         aggregate_type: str,
     ) -> None:
-        """Write one outbox row for `event`, on `session`, before commit.
-
-        Must run on the same `AsyncSession` as the
-        event `INSERT`, before `append`'s single `await session.commit()`
-        -- that is the atomicity guarantee the transactional outbox
-        pattern exists to provide. The outbox *reader* implements
-        `eventsource.ports.outbox.OutboxRepository`; the payload
-        shape (six keys, `payload` = `model_dump(mode="json")`) must
-        match what it expects exactly.
-        """
-        outbox_id = uuid4()
-        now = datetime.now(UTC)
-
-        event_data = outbox_event_data(event)
-
+        """Write one outbox row for `event`, on `session`, before commit."""
         await session.execute(
             text(
-                """
-                INSERT INTO event_outbox (
-                    id, event_id, event_type, aggregate_id, aggregate_type,
-                    tenant_id, event_data, created_at, status
-                )
-                VALUES (
-                    :id, :event_id, :event_type, :aggregate_id, :aggregate_type,
-                    :tenant_id, :event_data, :created_at, 'pending'
-                )
-                """
+                "INSERT INTO event_outbox ("
+                "id, event_id, event_type, aggregate_id, aggregate_type, "
+                "tenant_id, event_data, created_at, status"
+                ") VALUES ("
+                ":id, :event_id, :event_type, :aggregate_id, :aggregate_type, "
+                ":tenant_id, :event_data, :created_at, 'pending'"
+                ")"
             ),
             {
-                "id": outbox_id,
+                "id": uuid4(),
                 "event_id": event.event_id,
                 "event_type": event.event_type,
                 "aggregate_id": event.aggregate_id,
                 "aggregate_type": aggregate_type,
                 "tenant_id": str(event.tenant_id) if event.tenant_id else None,
-                "event_data": json_dumps(event_data),
-                "created_at": now,
+                "event_data": json_dumps(outbox_event_data(event)),
+                "created_at": datetime.now(UTC),
             },
         )

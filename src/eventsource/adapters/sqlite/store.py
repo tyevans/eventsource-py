@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class SQLiteEventStore:
-    """SQLite implementation of `FullEventStore` (single shared aiosqlite connection under `_lock`)."""
+    """SQLite implementation of `FullEventStore` (single shared connection under `_lock`)."""
 
     def __init__(
         self,
@@ -114,36 +114,29 @@ class SQLiteEventStore:
     ) -> p.AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
-        conn = await self._conn()
-        aid, category = str(stream.aggregate_id), stream.category
+        conn, aid, category = await self._conn(), str(stream.aggregate_id), stream.category
         async with self._lock:
             try:
                 current_version = await self._max_version(conn, aid, category)
                 check_expected(current_version, expected, stream)
-                seen_in_batch: set[UUID] = set()
+                seen: set[UUID] = set()
                 for event in events:
-                    if event.event_id in seen_in_batch:
+                    if event.event_id in seen:
                         msg = f"event_id {event.event_id} already exists in the store"
                         raise DuplicateEventError(msg)
-                    seen_in_batch.add(event.event_id)
+                    seen.add(event.event_id)
                 version, first_position, now = current_version, None, datetime.now(UTC).isoformat()
-                sql = (
-                    "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, "
-                    "tenant_id, actor_id, version, timestamp, payload, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                )
-                for event in events:
+                sql = "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, tenant_id, actor_id, version, timestamp, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                for ev in events:
                     version += 1
-                    eid, etype, actor = str(event.event_id), event.event_type, event.actor_id
-                    tid = str(event.tenant_id) if event.tenant_id else None
-                    occ = event.occurred_at.isoformat()
-                    payload = json_dumps(event.model_dump(mode="json"))
-                    vals = (eid, etype, category, aid, tid, actor, version, occ, payload, now)
-                    cursor = await conn.execute(sql, vals)
+                    tid = str(ev.tenant_id) if ev.tenant_id else None
+                    v1 = (str(ev.event_id), ev.event_type, category, aid, tid, ev.actor_id)
+                    ts, data = ev.occurred_at.isoformat(), json_dumps(ev.model_dump(mode="json"))
+                    cursor = await conn.execute(sql, (*v1, version, ts, data, now))
                     if first_position is None:
                         first_position = self._codec.encode(cursor.lastrowid or 0)
                     if self._outbox_enabled:
-                        await self._write_to_outbox(conn, event, category, now)
+                        await self._write_to_outbox(conn, ev, category, now)
                 await conn.commit()
                 return p.AppendResult(stream=stream, new_version=version, position=first_position)
             except aiosqlite.IntegrityError as e:
@@ -154,29 +147,21 @@ class SQLiteEventStore:
                     raise DuplicateEventError(msg) from e
                 if "unique" in err and ("aggregate_id" in err or "version" in err):
                     actual = await self._max_version(conn, aid, category)
-                    raise OptimisticLockError(
-                        stream.aggregate_id, describe_expected(expected), actual
-                    ) from e
+                    desc = describe_expected(expected)
+                    raise OptimisticLockError(stream.aggregate_id, desc, actual) from e
                 raise
             except BaseException:
                 await conn.rollback()
                 raise
 
-    async def _write_to_outbox(
-        self, conn: aiosqlite.Connection, event: DomainEvent, category: str, now: str
-    ) -> None:
+    async def _write_to_outbox(self, conn: Any, event: DomainEvent, cat: str, now: str) -> None:
         eid, aid = str(event.event_id), str(event.aggregate_id)
         tid = str(event.tenant_id) if event.tenant_id else None
         data = json_dumps(outbox_event_data(event))
-        await conn.execute(
-            "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
-            "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-            (str(uuid4()), eid, event.event_type, aid, category, tid, data, now),
-        )
+        sql = "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')"
+        await conn.execute(sql, (str(uuid4()), eid, event.event_type, aid, cat, tid, data, now))
 
-    async def _fetch_envelopes(
-        self, sql: str, params: Sequence[Any]
-    ) -> AsyncIterator[p.EventEnvelope]:
+    async def _fetch_envelopes(self, sql: str, params: Any) -> AsyncIterator[p.EventEnvelope]:
         conn = await self._conn()
         async with self._lock:
             rows = await (await conn.execute(sql, params)).fetchall()
@@ -200,16 +185,12 @@ class SQLiteEventStore:
             sql = "SELECT 1 FROM events WHERE event_id = ? LIMIT 1"
             return await (await conn.execute(sql, (str(event_id),))).fetchone() is not None
 
-    def read_all(
+    async def read_all(
         self, from_position: p.Position | None = None, options: p.FeedReadOptions | None = None
     ) -> AsyncIterator[p.EventEnvelope]:
-        return self._do_read_all(from_position, options or p.FeedReadOptions())
-
-    async def _do_read_all(
-        self, from_position: p.Position | None, options: p.FeedReadOptions
-    ) -> AsyncIterator[p.EventEnvelope]:
+        opts = options or p.FeedReadOptions()
         pos_val = self._codec.value_of(from_position) if from_position is not None else None
-        async for env in self._fetch_envelopes(*q.build_read_all_query(pos_val, options)):
+        async for env in self._fetch_envelopes(*q.build_read_all_query(pos_val, opts)):
             yield env
 
     async def current_position(self) -> p.Position | None:
