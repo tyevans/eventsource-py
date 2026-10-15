@@ -34,9 +34,13 @@ class TenantAccountOpened(TenantDomainEvent):
 
 def _make_store() -> InMemoryEventStore:
     reg = EventRegistry()
-    for evt in (dm.AccountOpened, dm.MoneyDeposited, TenantAccountOpened):
-        reg.register(evt)
-    for evt in (cm.CounterIncremented, cm.CounterDecremented):
+    for evt in (
+        dm.AccountOpened,
+        dm.MoneyDeposited,
+        TenantAccountOpened,
+        cm.CounterIncremented,
+        cm.CounterDecremented,
+    ):
         reg.register(evt)
     return InMemoryEventStore(event_registry=reg)
 
@@ -94,6 +98,17 @@ class TestAggregateRepositoryExecute:
         updated = await repo.execute(aid, dm.DepositMoney(account_id=aid, amount=75.0))
         assert (updated.state.balance, updated.version) == (75.0, 2)
 
+    async def test_execute_variadic_commands_applies_in_order_and_saves_once(self) -> None:
+        repo, aid = _account_repo(), uuid4()
+        agg = await repo.execute(
+            aid,
+            dm.OpenAccount(account_id=aid, owner="alice"),
+            dm.DepositMoney(account_id=aid, amount=50.0),
+            dm.DepositMoney(account_id=aid, amount=25.0),
+        )
+        assert (agg.state.is_open, agg.state.balance, agg.version) == (True, 75.0, 3)
+        assert not agg.has_uncommitted_events
+
     async def test_execute_create_if_missing_false_raises_when_missing(self) -> None:
         aid, cmd = uuid4(), dm.DepositMoney(account_id=uuid4(), amount=10.0)
         with pytest.raises(AggregateNotFoundError):
@@ -103,14 +118,12 @@ class TestAggregateRepositoryExecute:
         repo, aid = _counter_repo(), uuid4()
         created = await repo.execute(aid, lambda c: c.increment(5))
         assert created.state is not None and (created.state.value, created.version) == (5, 1)
-        assert not created.has_uncommitted_events
         updated = await repo.execute(aid, lambda c: c.decrement(2), create_if_missing=False)
         assert updated.state is not None and (updated.state.value, updated.version) == (3, 2)
 
     async def test_execute_callable_create_if_missing_false_raises_when_missing(self) -> None:
-        fn = lambda c: c.increment(1)  # noqa: E731
         with pytest.raises(AggregateNotFoundError):
-            await _counter_repo().execute(uuid4(), fn, create_if_missing=False)
+            await _counter_repo().execute(uuid4(), lambda c: c.increment(1), create_if_missing=False)  # fmt: skip
 
     async def test_execute_raises_type_error_for_non_executable_aggregate(self) -> None:
         with pytest.raises(TypeError, match="DeciderAggregate"):
@@ -124,11 +137,11 @@ class TestTenantAwareRepositoryExecute:
             agg = await repo.execute(aid, OpenTenantAccount(account_id=aid, tenant_id=tid))
             assert (agg.state.owner, agg.version) == ("alice", 1)
 
-    async def test_tenant_execute_callable_command(self) -> None:
+    async def test_tenant_execute_callable_and_variadic_commands(self) -> None:
         repo = TenantAwareRepository(_counter_repo(), require_tenant_context=True)
         async with tenant_scope(uuid4()):
-            agg = await repo.execute(uuid4(), lambda c: c.increment(10))
-            assert agg.state is not None and (agg.state.value, agg.version) == (10, 1)
+            agg = await repo.execute(uuid4(), lambda c: c.increment(10), lambda c: c.decrement(3))
+            assert agg.state is not None and (agg.state.value, agg.version) == (7, 2)
 
     async def test_tenant_execute_rejects_mismatched_tenant(self) -> None:
         repo, aid = _make_tenant_repo(require_tenant_context=False), uuid4()
@@ -137,69 +150,39 @@ class TestTenantAwareRepositoryExecute:
                 await repo.execute(aid, OpenTenantAccount(account_id=aid, tenant_id=uuid4()))
 
 
-class TestAggregateRepositoryGetOrNone:
-    async def test_get_or_none_returns_existing_aggregate(self) -> None:
-        repo, aid = _account_repo(), uuid4()
+class TestAggregateRepositoryGetOrNoneAndExists:
+    async def test_get_or_none_and_exists_when_present_and_missing(self) -> None:
+        repo, aid, missing = _account_repo(), uuid4(), uuid4()
+        assert await repo.get_or_none(missing) is None and await repo.exists(missing) is False
         await repo.execute(aid, dm.OpenAccount(account_id=aid, owner="alice"))
         found = await repo.get_or_none(aid)
         assert found is not None and (found.aggregate_id, found.version) == (aid, 1)
-        assert found.state.owner == "alice"
-
-    async def test_get_or_none_returns_none_when_not_found(self) -> None:
-        assert await _account_repo().get_or_none(uuid4()) is None
+        assert found.state.owner == "alice" and await repo.exists(aid) is True
 
 
-class TestTenantAwareRepositoryGetOrNone:
-    async def test_get_or_none_returns_existing_aggregate(self) -> None:
-        repo, tid, aid = _make_tenant_repo(), uuid4(), uuid4()
+class TestTenantAwareRepositoryGetOrNoneAndExists:
+    async def test_get_or_none_and_exists_when_present_and_missing(self) -> None:
+        repo, tid, aid, missing = _make_tenant_repo(), uuid4(), uuid4(), uuid4()
         async with tenant_scope(tid):
+            assert await repo.get_or_none(missing) is None and await repo.exists(missing) is False
             await repo.execute(aid, OpenTenantAccount(account_id=aid, tenant_id=tid))
             found = await repo.get_or_none(aid)
-        assert found is not None and (found.aggregate_id, found.version) == (aid, 1)
-        assert found.state.owner == "alice"
+            assert found is not None and (found.aggregate_id, found.version) == (aid, 1)
+            assert found.state.owner == "alice" and await repo.exists(aid) is True
 
-    async def test_get_or_none_returns_none_when_not_found(self) -> None:
-        async with tenant_scope(uuid4()):
-            assert await _make_tenant_repo().get_or_none(uuid4()) is None
-
-    async def test_get_or_none_propagates_missing_tenant_context(self) -> None:
+    async def test_get_or_none_and_exists_propagate_missing_tenant_context(self) -> None:
+        repo = _make_tenant_repo()
         with pytest.raises(TenantContextNotSetError):
-            await _make_tenant_repo().get_or_none(uuid4())
+            await repo.get_or_none(uuid4())
+        with pytest.raises(TenantContextNotSetError):
+            await repo.exists(uuid4())
 
-    async def test_get_or_none_propagates_tenant_mismatch_error(self) -> None:
+    async def test_get_or_none_and_exists_propagate_tenant_mismatch_error(self) -> None:
         err = TenantMismatchError(uuid4(), uuid4(), [uuid4()])
-        repo = TenantAwareRepository(MagicMock(load=AsyncMock(side_effect=err)))
+        repo = TenantAwareRepository(
+            MagicMock(load=AsyncMock(side_effect=err), exists=AsyncMock(side_effect=err))
+        )
         with pytest.raises(TenantMismatchError):
             await repo.get_or_none(uuid4())
-
-
-class TestAggregateRepositoryExists:
-    async def test_exists_returns_true_when_aggregate_exists(self) -> None:
-        repo, aid = _account_repo(), uuid4()
-        await repo.execute(aid, dm.OpenAccount(account_id=aid, owner="alice"))
-        assert await repo.exists(aid) is True
-
-    async def test_exists_returns_false_when_not_found(self) -> None:
-        assert await _account_repo().exists(uuid4()) is False
-
-
-class TestTenantAwareRepositoryExists:
-    async def test_exists_returns_true_when_aggregate_exists(self) -> None:
-        repo, tid, aid = _make_tenant_repo(), uuid4(), uuid4()
-        async with tenant_scope(tid):
-            await repo.execute(aid, OpenTenantAccount(account_id=aid, tenant_id=tid))
-            assert await repo.exists(aid) is True
-
-    async def test_exists_returns_false_when_not_found(self) -> None:
-        async with tenant_scope(uuid4()):
-            assert await _make_tenant_repo().exists(uuid4()) is False
-
-    async def test_exists_propagates_missing_tenant_context(self) -> None:
-        with pytest.raises(TenantContextNotSetError):
-            await _make_tenant_repo().exists(uuid4())
-
-    async def test_exists_propagates_tenant_mismatch_error(self) -> None:
-        err = TenantMismatchError(uuid4(), uuid4(), [uuid4()])
-        repo = TenantAwareRepository(MagicMock(exists=AsyncMock(side_effect=err)))
         with pytest.raises(TenantMismatchError):
             await repo.exists(uuid4())
