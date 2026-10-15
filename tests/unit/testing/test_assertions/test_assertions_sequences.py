@@ -106,3 +106,51 @@ class TestAssertEventSequence:
         assert "Full sequence:" in error_msg
         assert "Expected:" in error_msg
         assert "Actual:" in error_msg
+
+
+class TestAssertEventTypeCount:
+    """Tests for assert_event_type_count method."""
+
+    def test_passes_and_returns_matching_events(
+        self, multi_event_assertions: EventAssertions
+    ) -> None:
+        """Test passes and returns matching events when count matches."""
+        matched = multi_event_assertions.assert_event_type_count(SampleCreated, 1)
+        assert len(matched) == 1
+        assert isinstance(matched[0], SampleCreated)
+
+    def test_passes_for_zero_count_when_absent(
+        self, single_event_assertions: EventAssertions
+    ) -> None:
+        """Test passes and returns empty list when count is 0 and no events of type exist."""
+        matched = single_event_assertions.assert_event_type_count(SampleDeleted, 0)
+        assert matched == []
+
+    def test_raises_for_wrong_type_count(self, multi_event_assertions: EventAssertions) -> None:
+        """Test raises with clear diagnostic when count doesn't match."""
+        with pytest.raises(AssertionError) as exc_info:
+            multi_event_assertions.assert_event_type_count(SampleCreated, 2)
+
+        error_msg = str(exc_info.value)
+        assert "Expected 2 SampleCreated event(s), got 1." in error_msg
+        assert "Published event types:" in error_msg
+        assert "SampleCreated" in error_msg
+
+    def test_raises_with_none_when_empty(self, empty_assertions: EventAssertions) -> None:
+        """Test raises showing 'none' when no events were published."""
+        with pytest.raises(AssertionError) as exc_info:
+            empty_assertions.assert_event_type_count(SampleCreated, 1)
+
+        assert "Published event types: none" in str(exc_info.value)
+
+
+class TestLen:
+    """Tests for __len__ method."""
+
+    def test_len_empty(self, empty_assertions: EventAssertions) -> None:
+        """Test len returns 0 for empty assertions."""
+        assert len(empty_assertions) == 0
+
+    def test_len_multi(self, multi_event_assertions: EventAssertions) -> None:
+        """Test len returns total event count."""
+        assert len(multi_event_assertions) == 3
