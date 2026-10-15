@@ -40,13 +40,7 @@ class DeciderScenario:
     """
 
     _NON_AGGREGATE_ID_FIELDS = frozenset(
-        {
-            "command_id",
-            "correlation_id",
-            "causation_id",
-            "tenant_id",
-            "actor_id",
-        }
+        {"command_id", "correlation_id", "causation_id", "tenant_id", "actor_id"}
     )
 
     def __init__(
@@ -121,16 +115,11 @@ class DeciderScenario:
         if agg_id is None or not isinstance(agg_id, UUID):
             self._default_state = self._evolve(self._default_state, event)
             return
-
         if agg_id not in self._states:
             self._states[agg_id] = self._initial_state()
         self._states[agg_id] = self._evolve(self._states[agg_id], event)
 
-    def given_commands(
-        self,
-        *commands: object,
-        aggregate_id: UUID | None = None,
-    ) -> Self:
+    def given_commands(self, *commands: object, aggregate_id: UUID | None = None) -> Self:
         """Sequentially fold prior commands (decide -> evolve) into aggregate state."""
         for command in commands:
             target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
@@ -156,13 +145,9 @@ class DeciderScenario:
     def _resolve_target_id(self, command: object, explicit_id: UUID | None = None) -> UUID | None:
         if explicit_id is not None:
             return explicit_id
-
-        # 1. Direct aggregate_id on command
         cmd_agg_id = getattr(command, "aggregate_id", None)
         if isinstance(cmd_agg_id, UUID):
             return cmd_agg_id
-
-        # 2. Inspect command fields / attributes
         field_values: list[tuple[str, Any]] = []
         if isinstance(command, BaseModel):
             field_values = [(k, getattr(command, k)) for k in type(command).model_fields]
@@ -170,7 +155,6 @@ class DeciderScenario:
             field_values = list(command.__dict__.items())
         elif hasattr(command, "__dataclass_fields__"):
             field_values = [(k, getattr(command, k)) for k in command.__dataclass_fields__]
-
         uuid_candidates: list[tuple[str, UUID]] = []
         for name, val in field_values:
             if name in self._NON_AGGREGATE_ID_FIELDS:
@@ -180,16 +164,12 @@ class DeciderScenario:
                     return val
                 if name.endswith("_id") or name == "id":
                     uuid_candidates.append((name, val))
-
         if len(uuid_candidates) == 1:
             return uuid_candidates[0][1]
-
-        # 3. Fallback based on known aggregates
         if len(self._states) == 1:
             return next(iter(self._states.keys()))
         if len(self._states) == 0:
             return None
-
         raise ValueError(
             f"Multiple aggregates exist in scenario ({list(self._states.keys())}). "
             "Please specify which aggregate to evaluate via when(command, aggregate_id=...) "
@@ -205,22 +185,19 @@ class DeciderScenario:
         self._events = None
         self._error = None
         collected: list[DomainEvent] = []
-
         for command in commands:
             target_id = self._resolve_target_id(command, explicit_id=aggregate_id)
             self._last_target_id = target_id
-
-            if target_id is not None:
-                current_state = self._states.get(target_id, self._initial_state())
-            else:
-                current_state = self._default_state
-
+            current_state = (
+                self._states.get(target_id, self._initial_state())
+                if target_id is not None
+                else self._default_state
+            )
             try:
                 emitted = list(self._decide(command, current_state))
             except Exception as exc:  # noqa: BLE001 - the exception IS the result
                 self._error = exc
                 return self
-
             for event in emitted:
                 current_state = self._evolve(current_state, event)
             if target_id is not None:
@@ -228,7 +205,6 @@ class DeciderScenario:
             else:
                 self._default_state = current_state
             collected.extend(emitted)
-
         self._events = collected
         return self
 
@@ -272,6 +248,24 @@ class DeciderScenario:
         expected = [t.__name__ for t in event_types]
         if actual != expected:
             raise AssertionError(f"expected events {expected}, got {actual}")
+        return self
+
+    def then_event_types(self, *expected_types: type[DomainEvent]) -> Self:
+        """Assert the command produced events matching expected_types in exact order."""
+        if self._events is None and self._error is None:
+            raise AssertionError("call when() before then_event_types()")
+        if self._error is not None:
+            raise AssertionError(
+                f"Expected event types {[t.__name__ for t in expected_types]}, "
+                f"but command raised {self._error!r}"
+            )
+        assert self._events is not None
+        actual_types = [type(e) for e in self._events]
+        if actual_types != list(expected_types):
+            raise AssertionError(
+                f"Expected event types {[t.__name__ for t in expected_types]}, "
+                f"got {[t.__name__ for t in actual_types]}"
+            )
         return self
 
     def then_rejected(
