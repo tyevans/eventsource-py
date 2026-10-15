@@ -20,6 +20,10 @@ class InMemoryCheckpointRepository:
         self._checkpoints: dict[str, CheckpointData] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
 
+    def __len__(self) -> int:
+        """Return total number of checkpoints currently stored."""
+        return len(self._checkpoints)
+
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """Get the last processed event ID for a projection, or None if no checkpoint exists."""
         with self._tracer.span(
