@@ -46,47 +46,17 @@ class RabbitMQEventBusHealthMixin:
         return self._stats
 
     def get_stats(self) -> RabbitMQEventBusStats:
-        """Get current statistics (method form).
-
-        This method provides an alternative way to access statistics,
-        useful for consistency with other interfaces that expect a method
-        rather than a property.
-
-        Returns:
-            RabbitMQEventBusStats with current values.
-        """
+        """Get current statistics (method form)."""
         return self._stats
 
     def get_stats_dict(self) -> dict[str, Any]:
-        """Get statistics as a dictionary.
-
-        Converts all statistics to a dictionary format suitable for
-        JSON serialization and logging. Includes counters, timing
-        information, connection state, and uptime calculation.
-
-        Returns:
-            Dictionary with all statistics including:
-            - Counter fields (events_published, events_consumed, etc.)
-            - Timing fields as ISO format strings (last_publish_at, etc.)
-            - Connection state (is_connected, is_consuming)
-            - Uptime in seconds (None if not connected)
-            - Queue depth if available
-
-        Example:
-            >>> bus = RabbitMQEventBus(config=config)
-            >>> await bus.connect()
-            >>> stats_dict = bus.get_stats_dict()
-            >>> import json
-            >>> print(json.dumps(stats_dict, indent=2))
-        """
-        # Calculate uptime if connected
+        """Get statistics as a dictionary suitable for JSON serialization and logging."""
         uptime_seconds: float | None = None
         if self._stats.connected_at is not None:
             uptime_delta = datetime.now(UTC) - self._stats.connected_at
             uptime_seconds = uptime_delta.total_seconds()
 
         return {
-            # Counters
             "events_published": self._stats.events_published,
             "events_consumed": self._stats.events_consumed,
             "events_processed_success": self._stats.events_processed_success,
@@ -96,11 +66,9 @@ class RabbitMQEventBusHealthMixin:
             "reconnections": self._stats.reconnections,
             "publish_confirms": self._stats.publish_confirms,
             "publish_returns": self._stats.publish_returns,
-            # Batch publishing counters
             "batch_publishes": self._stats.batch_publishes,
             "batch_events_published": self._stats.batch_events_published,
             "batch_partial_failures": self._stats.batch_partial_failures,
-            # Timing (ISO format strings for JSON serialization)
             "last_publish_at": (
                 self._stats.last_publish_at.isoformat() if self._stats.last_publish_at else None
             ),
@@ -113,66 +81,20 @@ class RabbitMQEventBusHealthMixin:
             "connected_at": (
                 self._stats.connected_at.isoformat() if self._stats.connected_at else None
             ),
-            # Connection state
             "is_connected": self.is_connected,
             "is_consuming": self.is_consuming,
-            # Uptime in seconds
             "uptime_seconds": uptime_seconds,
         }
 
     def reset_stats(self) -> None:
-        """Reset all statistics to initial values.
-
-        Creates a new RabbitMQEventBusStats instance with default values,
-        effectively resetting all counters to zero and all timestamps to None.
-
-        Note:
-            This does not affect connection state or other bus state,
-            only the statistics tracking. The connected_at timestamp
-            is also reset, which will affect uptime calculation until
-            the next connection is established.
-
-        Example:
-            >>> bus = RabbitMQEventBus(config=config)
-            >>> await bus.connect()
-            >>> await bus.publish([event])
-            >>> print(bus.stats.events_published)  # 1
-            >>> bus.reset_stats()
-            >>> print(bus.stats.events_published)  # 0
-        """
-        # Preserve connected_at if still connected to maintain accurate uptime
+        """Reset all statistics to initial values while preserving connected_at if connected."""
         connected_at = self._stats.connected_at if self._connection_manager._connected else None
         self._stats = RabbitMQEventBusStats(connected_at=connected_at)
-        # Keep the connection manager's stats reference in sync -- it was
-        # handed the original instance at construction time.
         self._connection_manager._stats = self._stats
         self._logger.info("Statistics reset")
 
     async def get_queue_info(self) -> QueueInfo:
-        """Get information about the consumer queue.
-
-        Retrieves queue statistics using passive queue declaration, which
-        queries the queue state without modifying it. This is safe to call
-        at any time and does not affect the queue or its messages.
-
-        Returns:
-            QueueInfo object containing:
-            - name: Queue name
-            - message_count: Number of messages waiting in the queue
-            - consumer_count: Number of active consumers
-            - state: "running", "idle", "unknown", or "error"
-            - error: Error message if state is "error"
-
-        Note:
-            If not connected or channel is not initialized, returns a
-            QueueInfo with state="error" and appropriate error message.
-
-        Example:
-            >>> info = await bus.get_queue_info()
-            >>> print(f"Queue {info.name} has {info.message_count} messages")
-            >>> print(f"State: {info.state}, Consumers: {info.consumer_count}")
-        """
-        # Handle not connected state
+        """Get information about the consumer queue via passive queue declaration."""
         if not self._connection_manager._connected or not self._connection_manager._channel:
             return QueueInfo(
                 name=self._config.queue_name,
@@ -182,10 +104,8 @@ class RabbitMQEventBusHealthMixin:
                 error="Not connected to RabbitMQ",
             )
 
-        # Delegate the passive-declare check to RabbitMQTopology.
         queue_info = await self._topology.queue_health(self._config.queue_name)
         if queue_info is None:
-            # No live channel to query -- same "not connected" shape as above.
             return QueueInfo(
                 name=self._config.queue_name,
                 message_count=0,
@@ -196,36 +116,7 @@ class RabbitMQEventBusHealthMixin:
         return queue_info
 
     async def health_check(self) -> HealthCheckResult:
-        """Perform a comprehensive health check of the event bus.
-
-        Checks the status of:
-        - RabbitMQ connection
-        - AMQP channel
-        - Consumer queue accessibility
-        - Dead letter queue (if enabled)
-
-        This method is safe to call frequently and does not modify any
-        queue or exchange state.
-
-        Returns:
-            HealthCheckResult object containing:
-            - healthy: True if all components are operational
-            - connection_status: "connected", "disconnected", or "closed"
-            - channel_status: "open", "closed", or "not_initialized"
-            - queue_status: "accessible", "inaccessible", "not_initialized", or "error: ..."
-            - dlq_status: Status of DLQ or "disabled" if DLQ not enabled
-            - error: Error message if unhealthy
-            - details: Additional configuration and state information
-
-        Example:
-            >>> result = await bus.health_check()
-            >>> if result.healthy:
-            ...     print("Event bus is healthy")
-            >>> else:
-            ...     print(f"Unhealthy: {result.error}")
-            ...     print(f"Details: {result.details}")
-        """
-        # Connection/channel checks are owned by RabbitMQConnectionManager.
+        """Perform a comprehensive health check of the event bus."""
         connection_slice = self._connection_manager.health_slice()
         healthy = bool(connection_slice["healthy"])
         error_messages: list[str] = list(connection_slice["errors"])

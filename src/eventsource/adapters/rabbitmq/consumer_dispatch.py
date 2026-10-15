@@ -69,25 +69,16 @@ class RabbitMQConsumerDispatchMixin:
         """Deserialize an AMQP message to a domain event."""
         return serialization.deserialize_event(message, self._resolve_event_class, self._logger)
 
-    async def _process_message(
-        self,
-        message: AbstractIncomingMessage,
-    ) -> None:
-        """Process a single message from the queue with retry handling and tracing.
-
-        Deserializes the event, dispatches to registered handlers, and acknowledges
-        on success. On failure, delegates to ``_handle_failed_message`` for retry
-        or DLQ routing.
-        """
+    async def _process_message(self, message: AbstractIncomingMessage) -> None:
+        """Process a single message from the queue with retry handling and tracing."""
         headers = message.headers or {}
         event_type_name = str(headers.get("event_type", "unknown"))
-        retry_count_value = headers.get("x-retry-count")
-        if retry_count_value is None:
-            retry_count = 0
-        elif isinstance(retry_count_value, int):
-            retry_count = retry_count_value
-        else:
-            retry_count = int(str(retry_count_value))
+        raw_retry = headers.get("x-retry-count")
+        retry_count = (
+            0
+            if raw_retry is None
+            else (raw_retry if isinstance(raw_retry, int) else int(str(raw_retry)))
+        )
 
         death_info = death_headers.get_death_info(message)
         is_redelivered = death_headers.is_from_dlq(message)
@@ -110,8 +101,7 @@ class RabbitMQConsumerDispatchMixin:
                 }
             )
             self._logger.info(
-                f"Processing dead-lettered message: {event_type_name}",
-                extra=log_extra,
+                f"Processing dead-lettered message: {event_type_name}", extra=log_extra
             )
         else:
             self._logger.debug(
@@ -145,14 +135,10 @@ class RabbitMQConsumerDispatchMixin:
 
         try:
             event = self._deserialize_event(message)
-
             if event is None:
                 self._logger.warning(
                     f"Unknown event type: {event_type_name}, acknowledging to skip",
-                    extra={
-                        "event_type": event_type_name,
-                        "message_id": message.message_id,
-                    },
+                    extra={"event_type": event_type_name, "message_id": message.message_id},
                 )
                 if span:
                     span.set_attribute("event.unknown_type", True)
@@ -169,7 +155,6 @@ class RabbitMQConsumerDispatchMixin:
             self._stats.events_consumed += 1
             self._stats.events_processed_success += 1
             self._stats.last_consume_at = datetime.now(UTC)
-
             processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
 
             if span:
@@ -190,7 +175,6 @@ class RabbitMQConsumerDispatchMixin:
         except Exception as e:
             self._stats.events_processed_failed += 1
             self._stats.last_error_at = datetime.now(UTC)
-
             processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
             error_extra: dict[str, Any] = {
                 "message_id": message.message_id,
@@ -200,7 +184,6 @@ class RabbitMQConsumerDispatchMixin:
                 "error": str(e),
                 "error_type": type(e).__name__,
             }
-
             if is_redelivered:
                 error_extra.update(
                     {
@@ -209,20 +192,16 @@ class RabbitMQConsumerDispatchMixin:
                         "first_death_queue": death_info["first_death_queue"],
                     }
                 )
-
             if span:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
 
-            self._logger.error(
-                f"Failed to process message: {e}",
-                exc_info=True,
-                extra=error_extra,
+            self._logger.error(f"Failed to process message: {e}", exc_info=True, extra=error_extra)
+            dlq_error = (
+                e.failures[0][1]
+                if isinstance(e, HandlerDispatchError) and len(e.failures) == 1
+                else e
             )
-
-            dlq_error: Exception = e
-            if isinstance(e, HandlerDispatchError) and len(e.failures) == 1:
-                dlq_error = e.failures[0][1]
             await self._handle_failed_message(message, dlq_error, retry_count)
 
         finally:
@@ -235,13 +214,8 @@ class RabbitMQConsumerDispatchMixin:
         message: AbstractIncomingMessage,
         parent_span: Any = None,
     ) -> None:
-        """Dispatch an event to all matching handlers with error isolation.
-
-        Runs every registered handler sequentially; any failures are collected
-        and raised together as a single :class:`HandlerDispatchError`.
-        """
+        """Dispatch an event to all matching handlers with error isolation."""
         handlers = self._handlers_for(type(event))
-
         if not handlers:
             self._logger.warning(
                 f"No handlers registered for {event.event_type}",

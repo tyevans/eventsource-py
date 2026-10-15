@@ -91,10 +91,6 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
         self._retry_scheduler = RetryScheduler(custom_logger=self._logger)
 
-    # =========================================================================
-    # State
-    # =========================================================================
-
     @property
     def is_consuming(self) -> bool:
         """Check if currently consuming events."""
@@ -105,27 +101,10 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         """The background consumer task, if one is running."""
         return self._consumer_task
 
-    # =========================================================================
-    # Consume loop
-    # =========================================================================
-
     async def start(self) -> None:
         """Start consuming events from the RabbitMQ queue.
 
-        Runs continuously, consuming messages from the queue and dispatching
-        them to registered handlers, until :meth:`stop` is called or the
-        connection is lost.
-
-        Raises:
-            RuntimeError: If the consumer queue is not initialized. The
-                public ``RabbitMQEventBus.start_consuming()`` always
-                connects first, and ``connect()`` always declares topology
-                (including the consumer queue) before returning -- so this
-                should be unreachable through that path. Tripping it means
-                an internal invariant between the connection manager and
-                this consumer was violated (e.g. this ``start()`` was
-                called directly, bypassing the facade), not that the
-                caller forgot to connect.
+        Runs continuously until :meth:`stop` is called or connection is lost.
         """
         if not self._topology.consumer_queue:
             raise RuntimeError(
@@ -146,21 +125,16 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         )
 
         try:
-            # Use queue iterator for consuming
             async with self._topology.consumer_queue.iterator() as queue_iter:
                 async for message in queue_iter:
                     if not self._consuming:
                         break
-
                     await self._process_message(message)
 
         except asyncio.CancelledError:
             self._logger.info(
                 "Consumer loop cancelled",
-                extra={
-                    "consumer_name": consumer_name,
-                    "queue": self._config.queue_name,
-                },
+                extra={"consumer_name": consumer_name, "queue": self._config.queue_name},
             )
         except Exception as e:
             self._logger.error(
@@ -188,11 +162,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
             )
 
     async def stop(self) -> None:
-        """Stop the consumer loop gracefully.
-
-        Sets the consuming flag to False, which will cause the consumer loop
-        to exit after processing the current message.
-        """
+        """Stop the consumer loop gracefully."""
         self._consuming = False
         self._logger.info(
             "Stop consuming requested",
@@ -206,19 +176,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         self,
         runner: Callable[[], Coroutine[Any, Any, None]] | None = None,
     ) -> asyncio.Task[None]:
-        """Start consuming in a background task.
-
-        Args:
-            runner: Optional coroutine factory to run instead of :meth:`start`.
-                The facade passes its own ``start_consuming`` so the background
-                task keeps its auto-connect behavior.
-
-        Returns:
-            The background task running the consumer.
-
-        Raises:
-            RuntimeError: If consumer is already running in background.
-        """
+        """Start consuming in a background task."""
         if self._consumer_task is not None:
             raise RuntimeError("Consumer already running in background")
 
@@ -229,20 +187,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         return self._consumer_task
 
     async def resume_if_was_consuming(self) -> None:
-        """Restart consuming iff it was active before the connection dropped.
-
-        Intended as a reconnect hook. Reads the ``_was_consuming`` flag the
-        connection manager sets from its close callbacks, clears it, and
-        restarts the consume loop in the background.
-
-        Note:
-            Not currently registered via ``RabbitMQConnectionManager.on_reconnect``
-            -- the facade only wires ``RabbitMQTopology.redeclare``. This
-            matches the original (pre-decomposition) behavior, which never
-            resumed consuming automatically after a reconnect. Registering
-            this method would change that behavior and needs an explicit
-            decision, not a silent side effect of refactoring.
-        """
+        """Restart consuming iff it was active before the connection dropped."""
         if not self._connection._was_consuming:
             return
 
@@ -256,38 +201,17 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         )
         self.start_in_background()
 
-    # =========================================================================
-    # Graceful shutdown
-    # =========================================================================
-
     async def stop_gracefully(self, timeout: float) -> None:
-        """Stop consuming and wait for consumer task to finish.
-
-        This method signals the consumer loop to stop by setting the consuming
-        flag to False, then waits for the consumer task to complete. If the
-        task doesn't complete within the timeout, it is cancelled.
-
-        Args:
-            timeout: Maximum time to wait for the consumer to stop.
-                    Half of this time is used for graceful stop, the other
-                    half for cancellation if needed.
-
-        Raises:
-            asyncio.TimeoutError: If the consumer doesn't stop within timeout
-        """
+        """Stop consuming and wait for consumer task to finish."""
         if not self._consuming:
             self._logger.debug("Not consuming, skipping consumer stop")
             return
 
         self._logger.debug("Stopping consumer...")
-
-        # Signal consumer to stop
         self._consuming = False
 
-        # Wait for consumer task if running
         if self._consumer_task:
             try:
-                # Use half timeout for graceful wait, reserve half for cleanup
                 await asyncio.wait_for(
                     asyncio.shield(self._consumer_task),
                     timeout=timeout / 2,
@@ -310,23 +234,14 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         self._logger.debug("Consumer stopped")
 
     async def drain_in_flight(self, timeout: float) -> None:
-        """Wait for any in-flight message processing and retries to complete.
-
-        Args:
-            timeout: Maximum time available for draining.
-                    Actual drain time is min(timeout / 4, 5.0) seconds.
-        """
+        """Wait for any in-flight message processing and retries to complete."""
         await self.drain_retries(timeout)
         drain_time = min(timeout / 4, 5.0)
         if drain_time > 0:
             await asyncio.sleep(drain_time)
 
     async def drain_retries(self, timeout: float | None = None) -> None:
-        """Wait for all pending non-blocking retry tasks to complete.
-
-        Args:
-            timeout: Maximum seconds to wait. If None, waits indefinitely.
-        """
+        """Wait for all pending non-blocking retry tasks to complete."""
         await self._retry_scheduler.drain(timeout)
 
 
