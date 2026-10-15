@@ -1,7 +1,7 @@
 ---
 id: TASK-0371
 title: "Compact 211-212 line source modules below 190 lines and add EventRegistry ergonomics"
-status: Refined
+status: Complete
 target_bc: domain
 dependencies: [TASK-0370]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0371: Compact 211-212 line source modules below 190 lines and add EventRegistry ergonomics
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `domain`
 
 ## Objective
