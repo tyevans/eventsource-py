@@ -26,16 +26,9 @@ class TestCatchUpRunnerBasic:
 
     @pytest.mark.asyncio
     async def test_empty_event_store_returns_completed(
-        self,
-        runner: CatchUpRunner,
-        event_store: InMemoryEventStore,
+        self, runner: CatchUpRunner, event_store: InMemoryEventStore
     ):
-        """Test catch-up on empty store returns completed with 0 events.
-
-        An empty feed has no current position, so the coordinator would
-        skip catch-up entirely; a runner pointed at any target still
-        completes on the first empty read.
-        """
+        """Test catch-up on empty store returns completed with 0 events."""
         assert await event_store.current_position() is None
 
         result = await runner.run_until_position(
@@ -49,12 +42,9 @@ class TestCatchUpRunnerBasic:
 
     @pytest.mark.asyncio
     async def test_target_position_already_reached(
-        self,
-        runner: CatchUpRunner,
-        subscription: Subscription,
+        self, runner: CatchUpRunner, subscription: Subscription
     ):
         """Test catch-up returns immediately if already at target position."""
-        # Set subscription position to target
         position = Position(store_id="memory", key=(100,))
         subscription.last_processed_position = position
 
@@ -72,7 +62,6 @@ class TestCatchUpRunnerBasic:
         subscriber: MockSubscriber,
     ):
         """Test runner processes all events up to target position."""
-        # Add 5 events
         await add_events_to_store(event_store, 5)
         target = await current(event_store)
 
@@ -95,27 +84,19 @@ class TestCatchUpRunnerBatching:
         subscriber: MockSubscriber,
     ):
         """Test runner processes events in batches of configured size."""
-        # Add 25 events
         await add_events_to_store(event_store, 25)
         target = await current(event_store)
 
-        # Create config with small batch size
         config = SubscriptionConfig(
-            batch_size=5,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+            batch_size=5, checkpoint_strategy=CheckpointStrategy.EVERY_BATCH
         )
-        subscription = Subscription(
-            name="BatchTest",
-            config=config,
-            subscriber=subscriber,
-        )
+        subscription = Subscription(name="BatchTest", config=config, subscriber=subscriber)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
         result = await runner.run_until_position(target_position=target)
 
         assert result.completed is True
         assert result.events_processed == 25
-        # With batch_size=5 and EVERY_BATCH strategy, we expect 5 checkpoints
         checkpoint = await checkpoint_repo.get_position("BatchTest")
         assert checkpoint == target
 
@@ -127,17 +108,11 @@ class TestCatchUpRunnerBatching:
         subscriber: MockSubscriber,
     ):
         """Test batch size is limited to remaining events to target."""
-        # Add 3 events
         await add_events_to_store(event_store, 3)
         target = await current(event_store)
 
-        # Config with large batch size
         config = SubscriptionConfig(batch_size=100)
-        subscription = Subscription(
-            name="SmallBatchTest",
-            config=config,
-            subscriber=subscriber,
-        )
+        subscription = Subscription(name="SmallBatchTest", config=config, subscriber=subscriber)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
         result = await runner.run_until_position(target_position=target)
@@ -162,12 +137,7 @@ class TestCatchUpRunnerEdgeCases:
         event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
-        """A target behind every stored event stops before the first one.
-
-        This replaces the old negative-target case: positions are opaque
-        tokens, so "before the beginning" is expressed as a token that
-        orders below the feed's first event, not as -1.
-        """
+        """A target behind every stored event stops before the first one."""
         await add_events_to_store(event_store, 3)
 
         result = await runner.run_until_position(
@@ -186,23 +156,16 @@ class TestCatchUpRunnerEdgeCases:
         subscriber: MockSubscriber,
     ):
         """Test catch-up resumes from existing checkpoint position."""
-        # Add 10 events
         await add_events_to_store(event_store, 10)
         target = await current(event_store)
 
-        # Set subscription to start from position 5
         config = SubscriptionConfig(batch_size=100)
-        subscription = Subscription(
-            name="ResumeTest",
-            config=config,
-            subscriber=subscriber,
-        )
+        subscription = Subscription(name="ResumeTest", config=config, subscriber=subscriber)
         subscription.last_processed_position = await position_after(event_store, 5)
 
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
         result = await runner.run_until_position(target_position=target)
 
-        # Should only process events 6-10
         assert result.completed is True
         assert result.events_processed == 5
         assert len(subscriber.handled_events) == 5
@@ -219,11 +182,7 @@ class TestCatchUpRunnerEdgeCases:
         target = await current(event_store)
 
         config = SubscriptionConfig()
-        subscription = Subscription(
-            name="SingleEventTest",
-            config=config,
-            subscriber=subscriber,
-        )
+        subscription = Subscription(name="SingleEventTest", config=config, subscriber=subscriber)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
         result = await runner.run_until_position(target_position=target)
