@@ -56,7 +56,6 @@ _meter: Any = None
 
 
 def _get_meter() -> Any:
-    """Get or create the cached OpenTelemetry meter for Kafka event bus metrics."""
     global _meter
     if OTEL_AVAILABLE and _meter is None and otel_metrics is not None:
         _meter = otel_metrics.get_meter("eventsource.bus.kafka")
@@ -75,7 +74,6 @@ class KafkaEventBus(KafkaBusPublishMixin, KafkaBusConsumeMixin, KafkaBusDLQMixin
         tracer: Tracer | None = None,
         max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
     ) -> None:
-        """Initialize the Kafka event bus (raises KafkaNotAvailableError if aiokafka missing)."""
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
         super().__init__(event_registry=event_registry, max_background_tasks=max_background_tasks)
@@ -86,36 +84,34 @@ class KafkaEventBus(KafkaBusPublishMixin, KafkaBusConsumeMixin, KafkaBusDLQMixin
         rp = self._retry_policy = RetryPolicy(
             cfg.retry_base_delay, cfg.retry_max_delay, cfg.retry_jitter, cfg.max_retries
         )
-        self._stats = KafkaEventBusStats()
-        m = self._meter = _get_meter() if cfg.enable_metrics else None
+        self._stats, m = KafkaEventBusStats(), _get_meter() if cfg.enable_metrics else None
+        self._meter = m
         metrics = self._metrics_instance = KafkaEventBusMetrics(m) if m else None
-
         self._connection_manager = KafkaConnectionManager(cfg, self._stats, metrics)
         deps = (cfg, self._connection_manager, self._serializer, self._stats)
-        self._publisher = KafkaPublisher(*deps, metrics, tr, et)
+        self._publisher, se = KafkaPublisher(*deps, metrics, tr, et), asyncio.Event()
+        self._shutdown_event = se
         self._connection_gauge_registered = self._lag_gauge_registered = False
-        se = self._shutdown_event = asyncio.Event()
-        hf, rec = self._handlers_for, self._resolve_event_class
-        lag = self._register_consumer_lag_gauge
+        hf, rec, lag = self._handlers_for, self._resolve_event_class, self._register_consumer_lag_gauge  # fmt: skip
         self._consumer_loop = KafkaConsumerLoop(*deps, metrics, rp, hf, rec, tr, et, se, lag)
         self._dlq_admin = KafkaDLQAdmin(*deps)
         logger.debug("KafkaEventBus initialized", extra=cfg.get_sanitized_config())
 
     @property
     def is_connected(self) -> bool:
-        return self._connection_manager.is_connected
+        return self._connection_manager.is_connected  # fmt: skip
 
     @property
     def is_consuming(self) -> bool:
-        return self._consumer_loop.is_consuming
+        return self._consumer_loop.is_consuming  # fmt: skip
 
     @property
     def config(self) -> KafkaEventBusConfig:
-        return self._config
+        return self._config  # fmt: skip
 
     @property
     def stats(self) -> KafkaEventBusStats:
-        return self._stats
+        return self._stats  # fmt: skip
 
     async def connect(self) -> None:
         await self._connection_manager.connect()
@@ -163,26 +159,9 @@ class KafkaEventBus(KafkaBusPublishMixin, KafkaBusConsumeMixin, KafkaBusDLQMixin
         if not self.is_connected or not (consumer := self._connection_manager.consumer):
             raise EventBusConnectionError("Not connected to Kafka")
         partitions = consumer.partitions_for_topic(self._config.topic_name)
-        return {
-            "topic": self._config.topic_name,
-            "partitions": list(partitions) if partitions else [],
-            "consumer_group": self._config.consumer_group,
-            "connected": self.is_connected,
-            "consuming": self.is_consuming,
-        }
+        parts = list(partitions) if partitions else []
+        t, g = self._config.topic_name, self._config.consumer_group
+        return {"topic": t, "partitions": parts, "consumer_group": g, "connected": self.is_connected, "consuming": self.is_consuming}  # fmt: skip
 
 
-__all__ = [  # fmt: skip
-    "DeserializationError",
-    "EventSerializer",
-    "KAFKA_AVAILABLE",
-    "KafkaEventBus",
-    "KafkaEventBusConfig",
-    "KafkaEventBusMetrics",
-    "KafkaEventBusStats",
-    "KafkaNotAvailableError",
-    "OTEL_AVAILABLE",
-    "_get_meter",
-    "register_connection_gauge",
-    "register_consumer_lag_gauge",
-]
+__all__ = ["DeserializationError", "EventSerializer", "KAFKA_AVAILABLE", "KafkaEventBus", "KafkaEventBusConfig", "KafkaEventBusMetrics", "KafkaEventBusStats", "KafkaNotAvailableError", "OTEL_AVAILABLE", "_get_meter", "register_connection_gauge", "register_consumer_lag_gauge"]  # fmt: skip

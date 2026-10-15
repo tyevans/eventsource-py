@@ -30,7 +30,6 @@ class SQLCheckpointRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """Initialize the checkpoint repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._conn = conn
@@ -63,12 +62,7 @@ class SQLCheckpointRepository:
                     "events_processed = projection_checkpoints.events_processed + 1, "
                     "updated_at = EXCLUDED.updated_at"
                 )
-                params = {
-                    "projection_name": projection_name,
-                    "event_id": uuid_param(event_id, d),
-                    "event_type": event_type,
-                    "now": ts_param(now, d),
-                }
+                params = {"projection_name": projection_name, "event_id": uuid_param(event_id, d), "event_type": event_type, "now": ts_param(now, d)}  # fmt: skip
                 await conn.execute(query, params)
 
     async def get_lag_metrics(
@@ -134,11 +128,7 @@ class SQLCheckpointRepository:
     ) -> None:
         """Save checkpoint with an opaque global-feed position using an idempotent UPSERT."""
         token = position.to_str()
-        span_attrs = {
-            ATTR_PROJECTION_NAME: subscription_id,
-            ATTR_EVENT_TYPE: event_type,
-            "position_token": token,
-        }
+        span_attrs = {ATTR_PROJECTION_NAME: subscription_id, ATTR_EVENT_TYPE: event_type, "position_token": token}  # fmt: skip
         with self._tracer.span("eventsource.checkpoint.save_position", span_attrs):
             now = datetime.now(UTC)
             async with sql_connection(self._conn, write=True) as conn:
@@ -154,13 +144,7 @@ class SQLCheckpointRepository:
                     "events_processed = projection_checkpoints.events_processed + 1, "
                     "position_token = EXCLUDED.position_token, updated_at = EXCLUDED.updated_at"
                 )
-                params = {
-                    "subscription_id": subscription_id,
-                    "event_id": uuid_param(event_id, d),
-                    "event_type": event_type,
-                    "now": ts_param(now, d),
-                    "position_token": token,
-                }
+                params = {"subscription_id": subscription_id, "event_id": uuid_param(event_id, d), "event_type": event_type, "now": ts_param(now, d), "position_token": token}  # fmt: skip
                 await conn.execute(query, params)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
@@ -172,17 +156,7 @@ class SQLCheckpointRepository:
             )
             async with sql_connection(self._conn, write=False) as conn:
                 rows = (await conn.execute(text(sql))).fetchall()
-            return [
-                CheckpointData(
-                    r[0],
-                    uuid_result(r[1]),
-                    r[2],
-                    ts_result(r[3]),
-                    r[4] or 0,
-                    Position.from_str(r[5]) if r[5] else None,
-                )
-                for r in rows
-            ]
+            return [CheckpointData(r[0], uuid_result(r[1]), r[2], ts_result(r[3]), r[4] or 0, Position.from_str(r[5]) if r[5] else None) for r in rows]  # fmt: skip
 
 
 __all__ = ["SQLCheckpointRepository"]
