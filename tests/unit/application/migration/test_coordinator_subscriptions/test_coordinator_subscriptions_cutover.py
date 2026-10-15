@@ -25,22 +25,15 @@ class TestCompleteCutoverWithP3005:
 
     @pytest.fixture
     def coordinator_deps(self) -> dict:
-        """Create coordinator dependencies."""
         return create_coordinator_deps()
 
     @pytest.mark.asyncio
     async def test_complete_cutover_runs_verification_when_enabled(
         self, coordinator_deps: dict
     ) -> None:
-        """Test _complete_cutover runs consistency verification when enabled."""
         migration_id = uuid4()
         tenant_id = uuid4()
-
-        config = MigrationConfig(
-            verify_consistency=True,
-            migrate_subscriptions=False,
-        )
-
+        config = MigrationConfig(verify_consistency=True, migrate_subscriptions=False)
         migration = Migration(
             id=migration_id,
             tenant_id=tenant_id,
@@ -49,45 +42,27 @@ class TestCompleteCutoverWithP3005:
             phase=MigrationPhase.CUTOVER,
             config=config,
         )
-
         coordinator_deps["migration_repo"].update_phase = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            **coordinator_deps,
-            enable_tracing=False,
-        )
-
+        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
         coordinator._target_stores[migration_id] = AsyncMock()
-
         expected_report = make_verification_report(
-            tenant_id=tenant_id,
-            level=VerificationLevel.HASH,
+            tenant_id=tenant_id, level=VerificationLevel.HASH
         )
 
         with patch.object(coordinator, "verify_consistency", new_callable=AsyncMock) as mock_verify:
             mock_verify.return_value = expected_report
-
             await coordinator._complete_cutover(migration)
-
             mock_verify.assert_called_once_with(
-                migration_id,
-                level=VerificationLevel.HASH,
-                sample_percentage=100.0,
+                migration_id, level=VerificationLevel.HASH, sample_percentage=100.0
             )
 
     @pytest.mark.asyncio
     async def test_complete_cutover_runs_subscription_migration_when_enabled(
         self, coordinator_deps: dict
     ) -> None:
-        """Test _complete_cutover runs subscription migration when enabled."""
         migration_id = uuid4()
         tenant_id = uuid4()
-
-        config = MigrationConfig(
-            verify_consistency=False,
-            migrate_subscriptions=True,
-        )
-
+        config = MigrationConfig(verify_consistency=False, migrate_subscriptions=True)
         migration = Migration(
             id=migration_id,
             tenant_id=tenant_id,
@@ -96,43 +71,30 @@ class TestCompleteCutoverWithP3005:
             phase=MigrationPhase.CUTOVER,
             config=config,
         )
-
         coordinator_deps["migration_repo"].update_phase = AsyncMock()
-
         coordinator = MigrationCoordinator(
             **coordinator_deps,
             position_mapper=AsyncMock(),
             checkpoint_repo=AsyncMock(),
             enable_tracing=False,
         )
-
         expected_summary = make_migration_summary(
-            migration_id=migration_id,
-            tenant_id=tenant_id,
-            successful_count=1,
+            migration_id=migration_id, tenant_id=tenant_id, successful_count=1
         )
 
         with patch.object(
             coordinator, "migrate_subscriptions", new_callable=AsyncMock
         ) as mock_migrate:
             mock_migrate.return_value = expected_summary
-
             await coordinator._complete_cutover(migration)
-
             mock_migrate.assert_called_once_with(migration_id)
 
     @pytest.mark.asyncio
     async def test_complete_cutover_skips_verification_when_disabled(
         self, coordinator_deps: dict
     ) -> None:
-        """Test _complete_cutover skips verification when disabled."""
         migration_id = uuid4()
-
-        config = MigrationConfig(
-            verify_consistency=False,
-            migrate_subscriptions=False,
-        )
-
+        config = MigrationConfig(verify_consistency=False, migrate_subscriptions=False)
         migration = Migration(
             id=migration_id,
             tenant_id=uuid4(),
@@ -141,31 +103,19 @@ class TestCompleteCutoverWithP3005:
             phase=MigrationPhase.CUTOVER,
             config=config,
         )
-
         coordinator_deps["migration_repo"].update_phase = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            **coordinator_deps,
-            enable_tracing=False,
-        )
+        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
 
         with patch.object(coordinator, "verify_consistency", new_callable=AsyncMock) as mock_verify:
             await coordinator._complete_cutover(migration)
-
             mock_verify.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_complete_cutover_handles_verification_error_gracefully(
         self, coordinator_deps: dict
     ) -> None:
-        """Test _complete_cutover handles verification errors gracefully."""
         migration_id = uuid4()
-
-        config = MigrationConfig(
-            verify_consistency=True,
-            migrate_subscriptions=False,
-        )
-
+        config = MigrationConfig(verify_consistency=True, migrate_subscriptions=False)
         migration = Migration(
             id=migration_id,
             tenant_id=uuid4(),
@@ -174,21 +124,13 @@ class TestCompleteCutoverWithP3005:
             phase=MigrationPhase.CUTOVER,
             config=config,
         )
-
         coordinator_deps["migration_repo"].update_phase = AsyncMock()
-
-        coordinator = MigrationCoordinator(
-            **coordinator_deps,
-            enable_tracing=False,
-        )
-
+        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
         coordinator._target_stores[migration_id] = AsyncMock()
 
         with patch.object(coordinator, "verify_consistency", new_callable=AsyncMock) as mock_verify:
             mock_verify.side_effect = Exception("Verification failed")
-
             await coordinator._complete_cutover(migration)
-
             coordinator_deps["migration_repo"].update_phase.assert_called_once_with(
                 migration_id, MigrationPhase.COMPLETED
             )
@@ -197,14 +139,8 @@ class TestCompleteCutoverWithP3005:
     async def test_complete_cutover_handles_subscription_migration_error_gracefully(
         self, coordinator_deps: dict
     ) -> None:
-        """Test _complete_cutover handles subscription migration errors gracefully."""
         migration_id = uuid4()
-
-        config = MigrationConfig(
-            verify_consistency=False,
-            migrate_subscriptions=True,
-        )
-
+        config = MigrationConfig(verify_consistency=False, migrate_subscriptions=True)
         migration = Migration(
             id=migration_id,
             tenant_id=uuid4(),
@@ -213,9 +149,7 @@ class TestCompleteCutoverWithP3005:
             phase=MigrationPhase.CUTOVER,
             config=config,
         )
-
         coordinator_deps["migration_repo"].update_phase = AsyncMock()
-
         coordinator = MigrationCoordinator(
             **coordinator_deps,
             position_mapper=AsyncMock(),
@@ -227,9 +161,7 @@ class TestCompleteCutoverWithP3005:
             coordinator, "migrate_subscriptions", new_callable=AsyncMock
         ) as mock_migrate:
             mock_migrate.side_effect = Exception("Migration failed")
-
             await coordinator._complete_cutover(migration)
-
             coordinator_deps["migration_repo"].update_phase.assert_called_once_with(
                 migration_id, MigrationPhase.COMPLETED
             )
@@ -239,11 +171,8 @@ class TestCleanupMigrationResourcesP3005:
     """Tests for _cleanup_migration_resources() including P3-005 resources."""
 
     def test_cleanup_removes_consistency_report(self) -> None:
-        """Test cleanup removes consistency report."""
         migration_id = uuid4()
-
         coordinator = create_coordinator()
-
         coordinator._consistency_reports[migration_id] = MagicMock()
         coordinator._subscription_summaries[migration_id] = MagicMock()
         coordinator._lag_trackers[migration_id] = MagicMock()
@@ -257,9 +186,5 @@ class TestCleanupMigrationResourcesP3005:
         assert migration_id not in coordinator._target_stores
 
     def test_cleanup_handles_missing_resources_gracefully(self) -> None:
-        """Test cleanup handles missing P3-005 resources gracefully."""
-        migration_id = uuid4()
-
         coordinator = create_coordinator()
-
-        coordinator._cleanup_migration_resources(migration_id)
+        coordinator._cleanup_migration_resources(uuid4())

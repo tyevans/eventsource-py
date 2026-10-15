@@ -42,7 +42,6 @@ class TestCheckpointTrackingProjection:
         with pytest.raises(TypeError, match="abstract"):
             IncompleteProjection(checkpoint_repo=checkpoint_repo)  # type: ignore[abstract]
 
-    @pytest.mark.asyncio
     async def test_successful_event_processing_updates_checkpoint(
         self, checkpoint_repo: InMemoryCheckpointRepository, dlq_repo: InMemoryDLQRepository
     ) -> None:
@@ -52,7 +51,6 @@ class TestCheckpointTrackingProjection:
         assert len(projection.events_processed) == 1
         assert await checkpoint_repo.get_checkpoint("TestProjection") == event.event_id
 
-    @pytest.mark.asyncio
     async def test_failed_event_retries_with_backoff(
         self, checkpoint_repo: InMemoryCheckpointRepository, dlq_repo: InMemoryDLQRepository
     ) -> None:
@@ -61,22 +59,17 @@ class TestCheckpointTrackingProjection:
             await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert projection.attempt_count == 3
 
-    @pytest.mark.asyncio
     async def test_failed_event_goes_to_dlq(
         self, checkpoint_repo: InMemoryCheckpointRepository, dlq_repo: InMemoryDLQRepository
     ) -> None:
-        projection = FailingProjection(
-            checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo, max_retries=2
-        )
+        projection = FailingProjection(checkpoint_repo, dlq_repo, max_retries=2)
         event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         with pytest.raises(ValueError):
             await projection.handle(event)
-        failed_events = await dlq_repo.get_failed_events()
-        assert len(failed_events) == 1
-        assert failed_events[0].event_id == event.event_id
-        assert failed_events[0].projection_name == "FailingProjection"
+        failed = await dlq_repo.get_failed_events()
+        assert len(failed) == 1 and failed[0].event_id == event.event_id
+        assert failed[0].projection_name == "FailingProjection"
 
-    @pytest.mark.asyncio
     async def test_checkpoint_failure_does_not_rerun_the_handler_or_dlq_the_event(
         self, dlq_repo: InMemoryDLQRepository
     ) -> None:
@@ -87,43 +80,32 @@ class TestCheckpointTrackingProjection:
         assert projection.applied == [event.event_id], "the handler must run exactly once"
         assert await dlq_repo.get_failed_events() == []
 
-    @pytest.mark.asyncio
     async def test_failed_event_reraises_without_dlq_repo(
         self, checkpoint_repo: InMemoryCheckpointRepository, caplog: pytest.LogCaptureFixture
     ) -> None:
-        projection = FailingProjection(
-            checkpoint_repo=checkpoint_repo, dlq_repo=None, max_retries=2
-        )
+        projection = FailingProjection(checkpoint_repo, None, max_retries=2)
         with (
             caplog.at_level(logging.CRITICAL),
             pytest.raises(ValueError, match="Processing failed"),
         ):
             await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
-        critical_records = [r for r in caplog.records if r.levelno == logging.CRITICAL]
-        assert len(critical_records) == 1
-        assert "NO DLQ entry was recorded" in critical_records[0].message
-        assert "sent to DLQ" not in critical_records[0].message
+        crit = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+        assert len(crit) == 1 and "NO DLQ entry was recorded" in crit[0].message
+        assert "sent to DLQ" not in crit[0].message
 
-    @pytest.mark.asyncio
     async def test_failed_event_logs_no_entry_when_dlq_write_fails(
         self, checkpoint_repo: InMemoryCheckpointRepository, caplog: pytest.LogCaptureFixture
     ) -> None:
-        failing_dlq_repo = AsyncMock()
-        failing_dlq_repo.add_failed_event.side_effect = RuntimeError("DLQ unavailable")
-        projection = FailingProjection(
-            checkpoint_repo=checkpoint_repo, dlq_repo=failing_dlq_repo, max_retries=2
-        )
+        failing_dlq_repo = AsyncMock(add_failed_event=AsyncMock(side_effect=RuntimeError("DLQ")))
+        projection = FailingProjection(checkpoint_repo, failing_dlq_repo, max_retries=2)
         with (
             caplog.at_level(logging.CRITICAL),
             pytest.raises(ValueError, match="Processing failed"),
         ):
             await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
-        critical_records = [r for r in caplog.records if r.levelno == logging.CRITICAL]
-        no_entry_records = [r for r in critical_records if "NO DLQ entry was recorded" in r.message]
-        assert len(no_entry_records) == 1
-        assert "sent to DLQ" not in no_entry_records[0].message
+        no_entry = [r for r in caplog.records if "NO DLQ entry was recorded" in r.message]
+        assert len(no_entry) == 1 and "sent to DLQ" not in no_entry[0].message
 
-    @pytest.mark.asyncio
     async def test_get_checkpoint_returns_last_processed(
         self, checkpoint_repo: InMemoryCheckpointRepository, dlq_repo: InMemoryDLQRepository
     ) -> None:
@@ -133,7 +115,6 @@ class TestCheckpointTrackingProjection:
         await projection.handle(event)
         assert await projection.get_checkpoint() == str(event.event_id)
 
-    @pytest.mark.asyncio
     async def test_reset_clears_checkpoint(
         self, checkpoint_repo: InMemoryCheckpointRepository, dlq_repo: InMemoryDLQRepository
     ) -> None:
@@ -143,14 +124,12 @@ class TestCheckpointTrackingProjection:
         await projection.reset()
         assert await projection.get_checkpoint() is None
 
-    @pytest.mark.asyncio
     async def test_projection_name_defaults_to_class_name(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        projection = MyCustomProjection(checkpoint_repo=checkpoint_repo)
-        assert projection.projection_name == "MyCustomProjection"
+        proj = MyCustomProjection(checkpoint_repo=checkpoint_repo)
+        assert proj.projection_name == "MyCustomProjection"
 
-    @pytest.mark.asyncio
     async def test_bare_projection_disables_checkpoint_tracking(self) -> None:
         projection = TestProjection()
         await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
@@ -158,7 +137,6 @@ class TestCheckpointTrackingProjection:
 
 
 class TestDeclarativeProjection:
-    @pytest.mark.asyncio
     async def test_handles_decorator_registers_handler(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
@@ -167,25 +145,19 @@ class TestDeclarativeProjection:
         await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         assert len(projection.events_handled) == 1
 
-    @pytest.mark.asyncio
     async def test_multiple_handlers(self, checkpoint_repo: InMemoryCheckpointRepository) -> None:
         projection = MultiHandlerDeclarativeProjection(checkpoint_repo=checkpoint_repo)
-        assert len(projection.subscribed_to()) == 2
-        assert OrderCreated in projection.subscribed_to()
-        assert OrderShipped in projection.subscribed_to()
+        assert set(projection.subscribed_to()) == {OrderCreated, OrderShipped}
         await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         await projection.handle(OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"))
-        assert len(projection.created_events) == 1
-        assert len(projection.shipped_events) == 1
+        assert len(projection.created_events) == 1 and len(projection.shipped_events) == 1
 
-    @pytest.mark.asyncio
     async def test_handler_with_two_params(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         projection = TwoParamDeclarativeProjection(checkpoint_repo=checkpoint_repo)
         await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
-        assert len(projection.events_handled) == 1
-        assert projection.conn_values[0] is None
+        assert len(projection.events_handled) == 1 and projection.conn_values[0] is None
 
     def test_non_async_handler_raises_error(
         self, checkpoint_repo: InMemoryCheckpointRepository
@@ -211,7 +183,6 @@ class TestDeclarativeProjection:
 
             BadProjection(checkpoint_repo=checkpoint_repo)
 
-    @pytest.mark.asyncio
     async def test_unhandled_event_ignored_by_default(
         self, checkpoint_repo: InMemoryCheckpointRepository, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -220,7 +191,6 @@ class TestDeclarativeProjection:
             await projection.handle(OrderShipped(aggregate_id=uuid4(), tracking_number="TRK-001"))
         assert not any("No handler registered" in rec.message for rec in caplog.records)
 
-    @pytest.mark.asyncio
     async def test_public_handler_method_discovered(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
@@ -231,36 +201,30 @@ class TestDeclarativeProjection:
 
 
 class TestDeclarativeProjectionWithDLQ:
-    @pytest.mark.asyncio
     async def test_failing_handler_goes_to_dlq(
         self, checkpoint_repo: InMemoryCheckpointRepository, dlq_repo: InMemoryDLQRepository
     ) -> None:
-        class FailingProjection(FailingDeclarativeProjection):
+        class FailingDecl(FailingDeclarativeProjection):
             pass
 
-        projection = FailingProjection(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
+        projection = FailingDecl(checkpoint_repo=checkpoint_repo, dlq_repo=dlq_repo)
         with pytest.raises(ValueError):
             await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         failed_events = await dlq_repo.get_failed_events()
-        assert len(failed_events) == 1
-        assert "Handler error" in failed_events[0].error_message
+        assert len(failed_events) == 1 and "Handler error" in failed_events[0].error_message
 
 
 class TestLagMetrics:
-    @pytest.mark.asyncio
     async def test_get_lag_metrics_returns_none_initially(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        projection = TestProjection(checkpoint_repo=checkpoint_repo)
-        assert await projection.get_lag_metrics() is None
+        assert await TestProjection(checkpoint_repo=checkpoint_repo).get_lag_metrics() is None
 
-    @pytest.mark.asyncio
     async def test_get_lag_metrics_returns_data_after_processing(
         self, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         projection = TestProjection(checkpoint_repo=checkpoint_repo)
         await projection.handle(OrderCreated(aggregate_id=uuid4(), order_number="ORD-001"))
         metrics = await projection.get_lag_metrics()
-        assert metrics is not None
-        assert metrics["projection_name"] == "TestProjection"
+        assert metrics is not None and metrics["projection_name"] == "TestProjection"
         assert metrics["events_processed"] == 1
