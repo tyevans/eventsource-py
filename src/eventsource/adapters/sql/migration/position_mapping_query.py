@@ -71,106 +71,72 @@ class PostgreSQLPositionMappingQueryMixin:
             )
 
     async def find_by_source_position(
-        self,
-        migration_id: UUID,
-        source_position: Position,
+        self, migration_id: UUID, source_position: Position
     ) -> PositionMapping | None:
         """Find mapping by exact source position via unique index."""
-        with self._tracer.span(
-            "eventsource.position_mapping_repo.find_by_source_position",
-            {
-                "migration.id": str(migration_id),
-                "source_position": source_position.to_str(),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "source_position": source_position.to_str(),
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.position_mapping_repo.find_by_source_position", attrs):
             return await self._fetch_one_mapping(
                 f"""
-                SELECT {_SELECT_COLUMNS}
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-                  AND source_position_token = :source_position_token
+                SELECT {_SELECT_COLUMNS} FROM migration_position_mappings
+                WHERE migration_id = :migration_id AND source_position_token = :source_position_token
                 """,  # nosec B608
-                {
-                    "migration_id": migration_id,
-                    "source_position_token": source_position.to_str(),
-                },
+                {"migration_id": migration_id, "source_position_token": source_position.to_str()},
             )
 
     async def find_by_target_position(
-        self,
-        migration_id: UUID,
-        target_position: Position,
+        self, migration_id: UUID, target_position: Position
     ) -> PositionMapping | None:
         """Find mapping by exact target position."""
-        with self._tracer.span(
-            "eventsource.position_mapping_repo.find_by_target_position",
-            {
-                "migration.id": str(migration_id),
-                "target_position": target_position.to_str(),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "target_position": target_position.to_str(),
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.position_mapping_repo.find_by_target_position", attrs):
             return await self._fetch_one_mapping(
                 f"""
-                SELECT {_SELECT_COLUMNS}
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-                  AND target_position_token = :target_position_token
+                SELECT {_SELECT_COLUMNS} FROM migration_position_mappings
+                WHERE migration_id = :migration_id AND target_position_token = :target_position_token
                 LIMIT 1
                 """,  # nosec B608
-                {
-                    "migration_id": migration_id,
-                    "target_position_token": target_position.to_str(),
-                },
+                {"migration_id": migration_id, "target_position_token": target_position.to_str()},
             )
 
-    async def find_by_event_id(
-        self,
-        migration_id: UUID,
-        event_id: UUID,
-    ) -> PositionMapping | None:
+    async def find_by_event_id(self, migration_id: UUID, event_id: UUID) -> PositionMapping | None:
         """Find mapping by event ID."""
-        with self._tracer.span(
-            "eventsource.position_mapping_repo.find_by_event_id",
-            {
-                "migration.id": str(migration_id),
-                "event.id": str(event_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "event.id": str(event_id),
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.position_mapping_repo.find_by_event_id", attrs):
             return await self._fetch_one_mapping(
                 f"""
-                SELECT {_SELECT_COLUMNS}
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-                  AND event_id = :event_id
+                SELECT {_SELECT_COLUMNS} FROM migration_position_mappings
+                WHERE migration_id = :migration_id AND event_id = :event_id
                 """,  # nosec B608
                 {"migration_id": migration_id, "event_id": event_id},
             )
 
     async def list_by_migration(
-        self,
-        migration_id: UUID,
-        limit: int = 100,
-        offset: int = 0,
+        self, migration_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[PositionMapping]:
         """List mappings for a migration with pagination ordered by id ascending."""
-        with self._tracer.span(
-            "eventsource.position_mapping_repo.list_by_migration",
-            {
-                "migration.id": str(migration_id),
-                "limit": limit,
-                "offset": offset,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "limit": limit,
+            "offset": offset,
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.position_mapping_repo.list_by_migration", attrs):
             query = text(f"""
-                SELECT {_SELECT_COLUMNS}
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-                ORDER BY id ASC
-                LIMIT :limit OFFSET :offset
+                SELECT {_SELECT_COLUMNS} FROM migration_position_mappings
+                WHERE migration_id = :migration_id ORDER BY id ASC LIMIT :limit OFFSET :offset
             """)  # nosec B608
             async with _get_sql_connection()(self._conn, write=False) as conn:
                 result = await conn.execute(
@@ -180,28 +146,21 @@ class PostgreSQLPositionMappingQueryMixin:
             return [row_to_mapping(row) for row in rows]
 
     async def list_in_source_range(
-        self,
-        migration_id: UUID,
-        start_position: Position,
-        end_position: Position,
+        self, migration_id: UUID, start_position: Position, end_position: Position
     ) -> list[PositionMapping]:
         """List mappings within an inclusive source position range."""
-        with self._tracer.span(
-            "eventsource.position_mapping_repo.list_in_source_range",
-            {
-                "migration.id": str(migration_id),
-                "start_position": start_position.to_str(),
-                "end_position": end_position.to_str(),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
+        attrs = {
+            "migration.id": str(migration_id),
+            "start_position": start_position.to_str(),
+            "end_position": end_position.to_str(),
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.position_mapping_repo.list_in_source_range", attrs):
             total = await self.count_by_migration(migration_id)
             lower_ordinal = await self._find_first_ordinal_gte(migration_id, start_position, total)
             upper_ordinal = await self._find_last_ordinal_lte(migration_id, end_position, total)
-
             if lower_ordinal is None or upper_ordinal is None or lower_ordinal > upper_ordinal:
                 return []
-
             return await self.list_by_migration(
                 migration_id, limit=upper_ordinal - lower_ordinal + 1, offset=lower_ordinal
             )
@@ -220,10 +179,7 @@ class PostgreSQLPositionMappingQueryMixin:
                 row = result.fetchone()
             return row[0] if row else 0
 
-    async def get_position_bounds(
-        self,
-        migration_id: UUID,
-    ) -> tuple[Position, Position] | None:
+    async def get_position_bounds(self, migration_id: UUID) -> tuple[Position, Position] | None:
         """Get the first and last mapping's source positions for a migration."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.get_position_bounds",
@@ -232,12 +188,13 @@ class PostgreSQLPositionMappingQueryMixin:
             total = await self.count_by_migration(migration_id)
             if total == 0:
                 return None
-
             first = await self._get_by_ordinal(migration_id, 0)
             last = await self._get_by_ordinal(migration_id, total - 1)
-            if first is None or last is None:
-                return None
-            return (first.source_position, last.source_position)
+            return (
+                None
+                if first is None or last is None
+                else (first.source_position, last.source_position)
+            )
 
 
 __all__ = ["PostgreSQLPositionMappingQueryMixin"]
