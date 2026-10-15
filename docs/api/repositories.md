@@ -401,3 +401,71 @@ repository's own `_enable_tracing` reflects the tracer you supplied). Per [ADR
 0026](../adrs/0005-clean-storage-ports-composed-protocols-and-connection-lifecycle.md), all three outbox adapters keep
 their per-operation tracing spans — this is one of the rings ADR 0025 did
 not amend ADR 0016 for.
+
+## Aggregate and Tenant-Aware Repository Reference
+
+Alongside the outbox repositories above, `eventsource.application.aggregates`
+provides `AggregateRepository` (re-exported from `eventsource`) and the
+multi-tenant wrapper `TenantAwareRepository`
+(`eventsource.application.aggregates.tenant_repository`).
+
+### `AggregateRepository.execute`
+
+```python
+async def execute(
+    self,
+    aggregate_id: UUID,
+    command: Any,
+    *more_commands: Any,
+    create_if_missing: bool = True,
+) -> TAggregate: ...
+```
+
+Loads (or creates) an aggregate, applies one or more commands or callables
+sequentially, and persists the resulting uncommitted events in a single
+load-apply-save cycle:
+
+- **`aggregate_id`**: Identifier of the target aggregate stream.
+- **`command`, `*more_commands`**: One or more command objects (dispatched via
+  `aggregate.execute(cmd)` or `aggregate.apply_command(cmd)`, such as on
+  `DeciderAggregate`) or callables `Callable[[TAggregate], Any]` (invoked as
+  `cmd(aggregate)` for imperative `AggregateRoot` or `DeclarativeAggregate`
+  methods). Commands and callables are applied in order on the same in-memory
+  aggregate instance before `await self.save(aggregate)` is called once.
+- **`create_if_missing`**: When `True` (default), loads the aggregate via
+  `load_or_create(aggregate_id)`. When `False`, uses `load(aggregate_id)` and
+  raises `AggregateNotFoundError` before running any command if the stream does
+  not exist.
+
+```python
+# Apply multiple commands in a single load-apply-save cycle
+account = await repo.execute(
+    account_id,
+    OpenAccount(account_id=account_id, owner="Alice"),
+    DepositMoney(account_id=account_id, amount=100.0),
+)
+
+# Or chain multiple mutating callables on a DeclarativeAggregate
+order = await order_repo.execute(
+    order_id,
+    lambda agg: agg.create(customer_id=customer_id),
+    lambda agg: agg.ship("TRACK-123"),
+)
+```
+
+### `TenantAwareRepository` Methods
+
+`TenantAwareRepository[TAggregate]` wraps an `AggregateRepository[TAggregate]`
+to enforce write-path tenant consistency (`validate_on_save=True` by default)
+and optional read-path context preconditions (`require_tenant_context=False` by
+default).
+
+| Method | Signature | Description |
+| --- | --- | --- |
+| `execute` | `async def execute(self, aggregate_id: UUID, command: Any, *more_commands: Any, create_if_missing: bool = True) -> TAggregate` | Loads (or creates) the aggregate, applies `command` and any `*more_commands` sequentially (supporting both command objects and callables), and saves with tenant validation (`self.save(agg)`). |
+| `get_version` | `async def get_version(self, aggregate_id: UUID) -> int` | Returns the stream's current version (`0` when the stream does not exist). When `require_tenant_context=True`, calls `get_required_tenant()` before delegating to the wrapped repository's `get_version(aggregate_id)`. |
+| `get_or_raise` | `async def get_or_raise(self, aggregate_id: UUID) -> TAggregate` | Intent-revealing alias for `await self.load(aggregate_id)`. Enforces `get_required_tenant()` when `require_tenant_context=True` and raises `AggregateNotFoundError` if the stream does not exist. |
+| `get_or_none` | `async def get_or_none(self, aggregate_id: UUID) -> TAggregate \| None` | Calls `await self.load(aggregate_id)` and returns `None` on `AggregateNotFoundError`. |
+| `exists` | `async def exists(self, aggregate_id: UUID) -> bool` | Checks whether the aggregate stream exists, enforcing `get_required_tenant()` first when `require_tenant_context=True`. |
+| `load` | `async def load(self, aggregate_id: UUID) -> TAggregate` | Loads the aggregate by ID, enforcing `get_required_tenant()` first when `require_tenant_context=True`. |
+| `load_or_create` | `async def load_or_create(self, aggregate_id: UUID) -> TAggregate` | Loads an existing aggregate or creates a new instance if absent, enforcing `get_required_tenant()` when `require_tenant_context=True`. |

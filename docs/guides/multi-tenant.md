@@ -354,11 +354,13 @@ assert get_current_tenant() is None          # restored on exit
 You will rarely call `get_required_tenant()` yourself on the write path,
 because the library already calls it for you:
 `TenantDomainEvent.with_tenant_context(...)` uses it to fill in `tenant_id`,
-and `TenantAwareRepository` uses it in `save()` and — when configured to
-enforce on load — in its load paths. A `TenantContextNotSetError` raised from
-either means the same thing as one raised from your own code: the unit of work
-was not wrapped in a scope. Fix that at the request boundary (Step 1) rather
-than catching the error where it surfaced.
+and `TenantAwareRepository` uses it in `save()` and — when configured with
+`require_tenant_context=True` — in its read and query paths (`load(aggregate_id)`,
+`get_or_raise(aggregate_id)`, `get_or_none(aggregate_id)`, `load_or_create(aggregate_id)`,
+`exists(aggregate_id)`, and `get_version(aggregate_id)`). A `TenantContextNotSetError`
+raised from any of these means the same thing as one raised from your own code:
+the unit of work was not wrapped in a scope. Fix that at the request boundary
+(Step 1) rather than catching the error where it surfaced.
 
 A rule that covers the choice: use `get_required_tenant()` whenever the next
 line would be wrong with `None`, and `get_current_tenant()` only when you
@@ -725,3 +727,27 @@ everything rather than nothing.
 | `UUID` | equal `UUID` | processed |
 | `UUID` | different `UUID` | skipped, DEBUG log, checkpoint advances |
 | `UUID` | `None` / attribute absent | processed |
+
+## Reading, querying, and executing with `TenantAwareRepository`
+
+`TenantAwareRepository` exposes the same read, query, and command surface as
+`AggregateRepository`:
+
+- **`await tenant_repo.load(aggregate_id)`** and **`await tenant_repo.get_or_raise(aggregate_id)`**:
+  Load an existing aggregate by ID (raising `AggregateNotFoundError` when
+  missing). `get_or_raise(aggregate_id)` is an intent-revealing alias for
+  `load(aggregate_id)`.
+- **`await tenant_repo.get_or_none(aggregate_id)`**:
+  Returns the aggregate if found, or `None` when the stream does not exist.
+- **`await tenant_repo.exists(aggregate_id)`** and **`await tenant_repo.get_version(aggregate_id)`**:
+  Query whether the aggregate stream exists (`bool`) or inspect its current
+  version (`int`, `0` when absent).
+- **`await tenant_repo.execute(aggregate_id, command, *more_commands, create_if_missing=True)`**:
+  Loads (or creates) the aggregate, applies one or more commands or callables
+  sequentially, and saves with tenant consistency validation.
+
+When `require_tenant_context=True`, `load(aggregate_id)`,
+`get_or_raise(aggregate_id)`, `get_or_none(aggregate_id)`,
+`load_or_create(aggregate_id)`, `exists(aggregate_id)`, and
+`get_version(aggregate_id)` all verify `get_required_tenant()` before
+delegating to the wrapped `AggregateRepository`.

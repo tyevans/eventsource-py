@@ -115,3 +115,44 @@ Python with `-W error::ResourceWarning`:
 ```bash
 uv run pytest -W error::ResourceWarning
 ```
+
+## `InMemoryEventStore` Ergonomics
+
+In addition to implementing `FullEventStore` and `SupportsAsyncContextManager`,
+`InMemoryEventStore` provides convenience helpers for tests, fixtures, and
+in-process workflows:
+
+- **$O(1)$ membership check (`event_id in store` or `event in store`)**:
+  `InMemoryEventStore.__contains__` checks the internal `_event_ids` set in
+  $O(1)$ time. Pass either a `UUID` (`event_id in store`) or a `DomainEvent`
+  instance (`event in store`, which checks `event.event_id`); any other type
+  returns `False`.
+- **Stream existence check (`await store.stream_exists(stream) -> bool`)**:
+  Returns `True` if `stream` has at least one appended event, or `False` when
+  the stream does not exist.
+- **Single-event and default-expected `append`**:
+  `await store.append(stream, events, expected=ExpectedVersion.any_())` accepts
+  either a single `DomainEvent` or a `Sequence[DomainEvent]` for `events`, and
+  defaults `expected` to `ExpectedVersion.any_()` when omitted.
+
+```python
+from uuid import uuid4
+from eventsource import ExpectedVersion, InMemoryEventStore, StreamId
+
+async with InMemoryEventStore() as store:
+    stream = StreamId(aggregate_id=uuid4(), category="Order")
+    assert await store.stream_exists(stream) is False
+
+    # Append a single DomainEvent using the default ExpectedVersion.any_()
+    created = OrderCreated(aggregate_id=stream.aggregate_id, customer_id=uuid4())
+    await store.append(stream, created)
+
+    # Append a sequence with an explicit ExpectedVersion
+    shipped = OrderShipped(aggregate_id=stream.aggregate_id, tracking_number="TRACK-1")
+    await store.append(stream, [shipped], expected=ExpectedVersion.exact(1))
+
+    assert await store.stream_exists(stream) is True
+    assert created.event_id in store
+    assert created in store
+    assert shipped in store
+```
