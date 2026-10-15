@@ -45,6 +45,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Standard span names and attribute conventions implemented across Redis event bus modules:
+# - self._tracer.span("eventsource.event_bus.publish", ...)
+# - self._tracer.span("eventsource.event_bus.process", ...)
+# - self._tracer.span("eventsource.event_bus.dispatch", ...)
+# - self._tracer.span("eventsource.event_bus.handle", ...)
+
 
 class RedisEventBus(
     RedisBusPublishMixin,
