@@ -1,7 +1,7 @@
 ---
 id: TASK-0401
 title: "Add container dunders and clear to SubscriberRegistry and SubscriptionRegistry"
-status: Refined
+status: Complete
 target_bc: application
 dependencies: [TASK-0392]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0401: Add container dunders and clear to SubscriberRegistry and SubscriptionRegistry
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `application`
 
 ## Objective
