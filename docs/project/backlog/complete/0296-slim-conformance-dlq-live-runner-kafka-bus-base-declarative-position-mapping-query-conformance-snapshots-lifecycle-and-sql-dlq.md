@@ -1,7 +1,7 @@
 ---
 id: TASK-0296
 title: "Compact top 8 src/eventsource modules at 264-269 lines below 245 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

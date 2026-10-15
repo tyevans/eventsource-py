@@ -1,7 +1,7 @@
 ---
-id: TASK-0303
-title: "Add create_read_model_repository(model_class) helper to InMemoryTestHarness"
-status: Refined
+id: TASK-0302
+title: "Add assert_event_type_count(event_type, count) and __len__ to EventAssertions"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0303: Add create_read_model_repository(model_class) helper to InMemoryTestHarness
+# TASK-0302: Add assert_event_type_count(event_type, count) and __len__ to EventAssertions
 
 ## Summary
-Add `create_read_model_repository(model_class) -> InMemoryReadModelRepository[TModel]` to `InMemoryTestHarness` in `src/eventsource/testing/harness.py` with unit tests.
+Add `assert_event_type_count(event_type, count) -> list[TEvent]` and `__len__(self) -> int` to `EventAssertions` in `src/eventsource/testing/assertions.py` while compacting `assertions.py` below 215 lines.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 265` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).

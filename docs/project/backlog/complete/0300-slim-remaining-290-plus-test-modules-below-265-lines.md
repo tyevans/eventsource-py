@@ -1,7 +1,7 @@
 ---
 id: TASK-0300
 title: "Compact remaining 290+ line test and benchmark modules below 265 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

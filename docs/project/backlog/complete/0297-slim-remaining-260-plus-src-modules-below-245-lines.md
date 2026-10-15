@@ -1,7 +1,7 @@
 ---
 id: TASK-0297
 title: "Compact remaining 260+ line src/eventsource modules below 245 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
