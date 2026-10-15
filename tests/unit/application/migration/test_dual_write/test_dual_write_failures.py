@@ -18,11 +18,15 @@ from eventsource.ports import AppendResult, ExpectedVersion, Position
 from ._fixtures import TestEvent
 
 
-class TestFailureStats:
-    """Tests for FailureStats dataclass."""
+def _make_event_and_stream(
+    aggregate_id: UUID | None = None,
+) -> tuple[UUID, TestEvent, StreamId]:
+    agg_id = aggregate_id or uuid4()
+    return agg_id, TestEvent(aggregate_id=agg_id), StreamId(agg_id, "TestAggregate")
 
+
+class TestFailureStats:
     def test_empty_stats(self) -> None:
-        """Test default empty statistics."""
         stats = FailureStats()
         assert stats.total_failures == 0
         assert stats.total_events_failed == 0
@@ -31,7 +35,6 @@ class TestFailureStats:
         assert stats.unique_aggregates_affected == 0
 
     def test_stats_to_dict(self) -> None:
-        """Test converting stats to dictionary."""
         timestamp = datetime.now(UTC)
         stats = FailureStats(
             total_failures=5,
@@ -48,25 +51,19 @@ class TestFailureStats:
         assert result["unique_aggregates_affected"] == 3
 
     def test_stats_to_dict_with_none_timestamps(self) -> None:
-        """Test converting stats with None timestamps."""
         result = FailureStats().to_dict()
         assert result["first_failure_at"] is None
         assert result["last_failure_at"] is None
 
 
 class TestAppendSourceFailure:
-    """Tests for source failure scenarios."""
-
     async def test_source_failure_propagates(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that source failures (a version conflict) propagate to the caller."""
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        aggregate_id, event, stream = _make_event_and_stream()
         source_store.append.side_effect = OptimisticLockError(aggregate_id, 0, 5)
 
         with pytest.raises(OptimisticLockError):
@@ -76,18 +73,13 @@ class TestAppendSourceFailure:
 
 
 class TestAppendTargetFailure:
-    """Tests for target failure scenarios."""
-
     async def test_target_failure_operation_succeeds(
         self,
         interceptor: DualWriteInterceptor,
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that target failures don't fail the operation."""
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        _aggregate_id, event, stream = _make_event_and_stream()
         expected_result = AppendResult(
             stream=stream, new_version=1, position=Position(store_id="source", key=(1,))
         )
@@ -104,10 +96,7 @@ class TestAppendTargetFailure:
         source_store: MagicMock,
         target_store: MagicMock,
     ) -> None:
-        """Test that target failures are tracked."""
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        aggregate_id, event, stream = _make_event_and_stream()
         target_store.append.side_effect = Exception("Connection refused")
 
         await interceptor.append(stream, [event], ExpectedVersion.no_stream())
@@ -122,10 +111,7 @@ class TestAppendTargetFailure:
     async def test_target_failure_logs_warning(
         self, interceptor: DualWriteInterceptor, target_store: MagicMock
     ) -> None:
-        """Test that target failures are logged as warnings."""
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        aggregate_id, event, stream = _make_event_and_stream()
         target_store.append.side_effect = Exception("Target unavailable")
 
         with patch("eventsource.application.migration.dual_write.logger") as mock_logger:
@@ -138,7 +124,6 @@ class TestAppendTargetFailure:
     async def test_target_failure_records_metric_when_migration_id_set(
         self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """A mirror failure reports through the real MigrationMetrics instance."""
         from eventsource.application.migration.metrics import (
             clear_metrics_registry,
             get_migration_metrics,
@@ -153,9 +138,7 @@ class TestAppendTargetFailure:
             migration_id=migration_id,
             enable_tracing=False,
         )
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        _aggregate_id, event, stream = _make_event_and_stream()
         target_store.append.side_effect = Exception("Connection refused")
 
         await interceptor_with_migration.append(stream, [event], ExpectedVersion.no_stream())
@@ -167,36 +150,27 @@ class TestAppendTargetFailure:
     async def test_multiple_target_failures_tracked(
         self, interceptor: DualWriteInterceptor, target_store: MagicMock
     ) -> None:
-        """Test that multiple target failures are tracked."""
         target_store.append.side_effect = Exception("Connection refused")
         for _ in range(3):
-            aggregate_id = uuid4()
-            event = TestEvent(aggregate_id=aggregate_id)
-            stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+            _aggregate_id, event, stream = _make_event_and_stream()
             await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
-        failed_writes = interceptor.get_failed_writes()
-        assert len(failed_writes) == 3
+        assert len(interceptor.get_failed_writes()) == 3
         stats = interceptor.get_failure_stats()
         assert stats.total_failures == 3
         assert stats.unique_aggregates_affected == 3
 
 
 class TestFailureTracking:
-    """Tests for failure tracking functionality."""
-
     async def test_failure_stats_aggregation(
         self, interceptor: DualWriteInterceptor, target_store: MagicMock
     ) -> None:
-        """Test that failure statistics are correctly aggregated."""
         target_store.append.side_effect = Exception("Error")
-        aggregate_id = uuid4()
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        aggregate_id, _event, stream = _make_event_and_stream()
 
         for i in range(3):
-            event = TestEvent(aggregate_id=aggregate_id)
             expected = ExpectedVersion.no_stream() if i == 0 else ExpectedVersion.exact(i)
-            await interceptor.append(stream, [event], expected)
+            await interceptor.append(stream, [TestEvent(aggregate_id=aggregate_id)], expected)
 
         stats = interceptor.get_failure_stats()
         assert stats.total_failures == 3
@@ -206,11 +180,8 @@ class TestFailureTracking:
     async def test_failure_timestamps_tracked(
         self, interceptor: DualWriteInterceptor, target_store: MagicMock
     ) -> None:
-        """Test that first and last failure timestamps are tracked."""
         target_store.append.side_effect = Exception("Error")
-        aggregate_id = uuid4()
-        event = TestEvent(aggregate_id=aggregate_id)
-        stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+        _aggregate_id, event, stream = _make_event_and_stream()
         await interceptor.append(stream, [event], ExpectedVersion.no_stream())
 
         stats = interceptor.get_failure_stats()
@@ -221,7 +192,6 @@ class TestFailureTracking:
     def test_clear_failure_history(
         self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test clearing failure history."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
@@ -240,15 +210,13 @@ class TestFailureTracking:
         )
         interceptor_inst._affected_aggregates.add(uuid4())
 
-        count = interceptor_inst.clear_failure_history()
-        assert count == 1
+        assert interceptor_inst.clear_failure_history() == 1
         assert len(interceptor_inst.get_failed_writes()) == 0
         assert len(interceptor_inst._affected_aggregates) == 0
 
     async def test_failure_history_trimming(
         self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test that failure history is trimmed when exceeding max."""
         max_history = 5
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
@@ -260,9 +228,7 @@ class TestFailureTracking:
         target_store.append.side_effect = Exception("Error")
 
         for _i in range(max_history + 3):
-            aggregate_id = uuid4()
-            event = TestEvent(aggregate_id=aggregate_id)
-            stream = StreamId(aggregate_id=aggregate_id, category="TestAggregate")
+            _aggregate_id, event, stream = _make_event_and_stream()
             await interceptor_inst.append(stream, [event], ExpectedVersion.no_stream())
 
         assert len(interceptor_inst.get_failed_writes()) == max_history

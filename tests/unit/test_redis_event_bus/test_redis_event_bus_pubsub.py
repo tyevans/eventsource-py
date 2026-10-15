@@ -43,19 +43,15 @@ class TestRedisEventBusSubscription:
     """Tests for subscription management."""
 
     async def test_subscribe(self, bus: RedisEventBus) -> None:
-        """Test subscribing a handler to an event type."""
-        handler = OrderHandler()
-        bus.subscribe(SampleOrderCreated, handler)
+        bus.subscribe(SampleOrderCreated, OrderHandler())
         assert bus.get_subscriber_count(SampleOrderCreated) == 1
 
     async def test_subscribe_multiple_handlers(self, bus: RedisEventBus) -> None:
-        """Test subscribing multiple handlers to the same event type."""
         bus.subscribe(SampleOrderCreated, OrderHandler())
         bus.subscribe(SampleOrderCreated, OrderHandler())
         assert bus.get_subscriber_count(SampleOrderCreated) == 2
 
     async def test_subscribe_to_multiple_events(self, bus: RedisEventBus) -> None:
-        """Test subscribing to multiple event types."""
         handler = OrderHandler()
         bus.subscribe(SampleOrderCreated, handler)
         bus.subscribe(SampleOrderShipped, handler)
@@ -64,42 +60,30 @@ class TestRedisEventBusSubscription:
         assert bus.get_subscriber_count() == 2
 
     async def test_unsubscribe(self, bus: RedisEventBus) -> None:
-        """Test unsubscribing a handler."""
         handler = OrderHandler()
         bus.subscribe(SampleOrderCreated, handler)
-        result = bus.unsubscribe(SampleOrderCreated, handler)
-        assert result is True
+        assert bus.unsubscribe(SampleOrderCreated, handler) is True
         assert bus.get_subscriber_count(SampleOrderCreated) == 0
 
     async def test_unsubscribe_not_found(self, bus: RedisEventBus) -> None:
-        """Test unsubscribing a handler that wasn't subscribed."""
-        handler = OrderHandler()
-        result = bus.unsubscribe(SampleOrderCreated, handler)
-        assert result is False
+        assert bus.unsubscribe(SampleOrderCreated, OrderHandler()) is False
 
     async def test_subscribe_all(self, bus: RedisEventBus) -> None:
-        """Test subscribing an EventSubscriber to all its events."""
-        subscriber = SampleSubscriber()
-        bus.subscribe_all(subscriber)
+        bus.subscribe_all(SampleSubscriber())
         assert bus.get_subscriber_count(SampleOrderCreated) == 1
         assert bus.get_subscriber_count(SampleOrderShipped) == 1
 
     async def test_subscribe_to_all_events(self, bus: RedisEventBus) -> None:
-        """Test wildcard subscription."""
-        handler = OrderHandler()
-        bus.subscribe_to_all_events(handler)
+        bus.subscribe_to_all_events(OrderHandler())
         assert bus.get_wildcard_subscriber_count() == 1
 
     async def test_unsubscribe_from_all_events(self, bus: RedisEventBus) -> None:
-        """Test unsubscribing from wildcard subscription."""
         handler = OrderHandler()
         bus.subscribe_to_all_events(handler)
-        result = bus.unsubscribe_from_all_events(handler)
-        assert result is True
+        assert bus.unsubscribe_from_all_events(handler) is True
         assert bus.get_wildcard_subscriber_count() == 0
 
     async def test_clear_subscribers(self, bus: RedisEventBus) -> None:
-        """Test clearing all subscribers."""
         handler = OrderHandler()
         bus.subscribe(SampleOrderCreated, handler)
         bus.subscribe_to_all_events(handler)
@@ -114,7 +98,6 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_to_handler(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """Test dispatching event to handler."""
         handler = OrderHandler()
         bus.subscribe(SampleOrderCreated, handler)
         await bus._dispatch_event(_make_order_created(), "msg-123")
@@ -124,7 +107,6 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_to_sync_handler(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """Test dispatching event to sync handler."""
         handler = SyncHandler()
         bus.subscribe(SampleOrderCreated, handler)
         await bus._dispatch_event(_make_order_created(), "msg-123")
@@ -133,7 +115,6 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_to_wildcard_handler(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """Test dispatching event to wildcard handler."""
         handler = OrderHandler()
         bus.subscribe_to_all_events(handler)
         event = SamplePaymentReceived(aggregate_id=uuid4(), amount=100.0)
@@ -143,7 +124,6 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_to_multiple_handlers(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """Test dispatching event to multiple handlers."""
         handler1, handler2, wildcard_handler = OrderHandler(), OrderHandler(), OrderHandler()
         bus.subscribe(SampleOrderCreated, handler1)
         bus.subscribe(SampleOrderCreated, handler2)
@@ -156,19 +136,17 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_handler_failure(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """Test that handler failure raises exception."""
         bus.subscribe(SampleOrderCreated, FailingHandler())
         with pytest.raises(HandlerDispatchError) as exc_info:
             await bus._dispatch_event(_make_order_created(), "msg-123")
         assert len(exc_info.value.failures) == 1
-        failed_name, failed_exc = exc_info.value.failures[0]
+        _failed_name, failed_exc = exc_info.value.failures[0]
         assert isinstance(failed_exc, ValueError)
         assert "Handler failed intentionally" in str(failed_exc)
 
     async def test_dispatch_handler_failure_updates_stats(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """Test that handler failure updates statistics."""
         bus.subscribe(SampleOrderCreated, FailingHandler())
         initial_errors = bus.stats.handler_errors
         with pytest.raises(HandlerDispatchError):
@@ -178,13 +156,7 @@ class TestRedisEventBusDispatch:
     async def test_dispatch_isolates_handler_errors(
         self, bus: RedisEventBus, event_registry: EventRegistry
     ) -> None:
-        """A failing handler must not prevent other handlers from running.
-
-        All three handlers should be invoked even though the middle one
-        raises; the failure is reported once dispatch has run every handler,
-        via an aggregate HandlerDispatchError (not the underlying exception
-        directly), so the message is still left unacked for redelivery.
-        """
+        """A failing handler must not prevent other handlers from running."""
         handler1, failing_handler, handler3 = OrderHandler(), FailingHandler(), OrderHandler()
         bus.subscribe(SampleOrderCreated, handler1)
         bus.subscribe(SampleOrderCreated, failing_handler)
@@ -207,7 +179,6 @@ class TestRedisEventBusIntegration:
         event_registry: EventRegistry,
         mock_redis: AsyncMock,
     ) -> None:
-        """Test a full publish-consume cycle."""
         handler = OrderHandler()
         with (
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
@@ -243,7 +214,6 @@ class TestRedisEventBusIntegration:
         event_registry: EventRegistry,
         mock_redis: AsyncMock,
     ) -> None:
-        """Test that EventSubscriber receives events."""
         subscriber = SampleSubscriber()
         with (
             patch("eventsource.adapters.redis.bus.REDIS_AVAILABLE", True),
