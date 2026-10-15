@@ -1,7 +1,7 @@
 ---
 id: TASK-0243
 title: "Slim sql/migration/audit_log.py, memory/readmodels.py, postgresql/outbox.py, health_provider_probes.py, and replay.py below 305 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

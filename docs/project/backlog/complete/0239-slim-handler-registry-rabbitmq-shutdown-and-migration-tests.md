@@ -1,7 +1,7 @@
 ---
 id: TASK-0239
 title: "Slim handler registry, rabbitmq shutdown, dual write lifecycle, metrics/status, and operation error tests below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

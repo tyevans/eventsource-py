@@ -1,7 +1,7 @@
 ---
 id: TASK-0236
 title: "Slim the 5 test modules at >= 350 lines strictly below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

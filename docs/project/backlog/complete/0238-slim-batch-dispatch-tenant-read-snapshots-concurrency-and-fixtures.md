@@ -1,7 +1,7 @@
 ---
 id: TASK-0238
 title: "Slim live batch dispatch, tenant repository read, memory snapshots, sync concurrency, and integration fixtures below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
