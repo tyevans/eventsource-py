@@ -19,13 +19,10 @@ from tests.unit.application.subscriptions.test_subscription_manager._fixtures im
 
 
 class TestHealthStatus:
-    """Tests for health status reporting."""
-
     @pytest.mark.asyncio
     async def test_health_when_stopped(
         self, manager: SubscriptionManager, subscriber: MockSubscriber
     ):
-        """Test health status when stopped."""
         await manager.subscribe(subscriber)
         health = manager.get_health()
         assert health["status"] == "stopped"
@@ -40,7 +37,6 @@ class TestHealthStatus:
         event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
-        """Test health status when running."""
         await add_events_to_store(event_store, 5)
         await manager.subscribe(subscriber)
         await manager.start()
@@ -56,7 +52,6 @@ class TestHealthStatus:
     async def test_health_with_error_subscription(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
-        """Test health status with errored subscription."""
         await add_events_to_store(event_store, 5)
         subscriber = MockSubscriber()
         subscriber.fail_on_event_types.add("ManagerTestEvent")
@@ -75,12 +70,10 @@ class TestHealthStatus:
         event_store: InMemoryEventStore,
         subscriber: MockSubscriber,
     ):
-        """Test health includes subscription details."""
         await add_events_to_store(event_store, 5)
         await manager.subscribe(subscriber)
         await manager.start()
-        health = manager.get_health()
-        sub_status = health["subscriptions"][0]
+        sub_status = manager.get_health()["subscriptions"][0]
         assert "name" in sub_status
         assert "state" in sub_status
         assert "position" in sub_status
@@ -89,13 +82,10 @@ class TestHealthStatus:
 
 
 class TestMultipleSubscriptionsHealth:
-    """Tests for health status with multiple subscriptions."""
-
     @pytest.mark.asyncio
     async def test_health_status_all_healthy(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
-        """Test health shows healthy when all subscriptions are live."""
         await add_events_to_store(event_store, 5)
         await manager.subscribe(OrderProjection())
         await manager.subscribe(CustomerProjection())
@@ -110,7 +100,6 @@ class TestMultipleSubscriptionsHealth:
     async def test_health_status_with_mixed_states(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
-        """Test health shows appropriate status with mixed subscription states."""
         await add_events_to_store(event_store, 5)
         working = OrderProjection()
         failing = MockSubscriber()
@@ -133,7 +122,6 @@ class TestMultipleSubscriptionsHealth:
     async def test_is_healthy_property_with_multiple_subscriptions(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
-        """Test is_healthy property with multiple subscriptions."""
         await add_events_to_store(event_store, 5)
         await manager.subscribe(OrderProjection())
         await manager.subscribe(CustomerProjection())
@@ -143,11 +131,8 @@ class TestMultipleSubscriptionsHealth:
 
 
 class TestGetAllStatuses:
-    """Tests for get_all_statuses method."""
-
     @pytest.mark.asyncio
     async def test_get_all_statuses_returns_dict(self, manager: SubscriptionManager):
-        """Test get_all_statuses returns dictionary of statuses."""
         await manager.subscribe(OrderProjection())
         await manager.subscribe(CustomerProjection())
         statuses = manager.get_all_statuses()
@@ -159,7 +144,6 @@ class TestGetAllStatuses:
     async def test_get_all_statuses_returns_subscription_status_objects(
         self, manager: SubscriptionManager
     ):
-        """Test get_all_statuses returns SubscriptionStatus objects."""
         await manager.subscribe(MockSubscriber())
         statuses = manager.get_all_statuses()
         assert "MockSubscriber" in statuses
@@ -172,7 +156,6 @@ class TestGetAllStatuses:
     async def test_get_all_statuses_shows_different_states(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
-        """Test get_all_statuses shows different subscription states."""
         await add_events_to_store(event_store, 5)
         await manager.subscribe(OrderProjection())
         await manager.subscribe(CustomerProjection())
@@ -184,20 +167,16 @@ class TestGetAllStatuses:
 
     @pytest.mark.asyncio
     async def test_get_all_statuses_empty_manager(self, manager: SubscriptionManager):
-        """Test get_all_statuses with no subscriptions."""
-        statuses = manager.get_all_statuses()
-        assert statuses == {}
+        assert manager.get_all_statuses() == {}
 
     @pytest.mark.asyncio
     async def test_get_all_statuses_includes_statistics(
         self, manager: SubscriptionManager, event_store: InMemoryEventStore
     ):
-        """Test get_all_statuses includes event processing statistics."""
         await add_events_to_store(event_store, 10)
         await manager.subscribe(MockSubscriber())
         await manager.start()
-        statuses = manager.get_all_statuses()
-        status = statuses["MockSubscriber"]
+        status = manager.get_all_statuses()["MockSubscriber"]
         assert status.events_processed == 10
         assert status.position is not None
         assert status.uptime_seconds >= 0
@@ -205,16 +184,12 @@ class TestGetAllStatuses:
 
 
 class TestModuleImports:
-    """Tests for module imports and exports."""
-
     def test_import_from_subscriptions_module(self):
-        """Test SubscriptionManager can be imported from subscriptions module."""
         from eventsource.application.subscriptions import SubscriptionManager as SubMgr
 
         assert SubMgr is SubscriptionManager
 
     def test_all_exports(self):
-        """Test __all__ contains SubscriptionManager."""
         from eventsource.application.subscriptions import manager
 
         assert "SubscriptionManager" in manager.__all__

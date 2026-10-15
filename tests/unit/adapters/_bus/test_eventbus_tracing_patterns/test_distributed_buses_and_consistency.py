@@ -7,6 +7,10 @@ import pytest
 from eventsource.ports.bus import EventBus
 
 
+def _joined_source(*modules: object) -> str:
+    return "".join(inspect.getsource(m) for m in modules)  # type: ignore[arg-type]
+
+
 class TestRedisEventBusTracingCompliance:
     @pytest.fixture
     def check_redis_available(self) -> None:
@@ -21,8 +25,7 @@ class TestRedisEventBusTracingCompliance:
     def test_uses_tracer_composition(self, check_redis_available: None) -> None:
         from eventsource.adapters.redis.bus import RedisEventBus
 
-        sig = inspect.signature(RedisEventBus.__init__)
-        assert "tracer" in sig.parameters
+        assert "tracer" in inspect.signature(RedisEventBus.__init__).parameters
 
     def test_inherits_from_eventbus(self, check_redis_available: None) -> None:
         from eventsource.adapters.redis.bus import RedisEventBus
@@ -33,33 +36,32 @@ class TestRedisEventBusTracingCompliance:
         from eventsource.adapters.redis.bus import RedisEventBusConfig
 
         config = RedisEventBusConfig()
-        assert hasattr(config, "enable_tracing")
-        assert config.enable_tracing is True
+        assert hasattr(config, "enable_tracing") and config.enable_tracing is True
 
     def test_uses_standard_span_names(self, check_redis_available: None) -> None:
         from eventsource.adapters.redis import bus as redis_module
 
         source = inspect.getsource(redis_module)
-        assert "eventsource.event_bus.publish" in source
-        assert "eventsource.event_bus.dispatch" in source
-        assert "eventsource.event_bus.handle" in source
-        assert "eventsource.event_bus.process" in source
+        for name in ("publish", "dispatch", "handle", "process"):
+            assert f"eventsource.event_bus.{name}" in source
 
     def test_uses_standard_attributes(self, check_redis_available: None) -> None:
         from eventsource.adapters.redis import bus as redis_module
 
         source = inspect.getsource(redis_module)
-        assert "ATTR_MESSAGING_SYSTEM" in source
-        assert "ATTR_MESSAGING_DESTINATION" in source
-        assert "ATTR_EVENT_TYPE" in source
-        assert "ATTR_HANDLER_NAME" in source
-        assert "ATTR_HANDLER_SUCCESS" in source
+        for attr in (
+            "ATTR_MESSAGING_SYSTEM",
+            "ATTR_MESSAGING_DESTINATION",
+            "ATTR_EVENT_TYPE",
+            "ATTR_HANDLER_NAME",
+            "ATTR_HANDLER_SUCCESS",
+        ):
+            assert attr in source
 
     def test_imports_otel_from_observability(self, check_redis_available: None) -> None:
         from eventsource.adapters.redis import bus as redis_module
 
-        source = inspect.getsource(redis_module)
-        assert "from eventsource.observability import" in source
+        assert "from eventsource.observability import" in inspect.getsource(redis_module)
 
 
 class TestRabbitMQEventBusTracingCompliance:
@@ -76,8 +78,7 @@ class TestRabbitMQEventBusTracingCompliance:
     def test_uses_tracer_composition(self, check_rabbitmq_available: None) -> None:
         from eventsource.adapters.rabbitmq import RabbitMQEventBus
 
-        sig = inspect.signature(RabbitMQEventBus.__init__)
-        assert "tracer" in sig.parameters
+        assert "tracer" in inspect.signature(RabbitMQEventBus.__init__).parameters
 
     def test_inherits_from_eventbus(self, check_rabbitmq_available: None) -> None:
         from eventsource.adapters.rabbitmq import RabbitMQEventBus
@@ -88,55 +89,41 @@ class TestRabbitMQEventBusTracingCompliance:
         from eventsource.adapters.rabbitmq import RabbitMQEventBusConfig
 
         config = RabbitMQEventBusConfig()
-        assert hasattr(config, "enable_tracing")
-        assert config.enable_tracing is True
+        assert hasattr(config, "enable_tracing") and config.enable_tracing is True
 
     def test_uses_standard_span_names(self, check_rabbitmq_available: None) -> None:
-        from eventsource.adapters.rabbitmq import bus as rabbitmq_module
-        from eventsource.adapters.rabbitmq import consumer as consumer_module
-        from eventsource.adapters.rabbitmq import publisher as publisher_module
+        from eventsource.adapters.rabbitmq import bus, consumer, publisher
 
-        source = (
-            inspect.getsource(rabbitmq_module)
-            + inspect.getsource(publisher_module)
-            + inspect.getsource(consumer_module)
-        )
-        assert "eventsource.event_bus.publish" in source
-        assert "eventsource.event_bus.consume" in source
-        assert "eventsource.event_bus.handle" in source
+        source = _joined_source(bus, publisher, consumer)
+        for name in ("publish", "consume", "handle"):
+            assert f"eventsource.event_bus.{name}" in source
 
     def test_uses_standard_attributes(self, check_rabbitmq_available: None) -> None:
-        from eventsource.adapters.rabbitmq import bus as rabbitmq_module
-        from eventsource.adapters.rabbitmq import consumer as consumer_module
-        from eventsource.adapters.rabbitmq import publisher as publisher_module
+        from eventsource.adapters.rabbitmq import bus, consumer, publisher
 
-        source = (
-            inspect.getsource(rabbitmq_module)
-            + inspect.getsource(publisher_module)
-            + inspect.getsource(consumer_module)
-        )
-        assert "ATTR_MESSAGING_SYSTEM" in source
-        assert "ATTR_MESSAGING_DESTINATION" in source
-        assert "ATTR_EVENT_TYPE" in source
-        assert "ATTR_HANDLER_NAME" in source
-        assert "ATTR_HANDLER_SUCCESS" in source
+        source = _joined_source(bus, publisher, consumer)
+        for attr in (
+            "ATTR_MESSAGING_SYSTEM",
+            "ATTR_MESSAGING_DESTINATION",
+            "ATTR_EVENT_TYPE",
+            "ATTR_HANDLER_NAME",
+            "ATTR_HANDLER_SUCCESS",
+        ):
+            assert attr in source
 
     def test_imports_otel_from_observability(self, check_rabbitmq_available: None) -> None:
         from eventsource.adapters.rabbitmq import bus as rabbitmq_module
 
-        source = inspect.getsource(rabbitmq_module)
-        assert "from eventsource.observability import OTEL_AVAILABLE" in source
+        assert "from eventsource.observability import OTEL_AVAILABLE" in inspect.getsource(
+            rabbitmq_module
+        )
 
     def test_has_context_propagation(self, check_rabbitmq_available: None) -> None:
-        from eventsource.adapters.rabbitmq import consumer as consumer_module
-        from eventsource.adapters.rabbitmq import publisher as publisher_module
-        from eventsource.adapters.rabbitmq import serialization as serialization_module
+        from eventsource.adapters.rabbitmq import consumer, publisher, serialization
 
-        assert "from opentelemetry.propagate import inject" in inspect.getsource(
-            serialization_module
-        )
-        assert "from opentelemetry.propagate import extract" in inspect.getsource(consumer_module)
-        assert hasattr(publisher_module, "PROPAGATION_AVAILABLE")
+        assert "from opentelemetry.propagate import inject" in inspect.getsource(serialization)
+        assert "from opentelemetry.propagate import extract" in inspect.getsource(consumer)
+        assert hasattr(publisher, "PROPAGATION_AVAILABLE")
 
 
 class TestKafkaEventBusTracingCompliance:
@@ -159,25 +146,18 @@ class TestKafkaEventBusTracingCompliance:
         from eventsource.adapters.kafka import KafkaEventBusConfig
 
         config = KafkaEventBusConfig()
-        assert hasattr(config, "enable_tracing")
-        assert config.enable_tracing is True
+        assert hasattr(config, "enable_tracing") and config.enable_tracing is True
 
     def test_uses_tracer_composition(self, check_kafka_available: None) -> None:
         from eventsource.adapters.kafka import KafkaEventBus
 
-        sig = inspect.signature(KafkaEventBus.__init__)
-        assert "tracer" in sig.parameters
+        assert "tracer" in inspect.signature(KafkaEventBus.__init__).parameters
 
     def test_has_context_propagation(self, check_kafka_available: None) -> None:
-        from eventsource.adapters.kafka import consumer as kafka_consumer_module
-        from eventsource.adapters.kafka import publisher as kafka_publisher_module
+        from eventsource.adapters.kafka import consumer, publisher
 
-        assert "from opentelemetry.propagate import inject" in inspect.getsource(
-            kafka_publisher_module
-        )
-        assert "from opentelemetry.propagate import extract" in inspect.getsource(
-            kafka_consumer_module
-        )
+        assert "from opentelemetry.propagate import inject" in inspect.getsource(publisher)
+        assert "from opentelemetry.propagate import extract" in inspect.getsource(consumer)
 
 
 class TestTracerCompositionIntegration:
@@ -185,15 +165,13 @@ class TestTracerCompositionIntegration:
         from eventsource.adapters.memory.bus import InMemoryEventBus
 
         bus = InMemoryEventBus()
-        assert hasattr(bus, "_tracer")
-        assert bus._tracer is not None
+        assert hasattr(bus, "_tracer") and bus._tracer is not None
 
     def test_tracer_has_span_method(self) -> None:
         from eventsource.adapters.memory.bus import InMemoryEventBus
 
         bus = InMemoryEventBus()
-        assert hasattr(bus._tracer, "span")
-        assert callable(bus._tracer.span)
+        assert hasattr(bus._tracer, "span") and callable(bus._tracer.span)
 
     def test_tracer_span_works_as_context_manager(self) -> None:
         from eventsource.adapters.memory.bus import InMemoryEventBus
@@ -216,5 +194,4 @@ class TestEventBusSpanNamingConsistency:
             assert span_name.startswith("eventsource.event_bus.")
             parts = span_name.split(".")
             assert len(parts) == 3
-            assert parts[0] == "eventsource"
-            assert parts[1] == "event_bus"
+            assert parts[0] == "eventsource" and parts[1] == "event_bus"

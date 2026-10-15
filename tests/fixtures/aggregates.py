@@ -1,6 +1,7 @@
 """Shared test aggregate implementations and state models."""
 
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -40,64 +41,43 @@ class CounterAggregate(AggregateRoot[CounterState]):
     def _get_initial_state(self) -> CounterState:
         return CounterState(counter_id=self.aggregate_id)
 
+    def _ensure_state(self) -> CounterState:
+        if self._state is None:
+            self._state = self._get_initial_state()
+        return self._state
+
+    def _make_event(self, cls: type[DomainEvent], **kwargs: Any) -> DomainEvent:
+        return cls(
+            aggregate_id=self.aggregate_id,
+            aggregate_type=self.aggregate_type,
+            aggregate_version=self.get_next_version(),
+            **kwargs,
+        )
+
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, CounterIncremented):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(
-                update={"value": self._state.value + event.increment}
-            )
+            state = self._ensure_state()
+            self._state = state.model_copy(update={"value": state.value + event.increment})
         elif isinstance(event, CounterDecremented):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(
-                update={"value": self._state.value - event.decrement}
-            )
+            state = self._ensure_state()
+            self._state = state.model_copy(update={"value": state.value - event.decrement})
         elif isinstance(event, CounterNamed):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(update={"name": event.name})
+            state = self._ensure_state()
+            self._state = state.model_copy(update={"name": event.name})
         elif isinstance(event, CounterReset):
             self._state = self._get_initial_state()
 
     def increment(self, amount: int = 1) -> None:
-        self.apply_event(
-            CounterIncremented(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                increment=amount,
-            )
-        )
+        self.apply_event(self._make_event(CounterIncremented, increment=amount))
 
     def decrement(self, amount: int = 1) -> None:
-        self.apply_event(
-            CounterDecremented(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                decrement=amount,
-            )
-        )
+        self.apply_event(self._make_event(CounterDecremented, decrement=amount))
 
     def set_name(self, name: str) -> None:
-        self.apply_event(
-            CounterNamed(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                name=name,
-            )
-        )
+        self.apply_event(self._make_event(CounterNamed, name=name))
 
     def reset(self) -> None:
-        self.apply_event(
-            CounterReset(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-            )
-        )
+        self.apply_event(self._make_event(CounterReset))
 
 
 class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
@@ -106,23 +86,25 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
     def _get_initial_state(self) -> CounterState:
         return CounterState(counter_id=self.aggregate_id)
 
-    @handles(CounterIncremented)
-    def _on_counter_incremented(self, event: CounterIncremented) -> None:
+    def _ensure_state(self) -> CounterState:
         if self._state is None:
             self._state = self._get_initial_state()
-        self._state = self._state.model_copy(update={"value": self._state.value + event.increment})
+        return self._state
+
+    @handles(CounterIncremented)
+    def _on_counter_incremented(self, event: CounterIncremented) -> None:
+        state = self._ensure_state()
+        self._state = state.model_copy(update={"value": state.value + event.increment})
 
     @handles(CounterDecremented)
     def _on_counter_decremented(self, event: CounterDecremented) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-        self._state = self._state.model_copy(update={"value": self._state.value - event.decrement})
+        state = self._ensure_state()
+        self._state = state.model_copy(update={"value": state.value - event.decrement})
 
     @handles(CounterNamed)
     def _on_counter_named(self, event: CounterNamed) -> None:
-        if self._state is None:
-            self._state = self._get_initial_state()
-        self._state = self._state.model_copy(update={"name": event.name})
+        state = self._ensure_state()
+        self._state = state.model_copy(update={"name": event.name})
 
     @handles(CounterReset)
     def _on_counter_reset(self, event: CounterReset) -> None:
