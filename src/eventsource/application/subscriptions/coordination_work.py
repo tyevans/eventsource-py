@@ -49,9 +49,7 @@ class WorkRedistributionCoordinator(
     _peer_shutdown_callbacks: list[PeerShutdownCallback] = field(default_factory=list, repr=False)
     _heartbeat_callbacks: list[HeartbeatCallback] = field(default_factory=list, repr=False)
     _peer_timeout_callbacks: list[PeerTimeoutCallback] = field(default_factory=list, repr=False)
-    _work_assignment_callbacks: list[WorkAssignmentCallback] = field(
-        default_factory=list, repr=False
-    )
+    _work_assignment_callbacks: list[WorkAssignmentCallback] = field(default_factory=list, repr=False)  # fmt: skip
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _is_shutting_down: bool = field(default=False, repr=False)
     _shutdown_notification: ShutdownNotification | None = field(default=None, repr=False)
@@ -75,23 +73,15 @@ class WorkRedistributionCoordinator(
         """Create a shutdown notification for this instance and mark it as shutting down."""
         now = datetime.now(UTC)
         notification = ShutdownNotification(
-            instance_id=self.instance_id,
-            intent=intent,
-            initiated_at=now,
-            expected_completion_at=now + timedelta(seconds=drain_timeout_seconds),
-            subscriptions=tuple(subscriptions),
-            in_flight_count=in_flight_count,
-            metadata=metadata or {},
-        )
-        self._is_shutting_down = True
-        self._shutdown_notification = notification
+            self.instance_id, intent, now, now + timedelta(seconds=drain_timeout_seconds),
+            tuple(subscriptions), in_flight_count=in_flight_count, metadata=metadata or {},
+        )  # fmt: skip
+        self._is_shutting_down, self._shutdown_notification = True, notification
         extra = {
-            "instance_id": self.instance_id,
-            "intent": intent.value,
-            "subscriptions": list(subscriptions),
-            "in_flight_count": in_flight_count,
+            "instance_id": self.instance_id, "intent": intent.value,
+            "subscriptions": list(subscriptions), "in_flight_count": in_flight_count,
             "drain_timeout_seconds": drain_timeout_seconds,
-        }
+        }  # fmt: skip
         logger.info("Created shutdown notification", extra=extra)
         return notification
 
@@ -104,13 +94,9 @@ class WorkRedistributionCoordinator(
         """Create a heartbeat message for this instance."""
         is_leader = self.leader_elector.is_leader if self.leader_elector is not None else False
         return HeartbeatMessage(
-            instance_id=self.instance_id,
-            timestamp=datetime.now(UTC),
-            subscriptions=tuple(subscriptions),
-            in_flight_count=in_flight_count,
-            is_leader=is_leader,
-            load_factor=load_factor,
-        )
+            self.instance_id, datetime.now(UTC), tuple(subscriptions),
+            in_flight_count=in_flight_count, is_leader=is_leader, load_factor=load_factor,
+        )  # fmt: skip
 
     async def handle_peer_shutdown(self, notification: ShutdownNotification) -> None:
         """Handle a shutdown notification from a peer."""
@@ -122,11 +108,10 @@ class WorkRedistributionCoordinator(
             )
             peer.shutdown_notification = notification
         extra = {
-            "peer_id": notification.instance_id,
-            "intent": notification.intent.value,
+            "peer_id": notification.instance_id, "intent": notification.intent.value,
             "subscriptions": list(notification.subscriptions),
             "time_remaining": notification.time_remaining_seconds,
-        }
+        }  # fmt: skip
         logger.info("Received peer shutdown notification", extra=extra)
         for callback in self._peer_shutdown_callbacks:
             try:
@@ -157,9 +142,8 @@ class WorkRedistributionCoordinator(
             return
         extra = {
             "source_instance_id": assignment.source_instance_id,
-            "subscriptions": list(assignment.subscriptions),
-            "priority": assignment.priority,
-        }
+            "subscriptions": list(assignment.subscriptions), "priority": assignment.priority,
+        }  # fmt: skip
         logger.info("Received work assignment", extra=extra)
         for callback in self._work_assignment_callbacks:
             try:

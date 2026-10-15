@@ -50,13 +50,10 @@ class InMemoryDLQRepository:
     ) -> None:
         """Add or update a failed event in the DLQ."""
         attrs = {
-            ATTR_EVENT_ID: str(event_id),
-            ATTR_EVENT_TYPE: event_type,
-            ATTR_PROJECTION_NAME: projection_name,
-            ATTR_ERROR_TYPE: str(error)[:100],
-            ATTR_RETRY_COUNT: retry_count,
-            ATTR_DB_SYSTEM: "memory",
-        }
+            ATTR_EVENT_ID: str(event_id), ATTR_EVENT_TYPE: event_type,
+            ATTR_PROJECTION_NAME: projection_name, ATTR_ERROR_TYPE: str(error)[:100],
+            ATTR_RETRY_COUNT: retry_count, ATTR_DB_SYSTEM: "memory",
+        }  # fmt: skip
         with self._tracer.span("eventsource.dlq.add", attrs):
             now, key = datetime.now(UTC), self._make_key(event_id, projection_name)
             async with self._lock:
@@ -83,18 +80,15 @@ class InMemoryDLQRepository:
         with self._tracer.span("eventsource.dlq.get", attrs):
             async with self._lock:
                 entries = [
-                    e
-                    for e in self._entries.values()
-                    if e.status == status
-                    and (not projection_name or e.projection_name == projection_name)
-                ]
+                    e for e in self._entries.values()
+                    if e.status == status and (not projection_name or e.projection_name == projection_name)
+                ]  # fmt: skip
                 entries.sort(key=lambda e: e.first_failed_at or datetime.min, reverse=True)
                 return entries[:limit]
 
     async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
         """Get a specific failed event by its DLQ ID via O(1) index lookup."""
-        attrs = {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
-        with self._tracer.span("eventsource.dlq.get_by_id", attrs):
+        with self._tracer.span("eventsource.dlq.get_by_id", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}):  # fmt: skip
             async with self._lock:
                 return self._by_id.get(dlq_id)
 
@@ -105,13 +99,11 @@ class InMemoryDLQRepository:
         with self._tracer.span("eventsource.dlq.resolve", attrs):
             async with self._lock:
                 if (entry := self._by_id.get(dlq_id)) is not None:
-                    entry.status, entry.resolved_by = "resolved", by_str
-                    entry.resolved_at = datetime.now(UTC)
+                    entry.status, entry.resolved_by, entry.resolved_at = "resolved", by_str, datetime.now(UTC)  # fmt: skip
 
     async def mark_retrying(self, dlq_id: int | str) -> None:
         """Mark a DLQ entry as being retried via O(1) index lookup."""
-        attrs = {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}
-        with self._tracer.span("eventsource.dlq.retry", attrs):
+        with self._tracer.span("eventsource.dlq.retry", {"dlq.id": str(dlq_id), ATTR_DB_SYSTEM: "memory"}):  # fmt: skip
             async with self._lock:
                 if (entry := self._by_id.get(dlq_id)) is not None:
                     entry.status = "retrying"
@@ -122,12 +114,10 @@ class InMemoryDLQRepository:
             async with self._lock:
                 active = [e for e in self._entries.values() if e.status in ("failed", "retrying")]
                 dates = [e.first_failed_at for e in active if e.first_failed_at]
-                return DLQStats(
-                    total_failed=sum(1 for e in active if e.status == "failed"),
-                    total_retrying=sum(1 for e in active if e.status == "retrying"),
-                    affected_projections=len({e.projection_name for e in active}),
-                    oldest_failure=min(dates).isoformat() if dates else None,
-                )
+                failed_cnt = sum(1 for e in active if e.status == "failed")
+                retry_cnt = sum(1 for e in active if e.status == "retrying")
+                oldest = min(dates).isoformat() if dates else None
+                return DLQStats(failed_cnt, retry_cnt, len({e.projection_name for e in active}), oldest)  # fmt: skip
 
     async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """Get failure counts grouped by projection."""
@@ -141,8 +131,7 @@ class InMemoryDLQRepository:
                 for proj, items in by_proj.items():
                     firsts = [e.first_failed_at.isoformat() for e in items if e.first_failed_at]
                     lasts = [e.last_failed_at.isoformat() for e in items if e.last_failed_at]
-                    oldest, recent = min(firsts, default=None), max(lasts, default=None)
-                    result.append(ProjectionFailureCount(proj, len(items), oldest, recent))
+                    result.append(ProjectionFailureCount(proj, len(items), min(firsts, default=None), max(lasts, default=None)))  # fmt: skip
                 result.sort(key=lambda x: x.failure_count, reverse=True)
                 return result
 
@@ -152,10 +141,7 @@ class InMemoryDLQRepository:
         with self._tracer.span("eventsource.dlq.delete_resolved", attrs):
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
             async with self._lock:
-                keys = [
-                    k for k, e in self._entries.items()
-                    if e.status == "resolved" and e.resolved_at and e.resolved_at < cutoff
-                ]  # fmt: skip
+                keys = [k for k, e in self._entries.items() if e.status == "resolved" and e.resolved_at and e.resolved_at < cutoff]  # fmt: skip
                 for key in keys:
                     self._by_id.pop(self._entries.pop(key).id, None)
                 return len(keys)

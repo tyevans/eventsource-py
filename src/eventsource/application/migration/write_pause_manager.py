@@ -21,12 +21,7 @@ logger = logging.getLogger(__name__)
 class WritePauseManager:
     """Manages asyncio.Lock-protected write pause coordination for tenant migrations."""
 
-    def __init__(
-        self,
-        *,
-        default_timeout: float = 5.0,
-        max_history_size: int = 100,
-    ) -> None:
+    def __init__(self, *, default_timeout: float = 5.0, max_history_size: int = 100) -> None:
         self._default_timeout = default_timeout
         self._max_history_size = max_history_size
         self._paused_tenants: dict[UUID, PauseState] = {}
@@ -46,16 +41,14 @@ class WritePauseManager:
                 logger.debug("Tenant %s already paused (idempotent call)", tenant_id)
                 return False
             self._paused_tenants[tenant_id] = PauseState()
-            self._max_waiters[tenant_id] = 0
-            self._total_waiters[tenant_id] = 0
+            self._max_waiters[tenant_id] = self._total_waiters[tenant_id] = 0
             logger.info("Paused writes for tenant %s", tenant_id)
             return True
 
     async def resume_writes(self, tenant_id: UUID) -> PauseMetrics | None:
         """Resume writes for a tenant and return PauseMetrics, or None if not paused."""
         async with self._lock:
-            state = self._paused_tenants.pop(tenant_id, None)
-            if state is None:
+            if (state := self._paused_tenants.pop(tenant_id, None)) is None:
                 logger.debug("Tenant %s not paused (idempotent resume)", tenant_id)
                 return None
 
@@ -83,18 +76,14 @@ class WritePauseManager:
             return metrics
 
     async def wait_if_paused(
-        self,
-        tenant_id: UUID | None,
-        *,
-        timeout: float | None = None,
+        self, tenant_id: UUID | None, *, timeout: float | None = None
     ) -> float:
         """Wait if writes are paused for a tenant; returns wait time in ms or raises WritePausedError."""
         if tenant_id is None:
             return 0.0
         effective_timeout = timeout if timeout is not None else self._default_timeout
         async with self._lock:
-            state = self._paused_tenants.get(tenant_id)
-            if state is None:
+            if (state := self._paused_tenants.get(tenant_id)) is None:
                 return 0.0
             state.waiting_count += 1
             self._total_waiters[tenant_id] = self._total_waiters.get(tenant_id, 0) + 1
@@ -117,8 +106,7 @@ class WritePauseManager:
             raise WritePausedError(tenant_id, effective_timeout, waited_ms=wait_ms) from None
         finally:
             async with self._lock:
-                state = self._paused_tenants.get(tenant_id)
-                if state is not None:
+                if (state := self._paused_tenants.get(tenant_id)) is not None:
                     state.waiting_count = max(0, state.waiting_count - 1)
 
     def is_paused(self, tenant_id: UUID) -> bool:
@@ -126,8 +114,7 @@ class WritePauseManager:
 
     async def get_pause_state(self, tenant_id: UUID) -> dict[str, Any] | None:
         async with self._lock:
-            state = self._paused_tenants.get(tenant_id)
-            if state is None:
+            if (state := self._paused_tenants.get(tenant_id)) is None:
                 return None
             return {
                 "tenant_id": str(tenant_id),
@@ -153,11 +140,7 @@ class WritePauseManager:
         return metrics_list
 
     async def wait_for_no_waiters(
-        self,
-        tenant_id: UUID,
-        *,
-        timeout: float = 1.0,
-        poll_interval: float = 0.01,
+        self, tenant_id: UUID, *, timeout: float = 1.0, poll_interval: float = 0.01
     ) -> bool:
         start = time.perf_counter()
         while (time.perf_counter() - start) < timeout:
