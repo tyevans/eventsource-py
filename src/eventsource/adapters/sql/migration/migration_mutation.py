@@ -1,9 +1,4 @@
-"""Lifecycle mutation operations mixin for PostgreSQL migration repository.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Lifecycle mutation operations mixin for PostgreSQL migration repository."""
 
 from __future__ import annotations
 
@@ -14,10 +9,7 @@ from uuid import UUID
 from sqlalchemy import text
 
 from eventsource.adapters.serialization import json_dumps
-from eventsource.adapters.sql.migration.migration_helpers import (
-    VALID_TRANSITIONS,
-    _token,
-)
+from eventsource.adapters.sql.migration.migration_helpers import VALID_TRANSITIONS, _token
 from eventsource.application.migration.exceptions import (
     InvalidPhaseTransitionError,
     MigrationAlreadyExistsError,
@@ -55,45 +47,22 @@ class PostgreSQLMigrationMutationMixin:
         async def get_by_tenant(self, tenant_id: UUID) -> Migration | None: ...
         def _get_phase_timestamp_updates(self, phase: MigrationPhase) -> str: ...
         def _get_phase_timestamp_params(
-            self,
-            phase: MigrationPhase,
-            now: datetime,
+            self, phase: MigrationPhase, now: datetime
         ) -> dict[str, Any]: ...
 
     async def create(self, migration: Migration) -> UUID:
-        """Create a new migration record.
-
-        Creates a new migration in PENDING phase. Validates that no
-        active migration exists for the tenant to prevent duplicate
-        migrations.
-
-        Args:
-            migration: Migration instance to persist
-
-        Returns:
-            The migration ID
-
-        Raises:
-            MigrationAlreadyExistsError: If active migration exists for tenant
-        """
-        with self._tracer.span(
-            "eventsource.migration_repo.create",
-            {
-                "migration.id": str(migration.id),
-                ATTR_TENANT_ID: str(migration.tenant_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
-            # Check for existing active migration
+        """Create a new migration record in PENDING phase, ensuring no active tenant migration."""
+        attrs = {
+            "migration.id": str(migration.id),
+            ATTR_TENANT_ID: str(migration.tenant_id),
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.migration_repo.create", attrs):
             existing = await self.get_by_tenant(migration.tenant_id)
             if existing is not None:
-                raise MigrationAlreadyExistsError(
-                    migration.tenant_id,
-                    existing.id,
-                )
+                raise MigrationAlreadyExistsError(migration.tenant_id, existing.id)
 
             now = datetime.now(UTC)
-
             query = text("""
                 INSERT INTO tenant_migrations (
                     id, tenant_id, source_store_id, target_store_id,
@@ -107,7 +76,6 @@ class PostgreSQLMigrationMutationMixin:
                     :config, :error_count, :created_at, :updated_at, :created_by
                 )
             """)
-
             params = {
                 "id": migration.id,
                 "tenant_id": migration.tenant_id,
@@ -124,58 +92,28 @@ class PostgreSQLMigrationMutationMixin:
                 "updated_at": now,
                 "created_by": migration.created_by,
             }
-
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
-
             return migration.id
 
-    async def update_phase(
-        self,
-        migration_id: UUID,
-        new_phase: MigrationPhase,
-    ) -> None:
-        """Update migration phase with validation.
-
-        Validates the phase transition against the state machine before
-        applying the update. Also updates phase-specific timestamps
-        (e.g., started_at, bulk_copy_started_at, etc.).
-
-        Args:
-            migration_id: UUID of the migration
-            new_phase: New phase to transition to
-
-        Raises:
-            MigrationNotFoundError: If migration not found
-            InvalidPhaseTransitionError: If transition is invalid
-        """
-        with self._tracer.span(
-            "eventsource.migration_repo.update_phase",
-            {
-                "migration.id": str(migration_id),
-                "migration.new_phase": new_phase.value,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
-        ):
-            # Get current phase
+    async def update_phase(self, migration_id: UUID, new_phase: MigrationPhase) -> None:
+        """Update migration phase with state machine validation and phase timestamps."""
+        attrs = {
+            "migration.id": str(migration_id),
+            "migration.new_phase": new_phase.value,
+            ATTR_DB_SYSTEM: "postgresql",
+        }
+        with self._tracer.span("eventsource.migration_repo.update_phase", attrs):
             migration = await self.get(migration_id)
             if migration is None:
                 raise MigrationNotFoundError(migration_id)
 
-            # Validate transition
             valid_transitions = VALID_TRANSITIONS.get(migration.phase, set())
             if new_phase not in valid_transitions:
-                raise InvalidPhaseTransitionError(
-                    migration_id,
-                    migration.phase,
-                    new_phase,
-                )
+                raise InvalidPhaseTransitionError(migration_id, migration.phase, new_phase)
 
-            # Build update query with phase-specific timestamps
             now = datetime.now(UTC)
             timestamp_updates = self._get_phase_timestamp_updates(new_phase)
-
-            # timestamp_updates is hardcoded SQL from internal enum mapping
             query = text(f"""
                 UPDATE tenant_migrations
                 SET phase = :phase,
@@ -183,14 +121,12 @@ class PostgreSQLMigrationMutationMixin:
                     updated_at = :updated_at
                 WHERE id = :id
             """)  # nosec B608 - all data values are parameterized
-
             params = {
                 "id": migration_id,
                 "phase": new_phase.value,
                 "updated_at": now,
                 **self._get_phase_timestamp_params(new_phase, now),
             }
-
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
 

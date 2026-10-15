@@ -72,6 +72,7 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                 return
             ssl_context: ssl.SSLContext | None = None
             cfg = self._config
+            s_url = self._sanitize_url(cfg.rabbitmq_url)
             try:
                 ssl_context = self._create_ssl_context()
                 connect_kwargs: dict[str, Any] = {
@@ -91,42 +92,32 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                 await self._run_reconnect_callbacks()
                 self._connected = True
                 self._stats.connected_at = datetime.now(UTC)
-                tls_status = "TLS" if ssl_context is not None else "plaintext"
-                logger.info(
-                    f"Connected to RabbitMQ ({tls_status}) and initialized topology",
-                    extra={
-                        "rabbitmq_url": self._sanitize_url(cfg.rabbitmq_url),
-                        "exchange": cfg.exchange_name,
-                        "queue": cfg.queue_name,
-                        "consumer_group": cfg.consumer_group,
-                        "dlq_enabled": cfg.enable_dlq,
-                        "tls_enabled": ssl_context is not None,
-                    },
-                )
+                tls_on = ssl_context is not None
+                tls_status = "TLS" if tls_on else "plaintext"
+                info_ex = {
+                    "rabbitmq_url": s_url,
+                    "exchange": cfg.exchange_name,
+                    "queue": cfg.queue_name,
+                    "consumer_group": cfg.consumer_group,
+                    "dlq_enabled": cfg.enable_dlq,
+                    "tls_enabled": tls_on,
+                }
+                msg = f"Connected to RabbitMQ ({tls_status}) and initialized topology"
+                logger.info(msg, extra=info_ex)
             except ssl.SSLError as e:
-                logger.error(
-                    f"SSL error connecting to RabbitMQ: {e}",
-                    exc_info=True,
-                    extra={
-                        "rabbitmq_url": self._sanitize_url(cfg.rabbitmq_url),
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                        "tls_enabled": ssl_context is not None,
-                    },
-                )
+                ex: dict[str, Any] = {
+                    "rabbitmq_url": s_url,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "tls_enabled": ssl_context is not None,
+                }
+                logger.error(f"SSL error connecting to RabbitMQ: {e}", exc_info=True, extra=ex)
                 await self.disconnect()
                 raise
             except Exception as e:
-                logger.error(
-                    f"Failed to connect to RabbitMQ: {e}",
-                    exc_info=True,
-                    extra={
-                        "rabbitmq_url": self._sanitize_url(cfg.rabbitmq_url),
-                        "exchange": cfg.exchange_name,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    },
-                )
+                ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name, "error": str(e)}
+                ex["error_type"] = type(e).__name__
+                logger.error(f"Failed to connect to RabbitMQ: {e}", exc_info=True, extra=ex)
                 await self.disconnect()
                 raise
 
@@ -138,30 +129,21 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
             await self._connection.close()
             self._connection = None
         self._connected, self._stats.connected_at = False, None
-        logger.info(
-            "Disconnected from RabbitMQ",
-            extra={
-                "exchange": self._config.exchange_name,
-                "queue": self._config.queue_name,
-                "consumer_group": self._config.consumer_group,
-            },
-        )
+        cfg = self._config
+        ex = {"exchange": cfg.exchange_name, "queue": cfg.queue_name}
+        ex["consumer_group"] = cfg.consumer_group
+        logger.info("Disconnected from RabbitMQ", extra=ex)
 
     async def force_disconnect(self) -> None:
-        if self._channel:
-            try:
-                if not self._channel.is_closed:
-                    await self._channel.close()
-            except Exception:  # nosec B110 - intentionally suppress during force disconnect
-                pass
-            self._channel = None
-        if self._connection:
-            try:
-                if not self._connection.is_closed:
-                    await self._connection.close()
-            except Exception:  # nosec B110 - intentionally suppress during force disconnect
-                pass
-            self._connection = None
+        for attr in ("_channel", "_connection"):
+            obj = getattr(self, attr)
+            if obj:
+                try:
+                    if not obj.is_closed:
+                        await obj.close()
+                except Exception:  # nosec B110 - intentionally suppress during force disconnect
+                    pass
+                setattr(self, attr, None)
         self._connected = False
 
     def health_slice(self) -> dict[str, Any]:
