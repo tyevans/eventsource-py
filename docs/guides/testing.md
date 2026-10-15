@@ -303,6 +303,9 @@ published domain events:
   creates an `AggregateRepository` pre-wired with `harness.event_store`,
   `harness.event_bus`, and `harness.snapshot_store` (when `with_snapshots=True`
   or `snapshot_threshold` is specified) with tracing disabled for fast tests.
+- **`harness.create_read_model_repository(OrderSummary)`**:
+  creates an `InMemoryReadModelRepository` for the given `ReadModel` subclass
+  with tracing disabled for fast unit and projection tests.
 - **`await harness.append_events(*events, expected_version=None)`**:
   seeds one or more pre-existing events (or sequences of events) into
   `harness.event_store`, automatically grouped by `(aggregate_id, aggregate_type)`
@@ -310,8 +313,9 @@ published domain events:
 - **`harness.snapshot_store`**: provides a pre-configured `InMemorySnapshotStore`
   that is reset alongside all other components when `harness.reset()` is called.
 - **`harness.assertions`**: returns an `EventAssertions` wrapper over
-  `harness.published_events` with expressive helpers (`assert_event_published`,
-  `assert_no_event_published`, `assert_event_count`, `assert_event_sequence`,
+  `harness.published_events` supporting `len(harness.assertions)` and expressive
+  helpers (`assert_event_published`, `assert_no_event_published`,
+  `assert_event_count`, `assert_event_type_count`, `assert_event_sequence`,
   `assert_event_with_fields`, `assert_event_for_aggregate`, and
   `assert_no_events_published`).
 
@@ -323,6 +327,7 @@ from eventsource.testing import InMemoryTestHarness
 async def test_harness_repository_snapshots_and_assertions() -> None:
     harness = InMemoryTestHarness()
     repo = harness.create_repository(OrderAggregate, snapshot_threshold=2)
+    read_repo = harness.create_read_model_repository(OrderSummary)
 
     order_id = uuid4()
     customer_id = uuid4()
@@ -338,7 +343,9 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     )
 
     # EventAssertions wrapper over harness.published_events
+    assert len(harness.assertions) == 2
     harness.assertions.assert_event_count(2)
+    harness.assertions.assert_event_type_count(OrderShipped, 1)
     harness.assertions.assert_event_sequence([OrderCreated, OrderShipped])
     shipped = harness.assertions.assert_event_with_fields(
         OrderShipped,
