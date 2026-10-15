@@ -1,7 +1,7 @@
 ---
-id: TASK-0325
-title: "Synchronize Diataxis guides for ProjectionCoordinator and bdd.then_event_count"
-status: Refined
+id: TASK-0323
+title: "Enhance ProjectionRegistry and ProjectionCoordinator registration ergonomics"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0325: Synchronize Diataxis guides for ProjectionCoordinator and bdd.then_event_count
+# TASK-0323: Enhance ProjectionRegistry and ProjectionCoordinator registration ergonomics
 
 ## Summary
-Update `docs/guides/projections.md` and `docs/guides/testing.md` to document `ProjectionRegistry`/`ProjectionCoordinator` registration ergonomics and `then_event_count(..., event_type=...)`.
+Allow `ProjectionRegistry(projections=..., handlers=...)` and `registry.register(*items)` for fluent registration, and allow `ProjectionCoordinator` to accept either a `ProjectionRegistry` or a `Sequence[Projection]` directly.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly within architectural line ceilings (`uv run spec-ops health` reports 0 warnings and 0 violations).

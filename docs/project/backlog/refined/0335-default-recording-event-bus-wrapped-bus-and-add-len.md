@@ -1,6 +1,6 @@
 ---
-id: TASK-0324
-title: "Support event_type in bdd.then_event_count and delegate to harness.assertions"
+id: TASK-0335
+title: "Default RecordingEventBus wrapped bus to InMemoryEventBus and add __len__"
 status: Refined
 priority: High
 slice_type: domain
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0324: Support event_type in bdd.then_event_count and delegate to harness.assertions
+# TASK-0335: Default RecordingEventBus wrapped bus to InMemoryEventBus and add __len__
 
 ## Summary
-Enhance `then_event_count(harness, count, *, event_type=None)` in `src/eventsource/testing/bdd.py` to support type-filtered counts via `harness.assertions.assert_event_type_count` and delegate all `bdd` assertion helpers to `harness.assertions`.
+Allow `RecordingEventBus(wrapped=None, *, max_events=10_000)` to default `wrapped` to `InMemoryEventBus(enable_tracing=False)` and add `__len__` returning the count of recorded events.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly within architectural line ceilings (`uv run spec-ops health` reports 0 warnings and 0 violations).

@@ -168,8 +168,8 @@ class TestPostgreSQLCatchupIndexUtilization:
         assert buffer_lines, "Expected buffer statistics in EXPLAIN output"
         total_buffers = sum(
             int(tokens[i + 1])
-            for line in buffer_lines
-            for i, token in enumerate(tokens := line.replace(",", "").split())
+            for tokens in (line.replace(",", "").split() for line in buffer_lines)
+            for i, token in enumerate(tokens)
             if token in ("hit=", "read=") and i + 1 < len(tokens) and tokens[i + 1].isdigit()
         )
         assert total_buffers < 100, f"Expected < 100 buffers, got {total_buffers}"

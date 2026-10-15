@@ -1,6 +1,6 @@
 ---
-id: TASK-0323
-title: "Enhance ProjectionRegistry and ProjectionCoordinator registration ergonomics"
+id: TASK-0336
+title: "Synchronize Diataxis guides for SubscriberRegistry and standalone RecordingEventBus"
 status: Refined
 priority: High
 slice_type: domain
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0323: Enhance ProjectionRegistry and ProjectionCoordinator registration ergonomics
+# TASK-0336: Synchronize Diataxis guides for SubscriberRegistry and standalone RecordingEventBus
 
 ## Summary
-Allow `ProjectionRegistry(projections=..., handlers=...)` and `registry.register(*items)` for fluent registration, and allow `ProjectionCoordinator` to accept either a `ProjectionRegistry` or a `Sequence[Projection]` directly.
+Update `docs/guides/projections.md` and `docs/guides/testing.md` to document `SubscriberRegistry` O(1) routing/registration ergonomics and standalone `RecordingEventBus()` with `len(bus)`.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly within architectural line ceilings (`uv run spec-ops health` reports 0 warnings and 0 violations).

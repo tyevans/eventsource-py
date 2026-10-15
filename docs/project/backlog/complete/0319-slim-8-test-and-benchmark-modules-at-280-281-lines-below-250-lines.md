@@ -1,7 +1,7 @@
 ---
 id: TASK-0319
 title: "Compact 8 test and benchmark modules at 280-281 lines below 250 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
