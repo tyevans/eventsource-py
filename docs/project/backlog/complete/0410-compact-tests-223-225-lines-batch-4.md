@@ -1,7 +1,7 @@
 ---
 id: TASK-0410
 title: "Compact 223-225 line test modules below 210 lines (batch 4)"
-status: Refined
+status: Complete
 target_bc: testing
 dependencies: [TASK-0403]
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
@@ -11,7 +11,7 @@ adrs: [ADR-0002, ADR-0003, ADR-0005]
 
 # TASK-0410: Compact 223-225 line test modules below 210 lines (batch 4)
 
-- **Status**: Refined
+- **Status**: Complete
 - **Target Bounded Context**: `testing`
 
 ## Objective
