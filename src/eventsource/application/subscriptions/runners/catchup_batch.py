@@ -32,7 +32,9 @@ class CatchUpBatchMixin:
         _reached_target: bool
         _filter: EventFilter
         _flow_controller: FlowController
-        _stop_requested: bool
+
+        @property
+        def _stop_requested(self) -> bool: ...
 
         async def _read_batch_with_retry(
             self, from_position: Position | None, limit: int
