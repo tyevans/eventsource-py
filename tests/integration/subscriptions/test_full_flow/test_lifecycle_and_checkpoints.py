@@ -35,17 +35,14 @@ class TestFullLifecycle:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test complete lifecycle: subscribe -> start -> process -> stop."""
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-
         subscription = await subscription_manager.subscribe(projection)
         assert subscription.state == SubscriptionState.STARTING
 
         await subscription_manager.start()
         success = await projection.wait_for_events(50)
         assert success
-
         await subscription_manager.stop()
 
         assert projection.event_count == 50
@@ -58,26 +55,18 @@ class TestFullLifecycle:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test lifecycle including live event processing."""
         await populate_event_store(in_memory_event_store, 25)
         projection = CollectingProjection()
-
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
-
         await projection.wait_for_events(25)
 
         for i in range(25, 35):
-            await publish_live_event(
-                in_memory_event_store,
-                in_memory_event_bus,
-                f"ORD-{i:05d}",
-            )
+            await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:05d}")
 
         success = await projection.wait_for_events(35)
         assert success
-
         await subscription_manager.stop()
 
         assert projection.event_count == 35
@@ -94,10 +83,8 @@ class TestCheckpointPersistence:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test checkpoints are persisted correctly after processing."""
         await populate_event_store(in_memory_event_store, 100)
         projection = CollectingProjection()
-
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
@@ -115,20 +102,16 @@ class TestCheckpointPersistence:
         in_memory_checkpoint_repo,
         subscription_manager,
     ):
-        """Test checkpoint is persisted during processing."""
         await populate_event_store(in_memory_event_store, 200)
         projection = CollectingProjection()
-
         config = SubscriptionConfig(start_from="beginning", batch_size=50)
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
-
         await projection.wait_for_events(100)
 
         position = await in_memory_checkpoint_repo.get_position("CollectingProjection")
         assert position is not None
         assert position >= await position_after(in_memory_event_store, 50)
-
         await subscription_manager.stop()
 
 
@@ -136,21 +119,15 @@ class TestResumeAfterRestart:
     """Tests for resuming after restart."""
 
     async def test_resume_after_restart(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
+        self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
     ):
-        """Test subscription resumes correctly after restart."""
         await populate_event_store(in_memory_event_store, 50)
-
         projection1 = CollectingProjection()
         manager1 = SubscriptionManager(
             event_store=in_memory_event_store,
             event_bus=in_memory_event_bus,
             checkpoint_repo=in_memory_checkpoint_repo,
         )
-
         config = SubscriptionConfig(start_from="beginning")
         await manager1.subscribe(projection1, config, name="TestProjection")
         await manager1.start()
@@ -159,9 +136,7 @@ class TestResumeAfterRestart:
 
         for i in range(50, 100):
             event = SubTestOrderCreated(
-                aggregate_id=uuid4(),
-                order_number=f"ORD-{i:05d}",
-                amount=100.0 + i,
+                aggregate_id=uuid4(), order_number=f"ORD-{i:05d}", amount=100.0 + i
             )
             await in_memory_event_store.append(
                 StreamId(aggregate_id=event.aggregate_id, category="TestOrder"),
@@ -175,7 +150,6 @@ class TestResumeAfterRestart:
             event_bus=in_memory_event_bus,
             checkpoint_repo=in_memory_checkpoint_repo,
         )
-
         resume_config = SubscriptionConfig(start_from="checkpoint")
         await manager2.subscribe(projection2, resume_config, name="TestProjection")
         await manager2.start()
@@ -186,28 +160,21 @@ class TestResumeAfterRestart:
         assert projection2.events[0].order_number == "ORD-00050"
 
     async def test_resume_from_beginning_ignores_checkpoint(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
+        self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
     ):
-        """Test start_from='beginning' ignores existing checkpoint."""
         await in_memory_checkpoint_repo.save_position(
             subscription_id="TestProjection",
             position=Position(store_id="memory", key=(50,)),
             event_id=uuid4(),
             event_type="TestOrderCreated",
         )
-
         await populate_event_store(in_memory_event_store, 100)
-
         projection = CollectingProjection()
         manager = SubscriptionManager(
             event_store=in_memory_event_store,
             event_bus=in_memory_event_bus,
             checkpoint_repo=in_memory_checkpoint_repo,
         )
-
         config = SubscriptionConfig(start_from="beginning")
         await manager.subscribe(projection, config, name="TestProjection")
         await manager.start()
@@ -222,15 +189,10 @@ class TestContextManagerUsage:
     """Tests for async context manager usage."""
 
     async def test_context_manager(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
+        self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
     ):
-        """Test subscription manager as async context manager."""
         await populate_event_store(in_memory_event_store, 25)
         projection = CollectingProjection()
-
         manager = SubscriptionManager(
             event_store=in_memory_event_store,
             event_bus=in_memory_event_bus,
@@ -246,14 +208,9 @@ class TestContextManagerUsage:
         assert not manager.is_running
 
     async def test_context_manager_cleanup_on_exception(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
+        self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
     ):
-        """Test context manager cleans up on exception."""
         projection = CollectingProjection()
-
         try:
             async with SubscriptionManager(
                 event_store=in_memory_event_store,

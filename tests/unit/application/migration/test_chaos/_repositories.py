@@ -31,13 +31,17 @@ class InMemoryMigrationRepository:
         self._migrations: dict[UUID, Migration] = {}
         self._by_tenant: dict[UUID, UUID] = {}
 
+    async def _require(self, migration_id: UUID) -> Migration:
+        migration = await self.get(migration_id)
+        if migration is None:
+            raise MigrationNotFoundError(migration_id)
+        return migration
+
     async def create(self, migration: Migration) -> UUID:
         existing = await self.get_by_tenant(migration.tenant_id)
         if existing is not None:
             raise MigrationAlreadyExistsError(migration.tenant_id, existing.id)
-        now = datetime.now(UTC)
-        migration.created_at = now
-        migration.updated_at = now
+        migration.created_at = migration.updated_at = datetime.now(UTC)
         self._migrations[migration.id] = migration
         self._by_tenant[migration.tenant_id] = migration.id
         return migration.id
@@ -47,29 +51,20 @@ class InMemoryMigrationRepository:
 
     async def get_by_tenant(self, tenant_id: UUID) -> Migration | None:
         migration_id = self._by_tenant.get(tenant_id)
-        if migration_id is None:
-            return None
-        migration = self._migrations.get(migration_id)
-        if migration is None or migration.phase.is_terminal:
-            return None
-        return migration
+        migration = self._migrations.get(migration_id) if migration_id else None
+        return None if (migration is None or migration.phase.is_terminal) else migration
 
     async def update_phase(self, migration_id: UUID, new_phase: MigrationPhase) -> None:
-        migration = await self.get(migration_id)
-        if migration is None:
-            raise MigrationNotFoundError(migration_id)
+        migration = await self._require(migration_id)
         if not migration.can_transition_to(new_phase):
             raise InvalidPhaseTransitionError(migration_id, migration.phase, new_phase)
 
         now = datetime.now(UTC)
-        migration.phase = new_phase
-        migration.updated_at = now
+        migration.phase, migration.updated_at = new_phase, now
         if new_phase == MigrationPhase.BULK_COPY:
-            migration.started_at = now
-            migration.bulk_copy_started_at = now
+            migration.started_at = migration.bulk_copy_started_at = now
         elif new_phase == MigrationPhase.DUAL_WRITE:
-            migration.bulk_copy_completed_at = now
-            migration.dual_write_started_at = now
+            migration.bulk_copy_completed_at = migration.dual_write_started_at = now
         elif new_phase == MigrationPhase.CUTOVER:
             migration.cutover_started_at = now
         elif new_phase.is_terminal:
@@ -82,9 +77,7 @@ class InMemoryMigrationRepository:
         last_source_position: Position | None,
         last_target_position: Position | None = None,
     ) -> None:
-        migration = await self.get(migration_id)
-        if migration is None:
-            raise MigrationNotFoundError(migration_id)
+        migration = await self._require(migration_id)
         migration.events_copied = events_copied
         migration.last_source_position = last_source_position
         if last_target_position is not None:
@@ -92,26 +85,17 @@ class InMemoryMigrationRepository:
         migration.updated_at = datetime.now(UTC)
 
     async def set_events_total(self, migration_id: UUID, events_total: int) -> None:
-        migration = await self.get(migration_id)
-        if migration is None:
-            raise MigrationNotFoundError(migration_id)
-        migration.events_total = events_total
-        migration.updated_at = datetime.now(UTC)
+        migration = await self._require(migration_id)
+        migration.events_total, migration.updated_at = events_total, datetime.now(UTC)
 
     async def record_error(self, migration_id: UUID, error: str) -> None:
-        migration = await self.get(migration_id)
-        if migration is None:
-            raise MigrationNotFoundError(migration_id)
-        now = datetime.now(UTC)
+        migration = await self._require(migration_id)
         migration.error_count += 1
         migration.last_error = error[:1000]
-        migration.last_error_at = now
-        migration.updated_at = now
+        migration.last_error_at = migration.updated_at = datetime.now(UTC)
 
     async def set_paused(self, migration_id: UUID, paused: bool, reason: str | None = None) -> None:
-        migration = await self.get(migration_id)
-        if migration is None:
-            raise MigrationNotFoundError(migration_id)
+        migration = await self._require(migration_id)
         now = datetime.now(UTC)
         migration.is_paused = paused
         migration.paused_at = now if paused else None
@@ -128,38 +112,37 @@ class InMemoryRoutingRepository:
     def __init__(self) -> None:
         self._routing: dict[UUID, TenantRouting] = {}
 
+    def _new_routing(
+        self,
+        tenant_id: UUID,
+        store_id: str,
+        state: TenantMigrationState = TenantMigrationState.NORMAL,
+        migration_id: UUID | None = None,
+    ) -> TenantRouting:
+        now = datetime.now(UTC)
+        return TenantRouting(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            migration_state=state,
+            active_migration_id=migration_id,
+            created_at=now,
+            updated_at=now,
+        )
+
     async def get_routing(self, tenant_id: UUID) -> TenantRouting | None:
         return self._routing.get(tenant_id)
 
     async def get_or_default(self, tenant_id: UUID, default_store_id: str) -> TenantRouting:
-        existing = await self.get_routing(tenant_id)
-        if existing is not None:
-            return existing
-        now = datetime.now(UTC)
-        routing = TenantRouting(
-            tenant_id=tenant_id,
-            store_id=default_store_id,
-            migration_state=TenantMigrationState.NORMAL,
-            created_at=now,
-            updated_at=now,
-        )
-        self._routing[tenant_id] = routing
-        return routing
+        if tenant_id not in self._routing:
+            self._routing[tenant_id] = self._new_routing(tenant_id, default_store_id)
+        return self._routing[tenant_id]
 
     async def set_routing(self, tenant_id: UUID, store_id: str) -> None:
-        now = datetime.now(UTC)
         existing = self._routing.get(tenant_id)
         if existing:
-            existing.store_id = store_id
-            existing.updated_at = now
+            existing.store_id, existing.updated_at = store_id, datetime.now(UTC)
         else:
-            self._routing[tenant_id] = TenantRouting(
-                tenant_id=tenant_id,
-                store_id=store_id,
-                migration_state=TenantMigrationState.NORMAL,
-                created_at=now,
-                updated_at=now,
-            )
+            self._routing[tenant_id] = self._new_routing(tenant_id, store_id)
 
     async def set_migration_state(
         self,
@@ -168,20 +151,12 @@ class InMemoryRoutingRepository:
         migration_id: UUID | None = None,
     ) -> None:
         routing = self._routing.get(tenant_id)
-        now = datetime.now(UTC)
         if routing is None:
-            self._routing[tenant_id] = TenantRouting(
-                tenant_id=tenant_id,
-                store_id="default",
-                migration_state=state,
-                active_migration_id=migration_id,
-                created_at=now,
-                updated_at=now,
-            )
+            self._routing[tenant_id] = self._new_routing(tenant_id, "default", state, migration_id)
         else:
             routing.migration_state = state
             routing.active_migration_id = migration_id
-            routing.updated_at = now
+            routing.updated_at = datetime.now(UTC)
 
     async def switch_routing(
         self,
@@ -252,16 +227,11 @@ class MockLockManager:
         if self._should_fail:
             return None
         async with self._lock:
-            if key in self._held_locks:
-                return None
-            return MockLockInfo(key=key)
+            return None if key in self._held_locks else MockLockInfo(key=key)
 
     async def release(self, key: str) -> bool:
         async with self._lock:
-            if key in self._held_locks:
-                del self._held_locks[key]
-                return True
-            return False
+            return self._held_locks.pop(key, None) is not None
 
     def is_locked(self, key: str) -> bool:
         return key in self._held_locks
