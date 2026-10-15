@@ -100,15 +100,16 @@ class TestInMemoryReadModelRepository:
         assert result.order_number == "MEM-TEST-001"
 
     @pytest.mark.asyncio
-    async def test_inmemory_clear(
+    async def test_inmemory_truncate(
         self,
         inmemory_repo: Any,
         order_summary_factory: Callable[..., OrderSummary],
     ) -> None:
-        """Test the clear() convenience method."""
+        """Test the truncate() method."""
         for i in range(3):
             await inmemory_repo.save(order_summary_factory(order_number=f"ORD-{i}"))
 
-        await inmemory_repo.clear()
+        deleted = await inmemory_repo.truncate()
 
+        assert deleted == 3
         assert await inmemory_repo.count() == 0

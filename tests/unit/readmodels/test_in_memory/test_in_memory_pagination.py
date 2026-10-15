@@ -184,20 +184,11 @@ class TestInMemoryReadModelPagination:
         assert len(repo) == 0
 
     @pytest.mark.asyncio
-    async def test_clear_alias(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
-        """Test clear() is alias for truncate()."""
-        for i in range(3):
-            await repo.save(
-                OrderSummary(
-                    id=uuid4(),
-                    order_number=f"ORD-{i}",
-                    status="pending",
-                    total_amount=Decimal(str(i)),
-                )
-            )
+    async def test_truncate_empty(self, repo: InMemoryReadModelRepository[OrderSummary]) -> None:
+        """Test truncate() on an empty repository returns 0."""
+        count = await repo.truncate()
 
-        await repo.clear()
-
+        assert count == 0
         assert await repo.count() == 0
         assert len(repo) == 0
 
