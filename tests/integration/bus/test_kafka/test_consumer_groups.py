@@ -32,10 +32,7 @@ class TestKafkaEventBusConsumerGroups:
     """Tests for consumer group functionality."""
 
     @pytest.mark.slow
-    async def test_same_consumer_group_shares_messages(
-        self,
-        kafka_bootstrap_servers: str,
-    ) -> None:
+    async def test_same_consumer_group_shares_messages(self, kafka_bootstrap_servers: str) -> None:
         """Test that consumers in the same group share messages."""
         unique_suffix = uuid4().hex[:8]
         topic_prefix = f"test_shared_{unique_suffix}"
@@ -61,7 +58,6 @@ class TestKafkaEventBusConsumerGroups:
 
         bus1 = KafkaEventBus(config=config1, event_registry=registry)
         bus2 = KafkaEventBus(config=config2, event_registry=registry)
-
         consumer1_events: list[DomainEvent] = []
         consumer2_events: list[DomainEvent] = []
 
@@ -74,27 +70,20 @@ class TestKafkaEventBusConsumerGroups:
         try:
             await bus1.connect()
             await bus2.connect()
-
             bus1.subscribe(TestItemCreated, handler1)
             bus2.subscribe(TestItemCreated, handler2)
 
-            # Publish multiple events
             events: list[DomainEvent] = [
                 TestItemCreated(
-                    aggregate_id=uuid4(),
-                    aggregate_version=1,
-                    name=f"Shared Item {i}",
-                    quantity=i,
+                    aggregate_id=uuid4(), aggregate_version=1, name=f"Shared Item {i}", quantity=i
                 )
                 for i in range(10)
             ]
             await bus1.publish(events)
 
-            # Start both consumers
             task1 = asyncio.create_task(bus1.start_consuming())
             task2 = asyncio.create_task(bus2.start_consuming())
 
-            # Wait for all events to be consumed
             async def wait_for_all() -> None:
                 while len(consumer1_events) + len(consumer2_events) < 10:
                     await asyncio.sleep(0.1)
@@ -110,18 +99,14 @@ class TestKafkaEventBusConsumerGroups:
                     except TimeoutError:
                         task.cancel()
 
-            # Total should equal event count
-            total_received = len(consumer1_events) + len(consumer2_events)
-            assert total_received == 10
-
+            assert len(consumer1_events) + len(consumer2_events) == 10
         finally:
             await bus1.disconnect()
             await bus2.disconnect()
 
     @pytest.mark.slow
     async def test_different_consumer_groups_receive_all_messages(
-        self,
-        kafka_bootstrap_servers: str,
+        self, kafka_bootstrap_servers: str
     ) -> None:
         """Test that consumers in different groups each receive all messages."""
         unique_suffix = uuid4().hex[:8]
@@ -145,7 +130,6 @@ class TestKafkaEventBusConsumerGroups:
 
         bus1 = KafkaEventBus(config=config1, event_registry=registry)
         bus2 = KafkaEventBus(config=config2, event_registry=registry)
-
         group_a_events: list[DomainEvent] = []
         group_b_events: list[DomainEvent] = []
 
@@ -158,11 +142,9 @@ class TestKafkaEventBusConsumerGroups:
         try:
             await bus1.connect()
             await bus2.connect()
-
             bus1.subscribe(TestItemCreated, handler_a)
             bus2.subscribe(TestItemCreated, handler_b)
 
-            # Publish events through first bus
             events: list[DomainEvent] = [
                 TestItemCreated(
                     aggregate_id=uuid4(),
@@ -174,11 +156,9 @@ class TestKafkaEventBusConsumerGroups:
             ]
             await bus1.publish(events)
 
-            # Start both consumers
             task1 = asyncio.create_task(bus1.start_consuming())
             task2 = asyncio.create_task(bus2.start_consuming())
 
-            # Wait for both groups to receive all events
             async def wait_for_both() -> None:
                 while len(group_a_events) < 5 or len(group_b_events) < 5:
                     await asyncio.sleep(0.1)
@@ -194,10 +174,7 @@ class TestKafkaEventBusConsumerGroups:
                     except TimeoutError:
                         task.cancel()
 
-            # Both groups should have received all events
-            assert len(group_a_events) == 5
-            assert len(group_b_events) == 5
-
+            assert len(group_a_events) == 5 and len(group_b_events) == 5
         finally:
             await bus1.disconnect()
             await bus2.disconnect()

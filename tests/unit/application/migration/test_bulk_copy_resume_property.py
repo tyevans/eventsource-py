@@ -1,15 +1,4 @@
-"""Property: a bulk copy resumed after a crash converges on a source-equal target.
-
-Spec-mandated (store-retirement slice (c), FRD ss7): a resume that re-reads
-from an inclusive `last_source_position` re-appends events the target
-already has. The copy is only correct because that re-append raises
-`DuplicateEventError` and is counted as already-copied rather than as a
-failure. This property drives arbitrary stream shapes, batch sizes and
-crash points through two `BulkCopier` runs -- one that is cut off partway
-and a second that resumes from the persisted checkpoint -- and asserts the
-target converges to exactly the source's events, in order, with no
-duplicates.
-"""
+"""Property: a bulk copy resumed after a crash converges on a source-equal target."""
 
 from __future__ import annotations
 
@@ -45,14 +34,7 @@ class ResumePropertyEvent(DomainEvent):
 
 
 class FakePositionMappingRepository:
-    """Minimal in-memory double for `PositionMappingRepository`.
-
-    Only `create` is exercised: `BulkCopier`'s per-event append path calls
-    `PositionMapper.record_mapping`, which calls `repo.create` and nothing
-    else. Mappings are appended in call order, which is ascending
-    source-position order given `BulkCopier` streams the source feed in
-    order -- the precondition the real repositories document.
-    """
+    """Minimal in-memory double for `PositionMappingRepository`."""
 
     def __init__(self) -> None:
         self.mappings: list[PositionMapping] = []
@@ -62,11 +44,7 @@ class FakePositionMappingRepository:
         return len(self.mappings)
 
 
-async def _append_streams(
-    store: InMemoryEventStore,
-    tenant_id: UUID,
-    streams: list[int],
-) -> None:
+async def _append_streams(store: InMemoryEventStore, tenant_id: UUID, streams: list[int]) -> None:
     """Append `streams[i]` events to the i-th distinct stream, in order."""
     for count in streams:
         aggregate_id = uuid4()
@@ -111,16 +89,8 @@ def _make_migration(
 async def test_bulk_copy_resumes_to_a_source_equal_target(
     streams: list[int], batch_size: int, crash_after: int
 ) -> None:
-    """Random stream shapes, batch sizes and crash points: a resumed copy
-    converges on a target whose streams equal the source's.
-
-    A resume that re-reads from an inclusive position re-appends events the
-    target already has; the copy is only correct because that re-append
-    raises DuplicateEventError and is counted as already-copied. Remove that
-    handler and this property fails immediately.
-    """
-    tenant_id = uuid4()
-    migration_id = uuid4()
+    """Random stream shapes, batch sizes and crash points: resumed copy converges on source."""
+    tenant_id, migration_id = uuid4(), uuid4()
     events_total = sum(streams)
     crash_after = min(crash_after, events_total)
 

@@ -6,26 +6,16 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from eventsource.application.migration.dual_write import (
-    DualWriteInterceptor,
-    FailedWrite,
-)
+from eventsource.application.migration.dual_write import DualWriteInterceptor, FailedWrite
 from eventsource.domain import StreamId
 from eventsource.ports import AppendResult, ExpectedVersion, Position
 
-from ._fixtures import (
-    TestEvent,
-    sid,
-)
+from ._fixtures import TestEvent, sid
 
 
 class TestFailedWrite:
-    """Tests for FailedWrite dataclass."""
-
     def test_failed_write_creation(self) -> None:
-        """Test creating a FailedWrite record."""
-        aggregate_id = uuid4()
-        event_ids = [uuid4(), uuid4()]
+        aggregate_id, event_ids = uuid4(), [uuid4(), uuid4()]
         timestamp = datetime.now(UTC)
         position = Position(store_id="source", key=(100,))
 
@@ -46,7 +36,6 @@ class TestFailedWrite:
         assert failed_write.source_position == position
 
     def test_failed_write_with_no_position(self) -> None:
-        """Test creating a FailedWrite for a feedless source store."""
         failed_write = FailedWrite(
             timestamp=datetime.now(UTC),
             aggregate_id=uuid4(),
@@ -55,61 +44,41 @@ class TestFailedWrite:
             error_message="Connection refused",
             source_position=None,
         )
-
         assert failed_write.source_position is None
 
 
 class TestDualWriteInterceptorInit:
-    """Tests for DualWriteInterceptor initialization."""
-
     def test_init_with_defaults(
-        self,
-        source_store: MagicMock,
-        target_store: MagicMock,
-        tenant_id: UUID,
+        self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test initialization with default parameters."""
         interceptor_inst = DualWriteInterceptor(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
+            source_store=source_store, target_store=target_store, tenant_id=tenant_id
         )
-
         assert interceptor_inst.source_store == source_store
         assert interceptor_inst.target_store == target_store
         assert interceptor_inst.tenant_id == tenant_id
         assert interceptor_inst._max_failure_history == 1000
 
     def test_init_with_custom_max_failure_history(
-        self,
-        source_store: MagicMock,
-        target_store: MagicMock,
-        tenant_id: UUID,
+        self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test initialization with custom max failure history."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
             tenant_id=tenant_id,
             max_failure_history=500,
         )
-
         assert interceptor_inst._max_failure_history == 500
 
     def test_init_with_tracing_disabled(
-        self,
-        source_store: MagicMock,
-        target_store: MagicMock,
-        tenant_id: UUID,
+        self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
-        """Test initialization with tracing disabled."""
         interceptor_inst = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-
         assert interceptor_inst._enable_tracing is False
 
     def test_properties(
@@ -119,7 +88,6 @@ class TestDualWriteInterceptorInit:
         target_store: MagicMock,
         tenant_id: UUID,
     ) -> None:
-        """Test property accessors."""
         assert interceptor.source_store is source_store
         assert interceptor.target_store is target_store
         assert interceptor.tenant_id == tenant_id

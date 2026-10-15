@@ -67,17 +67,12 @@ class CounterAggregate(AggregateRoot[CounterState]):
         return CounterState(counter_id=self.aggregate_id)
 
     def _ensure_state(self) -> CounterState:
-        if self._state is None:
-            self._state = self._get_initial_state()
+        self._state = self._state or self._get_initial_state()
         return self._state
 
     def _make_event(self, cls: type[DomainEvent], **kwargs: object) -> DomainEvent:
-        return cls(
-            aggregate_id=self.aggregate_id,
-            aggregate_type=self.aggregate_type,
-            aggregate_version=self.get_next_version(),
-            **kwargs,  # type: ignore[arg-type]
-        )
+        v, aid, atype = self.get_next_version(), self.aggregate_id, self.aggregate_type
+        return cls(aggregate_id=aid, aggregate_type=atype, aggregate_version=v, **kwargs)  # type: ignore[arg-type]
 
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, CounterIncremented):
@@ -111,12 +106,8 @@ class OrderAggregate(AggregateRoot[OrderState]):
         return OrderState(order_id=self.aggregate_id)
 
     def _make_event(self, cls: type[DomainEvent], **kwargs: object) -> DomainEvent:
-        return cls(
-            aggregate_id=self.aggregate_id,
-            aggregate_type=self.aggregate_type,
-            aggregate_version=self.get_next_version(),
-            **kwargs,  # type: ignore[arg-type]
-        )
+        v, aid, atype = self.get_next_version(), self.aggregate_id, self.aggregate_type
+        return cls(aggregate_id=aid, aggregate_type=atype, aggregate_version=v, **kwargs)  # type: ignore[arg-type]
 
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, OrderCreated):
@@ -124,12 +115,8 @@ class OrderAggregate(AggregateRoot[OrderState]):
                 order_id=self.aggregate_id, customer_id=event.customer_id, status="created"
             )
         elif isinstance(event, OrderItemAdded) and self._state:
-            self._state = self._state.model_copy(
-                update={
-                    "items": [*self._state.items, event.item_name],
-                    "total": self._state.total + event.price,
-                }
-            )
+            items, total = [*self._state.items, event.item_name], self._state.total + event.price
+            self._state = self._state.model_copy(update={"items": items, "total": total})
         elif isinstance(event, OrderShipped) and self._state:
             self._state = self._state.model_copy(update={"status": "shipped"})
 
@@ -156,8 +143,7 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
         return CounterState(counter_id=self.aggregate_id)
 
     def _ensure_state(self) -> CounterState:
-        if self._state is None:
-            self._state = self._get_initial_state()
+        self._state = self._state or self._get_initial_state()
         return self._state
 
     @handles(CounterIncremented)
@@ -178,25 +164,17 @@ class DeclarativeCounterAggregate(DeclarativeAggregate[CounterState]):
     def _on_counter_reset(self, event: CounterReset) -> None:
         self._state = self._get_initial_state()
 
-    def increment(self, amount: int = 1) -> None:
+    def _emit(self, cls: type[DomainEvent], **kwargs: object) -> None:
+        v, aid, atype = self.get_next_version(), self.aggregate_id, self.aggregate_type
         self._raise_event(
-            CounterIncremented(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                increment=amount,
-            )
-        )
+            cls(aggregate_id=aid, aggregate_type=atype, aggregate_version=v, **kwargs)
+        )  # type: ignore[arg-type]
+
+    def increment(self, amount: int = 1) -> None:
+        self._emit(CounterIncremented, increment=amount)
 
     def decrement(self, amount: int = 1) -> None:
-        self._raise_event(
-            CounterDecremented(
-                aggregate_id=self.aggregate_id,
-                aggregate_type=self.aggregate_type,
-                aggregate_version=self.get_next_version(),
-                decrement=amount,
-            )
-        )
+        self._emit(CounterDecremented, decrement=amount)
 
 
 class LenientCounterAggregate(CounterAggregate):
