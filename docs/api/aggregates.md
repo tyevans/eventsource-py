@@ -571,13 +571,13 @@ await repo.save(order)
 assert not order.has_uncommitted_events
 ```
 
-### Event Application: `apply_event()`, `load_from_history()`, `get_next_version()`
+### Event Application: `apply_event()`, `apply_events()`, `load_from_history()`, `get_next_version()`
 
-These three methods are the whole of the state-mutation surface.
+These four methods are the whole of the state-mutation surface.
 `apply_event()` is the single point through which `_version`, `_state`, and
-`_uncommitted_events` change; `load_from_history()` is a loop over it; and
-`get_next_version()` is the helper that supplies the version an event must
-carry to pass its validation.
+`_uncommitted_events` change; `apply_events()` and `load_from_history()` loop
+over it; and `get_next_version()` is the helper that supplies the version an
+event must carry to pass its validation.
 
 #### `apply_event()`
 
@@ -641,17 +641,43 @@ Application code rarely calls `apply_event()` directly for new events —
 `aggregate_version` for you. Call it directly only when you have constructed
 the event by hand.
 
-#### `load_from_history()`
+#### `apply_events()`
 
 ```python
-def load_from_history(self, events: list[DomainEvent]) -> None
+def apply_events(self, *events: DomainEvent, is_new: bool = True) -> None
 ```
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `events` | `list[DomainEvent]` | *required* | Historical events in chronological order |
+| `*events` | `DomainEvent` | `()` | Variadic sequence of domain events to apply in order |
+| `is_new` | `bool` | `True` | Forwarded to `apply_event(event, is_new=is_new)` for each event |
 
-Returns `None`. The implementation is a single loop:
+Applies multiple `DomainEvent` instances sequentially by calling
+`self.apply_event(event, is_new=is_new)` for each event in `events`:
+
+```python
+aggregate.apply_events(order_created, item_added, order_shipped)
+
+# Or replay multiple events without tracking them as uncommitted:
+aggregate.apply_events(order_created, item_added, is_new=False)
+```
+
+When `is_new=True` (the default), each event is validated for aggregate ID and
+sequential `aggregate_version` (`1, 2, 3, ...`) as it is applied and appended
+to `uncommitted_events`. Calling `apply_events()` with no events is a no-op.
+
+#### `load_from_history()`
+
+```python
+def load_from_history(self, events: Iterable[DomainEvent]) -> None
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `events` | `Iterable[DomainEvent]` | *required* | Historical events in chronological order (any iterable: list, tuple, generator, etc.) |
+
+Returns `None`. Accepts any `Iterable[DomainEvent]` (not just a `list`), and
+replays each event in a single loop:
 
 ```python
 for event in events:
@@ -662,8 +688,8 @@ Because every event goes in with `is_new=False`, replay never validates
 versions and never populates `_uncommitted_events`. A rehydrated aggregate
 therefore reports `has_uncommitted_events == False` no matter how long its
 history, and `version` equals the `aggregate_version` of the final event in the
-list. An empty list is a no-op: nothing is applied, `version` stays at its
-current value, and `state` stays `None` on a fresh instance.
+iterable. An empty iterable is a no-op: nothing is applied, `version` stays at
+its current value, and `state` stays `None` on a fresh instance.
 
 The method **does not reset** the aggregate before replaying. It applies events
 on top of whatever state the instance already holds. That is deliberate — it is

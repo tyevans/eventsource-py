@@ -7,20 +7,26 @@ domain behavior through public frontdoors without database or broker setup:
   testing of `DeciderAggregate`s and pure `(decide, evolve, initial_state)`
   triples, including `.then_event_types(*EventClasses)`, `.then_events(*EventClasses)`,
   `.then_event(EventCls, **expected_fields)`, `.then_no_events()`,
-  `scenario.assertions`, and `len(scenario)`.
+  `scenario.assertions`, `len(scenario)`, `iter(scenario)`,
+  `EventClass in scenario`, and `event_instance in scenario`.
 - **`EventBuilder`** with `EventBuilder(EventCls, **fields)`,
+  `EventBuilder.build(**overrides)`, `builder(**overrides)` (`__call__`),
   `EventBuilder.clone(**overrides)`, and
   `EventBuilder.build_many(count, *, start_version=None)` for constructing
-  individual test events, branching reusable template builders, and building
-  auto-versioned event sequences with minimal boilerplate.
+  individual test events, applying one-off non-mutating field overrides,
+  branching reusable template builders, and building auto-versioned event
+  sequences with minimal boilerplate.
 - **`InMemoryTestHarness`** with `harness.create_repository(OrderAggregate, snapshot_threshold=...)`,
   `await harness.append_events(*events, expected_version=None)`,
   `harness.snapshot_store`, `harness.assertions` (`EventAssertions` wrapper
-  over `harness.published_events`, including `assert_first_event` and
-  `assert_last_event`), and variadic BDD helpers `await given_events(harness, event1, event2)`
-  (returning the appended `list[DomainEvent]`) and
-  `then_event_sequence(harness, OrderCreated, OrderShipped)` for pre-wired
-  repository and bus testing.
+  over `harness.published_events`, including `assert_first_event`,
+  `assert_last_event`, `iter(assertions)`, `assertions[i]`,
+  `EventClass in assertions`, and `event_instance in assertions`), container
+  dunders `len(harness)`, `iter(harness)`, `EventClass in harness`, and
+  `event_instance in harness`, and variadic BDD helpers
+  `await given_events(harness, event1, event2)` (returning the appended
+  `list[DomainEvent]`) and `then_event_sequence(harness, OrderCreated, OrderShipped)`
+  for pre-wired repository and bus testing.
 - **`RecordingEventBus.assertions`** (`bus.assertions.assert_event_published(...)`,
   `bus.assertions.assert_first_event(...)`, `bus.assertions.assert_last_event(...)`,
   `bus.assertions.assert_event_with_fields(...)`, `bus.assertions.assert_event_count(...)`),
@@ -180,9 +186,13 @@ def test_then_event_with_fields_and_state() -> None:
 
 When `when_all(...)` emits multiple events, chain `.then_event(...)` calls to
 inspect specific events and their payloads without breaking the fluent pipeline,
-or use `len(scenario)` and `scenario.assertions` (an `EventAssertions` wrapper
-over `scenario.events` supporting `.assert_first_event(EventCls, **fields)`,
-`.assert_last_event(EventCls, **fields)`, `.assert_event_sequence(...)`, etc.):
+or use container dunders (`len(scenario)`, `iter(scenario)`,
+`EventClass in scenario`, `event_instance in scenario`) and
+`scenario.assertions` (an `EventAssertions` wrapper over `scenario.events`
+supporting `.assert_first_event(EventCls, **fields)`,
+`.assert_last_event(EventCls, **fields)`, `.assert_event_sequence(...)`,
+`iter(assertions)`, `assertions[i]`, `EventClass in assertions`, and
+`event_instance in assertions`):
 
 ```python
 def test_chained_then_event_assertions() -> None:
@@ -200,8 +210,16 @@ def test_chained_then_event_assertions() -> None:
     )
 
     assert len(scenario) == 2
-    scenario.assertions.assert_first_event(AccountOpened, owner="alice")
-    scenario.assertions.assert_last_event(MoneyDeposited, amount=40.0)
+    assert AccountOpened in scenario
+    assert scenario.assertions[0] in scenario
+    assert [type(e) for e in scenario] == [AccountOpened, MoneyDeposited]
+
+    opened = scenario.assertions.assert_first_event(AccountOpened, owner="alice")
+    deposited = scenario.assertions.assert_last_event(MoneyDeposited, amount=40.0)
+    assert scenario.assertions[0] == opened
+    assert scenario.assertions[-1] == deposited
+    assert AccountOpened in scenario.assertions
+    assert deposited in scenario.assertions
 ```
 
 ### Asserting no-op commands with `then_no_events`
@@ -280,18 +298,20 @@ def test_event_builder_initial_fields() -> None:
 You can still chain `.with_aggregate_id(...)`, `.with_version(...)`, or
 `.with_fields(...)` on top of initial keyword fields when needed.
 
-### Branching reusable builders with `EventBuilder.clone`
+### Non-mutating overrides with `EventBuilder.build(**overrides)`, `builder(**overrides)`, and `EventBuilder.clone`
 
-Use `builder.clone(**overrides)` to copy an existing `EventBuilder` with optional
-field overrides without mutating the base builder—ideal for defining a shared
-template builder in a fixture or test and branching variants from it:
+To build one-off variants from a template builder without mutating its stored
+fields, pass keyword overrides directly to `builder.build(**overrides)` or invoke
+the builder as a callable via `builder(**overrides)` (`EventBuilder.__call__`).
+When you want a new `EventBuilder` instance with overridden defaults for further
+chaining, use `builder.clone(**overrides)`:
 
 ```python
 from uuid import uuid4
 from eventsource.testing import EventBuilder
 
 
-def test_event_builder_clone() -> None:
+def test_event_builder_overrides_and_clone() -> None:
     order_id = uuid4()
     base = EventBuilder(
         ItemAdded,
@@ -301,14 +321,22 @@ def test_event_builder_clone() -> None:
     )
 
     first = base.build()
-    second = base.clone(aggregate_version=2, item="Gadget", quantity=3).build()
+    override_built = base.build(aggregate_version=2, quantity=2)
+    callable_built = base(aggregate_version=3, item="Bolt", quantity=5)
+    second = base.clone(aggregate_version=4, item="Gadget", quantity=3).build()
 
     assert first.item == "Widget"
     assert first.aggregate_version == 1
+    assert override_built.item == "Widget"
+    assert override_built.quantity == 2
+    assert override_built.aggregate_version == 2
+    assert callable_built.item == "Bolt"
+    assert callable_built.quantity == 5
+    assert callable_built.aggregate_version == 3
     assert second.aggregate_id == order_id
     assert second.item == "Gadget"
     assert second.quantity == 3
-    assert second.aggregate_version == 2
+    assert second.aggregate_version == 4
 ```
 
 ### Building auto-versioned sequences with `EventBuilder.build_many`
@@ -378,10 +406,14 @@ published domain events:
   alongside `checkpoint_repo` and `dlq_repo` when `harness.reset()` is called.
   All in-memory repositories (`event_store`, `snapshot_store`, `checkpoint_repo`,
   `dlq_repo`, `outbox_repo`, and `create_read_model_repository(...)` instances)
-  and `harness` itself support `len(...)`.
+  and `harness` itself support `len(...)`. `harness` also supports
+  `iter(harness)`, `EventClass in harness`, and `event_instance in harness` over
+  `harness.published_events`.
 - **`harness.assertions`**: returns an `EventAssertions` wrapper over
-  `harness.published_events` supporting `len(harness.assertions)` and expressive
-  helpers (`assert_event_published`, `assert_no_event_published`,
+  `harness.published_events` supporting `len(harness.assertions)`,
+  `iter(harness.assertions)`, `harness.assertions[i]`,
+  `EventClass in harness.assertions`, `event_instance in harness.assertions`, and
+  expressive helpers (`assert_event_published`, `assert_no_event_published`,
   `assert_event_count`, `assert_event_type_count`, `assert_event_sequence`,
   `assert_first_event`, `assert_last_event`, `assert_event_with_fields`,
   `assert_event_for_aggregate`, `assert_events_for_aggregate`, `for_aggregate`,
@@ -417,11 +449,16 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
         create_if_missing=False,
     )
 
-    # EventAssertions wrapper, len(harness), and InMemoryEventStore helpers
+    # EventAssertions wrapper, container dunders, and InMemoryEventStore helpers
     assert len(harness) == 2
+    assert OrderCreated in harness
+    assert OrderShipped in harness
+    assert [type(e) for e in harness] == [OrderCreated, OrderShipped]
     assert len(harness.event_store) == 2
     assert await harness.event_store.get_event_count() == 2
     assert len(harness.assertions) == 2
+    assert OrderCreated in harness.assertions
+    assert [type(e) for e in harness.assertions] == [OrderCreated, OrderShipped]
     harness.assertions.assert_event_count(2)
     harness.assertions.assert_event_type_count(OrderShipped, 1)
     harness.assertions.assert_event_sequence([OrderCreated, OrderShipped])
@@ -430,11 +467,15 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
         customer_id=customer_id,
     )
     assert created.aggregate_id == order_id
+    assert harness.assertions[0] == created
+    assert created in harness
+    assert created in harness.assertions
     shipped = harness.assertions.assert_last_event(
         OrderShipped,
         tracking_number="TRACK-123",
     )
     assert shipped.aggregate_id == order_id
+    assert harness.assertions[-1] == shipped
     harness.assertions.assert_event_with_fields(
         OrderShipped,
         tracking_number="TRACK-123",

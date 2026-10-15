@@ -42,11 +42,9 @@ interface any more — event stores are split into five focused ports
 `CategoryQuery`), each with its own conformance suite in
 `eventsource.testing.conformance_ports`.
 
-> **Note on the harness docstring.** The module docstring in `harness.py` shows
-> `harness.create_repository(OrderAggregate)`. No such method exists on
-> `InMemoryTestHarness`; construct an `AggregateRepository` yourself from
-> `harness.event_store` and `harness.event_bus`. See
-> [InMemoryTestHarness](#inmemorytestharness) below for the real surface.
+See [InMemoryTestHarness](#inmemorytestharness) and
+[EventAssertions](#eventassertions) below for the full harness and assertion
+surface.
 
 ## Overview
 
@@ -57,25 +55,33 @@ individually or together; nothing in the package requires anything else in it.
 (`EventBuilder(OrderCreated).with_aggregate_id(...).with_fields(...).build()`)
 that supplies the base `DomainEvent` fields you would otherwise repeat in every
 test. Each `with_*` method mutates and returns the same builder, so calls chain;
-`build()` constructs the event by passing the accumulated field dict to the
-event class, meaning pydantic validation still applies and missing required
-fields still raise.
+`build(**overrides)` (or calling the builder directly as `builder(**overrides)`)
+constructs the event by merging the accumulated field dict with any one-off
+keyword `overrides` without mutating the builder, meaning pydantic validation
+still applies and missing required fields still raise.
 
 **Providing infrastructure.** `InMemoryTestHarness()` constructs
-`InMemoryEventStore`, `InMemoryEventBus`, `InMemoryCheckpointRepository`, and
-`InMemoryDLQRepository` in `__init__`, all with `enable_tracing=False`, and
-exposes them as read-only properties (`event_store`, `event_bus`,
-`checkpoint_repo`, `dlq_repo`). It also exposes the bus's published events via
-`published_events` and offers `reset()`, `clear_published_events()`, and
-`get_events_of_type()`. The harness is not thread-safe; use one per test.
+`InMemoryEventStore`, `InMemoryEventBus`, `InMemoryCheckpointRepository`,
+`InMemoryDLQRepository`, `InMemoryOutboxRepository`, and `InMemorySnapshotStore`
+in `__init__`, all with `enable_tracing=False`, and exposes them as read-only
+properties (`event_store`, `event_bus`, `checkpoint_repo`, `dlq_repo`,
+`outbox_repo`, `snapshot_store`). It also exposes `create_repository()`,
+`published_events`, `assertions`, `reset()`, `clear_published_events()`,
+`published_of_type()`, and container dunders over `published_events`
+(`len(harness)`, `iter(harness)`, `EventClass in harness`, and
+`event_instance in harness`). The harness is not thread-safe; use one per test.
 
 **Asserting on events.** `EventAssertions(events)` wraps any
 `Sequence[DomainEvent]` and provides assertions with failure messages that name
 the expected and actual event types — `assert_event_published`,
-`assert_no_event_published`, `assert_event_count`, `assert_event_sequence`,
+`assert_no_event_published`, `assert_event_count`, `assert_event_type_count`,
+`assert_event_sequence`, `assert_first_event`, `assert_last_event`,
 `assert_event_with_fields`, `assert_no_events_published`,
-`assert_event_for_aggregate`, plus a non-asserting `get_events_of_type`. The
-positive assertions return the matched event so you can inspect it further.
+`assert_event_for_aggregate`, `assert_events_for_aggregate`, `for_aggregate`,
+plus a non-asserting `get_events_of_type` and container dunders
+(`len(assertions)`, `iter(assertions)`, `assertions[i]`,
+`EventClass in assertions`, and `event_instance in assertions`). The positive
+assertions return the matched event so you can inspect it further.
 
 **Given/When/Then.** The BDD helpers read as a scenario over a harness:
 `await given_events(harness, events)` seeds prior state, `when_command(aggregate,
@@ -586,38 +592,49 @@ anything else.
 ### `build()`
 
 ```python
-build() -> TEvent
+build(**overrides: Any) -> TEvent
+__call__(**overrides: Any) -> TEvent
 ```
 
-Constructs the event by splatting the accumulated dict into the event class:
-`self._event_class(**self._fields)`. There is no post-processing — pydantic does
-all validation and coercion, and the returned instance is frozen like any other
+Constructs the event by merging the accumulated dict with any one-off keyword
+`overrides` and splatting into the event class:
+`self._event_class(**{**self._fields, **overrides})`. Passing `**overrides` does
+not mutate `self._fields` on the builder. Calling the builder directly as
+`builder(**overrides)` (`EventBuilder.__call__`) is a shorthand for
+`builder.build(**overrides)`. There is no post-processing — pydantic does all
+validation and coercion, and the returned instance is frozen like any other
 `DomainEvent`.
 
-`build()` raises `pydantic.ValidationError` when:
+`build()` (and `builder()`) raises `pydantic.ValidationError` when:
 
 - a required field was never set (`EventBuilder(SampleEvent).build()` with
   `customer_id`/`amount` unset),
 - a value has the wrong type (`customer_id="not-a-uuid"`),
 - a value violates a model constraint (`with_version(0)` against `ge=1`).
 
-`build()` is repeatable and non-consuming. The builder keeps its state, so you
-can build, mutate, and build again to produce a variant:
+`build(**overrides)` and `builder(**overrides)` are repeatable and non-consuming.
+The builder keeps its state, so you can build one-off variants via `**overrides`
+without mutating the template builder, or mutate with `with_*` and build again:
 
 ```python
 builder = EventBuilder(SampleEvent).with_fields(customer_id=uuid4(), amount=100.0)
 first = builder.build()
+override_variant = builder.build(amount=150.0, aggregate_version=2)
+callable_variant = builder(amount=175.0, aggregate_version=3)
 second = builder.with_field("amount", 200.0).build()
 
 assert first.amount == 100.0
+assert override_variant.amount == 150.0
+assert callable_variant.amount == 175.0
 assert second.amount == 200.0
 assert first.aggregate_id == second.aggregate_id  # held by the builder
 assert first.event_id != second.event_id          # regenerated per instance
 ```
 
 That reuse is the main sharp edge: a builder shared across several events in one
-test silently shares `aggregate_id` and every other field you set. When you want
-independent events, construct a new builder.
+test silently shares `aggregate_id` and every other field you set unless
+overridden via `build(aggregate_id=...)` / `builder(aggregate_id=...)`. When you
+want completely independent events, construct a new builder.
 
 ## DeciderScenario
 
@@ -745,15 +762,30 @@ scenario.then_rejected()  # command raised CommandRejectedError
 scenario.then_rejected(ValueError, match="Cannot ship unpaid")  # specific type and message
 ```
 
-#### `events` property
+#### `events`, `assertions`, and container dunders
 
-Read-only. Returns the list of events produced by `when()`, or an empty list if
-`when()` has not been called or if `decide` raised an exception:
+`scenario.events` is read-only and returns the list of events produced by
+`when()` / `when_all()`, or an empty list if `when()` has not been called or if
+`decide` raised an exception. `scenario.assertions` returns an
+`EventAssertions(scenario.events)` wrapper.
+
+`DeciderScenario` also implements Python container dunders over `scenario.events`:
+
+- `len(scenario)` returns `len(scenario.events)`.
+- `iter(scenario)` yields each emitted `DomainEvent` in order.
+- `EventClass in scenario` returns `True` if any emitted event is an instance of
+  `EventClass` (`issubclass(EventClass, DomainEvent)`).
+- `event_instance in scenario` returns `True` if that specific `DomainEvent`
+  instance is in `scenario.events`.
+- `bool(scenario)` is always `True`.
 
 ```python
 events = scenario.events
-assert len(events) == 1
-assert events[0].aggregate_id == order_id
+assert len(scenario) == 1
+assert OrderShipped in scenario
+assert events[0] in scenario
+for event in scenario:
+    assert event.aggregate_id == order_id
 ```
 
 ### Example: testing a decider with DeciderScenario
@@ -805,3 +837,64 @@ Use the async BDD helpers (`given_events`, `when_command`, `then_*`) when:
 The two approaches test different layers: `DeciderScenario` isolates the domain
 logic (pure functions), while the async helpers validate the aggregate's contract
 with the store and bus.
+
+## EventAssertions
+
+`eventsource.testing.assertions.EventAssertions` wraps any `Sequence[DomainEvent]`
+and exposes domain-specific assertions (`assert_event_published`,
+`assert_no_event_published`, `assert_event_count`, `assert_event_type_count`,
+`assert_event_sequence`, `assert_first_event`, `assert_last_event`,
+`assert_event_with_fields`, `assert_no_events_published`,
+`assert_event_for_aggregate`, `assert_events_for_aggregate`, `for_aggregate`, and
+`get_events_of_type`) alongside Python container dunders:
+
+| Operation | Signature | Semantics |
+| --- | --- | --- |
+| `len(assertions)` | `__len__() -> int` | Number of recorded events. |
+| `iter(assertions)` | `__iter__() -> Iterator[DomainEvent]` | Iterates over recorded events in order. |
+| `assertions[i]` | `__getitem__(index: int) -> DomainEvent` | Positional lookup (supports negative indices such as `assertions[-1]`). |
+| `EventClass in assertions` | `__contains__(target: object) -> bool` | `True` when `target` is a `DomainEvent` subclass and any recorded event is an instance of `target`. |
+| `event_instance in assertions` | `__contains__(target: object) -> bool` | `True` when `target` is a `DomainEvent` instance equal to a recorded event. |
+| `bool(assertions)` | `__bool__() -> bool` | Always `True` (even when empty). |
+
+```python
+assertions = EventAssertions([created_event, shipped_event])
+
+assert len(assertions) == 2
+assert assertions[0] == created_event
+assert assertions[-1] == shipped_event
+assert list(iter(assertions)) == [created_event, shipped_event]
+assert OrderCreated in assertions
+assert shipped_event in assertions
+```
+
+## InMemoryTestHarness
+
+`eventsource.testing.harness.InMemoryTestHarness` bundles `InMemoryEventStore`,
+`InMemoryEventBus`, `InMemoryCheckpointRepository`, `InMemoryDLQRepository`,
+`InMemoryOutboxRepository`, and `InMemorySnapshotStore` (all with
+`enable_tracing=False`) and provides helper methods (`create_repository`,
+`create_read_model_repository`, `append_events`, `publish_events`, `replay`,
+`published_of_type`, `clear_published_events`, `reset`) plus `harness.assertions`
+(`EventAssertions(harness.published_events)`).
+
+`InMemoryTestHarness` also implements container dunders over
+`harness.published_events`:
+
+- `len(harness)` returns `len(harness.published_events)`.
+- `iter(harness)` yields each published `DomainEvent` in publication order.
+- `EventClass in harness` delegates to `harness.assertions`, returning `True`
+  when any published event is an instance of `EventClass`.
+- `event_instance in harness` delegates to `harness.assertions`, returning
+  `True` when `event_instance` is in `harness.published_events`.
+- `bool(harness)` is always `True`.
+
+```python
+harness = InMemoryTestHarness()
+await harness.publish_events(created_event, shipped_event)
+
+assert len(harness) == 2
+assert OrderCreated in harness
+assert shipped_event in harness
+assert [e.event_id for e in harness] == [created_event.event_id, shipped_event.event_id]
+```

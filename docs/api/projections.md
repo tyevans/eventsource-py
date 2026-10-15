@@ -567,12 +567,14 @@ configuration type is shared with the subscription machinery.
 ```python
 async def replay(
     feed: GlobalEventFeed,
-    projections: EventSubscriber | Sequence[EventSubscriber],
+    projections: Iterable[EventSubscriber] | EventSubscriber,
     *,
     from_position: Position | None = None,
     tenant_id: UUID | None = None,
     aggregate_type: str | None = None,
+    event_types: Iterable[str | type[DomainEvent]] | None = None,
     strict: bool = False,
+    batch_size: int = REPLAY_BATCH_SIZE,
     max_events: int = MAX_EVENTS_PER_REPLAY,
     max_failures: int = MAX_FAILURES_PER_REPLAY,
     on_failure: Callable[[ReplayFailure], None] | None = None,
@@ -580,24 +582,30 @@ async def replay(
 ```
 
 Reads the global feed from `from_position` and folds every event into the target
-projection (or sequence of projections), returning a report (ADR 0054). This is the
-answer to "how do I rebuild a projection from the log" — a live subscription runner does
-the other job, catch-up on a timer via `ProjectionCoordinator`/`ProjectionRegistry`, and
-the coordinator's `rebuild_projection()` takes the events as a materialized list you have
-already read and filtered yourself.
+projection (or any `Iterable[EventSubscriber]` of projections), returning a report
+(ADR 0054). This is the answer to "how do I rebuild a projection from the log" — a
+live subscription runner does the other job, catch-up on a timer via
+`ProjectionCoordinator`/`ProjectionRegistry`, and the coordinator's
+`rebuild_projection()` takes the events as a materialized list you have already
+read and filtered yourself.
 
-You can pass either a single projection directly or a sequence of projections:
+You can pass either a single `EventSubscriber` directly or any
+`Iterable[EventSubscriber]` (such as a `list`, `tuple`, `set`, or generator):
 
 ```python
 from eventsource.application.projections import replay
 
 # Single projection passed directly
 single_report = await replay(event_store, orders)
+assert single_report
 assert single_report.succeeded
 
-# Multiple projections rebuilt in one pass
-report = await replay(event_store, [orders, invoices])
-print(f"{report.applied} applied, {report.failed} failed (succeeded={report.succeeded})")
+# Multiple projections rebuilt in one pass (any Iterable[EventSubscriber])
+report = await replay(event_store, (orders, invoices))
+print(
+    f"{report.applied} applied, {report.failed} failed, "
+    f"{report.total_processed} total (succeeded={bool(report)})"
+)
 ```
 
 `feed` is type-hinted `GlobalEventFeed`, the narrowest port that suffices: `replay`
@@ -617,26 +625,40 @@ which is what a rebuild wants. `replay` does **not** checkpoint: persist
 
 `tenant_id=` and `aggregate_type=` are forwarded to the adapter as `FeedReadOptions` and
 pushed into its query (ADR 0052), so rebuilding one tenant or one aggregate type out of a
-shared store is an indexed read rather than a scan. Naming neither sends no options
-object at all.
+shared store is an indexed read rather than a scan.
+
+`event_types=` accepts any `Iterable[str | type[DomainEvent]]` (event type name strings
+or `DomainEvent` subclasses) to filter replayed events by event type before dispatching
+to projections. Events whose `event_type` is not in `event_types` are skipped without
+invoking `handle()` (and are not counted in `applied`), while `last_position` still
+advances to reflect the cursor position reached in the feed.
 
 This is narrower than `tenant_filter` on the projection, which is applied *after*
 delivery and therefore pays for the whole read either way.
 
 ```python
-report = await replay(event_store, orders, tenant_id=tenant, aggregate_type="Order")
+report = await replay(
+    event_store,
+    orders,
+    tenant_id=tenant,
+    aggregate_type="Order",
+    event_types=[OrderCreated, "OrderShipped"],
+)
 ```
 
 ### `ReplayReport`
 
-| Field | Meaning |
+| Field / Member | Meaning |
 | --- | --- |
 | `succeeded` (property) | `True` when `len(failures) == 0` and `failures_truncated == 0`; `False` if any projection rejected an event. |
+| `bool(report)` (`__bool__`) | Alias for `report.succeeded` (`True` when no failures occurred, `False` otherwise). |
 | `applied` | Events delivered that no projection rejected. An event every projection ignores still counts. |
+| `failed` (property) | Events at least one retained failure names — per *event*, not per rejection. |
+| `total_processed` (property) | `applied + failed` — total replayed events delivered to projections. |
 | `last_position` | The last position the (possibly filtered) read reached; `None` for an empty feed. |
 | `failures` | One `ReplayFailure` per *rejection*, capped at `max_failures`. |
 | `failures_truncated` | Failures that occurred but are not in `failures`. |
-| `failed` (property) | Events at least one retained failure names — per *event*, not per rejection. |
+| `raise_for_failures()` | Raises `ReplayFailedError` from the first retained failure when `not report.succeeded` (or `RuntimeError` if all failures were truncated). |
 
 `failed` and `len(failures)` legitimately differ: two projections rejecting one event is
 one failed event and two failures. `failed` is derived from the distinct `event_id`s
@@ -644,7 +666,8 @@ rather than stored, so the two cannot drift apart. It keys on `event_id` and not
 `position` because `position` is `Position | None` — a feedless store sets it on nothing,
 and keying on it would report `1` for a rebuild in which every event failed.
 
-`failed` is exact only while `failures_truncated` is zero, and a lower bound otherwise.
+`failed` (and therefore `total_processed`) is exact only while `failures_truncated` is
+zero, and a lower bound otherwise.
 
 ### `ReplayFailure`
 
