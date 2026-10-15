@@ -41,7 +41,7 @@ class RecordingEventBus(EventBus):
         max_events: int | None = 10_000,
     ) -> None:
         self._wrapped: EventBus = (
-            wrapped if wrapped is not None else InMemoryEventBus(enable_tracing=False)
+            InMemoryEventBus(enable_tracing=False) if wrapped is None else wrapped
         )
         self._lock = threading.RLock()
         self._published: deque[DomainEvent] = deque(maxlen=max_events)
@@ -50,6 +50,10 @@ class RecordingEventBus(EventBus):
         """Return the number of currently recorded events."""
         with self._lock:
             return len(self._published)
+
+    def __bool__(self) -> bool:
+        """Event bus instances are always truthy even when no events have been recorded."""
+        return True
 
     @property
     def wrapped(self) -> EventBus:

@@ -24,6 +24,10 @@ class InMemoryCheckpointRepository:
         """Return total number of checkpoints currently stored."""
         return len(self._checkpoints)
 
+    def __bool__(self) -> bool:
+        """Repository instances are always truthy even when empty."""
+        return True
+
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """Get the last processed event ID for a projection, or None if no checkpoint exists."""
         with self._tracer.span(

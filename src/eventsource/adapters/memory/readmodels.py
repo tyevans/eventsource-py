@@ -177,6 +177,10 @@ class InMemoryReadModelRepository[TModel: ReadModel](
         """Return the number of models (including soft-deleted)."""
         return len(self._models)
 
+    def __bool__(self) -> bool:
+        """Repository instances are always truthy even when empty."""
+        return True
+
 
 __all__ = [
     "InMemoryReadModelQueryMixin",
