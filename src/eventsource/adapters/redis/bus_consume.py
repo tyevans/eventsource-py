@@ -1,9 +1,4 @@
-"""Consumption and handler dispatch mixin for Redis event bus.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Consumption and handler dispatch mixin for Redis event bus (ADR-0002, ADR-0007)."""
 
 from __future__ import annotations
 
@@ -12,10 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from eventsource.adapters.redis.config import (
-    DecodedStreams,
-    RedisConnectionError,
-)
+from eventsource.adapters.redis.config import DecodedStreams, RedisConnectionError
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
     ATTR_EVENT_TYPE,
@@ -110,10 +102,7 @@ class RedisBusConsumeMixin:
         self._consuming = False
         logger.info("Consumer loop stopped")
 
-    def start_consuming_in_background(
-        self,
-        consumer_name: str | None = None,
-    ) -> asyncio.Task[None]:
+    def start_consuming_in_background(self, consumer_name: str | None = None) -> asyncio.Task[None]:
         """Start consuming in a background task and retain the task reference."""
         if self._consumer_task is not None and not self._consumer_task.done():
             raise RuntimeError("Consumer is already running in the background")
@@ -126,10 +115,7 @@ class RedisBusConsumeMixin:
         logger.info("Stop consuming requested")
 
     async def _process_message(
-        self,
-        message_id: str,
-        message_data: dict[str, str],
-        consumer_name: str,
+        self, message_id: str, message_data: dict[str, str], consumer_name: str
     ) -> None:
         """Process a single message from the stream."""
         if not self._redis:
@@ -138,6 +124,11 @@ class RedisBusConsumeMixin:
         event_type_name = message_data.get("event_type", "unknown")
         event_id = message_data.get("event_id", "unknown")
         processing_start = datetime.now(UTC)
+        msg_meta = {
+            "message_id": message_id,
+            "event_type": event_type_name,
+            "event_id": event_id,
+        }
 
         with self._tracer.span(
             "eventsource.event_bus.process",
@@ -150,23 +141,14 @@ class RedisBusConsumeMixin:
             },
         ) as span:
             try:
-                logger.debug(
-                    f"Processing message {message_id}: {event_type_name}",
-                    extra={
-                        "message_id": message_id,
-                        "event_type": event_type_name,
-                        "event_id": event_id,
-                    },
-                )
+                logger.debug(f"Processing message {message_id}: {event_type_name}", extra=msg_meta)
 
-                occurred_at_str = message_data.get("occurred_at")
-                if occurred_at_str:
+                if occurred_at_str := message_data.get("occurred_at"):
                     try:
                         occurred_at = datetime.fromisoformat(occurred_at_str)
-                        now = datetime.now(UTC)
                         if occurred_at.tzinfo is None:
                             occurred_at = occurred_at.replace(tzinfo=UTC)
-                        lag_seconds = (now - occurred_at).total_seconds()
+                        lag_seconds = (datetime.now(UTC) - occurred_at).total_seconds()
                         logger.debug(
                             f"Processing lag: {lag_seconds:.3f}s",
                             extra={"lag_seconds": lag_seconds},
@@ -181,39 +163,30 @@ class RedisBusConsumeMixin:
                         extra={"event_type": event_type_name, "message_id": message_id},
                     )
                     await self._redis.xack(
-                        self._config.stream_name,
-                        self._config.consumer_group,
-                        message_id,
+                        self._config.stream_name, self._config.consumer_group, message_id
                     )
                     return
 
                 await self._dispatch_event(event, message_id)
                 await self._redis.xack(
-                    self._config.stream_name,
-                    self._config.consumer_group,
-                    message_id,
+                    self._config.stream_name, self._config.consumer_group, message_id
                 )
 
                 self._stats.events_consumed += 1
                 self._stats.events_processed_success += 1
-                processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
+                duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
 
                 if span:
                     span.set_attribute("processing.success", True)
-                    span.set_attribute("processing.duration_ms", processing_duration * 1000)
+                    span.set_attribute("processing.duration_ms", duration_ms)
 
                 logger.debug(
                     f"Successfully processed {event_type_name}",
-                    extra={
-                        "message_id": message_id,
-                        "event_type": event_type_name,
-                        "event_id": event_id,
-                        "duration_ms": processing_duration * 1000,
-                    },
+                    extra={**msg_meta, "duration_ms": duration_ms},
                 )
             except Exception as e:
                 self._stats.events_processed_failed += 1
-                processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
+                duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
 
                 if span:
                     span.set_attribute("processing.success", False)
@@ -222,13 +195,7 @@ class RedisBusConsumeMixin:
                 logger.error(
                     f"Failed to process message {message_id}: {e}",
                     exc_info=True,
-                    extra={
-                        "message_id": message_id,
-                        "event_type": event_type_name,
-                        "event_id": event_id,
-                        "error": str(e),
-                        "duration_ms": processing_duration * 1000,
-                    },
+                    extra={**msg_meta, "error": str(e), "duration_ms": duration_ms},
                 )
 
 

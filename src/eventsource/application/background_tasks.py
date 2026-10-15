@@ -1,27 +1,4 @@
-"""
-Background task manager for fire-and-forget asyncio work.
-
-This is an internal helper, not part of the public API. It exists because
-two independent pieces of the library needed the same bookkeeping for
-fire-and-forget ``asyncio.Task`` objects:
-
-- ``eventsource.application.aggregates.snapshotting.BackgroundScheduler`` uses
-  it to track in-flight background snapshot creation and to support
-  ``await_pending()`` in tests.
-- ``eventsource.adapters._bus.base.BaseEventBus`` uses it to track in-flight publish
-  work and to support draining on shutdown.
-
-Both call sites previously hand-rolled nearly identical task tracking; this
-module is the shared implementation they now delegate to.
-
-Example:
-    >>> from eventsource.application.background_tasks import BackgroundTaskManager
-    >>>
-    >>> manager = BackgroundTaskManager()
-    >>> manager.submit(create_snapshot_coro())
-    >>> # Later...
-    >>> count = await manager.await_all()
-"""
+"""Background task manager for fire-and-forget asyncio work."""
 
 from __future__ import annotations
 
@@ -35,57 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class BackgroundTaskManager:
-    """
-    Manager for background asyncio tasks.
-
-    Provides a clean interface for managing fire-and-forget operations
-    that shouldn't block the main execution path, such as:
-    - Background snapshot creation
-    - Async event publishing
-    - Deferred cleanup operations
-
-    Features:
-    - Task tracking with automatic cleanup via done-callback discard
-      (no unbounded growth between calls)
-    - Graceful shutdown with timeout
-    - Pending task count monitoring
-    - Error logging for failed tasks
-
-    Example:
-        >>> manager = BackgroundTaskManager()
-        >>>
-        >>> # Submit background work
-        >>> task = manager.submit(async_operation())
-        >>>
-        >>> # Check pending tasks
-        >>> print(f"Pending: {manager.pending_count}")
-        >>>
-        >>> # Wait for all tasks (e.g., during shutdown or tests)
-        >>> completed = await manager.await_all(timeout=30.0)
-        >>> print(f"Completed {completed} tasks")
-    """
+    """Manager for fire-and-forget background asyncio tasks with done-callback cleanup."""
 
     def __init__(self, max_pending: int | None = None) -> None:
-        """Initialize the task manager with an empty task set.
-
-        Args:
-            max_pending: Ceiling on in-flight tasks, or None for no ceiling.
-                This manager only *reports* capacity via `at_capacity`; it
-                never blocks or refuses a `submit()`. Deciding what to do at
-                the ceiling belongs to the caller, because the right answer
-                differs: `BaseEventBus` runs the work inline (so no event is
-                lost and a re-entrant publish cannot deadlock), which is not
-                a policy this class could impose on every user.
-        """
+        """Initialize the task manager with an optional max_pending capacity ceiling."""
         self.tasks: set[asyncio.Task[Any]] = set()
         self.max_pending = max_pending
 
     @property
     def at_capacity(self) -> bool:
-        """Whether the in-flight set has reached `max_pending`.
-
-        Always False when `max_pending` is None.
-        """
+        """Whether the in-flight set has reached `max_pending` (False when None)."""
         return self.max_pending is not None and len(self.tasks) >= self.max_pending
 
     def submit(
@@ -94,23 +30,7 @@ class BackgroundTaskManager:
         *,
         on_done: Callable[[asyncio.Task[Any]], None] | None = None,
     ) -> asyncio.Task[Any]:
-        """
-        Submit a coroutine as a background task.
-
-        The task is tracked and automatically discarded from tracking as
-        soon as it completes (via a done-callback), so pending tasks never
-        accumulate between calls.
-
-        Args:
-            coro: The coroutine to run in the background.
-            on_done: Optional callback invoked with the finished task
-                instead of this manager's default error logging. Callers
-                that need failures logged under their own module's logger
-                (e.g. to keep existing log output stable) can pass one.
-
-        Returns:
-            The created asyncio.Task
-        """
+        """Submit a coroutine as a tracked background task."""
         task = asyncio.create_task(coro)
         self.tasks.add(task)
         task.add_done_callback(lambda t: self._on_task_done(t, on_done))
@@ -129,46 +49,20 @@ class BackgroundTaskManager:
         if not task.cancelled():
             exc = task.exception()
             if exc:
-                logger.error(
-                    "Background task failed: %s",
-                    exc,
-                    exc_info=exc,
-                )
+                logger.error("Background task failed: %s", exc, exc_info=exc)
 
     @property
     def pending_count(self) -> int:
-        """
-        Get the number of pending (not yet completed) tasks.
-
-        Returns:
-            Number of tasks still running
-        """
+        """Get the number of pending (not yet completed) tasks."""
         return len(self.tasks)
 
     @property
     def has_pending(self) -> bool:
-        """
-        Check if there are any pending tasks.
-
-        Returns:
-            True if any tasks are still running
-        """
+        """Check if there are any pending tasks."""
         return self.pending_count > 0
 
     async def await_all(self, timeout: float | None = None) -> int:
-        """
-        Wait for all pending tasks to complete.
-
-        Args:
-            timeout: Maximum time to wait in seconds.
-                    If None, waits indefinitely.
-
-        Returns:
-            Number of tasks that were awaited
-
-        Note:
-            Tasks that don't complete within the timeout are cancelled.
-        """
+        """Wait for all pending tasks to complete, cancelling any that exceed timeout."""
         pending = {task for task in self.tasks if not task.done()}
         if not pending:
             return 0
@@ -176,7 +70,6 @@ class BackgroundTaskManager:
         count = len(pending)
 
         if timeout is not None:
-            # Wait with timeout
             _done, remaining = await asyncio.wait(
                 pending,
                 timeout=timeout,
@@ -189,48 +82,27 @@ class BackgroundTaskManager:
                     len(remaining),
                     extra={"remaining_tasks": len(remaining), "timeout": timeout},
                 )
-                # Cancel remaining tasks
                 for task in remaining:
                     task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await task
         else:
-            # Wait indefinitely, collecting exceptions
-            results = await asyncio.gather(
-                *pending,
-                return_exceptions=True,
-            )
-
-            # Log any exceptions
+            results = await asyncio.gather(*pending, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                    logger.error(
-                        "Background task failed: %s",
-                        result,
-                        exc_info=result,
-                    )
+                    logger.error("Background task failed: %s", result, exc_info=result)
 
         return count
 
     def cancel_all(self) -> int:
-        """
-        Cancel all pending tasks.
-
-        Returns:
-            Number of tasks that were cancelled
-        """
+        """Cancel all pending tasks and return the number cancelled."""
         pending = [task for task in self.tasks if not task.done()]
-        count = len(pending)
-
         for task in pending:
             task.cancel()
-
-        return count
+        return len(pending)
 
     def __repr__(self) -> str:
         return f"BackgroundTaskManager(pending={self.pending_count})"
 
 
-__all__ = [
-    "BackgroundTaskManager",
-]
+__all__ = ["BackgroundTaskManager"]

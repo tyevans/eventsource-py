@@ -1,13 +1,4 @@
-"""
-Runtime error handling for migration operations.
-
-`ErrorHandler` composes the other three modules — it classifies a failure,
-consults its retry configuration, and optionally guards the call with a
-circuit breaker. `classify_exception` is the bridge from an arbitrary
-caught exception to an `ErrorClassification`, and lives here rather than
-with the taxonomy because it depends on both the taxonomy and the
-vocabulary (ADR 0044).
-"""
+"""Runtime error handling for migration operations (ADR 0044)."""
 
 from __future__ import annotations
 
@@ -29,26 +20,13 @@ from eventsource.application.migration.error_classification import (
 from eventsource.application.migration.exceptions import MigrationError
 
 logger = logging.getLogger(__name__)
-
-# Type variable for generic async functions
 T = TypeVar("T")
 
-__all__ = [
-    "ErrorHandler",
-    "classify_exception",
-]
+__all__ = ["ErrorHandler", "classify_exception"]
 
 
 class ErrorHandler:
-    """
-    Error handler with automatic retry and circuit breaker support.
-
-    Provides a unified interface for handling migration errors with:
-    - Automatic retry for transient errors with exponential backoff
-    - Circuit breaker to prevent cascading failures
-    - Structured logging with error classification
-    - Alert hooks for critical/error severity
-    """
+    """Error handler with automatic retry, circuit breaker, logging, and alert support."""
 
     def __init__(
         self,
@@ -70,13 +48,7 @@ class ErrorHandler:
         retry_config: RetryConfig | None = None,
         on_retry: Callable[[int, Exception, float], None] | None = None,
     ) -> T:
-        """
-        Execute an operation with automatic retry for transient errors.
-
-        Raises:
-            MigrationError: If all retries are exhausted or error is non-transient.
-            CircuitBreakerOpenError: If circuit breaker is open.
-        """
+        """Execute an operation with automatic retry for transient errors."""
         ctx = (
             await self.circuit_breaker.protect(operation_name, migration_id)
             if self.circuit_breaker
@@ -95,21 +67,16 @@ class ErrorHandler:
                 else:
                     result = await operation()
 
-                # Success - log if we had to retry
                 if attempt > 0:
                     logger.info(
-                        "Operation '%s' succeeded after %d retries",
-                        operation_name,
-                        attempt,
+                        "Operation '%s' succeeded after %d retries", operation_name, attempt
                     )
-
                 return result
 
             except MigrationError as e:
                 last_exception = e
                 self._handle_error(e, operation_name)
 
-                # Check if we should retry
                 if not e.recoverability_type.should_retry:
                     logger.error(
                         "Non-retryable error in '%s': %s (code=%s)",
@@ -119,10 +86,7 @@ class ErrorHandler:
                     )
                     raise
 
-                # Use error's retry config if available and no override
                 config = retry_config or e.retry_config or TRANSIENT_RETRY_CONFIG
-
-                # Check if we have retries left
                 if attempt + 1 >= config.max_attempts:
                     logger.error(
                         "Exhausted %d retries for '%s': %s",
@@ -132,10 +96,8 @@ class ErrorHandler:
                     )
                     raise
 
-                # Calculate delay and sleep
                 delay_ms = config.get_delay_ms(attempt)
                 delay_s = delay_ms / 1000.0
-
                 logger.warning(
                     "Retryable error in '%s' (attempt %d/%d): %s. Retrying in %.1fs",
                     operation_name,
@@ -152,15 +114,9 @@ class ErrorHandler:
                 attempt += 1
 
             except Exception as e:
-                # Non-MigrationError exceptions are not automatically retried
-                logger.exception(
-                    "Unexpected error in '%s': %s",
-                    operation_name,
-                    str(e),
-                )
+                logger.exception("Unexpected error in '%s': %s", operation_name, str(e))
                 raise
 
-        # Should not reach here, but just in case
         if last_exception:
             raise last_exception
         raise RuntimeError(f"Unexpected state in retry loop for {operation_name}")
@@ -168,8 +124,6 @@ class ErrorHandler:
     def _handle_error(self, error: MigrationError, operation_name: str) -> None:
         """Handle an error by logging and potentially alerting."""
         classification = error.classification
-
-        # Log at appropriate level
         logger.log(
             classification.severity.log_level,
             "Error in '%s': %s [code=%s, severity=%s, recoverable=%s]",
@@ -180,14 +134,12 @@ class ErrorHandler:
             classification.recoverability.value,
         )
 
-        # Invoke alert callback if severity warrants it
         if classification.severity.should_alert and self.alert_callback:
             try:
                 self.alert_callback(error)
             except Exception:
                 logger.exception("Alert callback failed")
 
-        # Record metrics
         if self.metrics_callback:
             try:
                 self.metrics_callback(error, classification.recoverability.should_retry)
@@ -226,7 +178,6 @@ def classify_exception(exc: Exception) -> ErrorClassification:
     if isinstance(exc, MigrationError):
         return exc.classification
 
-    # Generic classification for non-migration errors
     return ErrorClassification(
         severity=ErrorSeverity.ERROR,
         recoverability=ErrorRecoverability.FATAL,
