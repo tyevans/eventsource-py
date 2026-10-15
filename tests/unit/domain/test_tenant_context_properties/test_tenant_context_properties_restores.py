@@ -34,16 +34,10 @@ def _clear_context() -> None:
     clear_tenant_context()
 
 
-# ---------------------------------------------------------------------------
-# 1. Nesting restores exactly
-# ---------------------------------------------------------------------------
-
-
 @given(tenant_ids=st.lists(tenant_id_strategy, min_size=0, max_size=8))
 @settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_sync_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
-    """For arbitrary nested tenant_scope_sync entries, exiting a scope always
-    restores exactly the tenant that was current before entering it."""
+    """Nested tenant_scope_sync entries always restore the prior tenant on exit."""
     clear_tenant_context()
 
     def recurse(remaining: list[UUID]) -> None:
@@ -63,7 +57,7 @@ def test_sync_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
 @given(tenant_ids=st.lists(tenant_id_strategy, min_size=0, max_size=8))
 @settings(max_examples=200, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_async_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
-    """Same property as above, but for the async tenant_scope."""
+    """Nested async tenant_scope entries always restore the prior tenant on exit."""
     clear_tenant_context()
 
     async def recurse(remaining: list[UUID]) -> None:
@@ -80,11 +74,6 @@ async def test_async_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
     assert get_current_tenant() is None
 
 
-# ---------------------------------------------------------------------------
-# 2. Concurrent tasks never see each other's tenant
-# ---------------------------------------------------------------------------
-
-
 @given(tenant_ids=st.lists(tenant_id_strategy, min_size=2, max_size=12))
 @settings(
     max_examples=50,
@@ -92,9 +81,7 @@ async def test_async_nesting_restores_exactly(tenant_ids: list[UUID]) -> None:
     deadline=None,
 )
 async def test_concurrent_tasks_never_observe_others_tenant(tenant_ids: list[UUID]) -> None:
-    """N concurrent tasks, each scoped to its own tenant, must only ever
-    observe their own tenant -- even with forced interleaving via
-    ``await asyncio.sleep(0)`` between set and read."""
+    """Concurrent tasks scoped to their own tenant never observe another task's tenant."""
     clear_tenant_context()
     observed: dict[int, list[UUID | None]] = {}
 
@@ -119,18 +106,12 @@ async def test_concurrent_tasks_never_observe_others_tenant(tenant_ids: list[UUI
 
 
 async def test_concurrency_isolation_test_actually_detects_breakage() -> None:
-    """Sanity check required by the test plan: verify the concurrency property
-    test above would actually fail if isolation were broken. We simulate a
-    broken implementation by replacing the per-task ContextVar-scoped set
-    with a single shared mutable value that all tasks read/write -- the
-    classic bug this module exists to prevent -- and confirm cross-tenant
-    contamination is observable and would fail the assertion used above."""
+    """Sanity check: verify the concurrency property test detects shared-state contamination."""
     shared_state: dict[str, UUID | None] = {"tenant": None}
 
     async def broken_worker(
         idx: int, tenant_id: UUID, samples: dict[int, list[UUID | None]]
     ) -> None:
-        # BROKEN: uses a shared global instead of a ContextVar-scoped value.
         shared_state["tenant"] = tenant_id
         collected: list[UUID | None] = [shared_state["tenant"]]
         await asyncio.sleep(0)
@@ -143,10 +124,6 @@ async def test_concurrency_isolation_test_actually_detects_breakage() -> None:
     samples: dict[int, list[UUID | None]] = {}
     await asyncio.gather(*(broken_worker(i, t, samples) for i, t in enumerate(tenant_ids)))
 
-    # With the broken (shared-global) implementation, at least one task must
-    # observe a tenant that isn't its own -- proving the property assertion
-    # used in test_concurrent_tasks_never_observe_others_tenant is capable of
-    # detecting a real isolation failure, not just passing vacuously.
     contaminated = any(
         any(sample != tenant_ids[idx] for sample in samples[idx]) for idx in range(len(tenant_ids))
     )
@@ -157,11 +134,6 @@ async def test_concurrency_isolation_test_actually_detects_breakage() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# 3. Exception safety
-# ---------------------------------------------------------------------------
-
-
 class _BoomError(Exception):
     pass
 
@@ -169,8 +141,7 @@ class _BoomError(Exception):
 @given(depth=st.integers(min_value=1, max_value=6), fail_at=st.integers(min_value=0))
 @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_sync_exception_at_any_depth_restores_context(depth: int, fail_at: int) -> None:
-    """An exception raised at any depth within nested sync scopes must still
-    unwind and restore the pre-scope tenant at every level."""
+    """An exception at any depth within nested sync scopes restores context at every level."""
     clear_tenant_context()
     fail_at = fail_at % depth
     tenant_ids = [uuid4() for _ in range(depth)]
@@ -191,7 +162,7 @@ def test_sync_exception_at_any_depth_restores_context(depth: int, fail_at: int) 
 @given(depth=st.integers(min_value=1, max_value=6), fail_at=st.integers(min_value=0))
 @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_async_exception_at_any_depth_restores_context(depth: int, fail_at: int) -> None:
-    """Same as above for the async tenant_scope."""
+    """An exception at any depth within nested async scopes restores context at every level."""
     clear_tenant_context()
     fail_at = fail_at % depth
     tenant_ids = [uuid4() for _ in range(depth)]
@@ -209,35 +180,20 @@ async def test_async_exception_at_any_depth_restores_context(depth: int, fail_at
     assert get_current_tenant() is None
 
 
-# ---------------------------------------------------------------------------
-# 4. get_required_tenant raises with the documented exception
-# ---------------------------------------------------------------------------
-
-
 def test_get_required_tenant_raises_documented_exception_type_and_message() -> None:
     clear_tenant_context()
     with pytest.raises(TenantContextNotSetError) as exc_info:
         get_required_tenant()
 
     message = str(exc_info.value)
-    # exceptions.py documents this exact wording; assert against it verbatim
-    # so a drift between the two would be caught.
     assert message == (
         "No tenant context set. Use set_current_tenant() or tenant_scope() "
         "before performing multi-tenant operations."
     )
 
 
-# ---------------------------------------------------------------------------
-# 5. Cancellation and ContextVar isolation
-# ---------------------------------------------------------------------------
-
-
 async def test_abandoned_async_scope_mid_await_still_restores_on_cancellation() -> None:
-    """If a task holding an active tenant_scope is cancelled mid-await, the
-    `async with` block's __aexit__ must still run (asyncio delivers
-    CancelledError into the suspended coroutine), so the token is reset and
-    no leak occurs."""
+    """Cancelling a task mid-await inside tenant_scope resets the token without leaking."""
     clear_tenant_context()
     tenant_id = uuid4()
     saw_tenant_before_cancel = None
@@ -246,25 +202,20 @@ async def test_abandoned_async_scope_mid_await_still_restores_on_cancellation() 
         nonlocal saw_tenant_before_cancel
         async with tenant_scope(tenant_id):
             saw_tenant_before_cancel = get_current_tenant()
-            await asyncio.sleep(10)  # will be cancelled while suspended here
+            await asyncio.sleep(10)
 
     task = asyncio.create_task(scoped_worker())
-    await asyncio.sleep(0)  # let it enter the scope and suspend
+    await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
     assert saw_tenant_before_cancel == tenant_id
-    # The cancelling context (this test function) never entered the scope,
-    # so it must be unaffected/still None -- proving the cancelled task's
-    # context manipulation didn't leak into the caller's context either.
     assert get_current_tenant() is None
 
 
 def test_copy_context_run_is_isolated_from_caller() -> None:
-    """Directly exercises the underlying mechanism the module's docstring
-    claims to rely on: contextvars.copy_context() produces an independent
-    snapshot such that mutations inside it are invisible to the caller."""
+    """contextvars.copy_context() isolates mutations inside the copy from the caller."""
     clear_tenant_context()
     caller_tenant = uuid4()
     set_current_tenant(caller_tenant)
@@ -277,7 +228,5 @@ def test_copy_context_run_is_isolated_from_caller() -> None:
 
     result = ctx.run(mutate_in_copy)
     assert result is not None
-    # Caller's own context must be unaffected by the mutation performed
-    # inside the copied context.
     assert get_current_tenant() == caller_tenant
     clear_tenant_context()

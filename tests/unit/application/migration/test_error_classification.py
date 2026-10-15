@@ -33,8 +33,6 @@ from eventsource.ports.migration.models import MigrationPhase
 
 
 class TestErrorSeverity:
-    """Tests for ErrorSeverity enum."""
-
     def test_severity_values(self) -> None:
         assert ErrorSeverity.CRITICAL.value == "critical"
         assert ErrorSeverity.ERROR.value == "error"
@@ -55,8 +53,6 @@ class TestErrorSeverity:
 
 
 class TestErrorRecoverability:
-    """Tests for ErrorRecoverability enum."""
-
     def test_recoverability_values(self) -> None:
         assert ErrorRecoverability.RECOVERABLE.value == "recoverable"
         assert ErrorRecoverability.TRANSIENT.value == "transient"
@@ -74,15 +70,15 @@ class TestErrorRecoverability:
 
 
 class TestRetryConfig:
-    """Tests for RetryConfig dataclass."""
-
     def test_default_values(self) -> None:
         config = RetryConfig()
-        assert config.max_attempts == 3
-        assert config.base_delay_ms == 100.0
-        assert config.max_delay_ms == 30000.0
-        assert config.exponential_base == 2.0
-        assert config.jitter_factor == 0.1
+        assert (
+            config.max_attempts,
+            config.base_delay_ms,
+            config.max_delay_ms,
+            config.exponential_base,
+            config.jitter_factor,
+        ) == (3, 100.0, 30000.0, 2.0, 0.1)
 
     def test_custom_values(self) -> None:
         config = RetryConfig(
@@ -92,11 +88,13 @@ class TestRetryConfig:
             exponential_base=3.0,
             jitter_factor=0.2,
         )
-        assert config.max_attempts == 5
-        assert config.base_delay_ms == 500.0
-        assert config.max_delay_ms == 60000.0
-        assert config.exponential_base == 3.0
-        assert config.jitter_factor == 0.2
+        assert (
+            config.max_attempts,
+            config.base_delay_ms,
+            config.max_delay_ms,
+            config.exponential_base,
+            config.jitter_factor,
+        ) == (5, 500.0, 60000.0, 3.0, 0.2)
 
     def test_validation_max_attempts(self) -> None:
         with pytest.raises(ValueError, match="max_attempts must be >= 1"):
@@ -120,48 +118,34 @@ class TestRetryConfig:
 
     def test_get_delay_exponential(self) -> None:
         config = RetryConfig(
-            base_delay_ms=100.0,
-            max_delay_ms=10000.0,
-            exponential_base=2.0,
-            jitter_factor=0.0,
+            base_delay_ms=100.0, max_delay_ms=10000.0, exponential_base=2.0, jitter_factor=0.0
         )
-        assert config.get_delay_ms(0) == 100.0
-        assert config.get_delay_ms(1) == 200.0
-        assert config.get_delay_ms(2) == 400.0
-        assert config.get_delay_ms(3) == 800.0
+        assert [config.get_delay_ms(i) for i in range(4)] == [100.0, 200.0, 400.0, 800.0]
 
     def test_get_delay_capped_at_max(self) -> None:
         config = RetryConfig(
-            base_delay_ms=100.0,
-            max_delay_ms=500.0,
-            exponential_base=2.0,
-            jitter_factor=0.0,
+            base_delay_ms=100.0, max_delay_ms=500.0, exponential_base=2.0, jitter_factor=0.0
         )
         assert config.get_delay_ms(5) == 500.0
 
     def test_get_delay_with_jitter(self) -> None:
         config = RetryConfig(
-            base_delay_ms=100.0,
-            max_delay_ms=10000.0,
-            exponential_base=2.0,
-            jitter_factor=0.1,
+            base_delay_ms=100.0, max_delay_ms=10000.0, exponential_base=2.0, jitter_factor=0.1
         )
-        delay = config.get_delay_ms(0)
-        assert 100.0 <= delay <= 110.0
+        assert 100.0 <= config.get_delay_ms(0) <= 110.0
 
     def test_to_dict(self) -> None:
-        config = RetryConfig(max_attempts=5)
-        data = config.to_dict()
-        assert data["max_attempts"] == 5
-        assert data["base_delay_ms"] == 100.0
-        assert data["max_delay_ms"] == 30000.0
-        assert data["exponential_base"] == 2.0
-        assert data["jitter_factor"] == 0.1
+        data = RetryConfig(max_attempts=5).to_dict()
+        assert data == {
+            "max_attempts": 5,
+            "base_delay_ms": 100.0,
+            "max_delay_ms": 30000.0,
+            "exponential_base": 2.0,
+            "jitter_factor": 0.1,
+        }
 
 
 class TestDefaultRetryConfigs:
-    """Tests for default retry configuration instances."""
-
     def test_transient_config(self) -> None:
         assert TRANSIENT_RETRY_CONFIG.max_attempts == 5
         assert TRANSIENT_RETRY_CONFIG.base_delay_ms == 100.0
@@ -176,58 +160,52 @@ class TestDefaultRetryConfigs:
 
 
 class TestErrorClassification:
-    """Tests for ErrorClassification dataclass."""
-
     def test_basic_creation(self) -> None:
-        classification = ErrorClassification(
+        c = ErrorClassification(
             severity=ErrorSeverity.ERROR,
             recoverability=ErrorRecoverability.TRANSIENT,
             error_code="TEST_ERROR",
             category="test",
             suggested_action="Fix the test",
         )
-        assert classification.severity == ErrorSeverity.ERROR
-        assert classification.recoverability == ErrorRecoverability.TRANSIENT
-        assert classification.error_code == "TEST_ERROR"
-        assert classification.category == "test"
-        assert classification.suggested_action == "Fix the test"
-        assert classification.retry_config is None
-        assert classification.documentation_url is None
-        assert classification.metrics_labels == {}
+        assert (c.severity, c.recoverability, c.error_code, c.category, c.suggested_action) == (
+            ErrorSeverity.ERROR,
+            ErrorRecoverability.TRANSIENT,
+            "TEST_ERROR",
+            "test",
+            "Fix the test",
+        )
+        assert (c.retry_config, c.documentation_url, c.metrics_labels) == (None, None, {})
 
     def test_with_retry_config(self) -> None:
-        retry_config = RetryConfig(max_attempts=5)
-        classification = ErrorClassification(
+        c = ErrorClassification(
             severity=ErrorSeverity.WARNING,
             recoverability=ErrorRecoverability.TRANSIENT,
             error_code="TRANSIENT_ERROR",
             category="connectivity",
             suggested_action="Retry",
-            retry_config=retry_config,
+            retry_config=RetryConfig(max_attempts=5),
         )
-        assert classification.retry_config is not None
-        assert classification.retry_config.max_attempts == 5
+        assert c.retry_config is not None and c.retry_config.max_attempts == 5
 
     def test_to_dict_basic(self) -> None:
-        classification = ErrorClassification(
+        data = ErrorClassification(
             severity=ErrorSeverity.ERROR,
             recoverability=ErrorRecoverability.FATAL,
             error_code="FATAL_ERROR",
             category="data",
             suggested_action="Contact support",
-        )
-        data = classification.to_dict()
-        assert data["severity"] == "error"
-        assert data["recoverability"] == "fatal"
-        assert data["error_code"] == "FATAL_ERROR"
-        assert data["category"] == "data"
-        assert data["suggested_action"] == "Contact support"
-        assert "retry_config" not in data
-        assert "documentation_url" not in data
-        assert "metrics_labels" not in data
+        ).to_dict()
+        assert data == {
+            "severity": "error",
+            "recoverability": "fatal",
+            "error_code": "FATAL_ERROR",
+            "category": "data",
+            "suggested_action": "Contact support",
+        }
 
     def test_to_dict_with_optional_fields(self) -> None:
-        classification = ErrorClassification(
+        data = ErrorClassification(
             severity=ErrorSeverity.WARNING,
             recoverability=ErrorRecoverability.TRANSIENT,
             error_code="CONN_ERROR",
@@ -236,17 +214,13 @@ class TestErrorClassification:
             retry_config=RetryConfig(max_attempts=3),
             documentation_url="https://docs.example.com/errors",
             metrics_labels={"component": "migration"},
-        )
-        data = classification.to_dict()
-        assert "retry_config" in data
+        ).to_dict()
         assert data["retry_config"]["max_attempts"] == 3
         assert data["documentation_url"] == "https://docs.example.com/errors"
         assert data["metrics_labels"] == {"component": "migration"}
 
 
 class TestErrorIntegration:
-    """Integration tests for error classification system."""
-
     def test_all_exceptions_have_classification(self) -> None:
         exceptions = [
             MigrationError("test"),
@@ -264,12 +238,9 @@ class TestErrorIntegration:
             CircuitBreakerOpenError("op", 10.0),
         ]
         for exc in exceptions:
-            classification = exc.classification
-            assert classification.severity in ErrorSeverity
-            assert classification.recoverability in ErrorRecoverability
-            assert len(classification.error_code) > 0
-            assert len(classification.category) > 0
-            assert len(classification.suggested_action) > 0
+            c = exc.classification
+            assert c.severity in ErrorSeverity and c.recoverability in ErrorRecoverability
+            assert c.error_code and c.category and c.suggested_action
 
     def test_transient_errors_have_retry_config(self) -> None:
         transient_errors = [
