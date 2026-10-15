@@ -1,6 +1,4 @@
-"""
-StatusStreamer core - Real-time migration status streaming iterator.
-"""
+"""StatusStreamer core - Real-time migration status streaming iterator."""
 
 from __future__ import annotations
 
@@ -20,38 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class StatusStreamer:
-    """
-    Real-time status streaming for migration monitoring.
-
-    Provides an async iterator interface for streaming MigrationStatus updates
-    to clients. Supports multiple simultaneous subscribers per migration and
-    automatically cleans up resources when subscriptions end or migrations complete.
-
-    The streamer uses the observer pattern internally, registering with the
-    MigrationCoordinator to receive status update notifications. Updates are
-    pushed to subscribers when:
-    - Phase changes occur
-    - Progress updates are recorded
-    - Errors occur
-    - The configurable update interval elapses
-
-    Thread Safety:
-        This class is designed for asyncio and is not thread-safe. All operations
-        should be performed within the same event loop.
-
-    Attributes:
-        _coordinator: MigrationCoordinator instance for fetching status.
-        _migration_id: UUID of the migration to stream status for.
-        _subscribers: Dictionary of active subscriber queues by subscriber ID.
-        _cleanup_task: Background task for cleanup on migration completion.
-
-    Example:
-        >>> streamer = StatusStreamer(coordinator, migration_id)
-        >>> async for status in streamer.stream_status():
-        ...     print(f"Migration {status.migration_id}: {status.phase.value}")
-        ...     if status.phase.is_terminal:
-        ...         break
-    """
+    """Real-time async status streaming iterator for migration monitoring."""
 
     def __init__(
         self,
@@ -92,20 +59,7 @@ class StatusStreamer:
         update_interval: float = 1.0,
         include_initial: bool = True,
     ) -> AsyncIterator[MigrationStatus]:
-        """
-        Stream migration status updates as an async iterator.
-
-        Yields MigrationStatus updates as they occur until a terminal state
-        is reached, the subscriber breaks, or the streamer is closed.
-
-        Args:
-            update_interval: Seconds between forced status checks (default 1.0).
-            include_initial: Whether to yield the initial status immediately.
-
-        Raises:
-            ValueError: If update_interval is <= 0.
-            RuntimeError: If streamer has been closed.
-        """
+        """Stream migration status updates until terminal state or streamer closure."""
         if update_interval <= 0:
             raise ValueError(f"update_interval must be > 0, got {update_interval}")
         if self._closed:

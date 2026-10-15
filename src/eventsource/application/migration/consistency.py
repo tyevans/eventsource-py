@@ -1,10 +1,4 @@
-"""
-ConsistencyVerifier - Verifies data integrity between stores (P3-003).
-
-Compares events between source and target stores using count-based (COUNT),
-hash-based (HASH), and full-content (FULL) verification levels, with optional
-sampling for large datasets.
-"""
+"""ConsistencyVerifier - Verifies data integrity between stores (P3-003)."""
 
 from __future__ import annotations
 
@@ -30,12 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
-    """
-    Verifies data consistency between source and target stores.
-
-    Supports COUNT, HASH (SHA-256), and FULL verification levels, plus
-    percentage-based sampling for large datasets.
-    """
+    """Verifies data consistency between source and target stores (COUNT, HASH, FULL)."""
 
     def __init__(
         self,
@@ -57,13 +46,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         level: VerificationLevel = VerificationLevel.HASH,
         sample_percentage: float = 100.0,
     ) -> VerificationReport:
-        """
-        Verify consistency of all data for a tenant between source and target stores.
-
-        Raises:
-            ValueError: If sample_percentage is not in (0, 100].
-            ConsistencyError: If verification fails due to store errors.
-        """
+        """Verify consistency of all data for a tenant between source and target stores."""
         if not 0 < sample_percentage <= 100:
             raise ValueError(
                 f"sample_percentage must be between 0 and 100, got {sample_percentage}"
@@ -169,19 +152,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         tenant_id: UUID,
         sample_percentage: float = 100.0,
     ) -> tuple[bool, list[ConsistencyViolation]]:
-        """
-        Verify event checksums match between stores.
-
-        Computes SHA-256 hashes of event content and compares them.
-        This is a convenience method that performs HASH-level verification.
-
-        Args:
-            tenant_id: The tenant UUID to verify.
-            sample_percentage: Percentage of events to sample.
-
-        Returns:
-            Tuple of (all_match, violations_list).
-        """
+        """Verify event SHA-256 checksums match between stores."""
         with self._tracer.span(
             "eventsource.consistency_verifier.verify_checksums",
             {"tenant_id": str(tenant_id), "sample_percentage": sample_percentage},
@@ -200,18 +171,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         self,
         tenant_id: UUID,
     ) -> tuple[bool, list[ConsistencyViolation]]:
-        """
-        Verify aggregate versions are consistent.
-
-        Checks that each aggregate has the same version (event count)
-        in both source and target stores.
-
-        Args:
-            tenant_id: The tenant UUID to verify.
-
-        Returns:
-            Tuple of (all_match, violations_list).
-        """
+        """Verify aggregate versions (event counts) are consistent across stores."""
         with self._tracer.span(
             "eventsource.consistency_verifier.verify_aggregate_versions",
             {"tenant_id": str(tenant_id)},
