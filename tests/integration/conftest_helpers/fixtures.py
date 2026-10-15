@@ -10,40 +10,28 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from .domain import (
-    TestItemCreated,
-    TestItemDeleted,
-    TestItemUpdated,
-    TestOrderCompleted,
-    TestOrderCreated,
-    TestOrderItemAdded,
-)
-from .schemas import (
-    CHECKPOINTS_SCHEMA_STATEMENTS,
-    DLQ_SCHEMA_STATEMENTS,
-    OUTBOX_SCHEMA_STATEMENTS,
-)
+from . import domain as _domain
+from . import schemas as _schemas
 
 
 def _build_test_registry() -> Any:
     from eventsource.domain.event_registry import EventRegistry
 
     registry = EventRegistry()
-    for event_cls in (
-        TestItemCreated,
-        TestItemUpdated,
-        TestItemDeleted,
-        TestOrderCreated,
-        TestOrderItemAdded,
-        TestOrderCompleted,
+    for cls in (
+        _domain.TestItemCreated,
+        _domain.TestItemUpdated,
+        _domain.TestItemDeleted,
+        _domain.TestOrderCreated,
+        _domain.TestOrderItemAdded,
+        _domain.TestOrderCompleted,
     ):
-        registry.register(event_cls)
+        registry.register(cls)
     return registry
 
 
 @pytest.fixture(scope="session")
 async def postgres_engine(postgres_connection_url: str) -> AsyncGenerator[AsyncEngine]:
-    """Provide SQLAlchemy async engine connected to PostgreSQL container."""
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -52,15 +40,15 @@ async def postgres_engine(postgres_connection_url: str) -> AsyncGenerator[AsyncE
     engine = create_async_engine(postgres_connection_url, echo=False, pool_size=5, max_overflow=10)
     async with engine.begin() as conn:
         raw = await conn.get_raw_connection()
-        driver_connection = raw.driver_connection
-        assert driver_connection is not None
-        await driver_connection.execute(get_schema("events"))
-        for statement in (
-            *CHECKPOINTS_SCHEMA_STATEMENTS,
-            *DLQ_SCHEMA_STATEMENTS,
-            *OUTBOX_SCHEMA_STATEMENTS,
-        ):
-            await conn.execute(text(statement))
+        assert raw.driver_connection is not None
+        await raw.driver_connection.execute(get_schema("events"))
+        stmts = (
+            *_schemas.CHECKPOINTS_SCHEMA_STATEMENTS,
+            *_schemas.DLQ_SCHEMA_STATEMENTS,
+            *_schemas.OUTBOX_SCHEMA_STATEMENTS,
+        )
+        for stmt in stmts:
+            await conn.execute(text(stmt))
     yield engine
     await engine.dispose()
 
@@ -69,8 +57,6 @@ async def postgres_engine(postgres_connection_url: str) -> AsyncGenerator[AsyncE
 async def postgres_session_factory(
     postgres_engine: AsyncEngine,
 ) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
     yield async_sessionmaker(postgres_engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -88,16 +74,17 @@ async def clean_postgres_tables(postgres_engine: AsyncEngine) -> AsyncGenerator[
     await truncate_tables()
 
 
-@pytest_asyncio.fixture(loop_scope="session")
-async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any]:
+def _connect_redis(url: str) -> Any:
     try:
         import redis.asyncio as redis
     except ImportError:
         pytest.skip("redis package not installed")
+    return redis.from_url(url, decode_responses=True, single_connection_client=True)
 
-    client = redis.from_url(
-        redis_connection_url, decode_responses=True, single_connection_client=True
-    )
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any]:
+    client = _connect_redis(redis_connection_url)
     await client.flushall()
     yield client
     await client.flushall()
@@ -106,15 +93,8 @@ async def redis_client(redis_connection_url: str) -> AsyncGenerator[Any]:
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def clean_redis(redis_connection_url: str) -> AsyncGenerator[None]:
-    try:
-        import redis.asyncio as redis
-    except ImportError:
-        pytest.skip("redis package not installed")
-
     for phase in ("before", "after"):
-        client = redis.from_url(
-            redis_connection_url, decode_responses=True, single_connection_client=True
-        )
+        client = _connect_redis(redis_connection_url)
         await client.flushall()
         await client.aclose()
         if phase == "before":
@@ -151,7 +131,7 @@ def redis_event_bus_factory(redis_connection_url: str) -> Any:
         pytest.skip("Redis package not installed")
 
     def create_bus() -> RedisEventBus:
-        config = RedisEventBusConfig(
+        cfg = RedisEventBusConfig(
             redis_url=redis_connection_url,
             stream_prefix="test_events",
             consumer_group="test_group",
@@ -159,7 +139,7 @@ def redis_event_bus_factory(redis_connection_url: str) -> Any:
             block_ms=1000,
             single_connection_client=True,
         )
-        return RedisEventBus(config=config, event_registry=_build_test_registry())
+        return RedisEventBus(config=cfg, event_registry=_build_test_registry())
 
     return create_bus
 
@@ -216,8 +196,8 @@ def sample_customer_id() -> UUID:
 
 
 @pytest.fixture
-def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> TestItemCreated:
-    return TestItemCreated(
+def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> _domain.TestItemCreated:
+    return _domain.TestItemCreated(
         aggregate_id=sample_aggregate_id,
         tenant_id=sample_tenant_id,
         aggregate_version=1,
@@ -229,8 +209,8 @@ def sample_item_event(sample_aggregate_id: UUID, sample_tenant_id: UUID) -> Test
 @pytest.fixture
 def sample_order_event(
     sample_aggregate_id: UUID, sample_customer_id: UUID, sample_tenant_id: UUID
-) -> TestOrderCreated:
-    return TestOrderCreated(
+) -> _domain.TestOrderCreated:
+    return _domain.TestOrderCreated(
         aggregate_id=sample_aggregate_id,
         tenant_id=sample_tenant_id,
         aggregate_version=1,
