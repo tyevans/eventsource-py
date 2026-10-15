@@ -15,13 +15,10 @@ class TestCheckpointRepositoryStandardAttributes:
 
     def test_uses_standard_attribute_constants(self):
         """Verify CheckpointRepository implementations use ATTR_* constants."""
-        result = subprocess.run(
-            ["grep", "-c", "ATTR_", "src/eventsource/adapters/sql/checkpoints.py"],
-            capture_output=True,
-            text=True,
-            cwd=self._repo_root,
-        )
-        count = int(result.stdout.strip())
+        import re
+
+        source = (self._repo_root / "src/eventsource/adapters/sql/checkpoints.py").read_text()
+        count = len(re.findall(r"ATTR_\w+", source))
         assert count >= 10, f"Expected at least 10 ATTR_* usages, found {count}"
 
     def test_no_duplicate_otel_available(self):

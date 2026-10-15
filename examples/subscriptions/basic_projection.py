@@ -1,9 +1,4 @@
-"""
-Basic Subscription Manager Example - Order Summary Projection
-
-Demonstrates creating a read model projection, setting up SubscriptionManager
-with in-memory implementations, running catch-up and live subscriptions, and
-querying the projection's read model.
+"""Basic Subscription Manager Example - Order Summary Projection.
 
 Run with: python -m examples.subscriptions.basic_projection
 """
@@ -154,10 +149,7 @@ class OrderSummaryProjection:
             self.order_counts["placed"] += 1
             self.total_revenue += event.total_amount
             self.customers.add(event.customer_id)
-            logger.info(
-                f"Order placed: total orders={sum(self.order_counts.values())}, "
-                f"revenue=${self.total_revenue:.2f}"
-            )
+            logger.info(f"Order placed: revenue=${self.total_revenue:.2f}")
         elif isinstance(event, OrderShipped):
             if self.order_counts["placed"] > 0:
                 self.order_counts["placed"] -= 1
@@ -186,36 +178,23 @@ class OrderSummaryProjection:
 
 
 def _print_summary(projection: OrderSummaryProjection) -> None:
-    summary = projection.get_summary()
-    print(f"   Total orders: {summary['total_orders']}\n   By status: {summary['by_status']}")
-    print(f"   Total revenue: ${summary['total_revenue']:.2f}")
-    print(f"   Unique customers: {summary['unique_customers']}")
+    s = projection.get_summary()
+    print(f"   Total orders: {s['total_orders']} | By status: {s['by_status']}")
+    print(f"   Total revenue: ${s['total_revenue']:.2f} | Customers: {s['unique_customers']}")
 
 
 async def main():
     """Demonstrate basic SubscriptionManager usage."""
-    print("=" * 60 + "\nBasic Subscription Manager Example\nOrder Summary Projection\n" + "=" * 60)
-
-    print("\n1. Setting up infrastructure (in-memory stores)...")
+    print("=" * 60 + "\nBasic Subscription Manager Example\n" + "=" * 60)
     event_store = InMemoryEventStore()
     event_bus = InMemoryEventBus()
     checkpoint_repo = InMemoryCheckpointRepository()
     repo = AggregateRepository(
         event_store=event_store, aggregate_factory=OrderAggregate, event_publisher=event_bus
     )
-    print("   - Event store: InMemoryEventStore\n   - Event bus: InMemoryEventBus")
-    print("   - Checkpoint repo: InMemoryCheckpointRepository")
-
-    print("\n2. Creating OrderSummaryProjection...")
     projection = OrderSummaryProjection()
-    print(f"   - Subscribed to: {[e.__name__ for e in projection.subscribed_to()]}")
 
-    print("\n3. Creating historical events (before subscription)...")
-    customers = [
-        (uuid4(), "Alice Johnson"),
-        (uuid4(), "Bob Smith"),
-        (uuid4(), "Carol Williams"),
-    ]
+    customers = [(uuid4(), "Alice Johnson"), (uuid4(), "Bob Smith"), (uuid4(), "Carol Williams")]
     order_ids = []
     for customer_id, customer_name in customers:
         order_id = uuid4()
@@ -223,7 +202,6 @@ async def main():
         order = repo.create_new(order_id)
         order.place(customer_id, customer_name, 100.0 + len(order_ids) * 50)
         await repo.save(order)
-        print(f"   Created order for {customer_name}")
 
     order = await repo.load(order_ids[0])
     order.ship("TRACK-001", "FedEx")
@@ -231,52 +209,35 @@ async def main():
     order = await repo.load(order_ids[0])
     order.deliver()
     await repo.save(order)
-    print("   First order shipped and delivered")
 
     order = await repo.load(order_ids[1])
     order.cancel("Customer request")
     await repo.save(order)
-    print("   Second order cancelled")
 
-    print("\n4. Setting up SubscriptionManager...")
     manager = SubscriptionManager(
         event_store=event_store, event_bus=event_bus, checkpoint_repo=checkpoint_repo
     )
     config = SubscriptionConfig(start_from="beginning", batch_size=100)
-    subscription = await manager.subscribe(projection, config=config, name="OrderSummary")
-    print(f"   Subscription created: {subscription.name}\n   Start position: {config.start_from}")
+    await manager.subscribe(projection, config=config, name="OrderSummary")
 
-    print("\n5. Starting subscription manager (catching up)...")
     await manager.start()
     await asyncio.sleep(0.5)
-
-    print("\n6. Querying projection after catch-up:")
+    print("\nAfter catch-up:")
     _print_summary(projection)
 
-    print("\n7. Creating new events (live subscription)...")
     order = repo.create_new(uuid4())
     order.place(uuid4(), "David Brown", 500.0)
     await repo.save(order)
-    print("   New order placed (live)")
     await asyncio.sleep(0.2)
 
-    print("\n8. Final projection status:")
+    print("\nFinal projection status:")
     _print_summary(projection)
-
     for name, sub_status in manager.get_all_statuses().items():
-        print(f"\n   Subscription '{name}':")
-        print(
-            f"     State: {sub_status.state}\n     Events processed: {sub_status.events_processed}"
-        )
-        print(f"     Last position: {sub_status.position}")
+        print(f"   Subscription '{name}': {sub_status.state} ({sub_status.events_processed})")
 
-    print("\n9. Stopping subscription manager...")
     await manager.stop()
     checkpoint = await checkpoint_repo.get_checkpoint("OrderSummary")
-    print(
-        f"   Checkpoint saved at position: {checkpoint}" if checkpoint else "   No checkpoint saved"
-    )
-    print("\n" + "=" * 60 + "\nExample completed successfully!\n" + "=" * 60)
+    print(f"   Checkpoint: {checkpoint}" if checkpoint else "   No checkpoint saved")
 
 
 if __name__ == "__main__":

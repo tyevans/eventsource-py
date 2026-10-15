@@ -19,9 +19,7 @@ class TestWorkRedistributionCoordinator:
     """Tests for WorkRedistributionCoordinator."""
 
     async def test_create_coordinator(self) -> None:
-        """Test creating a coordinator."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-
         assert coordinator.instance_id == "worker-1"
         assert coordinator.is_shutting_down is False
         assert coordinator.shutdown_notification is None
@@ -30,9 +28,7 @@ class TestWorkRedistributionCoordinator:
         assert coordinator.draining_peers == []
 
     async def test_create_shutdown_notification(self) -> None:
-        """Test creating a shutdown notification."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-
         notification = coordinator.create_shutdown_notification(
             intent=ShutdownIntent.GRACEFUL,
             subscriptions=["sub-1", "sub-2"],
@@ -40,7 +36,6 @@ class TestWorkRedistributionCoordinator:
             drain_timeout_seconds=30.0,
             metadata={"reason": "scale-down"},
         )
-
         assert notification.instance_id == "worker-1"
         assert notification.intent == ShutdownIntent.GRACEFUL
         assert notification.subscriptions == ("sub-1", "sub-2")
@@ -50,15 +45,10 @@ class TestWorkRedistributionCoordinator:
         assert coordinator.shutdown_notification == notification
 
     async def test_create_heartbeat_without_leader(self) -> None:
-        """Test creating heartbeat without leader elector."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
-
         heartbeat = coordinator.create_heartbeat(
-            subscriptions=["sub-1"],
-            in_flight_count=5,
-            load_factor=0.5,
+            subscriptions=["sub-1"], in_flight_count=5, load_factor=0.5
         )
-
         assert heartbeat.instance_id == "worker-1"
         assert heartbeat.subscriptions == ("sub-1",)
         assert heartbeat.in_flight_count == 5
@@ -66,25 +56,15 @@ class TestWorkRedistributionCoordinator:
         assert heartbeat.load_factor == 0.5
 
     async def test_create_heartbeat_with_leader(self) -> None:
-        """Test creating heartbeat with leader elector."""
         elector = InMemoryLeaderElector(_identity="worker-1")
         await elector.try_acquire()
-
-        coordinator = WorkRedistributionCoordinator(
-            instance_id="worker-1",
-            leader_elector=elector,
-        )
-
+        coordinator = WorkRedistributionCoordinator(instance_id="worker-1", leader_elector=elector)
         heartbeat = coordinator.create_heartbeat(
-            subscriptions=["sub-1"],
-            in_flight_count=5,
-            load_factor=0.5,
+            subscriptions=["sub-1"], in_flight_count=5, load_factor=0.5
         )
-
         assert heartbeat.is_leader is True
 
     async def test_handle_peer_shutdown(self) -> None:
-        """Test handling peer shutdown notification."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         received_notifications: list[ShutdownNotification] = []
 
@@ -92,7 +72,6 @@ class TestWorkRedistributionCoordinator:
             received_notifications.append(notification)
 
         coordinator.on_peer_shutdown(callback)
-
         now = datetime.now(UTC)
         notification = ShutdownNotification(
             instance_id="worker-2",
@@ -101,16 +80,13 @@ class TestWorkRedistributionCoordinator:
             expected_completion_at=now + timedelta(seconds=30),
             subscriptions=("sub-1",),
         )
-
         await coordinator.handle_peer_shutdown(notification)
-
         assert len(received_notifications) == 1
         assert received_notifications[0] == notification
         assert "worker-2" in coordinator.known_peers
         assert coordinator.known_peers["worker-2"].status == "draining"
 
     async def test_handle_peer_shutdown_ignores_self(self) -> None:
-        """Test that own shutdown notification is ignored."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         received_notifications: list[ShutdownNotification] = []
 
@@ -118,23 +94,19 @@ class TestWorkRedistributionCoordinator:
             received_notifications.append(notification)
 
         coordinator.on_peer_shutdown(callback)
-
         now = datetime.now(UTC)
         notification = ShutdownNotification(
-            instance_id="worker-1",  # Same as coordinator
+            instance_id="worker-1",
             intent=ShutdownIntent.GRACEFUL,
             initiated_at=now,
             expected_completion_at=now + timedelta(seconds=30),
             subscriptions=("sub-1",),
         )
-
         await coordinator.handle_peer_shutdown(notification)
-
         assert len(received_notifications) == 0
         assert "worker-1" not in coordinator.known_peers
 
     async def test_handle_heartbeat(self) -> None:
-        """Test handling peer heartbeat."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         received_heartbeats: list[HeartbeatMessage] = []
 
@@ -142,16 +114,13 @@ class TestWorkRedistributionCoordinator:
             received_heartbeats.append(heartbeat)
 
         coordinator.on_heartbeat(callback)
-
         heartbeat = HeartbeatMessage(
             instance_id="worker-2",
             timestamp=datetime.now(UTC),
             subscriptions=("sub-1",),
             in_flight_count=5,
         )
-
         await coordinator.handle_heartbeat(heartbeat)
-
         assert len(received_heartbeats) == 1
         assert received_heartbeats[0] == heartbeat
         assert "worker-2" in coordinator.known_peers
@@ -159,7 +128,6 @@ class TestWorkRedistributionCoordinator:
         assert coordinator.healthy_peer_count == 1
 
     async def test_handle_heartbeat_ignores_self(self) -> None:
-        """Test that own heartbeat is ignored."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         received_heartbeats: list[HeartbeatMessage] = []
 
@@ -167,19 +135,12 @@ class TestWorkRedistributionCoordinator:
             received_heartbeats.append(heartbeat)
 
         coordinator.on_heartbeat(callback)
-
-        heartbeat = HeartbeatMessage(
-            instance_id="worker-1",  # Same as coordinator
-            timestamp=datetime.now(UTC),
-        )
-
+        heartbeat = HeartbeatMessage(instance_id="worker-1", timestamp=datetime.now(UTC))
         await coordinator.handle_heartbeat(heartbeat)
-
         assert len(received_heartbeats) == 0
         assert "worker-1" not in coordinator.known_peers
 
     async def test_handle_work_assignment(self) -> None:
-        """Test handling work assignment."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-2")
         received_assignments: list[WorkAssignment] = []
 
@@ -187,21 +148,17 @@ class TestWorkRedistributionCoordinator:
             received_assignments.append(assignment)
 
         coordinator.on_work_assignment(callback)
-
         assignment = WorkAssignment(
             target_instance_id="worker-2",
             subscriptions=("sub-1",),
             source_instance_id="worker-1",
             assigned_at=datetime.now(UTC),
         )
-
         await coordinator.handle_work_assignment(assignment)
-
         assert len(received_assignments) == 1
         assert received_assignments[0] == assignment
 
     async def test_handle_work_assignment_ignores_other_target(self) -> None:
-        """Test that work assignment for other instance is ignored."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         received_assignments: list[WorkAssignment] = []
 
@@ -209,20 +166,16 @@ class TestWorkRedistributionCoordinator:
             received_assignments.append(assignment)
 
         coordinator.on_work_assignment(callback)
-
         assignment = WorkAssignment(
-            target_instance_id="worker-2",  # Not this instance
+            target_instance_id="worker-2",
             subscriptions=("sub-1",),
             source_instance_id="worker-3",
             assigned_at=datetime.now(UTC),
         )
-
         await coordinator.handle_work_assignment(assignment)
-
         assert len(received_assignments) == 0
 
     async def test_callback_error_handling(self) -> None:
-        """Test that callback errors don't break processing."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
         successful_callbacks: list[str] = []
 
@@ -234,7 +187,6 @@ class TestWorkRedistributionCoordinator:
 
         coordinator.on_peer_shutdown(failing_callback)
         coordinator.on_peer_shutdown(success_callback)
-
         now = datetime.now(UTC)
         notification = ShutdownNotification(
             instance_id="worker-2",
@@ -243,14 +195,10 @@ class TestWorkRedistributionCoordinator:
             expected_completion_at=now + timedelta(seconds=30),
             subscriptions=(),
         )
-
-        # Should not raise
         await coordinator.handle_peer_shutdown(notification)
-
         assert successful_callbacks == ["worker-2"]
 
     async def test_remove_callbacks(self) -> None:
-        """Test removing callbacks."""
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
 
         async def shutdown_cb(n: ShutdownNotification) -> None:
@@ -272,12 +220,9 @@ class TestWorkRedistributionCoordinator:
 
         assert coordinator.remove_peer_shutdown_callback(shutdown_cb) is True
         assert coordinator.remove_peer_shutdown_callback(shutdown_cb) is False
-
         assert coordinator.remove_heartbeat_callback(heartbeat_cb) is True
         assert coordinator.remove_heartbeat_callback(heartbeat_cb) is False
-
         assert coordinator.remove_peer_timeout_callback(timeout_cb) is True
         assert coordinator.remove_peer_timeout_callback(timeout_cb) is False
-
         assert coordinator.remove_work_assignment_callback(assignment_cb) is True
         assert coordinator.remove_work_assignment_callback(assignment_cb) is False
