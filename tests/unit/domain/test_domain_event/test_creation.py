@@ -14,16 +14,13 @@ class TestDomainEventCreation:
 
     def test_create_event_with_required_fields(self) -> None:
         """Event can be created with only required fields."""
-        aggregate_id = uuid4()
-        customer_id = uuid4()
-
+        aggregate_id, customer_id = uuid4(), uuid4()
         event = OrderCreated(
             aggregate_id=aggregate_id,
             order_number="ORD-001",
             customer_id=customer_id,
             total_amount=99.99,
         )
-
         assert event.aggregate_id == aggregate_id
         assert event.order_number == "ORD-001"
         assert event.customer_id == customer_id
@@ -39,10 +36,8 @@ class TestDomainEventCreation:
             customer_id=uuid4(),
             total_amount=99.99,
         )
-
         assert isinstance(event.event_id, UUID)
         assert isinstance(event.correlation_id, UUID)
-        # Two different events should have different IDs
         event2 = OrderCreated(
             aggregate_id=uuid4(),
             order_number="ORD-002",
@@ -62,9 +57,8 @@ class TestDomainEventCreation:
             total_amount=99.99,
         )
         after = datetime.now(UTC)
-
         assert before <= event.occurred_at <= after
-        assert event.occurred_at.tzinfo is not None  # Timezone-aware
+        assert event.occurred_at.tzinfo is not None
 
     def test_event_has_default_versions(self) -> None:
         """Event has default version values."""
@@ -74,7 +68,6 @@ class TestDomainEventCreation:
             customer_id=uuid4(),
             total_amount=99.99,
         )
-
         assert event.event_version == 1
         assert event.aggregate_version == 1
 
@@ -86,20 +79,15 @@ class TestDomainEventCreation:
             customer_id=uuid4(),
             total_amount=99.99,
         )
-
         assert event.tenant_id is None
         assert event.actor_id is None
         assert event.causation_id is None
 
     def test_event_with_all_optional_fields(self) -> None:
         """Event can be created with all optional fields."""
-        event_id = uuid4()
-        aggregate_id = uuid4()
-        tenant_id = uuid4()
-        correlation_id = uuid4()
-        causation_id = uuid4()
+        event_id, aggregate_id, tenant_id = uuid4(), uuid4(), uuid4()
+        correlation_id, causation_id = uuid4(), uuid4()
         occurred_at = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
-
         event = OrderCreated(
             event_id=event_id,
             aggregate_id=aggregate_id,
@@ -115,7 +103,6 @@ class TestDomainEventCreation:
             occurred_at=occurred_at,
             metadata={"source": "api", "version": "v2"},
         )
-
         assert event.event_id == event_id
         assert event.aggregate_id == aggregate_id
         assert event.event_version == 2
@@ -135,7 +122,6 @@ class TestDomainEventCreation:
             customer_id=uuid4(),
             total_amount=99.99,
         )
-
         assert event.metadata == {}
         assert isinstance(event.metadata, dict)
 
@@ -151,7 +137,6 @@ class TestDomainEventImmutability:
             customer_id=uuid4(),
             total_amount=99.99,
         )
-
         with pytest.raises(ValidationError):
             event.order_number = "ORD-002"  # type: ignore[misc]
 
@@ -163,7 +148,6 @@ class TestDomainEventImmutability:
             customer_id=uuid4(),
             total_amount=99.99,
         )
-
         with pytest.raises(ValidationError):
             event.aggregate_id = uuid4()  # type: ignore[misc]
 
@@ -176,8 +160,6 @@ class TestDomainEventImmutability:
             total_amount=99.99,
             metadata={"key": "value"},
         )
-
-        # Pydantic frozen models prevent attribute reassignment
         with pytest.raises(ValidationError):
             event.metadata = {"new": "dict"}  # type: ignore[misc]
 
@@ -187,9 +169,7 @@ class TestDomainEventStringRepresentation:
 
     def test_str_representation(self) -> None:
         """__str__ provides readable representation."""
-        event_id = uuid4()
-        aggregate_id = uuid4()
-
+        event_id, aggregate_id = uuid4(), uuid4()
         event = OrderCreated(
             event_id=event_id,
             aggregate_id=aggregate_id,
@@ -198,9 +178,7 @@ class TestDomainEventStringRepresentation:
             total_amount=99.99,
             aggregate_version=3,
         )
-
         str_repr = str(event)
-
         assert "OrderCreated" in str_repr
         assert str(event_id) in str_repr
         assert str(aggregate_id) in str_repr
@@ -208,10 +186,7 @@ class TestDomainEventStringRepresentation:
 
     def test_repr_representation(self) -> None:
         """__repr__ provides detailed representation."""
-        event_id = uuid4()
-        aggregate_id = uuid4()
-        tenant_id = uuid4()
-
+        event_id, aggregate_id, tenant_id = uuid4(), uuid4(), uuid4()
         event = OrderCreated(
             event_id=event_id,
             aggregate_id=aggregate_id,
@@ -220,9 +195,7 @@ class TestDomainEventStringRepresentation:
             total_amount=99.99,
             tenant_id=tenant_id,
         )
-
         repr_str = repr(event)
-
         assert "OrderCreated(" in repr_str
         assert "event_type='OrderCreated'" in repr_str
         assert "aggregate_type='Order'" in repr_str
@@ -234,53 +207,34 @@ class TestDomainEventEquality:
 
     def test_events_with_same_data_are_equal(self) -> None:
         """Events with same data are equal."""
-        event_id = uuid4()
-        aggregate_id = uuid4()
-        customer_id = uuid4()
-        correlation_id = uuid4()
+        event_id, aggregate_id, customer_id, correlation_id = uuid4(), uuid4(), uuid4(), uuid4()
         occurred_at = datetime.now(UTC)
-
-        event1 = OrderCreated(
-            event_id=event_id,
-            aggregate_id=aggregate_id,
-            order_number="ORD-001",
-            customer_id=customer_id,
-            total_amount=99.99,
-            correlation_id=correlation_id,
-            occurred_at=occurred_at,
-        )
-
-        event2 = OrderCreated(
-            event_id=event_id,
-            aggregate_id=aggregate_id,
-            order_number="ORD-001",
-            customer_id=customer_id,
-            total_amount=99.99,
-            correlation_id=correlation_id,
-            occurred_at=occurred_at,
-        )
-
-        assert event1 == event2
+        kwargs = {
+            "event_id": event_id,
+            "aggregate_id": aggregate_id,
+            "order_number": "ORD-001",
+            "customer_id": customer_id,
+            "total_amount": 99.99,
+            "correlation_id": correlation_id,
+            "occurred_at": occurred_at,
+        }
+        assert OrderCreated(**kwargs) == OrderCreated(**kwargs)
 
     def test_events_with_different_data_are_not_equal(self) -> None:
         """Events with different data are not equal."""
-        aggregate_id = uuid4()
-        customer_id = uuid4()
-
+        aggregate_id, customer_id = uuid4(), uuid4()
         event1 = OrderCreated(
             aggregate_id=aggregate_id,
             order_number="ORD-001",
             customer_id=customer_id,
             total_amount=99.99,
         )
-
         event2 = OrderCreated(
             aggregate_id=aggregate_id,
             order_number="ORD-002",
             customer_id=customer_id,
             total_amount=50.00,
         )
-
         assert event1 != event2
 
     def test_events_with_metadata_are_not_hashable(self) -> None:
@@ -292,7 +246,5 @@ class TestDomainEventEquality:
             total_amount=99.99,
             metadata={"key": "value"},
         )
-
-        # Events with metadata dict are not hashable
         with pytest.raises(TypeError):
             hash(event)
