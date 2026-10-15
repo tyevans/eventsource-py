@@ -176,3 +176,28 @@ class TestHarnessRepr:
         repr_str = repr(harness)
 
         assert "published=1" in repr_str
+
+    @pytest.mark.asyncio
+    async def test_outbox_repo_publish_events_and_len(self) -> None:
+        """outbox_repo, publish_events(persist=...), and len(harness) work together."""
+        from eventsource.adapters.memory.outbox import InMemoryOutboxRepository
+
+        harness = InMemoryTestHarness()
+        assert isinstance(harness.outbox_repo, InMemoryOutboxRepository)
+        assert harness.outbox_repo._enable_tracing is False
+        assert len(harness) == 0
+
+        await harness.publish_events()
+        assert len(harness) == 0
+
+        agg_id = uuid4()
+        ev1 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
+        ev2 = HarnessSampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2)
+
+        await harness.publish_events(ev1)
+        assert len(harness) == 1
+        assert await harness.event_store.get_event_count() == 0
+
+        await harness.publish_events(ev2, persist=True)
+        assert len(harness) == 2
+        assert await harness.event_store.get_event_count() == 1
