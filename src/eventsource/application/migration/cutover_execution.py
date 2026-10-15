@@ -67,29 +67,8 @@ class CutoverExecutionMixin:
         """
         Execute the atomic cutover from source to target store.
 
-        This is the main entry point for performing a cutover. It acquires
-        an advisory lock, pauses writes, verifies sync lag, switches routing,
-        and resumes writes. If any step fails or the timeout is exceeded,
-        the operation is automatically rolled back.
-
-        Args:
-            migration_id: ID of the migration being performed.
-            tenant_id: Tenant whose events are being migrated.
-            lag_tracker: SyncLagTracker for verifying final sync lag.
-            target_store_id: ID of the target store to switch to.
-            config: Optional migration configuration. If not provided,
-                defaults are used.
-            timeout_ms: Maximum time in milliseconds for the cutover pause.
-                If not provided, uses config.cutover_timeout_ms or 500ms.
-            since: The lag tracker's count anchor -- the furthest source
-                position provably present in the target (see
-                `DualWriteInterceptor.safe_lag_anchor`).
-
-        Returns:
-            CutoverResult indicating success/failure and timing details.
-
-        Raises:
-            CutoverError: If cutover fails and cannot be rolled back.
+        Acquires an advisory lock, pauses writes, verifies sync lag, switches
+        routing, and resumes writes. Automatically rolls back on failure or timeout.
         """
         config = config or MigrationConfig()
         effective_timeout_ms = timeout_ms if timeout_ms is not None else config.cutover_timeout_ms
@@ -149,41 +128,18 @@ class CutoverExecutionMixin:
         timeout_ms: float,
         since: Position | None,
     ) -> CutoverResult:
-        """
-        Execute cutover while holding the advisory lock.
-
-        This method performs the actual cutover sequence. It is called
-        after the advisory lock has been acquired.
-
-        Args:
-            migration_id: ID of the migration.
-            tenant_id: Tenant being migrated.
-            lag_tracker: For verifying sync lag.
-            target_store_id: Target store to switch to.
-            config: Migration configuration.
-            timeout_ms: Maximum cutover pause time.
-            since: The lag tracker's count anchor (see
-                `DualWriteInterceptor.safe_lag_anchor`).
-
-        Returns:
-            CutoverResult with outcome details.
-        """
+        """Execute the cutover sequence while holding the advisory lock."""
         start_time = time.perf_counter()
         events_synced = 0
 
-        # Captured before anything is changed. `_rollback` restores the
-        # migration *state* to DUAL_WRITE; without the store id it left the
-        # route pointed at the target, so a "rolled back" tenant would still
-        # have all its traffic on the store the cutover failed to complete.
+        # Capture source store ID before changing routing so rollback can restore it.
         source_routing = await self._routing_repo.get_routing(tenant_id)
         source_store_id = source_routing.store_id if source_routing else None
 
         try:
-            # Step 1: Pause writes for the tenant
             await self._router.pause_writes(tenant_id)
             logger.debug("Paused writes for tenant %s", tenant_id)
 
-            # Step 2: Pre-cutover validation - verify sync lag
             await lag_tracker.calculate_lag(since=since)
             lag = lag_tracker.current_lag
             if lag is None:
@@ -205,37 +161,31 @@ class CutoverExecutionMixin:
                 config.cutover_max_lag_events,
             )
 
-            # Step 3: Update routing state to CUTOVER_PAUSED
             await self._routing_repo.set_migration_state(
                 tenant_id, TenantMigrationState.CUTOVER_PAUSED, migration_id=migration_id
             )
 
-            # Step 4: Verify we haven't exceeded timeout
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             if elapsed_ms >= timeout_ms:
                 raise CutoverTimeoutError(
                     migration_id=migration_id, elapsed_ms=elapsed_ms, timeout_ms=timeout_ms
                 )
 
-            # Step 5: Wait for any final sync (brief sleep to drain in-flight)
-            remaining_ms = max(0, timeout_ms - elapsed_ms - 10)  # Reserve 10ms margin
+            remaining_ms = max(0, timeout_ms - elapsed_ms - 10)
             if remaining_ms > 0:
-                await asyncio.sleep(min(remaining_ms / 1000, 0.010))  # Max 10ms wait
+                await asyncio.sleep(min(remaining_ms / 1000, 0.010))
 
-            # Step 6: Final lag check after brief wait
             await lag_tracker.calculate_lag(since=since)
             final_lag = lag_tracker.current_lag
             if final_lag:
                 events_synced = max(0, lag.events - final_lag.events)
 
-            # Step 7: Check timeout again
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             if elapsed_ms >= timeout_ms:
                 raise CutoverTimeoutError(
                     migration_id=migration_id, elapsed_ms=elapsed_ms, timeout_ms=timeout_ms
                 )
 
-            # Step 8: Verify target store is healthy (read test)
             try:
                 target_store = self._router.get_store(target_store_id)
                 if target_store is not None:
@@ -249,7 +199,6 @@ class CutoverExecutionMixin:
                     reason="target_health_check_failed",
                 ) from e
 
-            # Step 9: Atomically switch routing to target and set state to MIGRATED.
             await self._routing_repo.switch_routing(
                 tenant_id,
                 target_store_id,

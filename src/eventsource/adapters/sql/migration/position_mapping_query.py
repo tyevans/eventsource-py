@@ -58,31 +58,30 @@ class PostgreSQLPositionMappingQueryMixin:
             total: int,
         ) -> int | None: ...
 
+    async def _fetch_one_mapping(
+        self, query_str: str, params: dict[str, Any]
+    ) -> PositionMapping | None:
+        async with _get_sql_connection()(self._conn, write=False) as conn:
+            result = await conn.execute(text(query_str), params)
+            row = result.fetchone()
+        return row_to_mapping(row) if row is not None else None
+
     async def get(self, mapping_id: int) -> PositionMapping | None:
         """Get a position mapping by its database ID."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.get",
-            {
-                "mapping.id": mapping_id,
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"mapping.id": mapping_id, ATTR_DB_SYSTEM: "postgresql"},
         ):
-            query = text("""
+            return await self._fetch_one_mapping(
+                """
                 SELECT
                     id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE id = :id
-            """)
-
-            async with _get_sql_connection()(self._conn, write=False) as conn:
-                result = await conn.execute(query, {"id": mapping_id})
-                row = result.fetchone()
-
-            if row is None:
-                return None
-
-            return row_to_mapping(row)
+                """,
+                {"id": mapping_id},
+            )
 
     async def find_by_source_position(
         self,
@@ -98,29 +97,20 @@ class PostgreSQLPositionMappingQueryMixin:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
+            return await self._fetch_one_mapping(
+                """
                 SELECT
                     id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                   AND source_position_token = :source_position_token
-            """)
-
-            async with _get_sql_connection()(self._conn, write=False) as conn:
-                result = await conn.execute(
-                    query,
-                    {
-                        "migration_id": migration_id,
-                        "source_position_token": source_position.to_str(),
-                    },
-                )
-                row = result.fetchone()
-
-            if row is None:
-                return None
-
-            return row_to_mapping(row)
+                """,
+                {
+                    "migration_id": migration_id,
+                    "source_position_token": source_position.to_str(),
+                },
+            )
 
     async def find_by_target_position(
         self,
@@ -136,7 +126,8 @@ class PostgreSQLPositionMappingQueryMixin:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
+            return await self._fetch_one_mapping(
+                """
                 SELECT
                     id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
@@ -144,22 +135,12 @@ class PostgreSQLPositionMappingQueryMixin:
                 WHERE migration_id = :migration_id
                   AND target_position_token = :target_position_token
                 LIMIT 1
-            """)
-
-            async with _get_sql_connection()(self._conn, write=False) as conn:
-                result = await conn.execute(
-                    query,
-                    {
-                        "migration_id": migration_id,
-                        "target_position_token": target_position.to_str(),
-                    },
-                )
-                row = result.fetchone()
-
-            if row is None:
-                return None
-
-            return row_to_mapping(row)
+                """,
+                {
+                    "migration_id": migration_id,
+                    "target_position_token": target_position.to_str(),
+                },
+            )
 
     async def find_by_event_id(
         self,
@@ -175,29 +156,17 @@ class PostgreSQLPositionMappingQueryMixin:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
+            return await self._fetch_one_mapping(
+                """
                 SELECT
                     id, migration_id, source_position_token, target_position_token,
                     event_id, mapped_at
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                   AND event_id = :event_id
-            """)
-
-            async with _get_sql_connection()(self._conn, write=False) as conn:
-                result = await conn.execute(
-                    query,
-                    {
-                        "migration_id": migration_id,
-                        "event_id": event_id,
-                    },
-                )
-                row = result.fetchone()
-
-            if row is None:
-                return None
-
-            return row_to_mapping(row)
+                """,
+                {"migration_id": migration_id, "event_id": event_id},
+            )
 
     async def list_by_migration(
         self,
@@ -224,18 +193,11 @@ class PostgreSQLPositionMappingQueryMixin:
                 ORDER BY id ASC
                 LIMIT :limit OFFSET :offset
             """)
-
             async with _get_sql_connection()(self._conn, write=False) as conn:
                 result = await conn.execute(
-                    query,
-                    {
-                        "migration_id": migration_id,
-                        "limit": limit,
-                        "offset": offset,
-                    },
+                    query, {"migration_id": migration_id, "limit": limit, "offset": offset}
                 )
                 rows = result.fetchall()
-
             return [row_to_mapping(row) for row in rows]
 
     async def list_in_source_range(
@@ -261,28 +223,24 @@ class PostgreSQLPositionMappingQueryMixin:
             if lower_ordinal is None or upper_ordinal is None or lower_ordinal > upper_ordinal:
                 return []
 
-            count = upper_ordinal - lower_ordinal + 1
-            return await self.list_by_migration(migration_id, limit=count, offset=lower_ordinal)
+            return await self.list_by_migration(
+                migration_id, limit=upper_ordinal - lower_ordinal + 1, offset=lower_ordinal
+            )
 
     async def count_by_migration(self, migration_id: UUID) -> int:
         """Count total mappings for a migration."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.count_by_migration",
-            {
-                "migration.id": str(migration_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             query = text("""
                 SELECT COUNT(*)
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
             """)
-
             async with _get_sql_connection()(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"migration_id": migration_id})
                 row = result.fetchone()
-
             return row[0] if row else 0
 
     async def get_position_bounds(
@@ -292,10 +250,7 @@ class PostgreSQLPositionMappingQueryMixin:
         """Get the first and last mapping's source positions for a migration."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.get_position_bounds",
-            {
-                "migration.id": str(migration_id),
-                ATTR_DB_SYSTEM: "postgresql",
-            },
+            {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
             total = await self.count_by_migration(migration_id)
             if total == 0:
@@ -303,10 +258,8 @@ class PostgreSQLPositionMappingQueryMixin:
 
             first = await self._get_by_ordinal(migration_id, 0)
             last = await self._get_by_ordinal(migration_id, total - 1)
-
             if first is None or last is None:
                 return None
-
             return (first.source_position, last.source_position)
 
 
