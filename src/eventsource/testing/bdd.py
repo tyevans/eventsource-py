@@ -9,9 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from typing import Any
-from uuid import UUID
 
-from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
 from eventsource.ports import ExpectedVersion
@@ -38,21 +36,7 @@ async def given_events(
         expected_version: Optional stream version expectation (defaults to ExpectedVersion.any_())
     """
     event_list = [events] if isinstance(events, DomainEvent) else list(events)
-    if not event_list:
-        return
-
-    by_aggregate: dict[tuple[UUID, str], list[DomainEvent]] = {}
-    for event in event_list:
-        key = (event.aggregate_id, event.aggregate_type)
-        by_aggregate.setdefault(key, []).append(event)
-
-    version_constraint = expected_version or ExpectedVersion.any_()
-    for (agg_id, agg_type), agg_events in by_aggregate.items():
-        await harness.event_store.append(
-            StreamId(aggregate_id=agg_id, category=agg_type),
-            agg_events,
-            version_constraint,
-        )
+    await harness.append_events(*event_list, expected_version=expected_version)
 
 
 def when_command[TAggregate: AggregateRoot[Any]](
