@@ -1,19 +1,11 @@
-"""
-Integration tests for live event processing.
-
-Tests cover:
-- Live event delivery after transition
-- Multiple event types in live mode
-- Real-time event handling
-- Event ordering in live mode
-"""
+"""Integration tests for live event processing."""
 
 import asyncio
 from uuid import uuid4
 
 import pytest
 
-from eventsource.application.subscriptions import SubscriptionConfig
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 from eventsource.domain import StreamId
 from eventsource.ports.positions import ExpectedVersion
 
@@ -47,27 +39,17 @@ class TestLiveEventDelivery:
         subscription_manager,
     ):
         """Test subscription receives live events after catch-up."""
-        # Arrange
         await populate_event_store(in_memory_event_store, 20)
-
         projection = CollectingProjection()
 
-        # Act
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
-
         await projection.wait_for_events(20)
 
-        # Publish live events
         for i in range(5):
-            await publish_live_event(
-                in_memory_event_store,
-                in_memory_event_bus,
-                f"LIVE-{i:03d}",
-            )
+            await publish_live_event(in_memory_event_store, in_memory_event_bus, f"LIVE-{i:03d}")
 
-        # Assert
         success = await projection.wait_for_events(25)
         assert success
         assert projection.event_count == 25
@@ -80,36 +62,22 @@ class TestLiveEventDelivery:
         subscription_manager,
     ):
         """Test live-only subscription ignores historical events."""
-        # Arrange: Populate store with historical events
         await populate_event_store(in_memory_event_store, 50)
-
         projection = CollectingProjection()
 
-        # Act: Subscribe with start_from="end"
         config = SubscriptionConfig(start_from="end")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
-
-        # Wait a moment to ensure we're in live mode
         await asyncio.sleep(0.1)
 
-        # Historical events should not be received
         assert projection.event_count == 0
 
-        # Publish live events
         for i in range(10):
-            await publish_live_event(
-                in_memory_event_store,
-                in_memory_event_bus,
-                f"LIVE-{i:03d}",
-            )
+            await publish_live_event(in_memory_event_store, in_memory_event_bus, f"LIVE-{i:03d}")
 
-        # Assert: Only live events received
         success = await projection.wait_for_events(10)
         assert success
         assert projection.event_count == 10
-
-        # All events should be live events
         for event in projection.events:
             assert event.order_number.startswith("LIVE-")
 
@@ -122,41 +90,21 @@ class TestLiveEventDelivery:
     ):
         """Test live subscription handles different event types."""
         projection = CollectingProjection()
-
-        # Start with empty store
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
 
-        # Publish different event types
         order_id = uuid4()
+        stream_id = StreamId(aggregate_id=order_id, category="SubTestOrder")
 
-        # Created event
-        created = SubTestOrderCreated(
-            aggregate_id=order_id,
-            order_number="ORD-001",
-            amount=100.0,
-        )
-        await in_memory_event_store.append(
-            StreamId(aggregate_id=order_id, category="SubTestOrder"),
-            [created],
-            ExpectedVersion.no_stream(),
-        )
+        created = SubTestOrderCreated(aggregate_id=order_id, order_number="ORD-001", amount=100.0)
+        await in_memory_event_store.append(stream_id, [created], ExpectedVersion.no_stream())
         await in_memory_event_bus.publish([created])
 
-        # Shipped event
-        shipped = SubTestOrderShipped(
-            aggregate_id=order_id,
-            tracking_number="TRK-001",
-        )
-        await in_memory_event_store.append(
-            StreamId(aggregate_id=order_id, category="SubTestOrder"),
-            [shipped],
-            ExpectedVersion.exact(1),
-        )
+        shipped = SubTestOrderShipped(aggregate_id=order_id, tracking_number="TRK-001")
+        await in_memory_event_store.append(stream_id, [shipped], ExpectedVersion.exact(1))
         await in_memory_event_bus.publish([shipped])
 
-        # Assert
         success = await projection.wait_for_events(2)
         assert success
         assert projection.event_count == 2
@@ -176,29 +124,17 @@ class TestLiveEventOrdering:
     ):
         """Test live events are delivered in order."""
         projection = CollectingProjection()
-
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
 
-        # Publish events in sequence
         for i in range(20):
-            event = SubTestOrderCreated(
-                aggregate_id=uuid4(),
-                order_number=f"ORD-{i:03d}",
-                amount=100.0 + i,
+            await publish_live_event(
+                in_memory_event_store, in_memory_event_bus, f"ORD-{i:03d}", amount=100.0 + i
             )
-            await in_memory_event_store.append(
-                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
-            await in_memory_event_bus.publish([event])
 
         success = await projection.wait_for_events(20)
         assert success
-
-        # Verify order
         for i, event in enumerate(projection.events):
             assert event.order_number == f"ORD-{i:03d}"
 
@@ -211,25 +147,15 @@ class TestLiveEventOrdering:
     ):
         """Test handling rapid succession of live events."""
         projection = CollectingProjection()
-
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
 
-        # Publish many events rapidly
         events_published = []
         for i in range(100):
-            event = SubTestOrderCreated(
-                aggregate_id=uuid4(),
-                order_number=f"ORD-{i:03d}",
-                amount=100.0 + i,
+            event = await publish_live_event(
+                in_memory_event_store, in_memory_event_bus, f"ORD-{i:03d}", amount=100.0 + i
             )
-            await in_memory_event_store.append(
-                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
-            await in_memory_event_bus.publish([event])
             events_published.append(event)
 
         success = await projection.wait_for_events(100, timeout=10.0)
@@ -250,12 +176,9 @@ class TestLiveSubscriptionHealth:
     ):
         """Test subscription is in live state after transition."""
         projection = CollectingProjection()
-
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
-
-        # Give it a moment to transition
         await asyncio.sleep(0.1)
 
         subscription = subscription_manager.get_subscription("CollectingProjection")
@@ -271,13 +194,11 @@ class TestLiveSubscriptionHealth:
     ):
         """Test live subscription tracks statistics."""
         await populate_event_store(in_memory_event_store, 30)
-
         projection = CollectingProjection()
 
         config = SubscriptionConfig(start_from="beginning")
         await subscription_manager.subscribe(projection, config)
         await subscription_manager.start()
-
         await projection.wait_for_events(30)
 
         subscription = subscription_manager.get_subscription("CollectingProjection")
@@ -304,36 +225,22 @@ class TestLiveSubscriptionRecovery:
         await subscription_manager.subscribe(projection2, config, name="Projection2")
         await subscription_manager.start()
 
-        # Publish events
         for i in range(10):
-            await publish_live_event(
-                in_memory_event_store,
-                in_memory_event_bus,
-                f"ORD-{i:03d}",
-            )
+            await publish_live_event(in_memory_event_store, in_memory_event_bus, f"ORD-{i:03d}")
 
         await projection1.wait_for_events(10)
         await projection2.wait_for_events(10)
 
-        # Both should have received all events
         assert projection1.event_count == 10
         assert projection2.event_count == 10
 
     async def test_live_subscription_continues_after_stop_start(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
+        self, in_memory_event_store, in_memory_event_bus, in_memory_checkpoint_repo
     ):
         """Test live subscription resumes correctly after manager restart."""
-        from eventsource.application.subscriptions import SubscriptionManager
-
-        # First: Populate store with initial events (not live)
         for i in range(20):
             event = SubTestOrderCreated(
-                aggregate_id=uuid4(),
-                order_number=f"ORD-{i:03d}",
-                amount=100.0 + i,
+                aggregate_id=uuid4(), order_number=f"ORD-{i:03d}", amount=100.0 + i
             )
             await in_memory_event_store.append(
                 StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
@@ -341,33 +248,26 @@ class TestLiveSubscriptionRecovery:
                 ExpectedVersion.no_stream(),
             )
 
-        # First manager instance - catches up from beginning
         projection1 = CollectingProjection()
         manager1 = SubscriptionManager(
             event_store=in_memory_event_store,
             event_bus=in_memory_event_bus,
             checkpoint_repo=in_memory_checkpoint_repo,
         )
-
-        config = SubscriptionConfig(start_from="beginning")
-        await manager1.subscribe(projection1, config, name="TestProjection")
+        await manager1.subscribe(
+            projection1, SubscriptionConfig(start_from="beginning"), name="TestProjection"
+        )
         await manager1.start()
-
-        # Wait for catch-up to complete
         await projection1.wait_for_events(20)
         await manager1.stop()
 
-        # Verify checkpoint was saved (catch-up saves checkpoints)
         checkpoint_pos = await in_memory_checkpoint_repo.get_position("TestProjection")
         assert checkpoint_pos is not None, "Checkpoint should be saved after catch-up"
         assert checkpoint_pos >= await position_after(in_memory_event_store, 20)
 
-        # Add more events while stopped
         for i in range(20, 30):
             event = SubTestOrderCreated(
-                aggregate_id=uuid4(),
-                order_number=f"ORD-{i:03d}",
-                amount=100.0 + i,
+                aggregate_id=uuid4(), order_number=f"ORD-{i:03d}", amount=100.0 + i
             )
             await in_memory_event_store.append(
                 StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
@@ -375,25 +275,19 @@ class TestLiveSubscriptionRecovery:
                 ExpectedVersion.no_stream(),
             )
 
-        # Second manager instance
         projection2 = CollectingProjection()
         manager2 = SubscriptionManager(
             event_store=in_memory_event_store,
             event_bus=in_memory_event_bus,
             checkpoint_repo=in_memory_checkpoint_repo,
         )
-
-        # Resume from checkpoint
-        resume_config = SubscriptionConfig(start_from="checkpoint")
-        await manager2.subscribe(projection2, resume_config, name="TestProjection")
+        await manager2.subscribe(
+            projection2, SubscriptionConfig(start_from="checkpoint"), name="TestProjection"
+        )
         await manager2.start()
 
-        # Should catch up events 20-29 (10 new events after checkpoint)
         success = await projection2.wait_for_events(10, timeout=10.0)
         assert success, f"Expected 10 events, got {projection2.event_count}"
         assert projection2.event_count == 10
-
-        # First event should be ORD-020
         assert projection2.events[0].order_number == "ORD-020"
-
         await manager2.stop()
