@@ -23,6 +23,7 @@ Example:
 from __future__ import annotations
 
 from typing import Any, TypeVar
+from uuid import UUID
 
 from eventsource.adapters.memory import (
     InMemoryCheckpointRepository,
@@ -32,8 +33,10 @@ from eventsource.adapters.memory import (
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates import AggregateRepository
+from eventsource.domain import StreamId
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
+from eventsource.ports import ExpectedVersion
 from eventsource.testing.assertions import EventAssertions
 
 TEvent = TypeVar("TEvent", bound=DomainEvent)
@@ -45,27 +48,12 @@ class InMemoryTestHarness:
     Pre-configured test infrastructure for event sourcing tests.
 
     Provides in-memory implementations of all infrastructure components,
-    wired together and ready to use. This eliminates boilerplate setup
-    in tests and ensures consistent configuration.
-
-    Components provided:
-    - event_store: InMemoryEventStore (the ports adapter) for persisting events
+    wired together and ready to use:
+    - event_store: InMemoryEventStore for persisting events
     - event_bus: InMemoryEventBus for publishing/subscribing to events
     - checkpoint_repo: InMemoryCheckpointRepository for projection checkpoints
     - dlq_repo: InMemoryDLQRepository for dead letter queue
     - snapshot_store: InMemorySnapshotStore for aggregate state snapshots
-
-    Example:
-        >>> @pytest.fixture
-        ... def harness():
-        ...     h = InMemoryTestHarness()
-        ...     yield h
-        ...     h.reset()
-        >>>
-        >>> async def test_order_creation(harness):
-        ...     # Use harness.event_store, harness.event_bus, etc.
-        ...     await harness.event_store.append(...)
-        ...     assert len(harness.published_events) == 1
 
     Thread Safety:
         The harness itself is not thread-safe, but the underlying
@@ -74,13 +62,7 @@ class InMemoryTestHarness:
     """
 
     def __init__(self) -> None:
-        """
-        Initialize the test harness with fresh in-memory components.
-
-        All components are created immediately and ready to use.
-        Tracing is disabled by default for test performance and
-        to avoid polluting traces.
-        """
+        """Initialize the test harness with fresh in-memory components (tracing disabled)."""
         self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
@@ -89,66 +71,22 @@ class InMemoryTestHarness:
 
     @property
     def event_store(self) -> InMemoryEventStore:
-        """
-        Get the in-memory event store.
-
-        Returns:
-            InMemoryEventStore instance for persisting and retrieving events
-
-        Example:
-            >>> await harness.event_store.append(
-            ...     StreamId(aggregate_id=order_id, category="Order"),
-            ...     [order_created],
-            ...     ExpectedVersion.no_stream(),
-            ... )
-        """
+        """Get the in-memory event store."""
         return self._event_store
 
     @property
     def event_bus(self) -> InMemoryEventBus:
-        """
-        Get the in-memory event bus.
-
-        Returns:
-            InMemoryEventBus instance for publishing and subscribing to events
-
-        Example:
-            >>> harness.event_bus.subscribe(OrderCreated, my_handler)
-            >>> await harness.event_bus.publish([order_created])
-        """
+        """Get the in-memory event bus."""
         return self._event_bus
 
     @property
     def checkpoint_repo(self) -> InMemoryCheckpointRepository:
-        """
-        Get the in-memory checkpoint repository.
-
-        Returns:
-            InMemoryCheckpointRepository instance for projection checkpoints
-
-        Example:
-            >>> await harness.checkpoint_repo.save_position("my-projection", position, event_id, "EventType")
-            >>> position = await harness.checkpoint_repo.get_position("my-projection")
-        """
+        """Get the in-memory checkpoint repository."""
         return self._checkpoint_repo
 
     @property
     def dlq_repo(self) -> InMemoryDLQRepository:
-        """
-        Get the in-memory dead letter queue repository.
-
-        Returns:
-            InMemoryDLQRepository instance for failed event handling
-
-        Example:
-            >>> await harness.dlq_repo.add_failed_event(
-            ...     event_id=event_id,
-            ...     projection_name="handler-name",
-            ...     event_type="MyEvent",
-            ...     event_data={},
-            ...     error=Exception("Test error"),
-            ... )
-        """
+        """Get the in-memory dead letter queue repository."""
         return self._dlq_repo
 
     @property
@@ -163,21 +101,28 @@ class InMemoryTestHarness:
 
     @property
     def published_events(self) -> list[DomainEvent]:
-        """
-        Get all events published through the event bus.
-
-        This is a convenience property that delegates to the event bus's
-        published_events property. Useful for assertions in tests.
-
-        Returns:
-            List of all published events in publication order
-
-        Example:
-            >>> await harness.event_bus.publish([event1, event2])
-            >>> assert len(harness.published_events) == 2
-            >>> assert harness.published_events[0] == event1
-        """
+        """Get all events published through the event bus in publication order."""
         return self._event_bus.published_events
+
+    async def append_events(
+        self,
+        *events: DomainEvent,
+        expected_version: ExpectedVersion | None = None,
+    ) -> None:
+        """Group events by aggregate stream and append them to the event store."""
+        if not events:
+            return
+        by_aggregate: dict[tuple[UUID, str], list[DomainEvent]] = {}
+        for event in events:
+            key = (event.aggregate_id, event.aggregate_type)
+            by_aggregate.setdefault(key, []).append(event)
+        version_constraint = expected_version or ExpectedVersion.any_()
+        for (agg_id, agg_type), agg_events in by_aggregate.items():
+            await self._event_store.append(
+                StreamId(aggregate_id=agg_id, category=agg_type),
+                agg_events,
+                version_constraint,
+            )
 
     def create_repository(
         self,
@@ -199,19 +144,7 @@ class InMemoryTestHarness:
         )
 
     def reset(self) -> None:
-        """
-        Reset all state and create fresh components.
-
-        Call this between tests to ensure complete isolation.
-        Creates new instances of all components.
-
-        Example:
-            >>> @pytest.fixture
-            ... def harness():
-            ...     h = InMemoryTestHarness()
-            ...     yield h
-            ...     h.reset()  # Clean up after test
-        """
+        """Reset all state and create fresh in-memory components."""
         self._event_store = InMemoryEventStore()
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
@@ -219,20 +152,7 @@ class InMemoryTestHarness:
         self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
 
     def clear_published_events(self) -> None:
-        """
-        Clear only the published events, keeping other state.
-
-        Useful when you want to verify events published after a certain point
-        without resetting the entire harness.
-
-        Example:
-            >>> # Setup phase publishes some events
-            >>> await setup_test_data(harness)
-            >>> harness.clear_published_events()
-            >>> # Now test only new events
-            >>> await execute_command(harness)
-            >>> assert len(harness.published_events) == 1
-        """
+        """Clear only the published events, keeping other state."""
         self._event_bus.clear_published_events()
 
     def published_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
@@ -240,23 +160,7 @@ class InMemoryTestHarness:
         return self._event_bus.published_of_type(event_type)
 
     def get_events_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
-        """
-        Filter published events by type.
-
-        This is a convenience method for filtering published events
-        to only those matching a specific event type.
-
-        Args:
-            event_type: The event class to filter by
-
-        Returns:
-            List of events matching the type
-
-        Example:
-            >>> await harness.event_bus.publish([order_created, order_shipped])
-            >>> shipped_events = harness.get_events_of_type(OrderShipped)
-            >>> assert len(shipped_events) == 1
-        """
+        """Filter published events by type."""
         return self._event_bus.published_of_type(event_type)
 
     def __repr__(self) -> str:

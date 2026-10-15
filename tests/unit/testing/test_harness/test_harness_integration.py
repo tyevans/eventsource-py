@@ -191,3 +191,31 @@ class TestHarnessIntegration:
         loaded = await repo.load(order.aggregate_id)
         assert loaded.version == 2
         assert loaded.state.step_count == 2
+
+    @pytest.mark.asyncio
+    async def test_append_events_empty_is_noop(self, harness: InMemoryTestHarness) -> None:
+        """append_events with no arguments returns immediately without modifying the store."""
+        await harness.append_events()
+        all_events = [e async for e in harness.event_store.read_all()]
+        assert all_events == []
+
+    @pytest.mark.asyncio
+    async def test_append_events_groups_by_aggregate_and_honors_expected_version(
+        self, harness: InMemoryTestHarness
+    ) -> None:
+        """append_events groups events by aggregate stream and passes expected_version."""
+        agg1_id = uuid4()
+        agg2_id = uuid4()
+        e1 = HarnessSampleEvent(aggregate_id=agg1_id, aggregate_type="Sample", aggregate_version=1)
+        e2 = HarnessSampleEvent(aggregate_id=agg2_id, aggregate_type="Sample", aggregate_version=1)
+        e3 = HarnessSampleEvent(aggregate_id=agg1_id, aggregate_type="Sample", aggregate_version=2)
+
+        await harness.append_events(e1, e2, e3, expected_version=ExpectedVersion.no_stream())
+
+        repo = harness.create_repository(SampleOrderAggregate)
+        loaded1 = await repo.load(agg1_id)
+        loaded2 = await repo.load(agg2_id)
+        assert loaded1.version == 2
+        assert loaded1.state.step_count == 2
+        assert loaded2.version == 1
+        assert loaded2.state.step_count == 1
