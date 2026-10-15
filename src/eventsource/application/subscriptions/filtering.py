@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import fnmatch
-import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -15,24 +15,22 @@ from eventsource.application.subscriptions.filtering_models import (
     matches_event_type,
     matches_pattern,
 )
+from eventsource.domain.event import DomainEvent
 from eventsource.ports.subscribers import get_subscribed_event_types
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.config import SubscriptionConfig
-    from eventsource.domain.event import DomainEvent
     from eventsource.ports.envelopes import EventEnvelope
     from eventsource.ports.subscribers import Subscriber
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
 class EventFilter:
     """Filters events based on event type, fnmatch pattern, aggregate type, and tenant ID."""
 
-    event_types: tuple[type[DomainEvent], ...] | None = None
-    event_type_patterns: tuple[str, ...] | None = None
-    aggregate_types: tuple[str, ...] | None = None
+    event_types: Iterable[type[DomainEvent]] | None = None
+    event_type_patterns: Iterable[str] | None = None
+    aggregate_types: Iterable[str] | None = None
     tenant_id: UUID | None = None
 
     _event_type_set: set[type[DomainEvent]] | None = field(default=None, init=False, repr=False)
@@ -43,35 +41,26 @@ class EventFilter:
     _stats: FilterStats = field(default_factory=FilterStats, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        for attr in ("event_types", "event_type_patterns", "aggregate_types"):
+            val = getattr(self, attr)
+            if val is not None and not isinstance(val, tuple):
+                setattr(self, attr, tuple(val))
+
         if self.event_types:
             self._event_type_set = set(self.event_types)
         if self.aggregate_types:
             self._aggregate_type_set = set(self.aggregate_types)
         if self.event_type_patterns is not None:
-            exact: list[str] = []
-            compiled: list[re.Pattern[str]] = []
-            for pattern in self.event_type_patterns:
-                if is_wildcard_pattern(pattern):
-                    compiled.append(re.compile(fnmatch.translate(pattern)))
-                else:
-                    exact.append(pattern)
-            self._exact_patterns = frozenset(exact)
-            self._compiled_patterns = tuple(compiled)
-
-        self._has_any_filter = bool(
-            self._event_type_set is not None
-            or self.event_type_patterns is not None
-            or self._aggregate_type_set is not None
-            or self.tenant_id is not None
-        )
+            pats = self.event_type_patterns
+            self._exact_patterns = frozenset(p for p in pats if not is_wildcard_pattern(p))
+            self._compiled_patterns = tuple(
+                re.compile(fnmatch.translate(p)) for p in pats if is_wildcard_pattern(p)
+            )
+        self._has_any_filter = any(x is not None for x in (self._event_type_set, self.event_type_patterns, self._aggregate_type_set, self.tenant_id))  # fmt: skip
 
     @classmethod
     def from_config(cls, config: SubscriptionConfig) -> EventFilter:
-        return cls(
-            event_types=config.event_types,
-            aggregate_types=config.aggregate_types,
-            tenant_id=config.tenant_id,
-        )
+        return cls(config.event_types, aggregate_types=config.aggregate_types, tenant_id=config.tenant_id)  # fmt: skip
 
     @classmethod
     def from_subscriber(cls, subscriber: Subscriber) -> EventFilter:
@@ -85,13 +74,8 @@ class EventFilter:
         event_types = config.event_types
         if event_types is None:
             subscribed = get_subscribed_event_types(subscriber)
-            if subscribed:
-                event_types = tuple(subscribed)
-        return cls(
-            event_types=event_types,
-            aggregate_types=config.aggregate_types,
-            tenant_id=config.tenant_id,
-        )
+            event_types = tuple(subscribed) if subscribed else None
+        return cls(event_types, aggregate_types=config.aggregate_types, tenant_id=config.tenant_id)
 
     @classmethod
     def from_patterns(cls, *patterns: str) -> EventFilter:
@@ -99,37 +83,33 @@ class EventFilter:
 
     @property
     def is_configured(self) -> bool:
-        return (
-            self.event_types is not None
-            or self.event_type_patterns is not None
-            or self.aggregate_types is not None
-            or self.tenant_id is not None
-        )
+        return any(x is not None for x in (self.event_types, self.event_type_patterns, self.aggregate_types, self.tenant_id))  # fmt: skip
 
     @property
     def stats(self) -> FilterStats:
         return self._stats
 
     def matches(self, event: DomainEvent) -> bool:
-        if not self._has_any_filter:
+        matched = not self._has_any_filter or (
+            self._matches_event_type(event)
+            and self._matches_event_type_pattern(event)
+            and self._matches_aggregate_type(event)
+            and self._matches_tenant_id(event)
+        )
+        if matched:
             self._stats.record_match()
-            return True
-        if (
-            not self._matches_event_type(event)
-            or not self._matches_event_type_pattern(event)
-            or not self._matches_aggregate_type(event)
-            or not self._matches_tenant_id(event)
-        ):
+        else:
             self._stats.record_skip()
-            return False
-        self._stats.record_match()
-        return True
+        return matched
 
     def matches_envelope(self, envelope: EventEnvelope) -> bool:
-        if not self._has_any_filter:
-            self._stats.record_match()
-            return True
         return self.matches(envelope.event)
+
+    def __call__(self, item: DomainEvent | EventEnvelope) -> bool:
+        return self.matches(item) if isinstance(item, DomainEvent) else self.matches_envelope(item)
+
+    def filter[TItem: (DomainEvent, EventEnvelope)](self, items: Iterable[TItem]) -> list[TItem]:
+        return [item for item in items if self(item)]
 
     def _matches_event_type(self, event: DomainEvent) -> bool:
         return self._event_type_set is None or type(event) in self._event_type_set
@@ -137,13 +117,8 @@ class EventFilter:
     def _matches_event_type_pattern(self, event: DomainEvent) -> bool:
         if self.event_type_patterns is None:
             return True
-        event_type_name = event.event_type
-        if event_type_name in self._exact_patterns:
-            return True
-        return bool(
-            self._compiled_patterns
-            and any(p.match(event_type_name) is not None for p in self._compiled_patterns)
-        )
+        name = event.event_type
+        return name in self._exact_patterns or any(p.match(name) for p in self._compiled_patterns)
 
     def _matches_aggregate_type(self, event: DomainEvent) -> bool:
         return self._aggregate_type_set is None or event.aggregate_type in self._aggregate_type_set
@@ -153,10 +128,9 @@ class EventFilter:
 
     @property
     def event_type_names(self) -> list[str] | None:
-        if self._event_type_set is None:
-            return None
-        names = [event_type.event_type_name() for event_type in self._event_type_set]
-        return names if names else None
+        return (
+            [et.event_type_name() for et in self._event_type_set] if self._event_type_set else None
+        )
 
     def reset_stats(self) -> None:
         self._stats = FilterStats()

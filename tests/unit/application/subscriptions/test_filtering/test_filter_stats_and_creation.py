@@ -104,6 +104,51 @@ class TestEventFilterCreation:
         assert filter.event_type_patterns == ("Order*", "Payment*")
         assert filter.is_configured is True
 
+    def test_normalizes_list_and_set_inputs_to_tuples(self, order_created: OrderCreated):
+        filter = EventFilter(
+            event_types=[OrderCreated, OrderShipped],
+            event_type_patterns=["Order*"],
+            aggregate_types={"Order"},
+        )
+        assert filter.event_types == (OrderCreated, OrderShipped)
+        assert filter.event_type_patterns == ("Order*",)
+        assert filter.aggregate_types == ("Order",)
+        assert filter.matches(order_created) is True
+
+    def test_callable_and_filter_with_events_and_envelopes(
+        self,
+        order_created: OrderCreated,
+        order_shipped: OrderShipped,
+        order_cancelled: OrderCancelled,
+    ):
+        from datetime import UTC, datetime
+
+        from eventsource.domain import StreamId
+        from eventsource.ports.envelopes import EventEnvelope
+
+        ef = EventFilter(event_types=[OrderCreated, OrderShipped])
+        assert ef(order_created) is True
+        assert ef(order_cancelled) is False
+        assert ef.filter([order_created, order_cancelled, order_shipped]) == [
+            order_created,
+            order_shipped,
+        ]
+
+        now = datetime.now(UTC)
+        envelopes = [
+            EventEnvelope(
+                order_created, StreamId(order_created.aggregate_id, "Order"), 1, None, now
+            ),
+            EventEnvelope(
+                order_cancelled, StreamId(order_cancelled.aggregate_id, "Order"), 2, None, now
+            ),
+            EventEnvelope(
+                order_shipped, StreamId(order_shipped.aggregate_id, "Order"), 3, None, now
+            ),
+        ]
+        assert ef(envelopes[0]) is True and ef(envelopes[1]) is False
+        assert ef.filter(envelopes) == [envelopes[0], envelopes[2]]
+
 
 class TestEventFilterRepr:
     """Tests for EventFilter string representation."""
