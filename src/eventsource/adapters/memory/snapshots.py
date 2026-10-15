@@ -28,47 +28,6 @@ class InMemorySnapshotStore:
 
     Stores snapshots in a dictionary keyed by (aggregate_id, aggregate_type).
     Uses asyncio.Lock for thread-safe concurrent access.
-
-    Features:
-    - Fast in-memory operations
-    - Thread-safe with asyncio.Lock
-    - clear() method for test cleanup
-    - Full implementation of delete_snapshots_by_type
-    - Optional OpenTelemetry tracing
-
-    Limitations:
-    - Data is not persisted (lost on process restart)
-    - Not suitable for production use
-    - Single-process only (no shared state)
-
-    Example:
-        >>> from eventsource.adapters.memory.snapshots import InMemorySnapshotStore
-        >>> from eventsource.ports.snapshots import Snapshot
-        >>> from datetime import datetime, UTC
-        >>> from uuid import uuid4
-        >>>
-        >>> store = InMemorySnapshotStore()
-        >>>
-        >>> # Save a snapshot
-        >>> snapshot = Snapshot(
-        ...     aggregate_id=uuid4(),
-        ...     aggregate_type="Order",
-        ...     version=100,
-        ...     state={"status": "shipped"},
-        ...     schema_version=1,
-        ...     created_at=datetime.now(UTC),
-        ... )
-        >>> await store.save_snapshot(snapshot)
-        >>>
-        >>> # Retrieve the snapshot
-        >>> loaded = await store.get_snapshot(
-        ...     snapshot.aggregate_id, "Order"
-        ... )
-        >>> assert loaded == snapshot
-
-    See Also:
-        PostgreSQLSnapshotStore: For production PostgreSQL deployments
-        SQLiteSnapshotStore: For embedded/lightweight deployments
     """
 
     def __init__(
@@ -77,15 +36,7 @@ class InMemorySnapshotStore:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the in-memory snapshot store.
-
-        Args:
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True).
-                          Ignored if tracer is explicitly provided.
-        """
+        """Initialize the in-memory snapshot store."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._snapshots: dict[tuple[UUID, str], Snapshot] = {}
@@ -93,15 +44,7 @@ class InMemorySnapshotStore:
         logger.debug("InMemorySnapshotStore initialized")
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
-        """
-        Save or update a snapshot.
-
-        Uses upsert semantics - replaces any existing snapshot for the
-        same aggregate_id and aggregate_type combination.
-
-        Args:
-            snapshot: The snapshot to save
-        """
+        """Save or update a snapshot using upsert semantics."""
         with self._tracer.span(
             "eventsource.snapshot.save",
             {
@@ -136,16 +79,7 @@ class InMemorySnapshotStore:
         aggregate_id: UUID,
         aggregate_type: str,
     ) -> Snapshot | None:
-        """
-        Get the snapshot for an aggregate.
-
-        Args:
-            aggregate_id: Unique identifier of the aggregate
-            aggregate_type: Type name of the aggregate
-
-        Returns:
-            The snapshot if found, None otherwise
-        """
+        """Get the snapshot for an aggregate, or None if not found."""
         with self._tracer.span(
             "eventsource.snapshot.get",
             {
@@ -154,9 +88,7 @@ class InMemorySnapshotStore:
             },
         ):
             async with self._lock:
-                key = (aggregate_id, aggregate_type)
-                snapshot = self._snapshots.get(key)
-
+                snapshot = self._snapshots.get((aggregate_id, aggregate_type))
                 if snapshot:
                     logger.debug(
                         "Retrieved snapshot for %s/%s at v%d",
@@ -170,7 +102,6 @@ class InMemorySnapshotStore:
                         aggregate_type,
                         aggregate_id,
                     )
-
                 return snapshot
 
     async def delete_snapshot(
@@ -178,16 +109,7 @@ class InMemorySnapshotStore:
         aggregate_id: UUID,
         aggregate_type: str,
     ) -> bool:
-        """
-        Delete the snapshot for an aggregate.
-
-        Args:
-            aggregate_id: Unique identifier of the aggregate
-            aggregate_type: Type name of the aggregate
-
-        Returns:
-            True if a snapshot was deleted, False if none existed
-        """
+        """Delete the snapshot for an aggregate. Returns True if deleted."""
         with self._tracer.span(
             "eventsource.snapshot.delete",
             {
@@ -199,18 +121,10 @@ class InMemorySnapshotStore:
                 key = (aggregate_id, aggregate_type)
                 if key in self._snapshots:
                     del self._snapshots[key]
-                    logger.debug(
-                        "Deleted snapshot for %s/%s",
-                        aggregate_type,
-                        aggregate_id,
-                    )
+                    logger.debug("Deleted snapshot for %s/%s", aggregate_type, aggregate_id)
                     return True
 
-                logger.debug(
-                    "No snapshot to delete for %s/%s",
-                    aggregate_type,
-                    aggregate_id,
-                )
+                logger.debug("No snapshot to delete for %s/%s", aggregate_type, aggregate_id)
                 return False
 
     async def snapshot_exists(
@@ -218,19 +132,7 @@ class InMemorySnapshotStore:
         aggregate_id: UUID,
         aggregate_type: str,
     ) -> bool:
-        """
-        Check if a snapshot exists for an aggregate.
-
-        More efficient than default implementation as it doesn't
-        need to retrieve the full snapshot.
-
-        Args:
-            aggregate_id: Unique identifier of the aggregate
-            aggregate_type: Type name of the aggregate
-
-        Returns:
-            True if snapshot exists, False otherwise
-        """
+        """Check if a snapshot exists for an aggregate."""
         with self._tracer.span(
             "eventsource.snapshot.exists",
             {
@@ -239,47 +141,28 @@ class InMemorySnapshotStore:
             },
         ):
             async with self._lock:
-                key = (aggregate_id, aggregate_type)
-                return key in self._snapshots
+                return (aggregate_id, aggregate_type) in self._snapshots
 
     async def delete_snapshots_by_type(
         self,
         aggregate_type: str,
         schema_version_below: int | None = None,
     ) -> int:
-        """
-        Delete all snapshots for aggregates of a given type.
-
-        Args:
-            aggregate_type: Type name of aggregates
-            schema_version_below: If provided, only delete snapshots
-                                 with schema_version < this value
-
-        Returns:
-            Number of snapshots deleted
-        """
+        """Delete all snapshots for aggregates of a given type."""
         with self._tracer.span(
             "eventsource.snapshot.delete_by_type",
-            {
-                ATTR_AGGREGATE_TYPE: aggregate_type,
-            },
+            {ATTR_AGGREGATE_TYPE: aggregate_type},
         ):
             async with self._lock:
-                keys_to_delete = []
-
-                for key, snapshot in self._snapshots.items():
-                    agg_id, agg_type = key
-                    if agg_type != aggregate_type:
-                        continue
-
-                    if (
-                        schema_version_below is not None
-                        and snapshot.schema_version >= schema_version_below
-                    ):
-                        continue
-
-                    keys_to_delete.append(key)
-
+                keys_to_delete = [
+                    key
+                    for key, snapshot in self._snapshots.items()
+                    if key[1] == aggregate_type
+                    and (
+                        schema_version_below is None
+                        or snapshot.schema_version < schema_version_below
+                    )
+                ]
                 for key in keys_to_delete:
                     del self._snapshots[key]
 
@@ -296,22 +179,8 @@ class InMemorySnapshotStore:
                 return len(keys_to_delete)
 
     async def clear(self) -> None:
-        """
-        Clear all snapshots from the store.
-
-        Useful for test cleanup between test cases.
-
-        Example:
-            >>> @pytest.fixture
-            ... async def snapshot_store():
-            ...     store = InMemorySnapshotStore()
-            ...     yield store
-            ...     await store.clear()  # Cleanup after test
-        """
-        with self._tracer.span(
-            "eventsource.snapshot.clear",
-            {},
-        ):
+        """Clear all snapshots from the store."""
+        with self._tracer.span("eventsource.snapshot.clear", {}):
             async with self._lock:
                 count = len(self._snapshots)
                 self._snapshots.clear()
@@ -319,15 +188,7 @@ class InMemorySnapshotStore:
 
     @property
     def snapshot_count(self) -> int:
-        """
-        Get the number of snapshots currently stored.
-
-        Useful for testing and debugging. Not thread-safe for reads
-        but acceptable for diagnostic purposes.
-
-        Returns:
-            Number of snapshots in the store
-        """
+        """Get the number of snapshots currently stored."""
         return len(self._snapshots)
 
     async def close(self) -> None:
