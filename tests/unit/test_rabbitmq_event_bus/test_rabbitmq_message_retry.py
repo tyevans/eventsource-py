@@ -57,7 +57,7 @@ class TestHandleFailedMessage:
     ) -> None:
         """Test that message is republished when under max_retries."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         error = ValueError("Test error")
         await bus._handle_failed_message(mock_message, error, retry_count=0)
@@ -73,8 +73,8 @@ class TestHandleFailedMessage:
         """Test that message is sent to DLQ at max_retries."""
         mock_exchange = AsyncMock()
         mock_dlq_exchange = AsyncMock()
-        bus._exchange = mock_exchange
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._exchange = mock_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         error = ValueError("Test error")
         await bus._handle_failed_message(mock_message, error, retry_count=3)
@@ -91,8 +91,8 @@ class TestHandleFailedMessage:
         """Test that message is sent to DLQ when over max_retries."""
         mock_exchange = AsyncMock()
         mock_dlq_exchange = AsyncMock()
-        bus._exchange = mock_exchange
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._exchange = mock_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         error = ValueError("Test error")
         await bus._handle_failed_message(mock_message, error, retry_count=5)
@@ -106,7 +106,7 @@ class TestHandleFailedMessage:
     ) -> None:
         """Test that retry count is incremented in republished message."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         error = ValueError("Test error")
         await bus._handle_failed_message(mock_message, error, retry_count=1)
@@ -168,7 +168,7 @@ class TestProcessMessageWithRetry:
         mock_message.headers["x-retry-count"] = 2
 
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         # Create a failing handler
         async def failing_handler(event: DomainEvent) -> None:
@@ -191,7 +191,7 @@ class TestProcessMessageWithRetry:
         del mock_message.headers["x-retry-count"]
 
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")
@@ -212,7 +212,7 @@ class TestProcessMessageWithRetry:
         """Test that successful processing does not trigger retry logic."""
 
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         # Create a successful handler
         async def success_handler(event: DomainEvent) -> None:
@@ -233,7 +233,7 @@ class TestProcessMessageWithRetry:
     ) -> None:
         """Test that failure increments events_processed_failed stat."""
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         async def failing_handler(event: DomainEvent) -> None:
             raise ValueError("Intentional failure")

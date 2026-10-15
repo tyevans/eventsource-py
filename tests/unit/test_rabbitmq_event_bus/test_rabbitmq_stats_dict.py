@@ -84,9 +84,9 @@ class TestGetStatsDictMethod:
         bus = RabbitMQEventBus()
         # Simulate being connected 60 seconds ago
         bus._stats.connected_at = datetime.now(UTC)
-        bus._connected = True
-        bus._connection = MagicMock()
-        bus._connection.is_closed = False
+        bus._connection_manager._connected = True
+        bus._connection_manager._connection = MagicMock()
+        bus._connection_manager._connection.is_closed = False
 
         stats_dict = bus.get_stats_dict()
 

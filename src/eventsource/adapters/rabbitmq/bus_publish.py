@@ -14,16 +14,18 @@ from eventsource.domain.event import DomainEvent
 
 if TYPE_CHECKING:
     from aio_pika import Message
-    from aio_pika.abc import AbstractExchange, AbstractIncomingMessage
+    from aio_pika.abc import AbstractIncomingMessage
 
+    from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
     from eventsource.adapters.rabbitmq.publisher import RabbitMQPublisher
+    from eventsource.adapters.rabbitmq.topology import RabbitMQTopology
 
 
 class RabbitMQEventBusPublishMixin:
     """Mixin providing publishing and serialization for RabbitMQEventBus."""
 
-    _connected: bool
-    _exchange: AbstractExchange | None
+    _connection_manager: RabbitMQConnectionManager
+    _topology: RabbitMQTopology
     _publisher: RabbitMQPublisher
     _logger: logging.Logger
 
@@ -118,10 +120,10 @@ class RabbitMQEventBusPublishMixin:
             return
 
         # Auto-connect if needed
-        if not self._connected:
+        if not self._connection_manager._connected:
             await self.connect()
 
-        if not self._exchange:
+        if not self._topology.exchange:
             raise RuntimeError("Exchange not initialized")
 
         if len(events) == 1:
@@ -170,10 +172,10 @@ class RabbitMQEventBusPublishMixin:
             return {"total": 0, "published": 0, "failed": 0, "chunks": 0}
 
         # Auto-connect if needed
-        if not self._connected:
+        if not self._connection_manager._connected:
             await self.connect()
 
-        if not self._exchange:
+        if not self._topology.exchange:
             raise RuntimeError("Exchange not initialized")
 
         return await self._publisher.publish_batch(events, preserve_order=preserve_order)

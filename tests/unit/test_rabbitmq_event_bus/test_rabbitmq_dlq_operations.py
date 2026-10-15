@@ -47,7 +47,7 @@ class TestSendToDLQ:
     ) -> None:
         """Test that failure metadata is added to DLQ message."""
         mock_dlq_exchange = AsyncMock()
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         error = ValueError("Test error")
         await bus._send_to_dlq(mock_message, error, 3)
@@ -67,7 +67,7 @@ class TestSendToDLQ:
     ) -> None:
         """Test that original headers are preserved in DLQ message."""
         mock_dlq_exchange = AsyncMock()
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         error = ValueError("Test error")
         await bus._send_to_dlq(mock_message, error, 3)
@@ -84,7 +84,7 @@ class TestSendToDLQ:
     ) -> None:
         """Test that messages_sent_to_dlq stat is incremented."""
         mock_dlq_exchange = AsyncMock()
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         initial_count = bus.stats.messages_sent_to_dlq
 
@@ -99,7 +99,7 @@ class TestSendToDLQ:
     ) -> None:
         """Test that queue name is used as routing key for DLQ."""
         mock_dlq_exchange = AsyncMock()
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         error = ValueError("Test error")
         await bus._send_to_dlq(mock_message, error, 3)
@@ -116,7 +116,7 @@ class TestSendToDLQ:
         bus = RabbitMQEventBus(config=config)
 
         mock_dlq_exchange = AsyncMock()
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         initial_count = bus.stats.messages_sent_to_dlq
 
@@ -132,7 +132,7 @@ class TestSendToDLQ:
         self, bus: RabbitMQEventBus, mock_message: MagicMock
     ) -> None:
         """Test that nothing happens when DLQ exchange not initialized."""
-        bus._dlq_exchange = None
+        bus._topology._dlq_exchange = None
 
         initial_count = bus.stats.messages_sent_to_dlq
 
@@ -171,7 +171,7 @@ class TestPurgeDLQ:
     ) -> None:
         """Test purge_dlq returns 0 when not connected."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        assert bus._connected is False
+        assert bus._connection_manager._connected is False
 
         result = await bus.purge_dlq()
 
@@ -183,7 +183,7 @@ class TestPurgeDLQ:
     ) -> None:
         """Test purge_dlq returns 0 when DLQ disabled."""
         bus = RabbitMQEventBus(config=config_without_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         result = await bus.purge_dlq()
 
@@ -195,8 +195,8 @@ class TestPurgeDLQ:
     ) -> None:
         """Test purge_dlq returns 0 when channel not initialized."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
-        bus._channel = None
+        bus._connection_manager._connected = True
+        bus._connection_manager._channel = None
 
         result = await bus.purge_dlq()
 
@@ -206,7 +206,7 @@ class TestPurgeDLQ:
     async def test_purges_dlq_successfully(self, config_with_dlq: RabbitMQEventBusConfig) -> None:
         """Test successful DLQ purge."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_queue = AsyncMock()
@@ -215,7 +215,7 @@ class TestPurgeDLQ:
         mock_purge_result.message_count = 15
         mock_queue.purge.return_value = mock_purge_result
         mock_channel.get_queue.return_value = mock_queue
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         result = await bus.purge_dlq()
 
@@ -227,11 +227,11 @@ class TestPurgeDLQ:
     async def test_handles_exception(self, config_with_dlq: RabbitMQEventBusConfig) -> None:
         """Test that exceptions are handled gracefully."""
         bus = RabbitMQEventBus(config=config_with_dlq)
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         mock_channel = AsyncMock()
         mock_channel.get_queue.side_effect = Exception("Queue error")
-        bus._channel = mock_channel
+        bus._connection_manager._channel = mock_channel
 
         result = await bus.purge_dlq()
 

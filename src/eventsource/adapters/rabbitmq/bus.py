@@ -29,7 +29,6 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -167,7 +166,7 @@ class RabbitMQEventBus(
         # Connection lifecycle (connection/channel/connect-lock/reconnect
         # and close callbacks) is owned by RabbitMQConnectionManager.
         self._connection_manager = RabbitMQConnectionManager(config=self._config, stats=self._stats)
-        self._connection_manager._is_consuming = lambda: self._consuming
+        self._connection_manager._is_consuming = lambda: self._consumer._consuming
 
         # Exchange/queue declaration and bindings are owned by
         # RabbitMQTopology. Re-declaration after a reconnect is wired
@@ -192,10 +191,7 @@ class RabbitMQEventBus(
         tracer_instance = tracer or create_tracer(__name__, self._config.enable_tracing)
 
         # Publish-path (single/batch, sequential/concurrent strategies) is
-        # owned by RabbitMQPublisher, which is the source of truth for
-        # _tracer/_enable_tracing (see the proxying properties below) so
-        # that tests/facade code reassigning bus._tracer after construction
-        # (e.g. to a mock) still affect publish-path spans.
+        # owned by RabbitMQPublisher.
         self._publisher = RabbitMQPublisher(
             config=self._config,
             connection=self._connection_manager,
@@ -234,30 +230,6 @@ class RabbitMQEventBus(
         """Get the configuration."""
         return self._config
 
-    # -------------------------------------------------------------------
-    # Backward-compatible internal accessors -- these proxy the tracer
-    # fields now owned by RabbitMQPublisher, so that facade code (and
-    # tests) that read/write them directly keep working unchanged.
-    # -------------------------------------------------------------------
-
-    @property
-    def _tracer(self) -> Tracer | None:
-        return self._publisher._tracer
-
-    @_tracer.setter
-    def _tracer(self, value: Tracer | None) -> None:
-        self._publisher._tracer = value
-        self._consumer._tracer = value
-
-    @property
-    def _enable_tracing(self) -> bool:
-        return self._publisher._enable_tracing
-
-    @_enable_tracing.setter
-    def _enable_tracing(self, value: bool) -> None:
-        self._publisher._enable_tracing = value
-        self._consumer._enable_tracing = value
-
     @property
     def is_connected(self) -> bool:
         """Check if connected to RabbitMQ.
@@ -265,118 +237,6 @@ class RabbitMQEventBus(
         Returns True only if the connection is established and not closed.
         """
         return self._connection_manager.is_connected
-
-    # -------------------------------------------------------------------
-    # Backward-compatible internal accessors -- these proxy the private
-    # connection-state fields now owned by RabbitMQConnectionManager, so
-    # that facade code (and tests) that read/write them directly keep
-    # working unchanged.
-    # -------------------------------------------------------------------
-
-    @property
-    def _connection(self) -> AbstractRobustConnection | None:
-        return self._connection_manager._connection
-
-    @_connection.setter
-    def _connection(self, value: AbstractRobustConnection | None) -> None:
-        self._connection_manager._connection = value
-
-    @property
-    def _channel(self) -> AbstractRobustChannel | None:
-        return self._connection_manager._channel  # type: ignore[return-value]
-
-    @_channel.setter
-    def _channel(self, value: AbstractRobustChannel | None) -> None:
-        self._connection_manager._channel = value
-
-    @property
-    def _connected(self) -> bool:
-        return self._connection_manager._connected
-
-    @_connected.setter
-    def _connected(self, value: bool) -> None:
-        self._connection_manager._connected = value
-
-    @property
-    def _reconnecting(self) -> bool:
-        return self._connection_manager._reconnecting
-
-    @_reconnecting.setter
-    def _reconnecting(self, value: bool) -> None:
-        self._connection_manager._reconnecting = value
-
-    @property
-    def _was_consuming(self) -> bool:
-        return self._connection_manager._was_consuming
-
-    @_was_consuming.setter
-    def _was_consuming(self, value: bool) -> None:
-        self._connection_manager._was_consuming = value
-
-    @property
-    def _lock(self) -> asyncio.Lock:
-        return self._connection_manager._lock
-
-    # -------------------------------------------------------------------
-    # Backward-compatible internal accessors -- these proxy the private
-    # exchange/queue-reference fields now owned by RabbitMQTopology, so
-    # that facade code (and tests) that read/write them directly keep
-    # working unchanged.
-    # -------------------------------------------------------------------
-
-    @property
-    def _exchange(self) -> AbstractExchange | None:
-        return self._topology.exchange
-
-    @_exchange.setter
-    def _exchange(self, value: AbstractExchange | None) -> None:
-        self._topology._exchange = value
-
-    @property
-    def _dlq_exchange(self) -> AbstractExchange | None:
-        return self._topology.dlq_exchange
-
-    @_dlq_exchange.setter
-    def _dlq_exchange(self, value: AbstractExchange | None) -> None:
-        self._topology._dlq_exchange = value
-
-    @property
-    def _consumer_queue(self) -> AbstractQueue | None:
-        return self._topology.consumer_queue
-
-    @_consumer_queue.setter
-    def _consumer_queue(self, value: AbstractQueue | None) -> None:
-        self._topology._consumer_queue = value
-
-    @property
-    def _dlq_queue(self) -> AbstractQueue | None:
-        return self._topology.dlq_queue
-
-    @_dlq_queue.setter
-    def _dlq_queue(self, value: AbstractQueue | None) -> None:
-        self._topology._dlq_queue = value
-
-    # -------------------------------------------------------------------
-    # Backward-compatible internal accessors -- these proxy the consumer
-    # state now owned by RabbitMQConsumer, so that facade code (and tests)
-    # that read/write them directly keep working unchanged.
-    # -------------------------------------------------------------------
-
-    @property
-    def _consuming(self) -> bool:
-        return self._consumer._consuming
-
-    @_consuming.setter
-    def _consuming(self, value: bool) -> None:
-        self._consumer._consuming = value
-
-    @property
-    def _consumer_task(self) -> asyncio.Task[None] | None:
-        return self._consumer._consumer_task
-
-    @_consumer_task.setter
-    def _consumer_task(self, value: asyncio.Task[None] | None) -> None:
-        self._consumer._consumer_task = value
 
     @property
     def is_consuming(self) -> bool:

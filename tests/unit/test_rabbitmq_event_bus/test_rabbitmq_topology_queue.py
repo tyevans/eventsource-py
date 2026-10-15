@@ -138,7 +138,7 @@ class TestRabbitMQQueueDeclaration:
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        assert bus._consumer_queue is mock_queue
+        assert bus._topology._consumer_queue is mock_queue
 
 
 class TestRabbitMQQueueBinding:

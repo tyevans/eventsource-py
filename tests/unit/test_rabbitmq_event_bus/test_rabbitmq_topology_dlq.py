@@ -173,8 +173,8 @@ class TestRabbitMQDLQDeclaration:
         bus = RabbitMQEventBus(config=config_with_dlq)
         await bus.connect()
 
-        assert bus._dlq_exchange is mock_dlq_exchange
-        assert bus._dlq_queue is mock_dlq_queue
+        assert bus._topology._dlq_exchange is mock_dlq_exchange
+        assert bus._topology._dlq_queue is mock_dlq_queue
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -210,5 +210,5 @@ class TestRabbitMQDLQDeclaration:
         assert mock_channel.declare_queue.call_count == 1
 
         # DLQ references should be None
-        assert bus._dlq_exchange is None
-        assert bus._dlq_queue is None
+        assert bus._topology._dlq_exchange is None
+        assert bus._topology._dlq_queue is None

@@ -51,9 +51,9 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config_no_tracing)
 
         # With composition-based tracing, _tracer is always set but disabled
-        assert bus._tracer is not None
-        assert bus._tracer.enabled is False
-        assert bus._enable_tracing is False
+        assert bus._publisher._tracer is not None
+        assert bus._publisher._tracer.enabled is False
+        assert bus._publisher._enable_tracing is False
 
     def test_tracer_set_when_enabled_and_available(self, config: RabbitMQEventBusConfig) -> None:
         """Test that _tracer is set when enabled and available."""
@@ -62,12 +62,12 @@ class TestOpenTelemetryTracing:
         bus = RabbitMQEventBus(config=config)
 
         # With composition-based tracing, _tracer is always set
-        assert bus._tracer is not None
+        assert bus._publisher._tracer is not None
         if OTEL_AVAILABLE:
-            assert bus._enable_tracing is True
-            assert bus._tracer.enabled is True
+            assert bus._publisher._enable_tracing is True
+            assert bus._publisher._tracer.enabled is True
         else:
-            assert bus._tracer.enabled is False
+            assert bus._publisher._tracer.enabled is False
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -109,7 +109,7 @@ class TestOpenTelemetryTracing:
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
-        bus._tracer = mock_tracer
+        bus._publisher._tracer = mock_tracer
 
         await bus.publish([event])
 
@@ -162,7 +162,7 @@ class TestOpenTelemetryTracing:
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
-        bus._tracer = mock_tracer
+        bus._publisher._tracer = mock_tracer
 
         await bus.publish([event])
 
@@ -212,9 +212,9 @@ class TestOpenTelemetryTracing:
         await bus.connect()
 
         # With composition-based tracing, _tracer is always set but disabled
-        assert bus._tracer is not None
-        assert bus._tracer.enabled is False
-        assert bus._enable_tracing is False
+        assert bus._publisher._tracer is not None
+        assert bus._publisher._tracer.enabled is False
+        assert bus._publisher._enable_tracing is False
 
         # Publish should still work without tracing
         await bus.publish([event])
@@ -263,7 +263,7 @@ class TestOpenTelemetryTracing:
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
-        bus._tracer = mock_tracer
+        bus._publisher._tracer = mock_tracer
 
         with pytest.raises(Exception, match="Publish failed"):
             await bus.publish([event])

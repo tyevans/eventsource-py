@@ -75,14 +75,14 @@ class TestForceDisconnect:
 
         await bus._force_disconnect()
 
-        assert bus._connection is None
-        assert bus._channel is None
-        assert bus._exchange is None
-        assert bus._dlq_exchange is None
-        assert bus._consumer_queue is None
-        assert bus._dlq_queue is None
-        assert bus._connected is False
-        assert bus._consuming is False
+        assert bus._connection_manager._connection is None
+        assert bus._connection_manager._channel is None
+        assert bus._topology._exchange is None
+        assert bus._topology._dlq_exchange is None
+        assert bus._topology._consumer_queue is None
+        assert bus._topology._dlq_queue is None
+        assert bus._connection_manager._connected is False
+        assert bus._consumer._consuming is False
         assert bus._shutdown_initiated is True
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -104,11 +104,11 @@ class TestForceDisconnect:
         async def long_running() -> None:
             await asyncio.sleep(100)
 
-        bus._consumer_task = asyncio.create_task(long_running())
+        bus._consumer._consumer_task = asyncio.create_task(long_running())
 
         await bus._force_disconnect()
 
-        assert bus._consumer_task is None
+        assert bus._consumer._consumer_task is None
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -131,9 +131,9 @@ class TestForceDisconnect:
         # Should not raise even with errors
         await bus._force_disconnect()
 
-        assert bus._connected is False
-        assert bus._channel is None
-        assert bus._connection is None
+        assert bus._connection_manager._connected is False
+        assert bus._connection_manager._channel is None
+        assert bus._connection_manager._connection is None
 
     @pytest.mark.asyncio
     async def test_force_disconnect_when_not_connected(

@@ -139,29 +139,29 @@ class TestRabbitMQReconnectionStateTracking:
 
     def test_initial_was_consuming_is_false(self, bus: RabbitMQEventBus) -> None:
         """Test that _was_consuming is initialized to False."""
-        assert bus._was_consuming is False
+        assert bus._connection_manager._was_consuming is False
 
     def test_initial_reconnecting_is_false(self, bus: RabbitMQEventBus) -> None:
         """Test that _reconnecting is initialized to False."""
-        assert bus._reconnecting is False
+        assert bus._connection_manager._reconnecting is False
 
     def test_was_consuming_preserved_after_connection_close(self, bus: RabbitMQEventBus) -> None:
         """Test that _was_consuming is preserved after multiple connection closes."""
-        bus._consuming = True
-        bus._connected = True
+        bus._consumer._consuming = True
+        bus._connection_manager._connected = True
 
         # First disconnect
         bus._on_connection_close(None, None)
-        assert bus._was_consuming is True
+        assert bus._connection_manager._was_consuming is True
 
         # Simulate reconnection success
-        bus._consuming = False  # Consumer not restarted yet
-        bus._connected = True
+        bus._consumer._consuming = False  # Consumer not restarted yet
+        bus._connection_manager._connected = True
 
         # Second disconnect (without active consumption)
         bus._on_connection_close(None, None)
         # _was_consuming should still be True from first disconnect
-        assert bus._was_consuming is True
+        assert bus._connection_manager._was_consuming is True
 
     def test_reconnections_counter_persists_across_reconnections(
         self, bus: RabbitMQEventBus

@@ -14,13 +14,14 @@ from eventsource.domain.event import DomainEvent
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractIncomingMessage
 
+    from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
     from eventsource.adapters.rabbitmq.consumer import RabbitMQConsumer
 
 
 class RabbitMQEventBusConsumeMixin:
     """Mixin providing consumer loop and retry handling for RabbitMQEventBus."""
 
-    _connected: bool
+    _connection_manager: RabbitMQConnectionManager
     _consumer: RabbitMQConsumer
 
     if TYPE_CHECKING:
@@ -82,7 +83,7 @@ class RabbitMQEventBusConsumeMixin:
             RuntimeError: If not connected and connection fails, or if
                          consumer queue not initialized
         """
-        if not self._connected:
+        if not self._connection_manager._connected:
             await self.connect()
 
         await self._consumer.start()

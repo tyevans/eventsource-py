@@ -33,7 +33,7 @@ class TestRabbitMQReconnectionCallbacks:
     @pytest.mark.asyncio
     async def test_on_reconnect_increments_reconnection_stats(self, bus: RabbitMQEventBus) -> None:
         """Test that _on_reconnect increments the reconnections counter."""
-        bus._connected = False
+        bus._connection_manager._connected = False
         bus._stats.reconnections = 0
 
         # Create mock connection with channel
@@ -57,7 +57,7 @@ class TestRabbitMQReconnectionCallbacks:
         self, bus: RabbitMQEventBus
     ) -> None:
         """Test that multiple reconnections increment the counter correctly."""
-        bus._connected = False
+        bus._connection_manager._connected = False
         bus._stats.reconnections = 0
 
         mock_connection = AsyncMock()
@@ -92,7 +92,7 @@ class TestRabbitMQReconnectionCallbacks:
         await bus._on_reconnect(mock_connection)
 
         mock_connection.channel.assert_called_once()
-        assert bus._channel is mock_channel
+        assert bus._connection_manager._channel is mock_channel
 
     @pytest.mark.asyncio
     async def test_on_reconnect_sets_prefetch_count(self, bus: RabbitMQEventBus) -> None:
@@ -187,7 +187,7 @@ class TestRabbitMQReconnectionCallbacks:
     @pytest.mark.asyncio
     async def test_on_reconnect_sets_connected_true_on_success(self, bus: RabbitMQEventBus) -> None:
         """Test that _on_reconnect sets _connected to True on success."""
-        bus._connected = False
+        bus._connection_manager._connected = False
 
         mock_connection = AsyncMock()
         mock_channel = AsyncMock()
@@ -201,26 +201,26 @@ class TestRabbitMQReconnectionCallbacks:
 
         await bus._on_reconnect(mock_connection)
 
-        assert bus._connected is True
+        assert bus._connection_manager._connected is True
 
     @pytest.mark.asyncio
     async def test_on_reconnect_sets_connected_false_on_failure(
         self, bus: RabbitMQEventBus
     ) -> None:
         """Test that _on_reconnect sets _connected to False on failure."""
-        bus._connected = False
+        bus._connection_manager._connected = False
 
         mock_connection = AsyncMock()
         mock_connection.channel = AsyncMock(side_effect=Exception("Channel error"))
 
         await bus._on_reconnect(mock_connection)
 
-        assert bus._connected is False
+        assert bus._connection_manager._connected is False
 
     @pytest.mark.asyncio
     async def test_on_reconnect_sets_reconnecting_flag(self, bus: RabbitMQEventBus) -> None:
         """Test that _on_reconnect manages the _reconnecting flag."""
-        bus._reconnecting = False
+        bus._connection_manager._reconnecting = False
 
         mock_connection = AsyncMock()
         mock_channel = AsyncMock()
@@ -235,7 +235,7 @@ class TestRabbitMQReconnectionCallbacks:
         await bus._on_reconnect(mock_connection)
 
         # After successful reconnection, reconnecting should be False
-        assert bus._reconnecting is False
+        assert bus._connection_manager._reconnecting is False
 
     @pytest.mark.asyncio
     async def test_on_reconnect_clears_reconnecting_on_failure(self, bus: RabbitMQEventBus) -> None:
@@ -245,7 +245,7 @@ class TestRabbitMQReconnectionCallbacks:
 
         await bus._on_reconnect(mock_connection)
 
-        assert bus._reconnecting is False
+        assert bus._connection_manager._reconnecting is False
 
 
 class TestRabbitMQConnectionCloseCallback:
@@ -267,52 +267,52 @@ class TestRabbitMQConnectionCloseCallback:
 
     def test_connection_close_updates_connected_state(self, bus: RabbitMQEventBus) -> None:
         """Test that _on_connection_close sets _connected to False."""
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         bus._on_connection_close(None, None)
 
-        assert bus._connected is False
+        assert bus._connection_manager._connected is False
 
     def test_connection_close_tracks_was_consuming_when_consuming(
         self, bus: RabbitMQEventBus
     ) -> None:
         """Test that _on_connection_close tracks consuming state."""
-        bus._connected = True
-        bus._consuming = True
-        bus._was_consuming = False
+        bus._connection_manager._connected = True
+        bus._consumer._consuming = True
+        bus._connection_manager._was_consuming = False
 
         bus._on_connection_close(None, None)
 
-        assert bus._was_consuming is True
+        assert bus._connection_manager._was_consuming is True
 
     def test_connection_close_does_not_set_was_consuming_when_not_consuming(
         self, bus: RabbitMQEventBus
     ) -> None:
         """Test that _on_connection_close doesn't set _was_consuming when not consuming."""
-        bus._connected = True
-        bus._consuming = False
-        bus._was_consuming = False
+        bus._connection_manager._connected = True
+        bus._consumer._consuming = False
+        bus._connection_manager._was_consuming = False
 
         bus._on_connection_close(None, None)
 
-        assert bus._was_consuming is False
+        assert bus._connection_manager._was_consuming is False
 
     def test_connection_close_with_exception(self, bus: RabbitMQEventBus) -> None:
         """Test that _on_connection_close handles exceptions."""
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         exception = ValueError("Connection lost")
         bus._on_connection_close(MagicMock(), exception)
 
-        assert bus._connected is False
+        assert bus._connection_manager._connected is False
 
     def test_connection_close_without_exception(self, bus: RabbitMQEventBus) -> None:
         """Test that _on_connection_close handles graceful close."""
-        bus._connected = True
+        bus._connection_manager._connected = True
 
         bus._on_connection_close(MagicMock(), None)
 
-        assert bus._connected is False
+        assert bus._connection_manager._connected is False
 
 
 class TestRabbitMQChannelCloseCallback:

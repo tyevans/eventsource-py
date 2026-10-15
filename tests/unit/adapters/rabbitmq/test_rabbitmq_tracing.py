@@ -65,10 +65,11 @@ class TestRabbitMQEventBusTracingComposition:
         config = RabbitMQEventBusConfig(enable_tracing=True)
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry)
 
-        # Tracer should be set
-        assert hasattr(bus, "_enable_tracing")
-        assert hasattr(bus, "_tracer")
-        assert bus._tracer is not None
+        # Tracer should be set on publisher and consumer collaborators
+        assert hasattr(bus._publisher, "_enable_tracing")
+        assert hasattr(bus._publisher, "_tracer")
+        assert bus._publisher._tracer is not None
+        assert bus._consumer._tracer is not None
 
     def test_tracing_disabled_uses_null_tracer(self, mock_registry: MagicMock) -> None:
         """When tracing is disabled, _tracer should be NullTracer."""
@@ -77,8 +78,10 @@ class TestRabbitMQEventBusTracingComposition:
         config = RabbitMQEventBusConfig(enable_tracing=False)
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry)
 
-        assert bus._enable_tracing is False
-        assert isinstance(bus._tracer, NullTracer)
+        assert bus._publisher._enable_tracing is False
+        assert bus._consumer._enable_tracing is False
+        assert isinstance(bus._publisher._tracer, NullTracer)
+        assert isinstance(bus._consumer._tracer, NullTracer)
 
     def test_custom_tracer_can_be_injected(self, mock_registry: MagicMock) -> None:
         """Custom tracer can be injected via constructor."""
@@ -88,7 +91,8 @@ class TestRabbitMQEventBusTracingComposition:
         config = RabbitMQEventBusConfig()
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry, tracer=custom_tracer)
 
-        assert bus._tracer is custom_tracer
+        assert bus._publisher._tracer is custom_tracer
+        assert bus._consumer._tracer is custom_tracer
 
     def test_tracer_has_span_method(self, mock_registry: MagicMock) -> None:
         """The tracer should have span method for creating spans."""
@@ -97,8 +101,8 @@ class TestRabbitMQEventBusTracingComposition:
         config = RabbitMQEventBusConfig()
         bus = RabbitMQEventBus(config=config, event_registry=mock_registry)
 
-        assert hasattr(bus._tracer, "span")
-        assert callable(bus._tracer.span)
+        assert hasattr(bus._publisher._tracer, "span")
+        assert callable(bus._publisher._tracer.span)
 
 
 class TestRabbitMQEventBusNoOTELAvailable:

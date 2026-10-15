@@ -85,11 +85,11 @@ class TestGracefulShutdown:
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-        bus._consuming = True
+        bus._consumer._consuming = True
 
         await bus.shutdown(timeout=5.0)
 
-        assert bus._consuming is False
+        assert bus._consumer._consuming is False
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -160,12 +160,12 @@ class TestGracefulShutdown:
         async def long_running() -> None:
             await asyncio.sleep(100)
 
-        bus._consumer_task = asyncio.create_task(long_running())
-        bus._consuming = True
+        bus._consumer._consumer_task = asyncio.create_task(long_running())
+        bus._consumer._consuming = True
 
         await bus.shutdown(timeout=2.0)
 
-        assert bus._consumer_task is None
+        assert bus._consumer._consumer_task is None
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -195,7 +195,7 @@ class TestGracefulShutdown:
 
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
-        assert bus._consuming is False
+        assert bus._consumer._consuming is False
 
         await bus.shutdown(timeout=5.0)
 
@@ -294,7 +294,7 @@ class TestStopConsumingGracefully:
     @pytest.mark.asyncio
     async def test_stop_consuming_when_not_consuming(self, bus: RabbitMQEventBus) -> None:
         """Test _stop_consuming_gracefully when not consuming does nothing."""
-        bus._consuming = False
+        bus._consumer._consuming = False
 
         await bus._stop_consuming_gracefully(timeout=5.0)
 
@@ -303,31 +303,31 @@ class TestStopConsumingGracefully:
     @pytest.mark.asyncio
     async def test_stop_consuming_sets_flag(self, bus: RabbitMQEventBus) -> None:
         """Test that _stop_consuming_gracefully sets consuming flag to False."""
-        bus._consuming = True
+        bus._consumer._consuming = True
 
         await bus._stop_consuming_gracefully(timeout=5.0)
 
-        assert bus._consuming is False
+        assert bus._consumer._consuming is False
 
     @pytest.mark.asyncio
     async def test_stop_consuming_cancels_slow_task(self, bus: RabbitMQEventBus) -> None:
         """Test that slow consumer task is cancelled if it doesn't stop in time."""
-        bus._consuming = True
+        bus._consumer._consuming = True
 
         # Create a task that won't respond to _consuming flag
         async def slow_consumer() -> None:
             await asyncio.sleep(100)
 
-        bus._consumer_task = asyncio.create_task(slow_consumer())
+        bus._consumer._consumer_task = asyncio.create_task(slow_consumer())
 
         await bus._stop_consuming_gracefully(timeout=0.1)
 
-        assert bus._consumer_task is None
+        assert bus._consumer._consumer_task is None
 
     @pytest.mark.asyncio
     async def test_stop_consuming_waits_for_graceful_stop(self, bus: RabbitMQEventBus) -> None:
         """Test that _stop_consuming_gracefully waits for task to complete."""
-        bus._consuming = True
+        bus._consumer._consuming = True
         completed = False
 
         async def quick_consumer() -> None:
@@ -336,10 +336,10 @@ class TestStopConsumingGracefully:
             await asyncio.sleep(0.01)
             completed = True
 
-        bus._consumer_task = asyncio.create_task(quick_consumer())
+        bus._consumer._consumer_task = asyncio.create_task(quick_consumer())
 
         await bus._stop_consuming_gracefully(timeout=5.0)
 
         # Allow task to complete
         await asyncio.sleep(0.02)
-        assert bus._consumer_task is None
+        assert bus._consumer._consumer_task is None

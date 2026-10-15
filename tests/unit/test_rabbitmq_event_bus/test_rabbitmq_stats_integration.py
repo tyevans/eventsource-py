@@ -56,7 +56,7 @@ class TestResetStatsMethod:
         bus = RabbitMQEventBus()
         connect_time = datetime.now(UTC)
         bus._stats.connected_at = connect_time
-        bus._connected = True
+        bus._connection_manager._connected = True
         bus._stats.events_published = 100
 
         bus.reset_stats()
@@ -70,7 +70,7 @@ class TestResetStatsMethod:
         """Test that reset_stats() clears connected_at when disconnected."""
         bus = RabbitMQEventBus()
         bus._stats.connected_at = datetime.now(UTC)
-        bus._connected = False  # Not connected
+        bus._connection_manager._connected = False  # Not connected
 
         bus.reset_stats()
 

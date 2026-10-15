@@ -38,7 +38,7 @@ class TestRabbitMQProcessMessage:
     def bus(self, config: RabbitMQEventBusConfig, registry: EventRegistry) -> RabbitMQEventBus:
         """Create bus instance for testing."""
         bus = RabbitMQEventBus(config=config, event_registry=registry)
-        bus._connected = True
+        bus._connection_manager._connected = True
         return bus
 
     @pytest.mark.asyncio
@@ -98,7 +98,7 @@ class TestRabbitMQProcessMessage:
 
         # Set up exchange for retry republish
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         async def failing_handler(e: DomainEvent) -> None:
             raise ValueError("Handler failed")
@@ -231,7 +231,7 @@ class TestRabbitMQProcessMessageWithDLQTracking:
 
         # Set up DLQ exchange mock
         mock_dlq_exchange = AsyncMock()
-        bus._dlq_exchange = mock_dlq_exchange
+        bus._topology._dlq_exchange = mock_dlq_exchange
 
         initial_dlq_count = bus.stats.messages_sent_to_dlq
 

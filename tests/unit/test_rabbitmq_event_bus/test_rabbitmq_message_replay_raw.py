@@ -30,7 +30,7 @@ class TestReplayMessage:
     ) -> None:
         """Test _replay_message raises when exchange not initialized."""
         bus = RabbitMQEventBus(config=config)
-        bus._exchange = None
+        bus._topology._exchange = None
 
         mock_message = AsyncMock()
 
@@ -42,7 +42,7 @@ class TestReplayMessage:
         """Test that DLQ headers are removed from replayed message."""
         bus = RabbitMQEventBus(config=config)
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         mock_message = AsyncMock()
         mock_message.body = b'{"data": "test"}'
@@ -78,7 +78,7 @@ class TestReplayMessage:
         """Test that retry count is reset to 0."""
         bus = RabbitMQEventBus(config=config)
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         mock_message = AsyncMock()
         mock_message.body = b"{}"
@@ -100,7 +100,7 @@ class TestReplayMessage:
         """Test that x-replayed-from-dlq timestamp is added."""
         bus = RabbitMQEventBus(config=config)
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         mock_message = AsyncMock()
         mock_message.body = b"{}"
@@ -124,7 +124,7 @@ class TestReplayMessage:
         """Test that original routing key is used for republishing."""
         bus = RabbitMQEventBus(config=config)
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         mock_message = AsyncMock()
         mock_message.body = b"{}"
@@ -148,7 +148,7 @@ class TestReplayMessage:
         """Test fallback to message routing key when original not in headers."""
         bus = RabbitMQEventBus(config=config)
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         mock_message = AsyncMock()
         mock_message.body = b"{}"
@@ -170,7 +170,7 @@ class TestReplayMessage:
         """Test that non-DLQ headers are preserved."""
         bus = RabbitMQEventBus(config=config)
         mock_exchange = AsyncMock()
-        bus._exchange = mock_exchange
+        bus._topology._exchange = mock_exchange
 
         mock_message = AsyncMock()
         mock_message.body = b"{}"

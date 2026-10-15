@@ -36,7 +36,7 @@ class TestRabbitMQPublishSingle:
 
         event = PublishTestEvent(aggregate_id=uuid4())
         bus = RabbitMQEventBus(config=config)
-        bus._exchange = None
+        bus._topology._exchange = None
 
         with pytest.raises(RuntimeError, match="Exchange not initialized"):
             await bus._publish_single(event)

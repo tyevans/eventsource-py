@@ -253,8 +253,8 @@ class TestFanoutExchangeMultipleConsumerGroups:
         await bus2.connect()
 
         # Both should connect successfully
-        assert bus1._connected
-        assert bus2._connected
+        assert bus1._connection_manager._connected
+        assert bus2._connection_manager._connected
 
         # Verify different queue names were declared
         queue_declare_calls = [

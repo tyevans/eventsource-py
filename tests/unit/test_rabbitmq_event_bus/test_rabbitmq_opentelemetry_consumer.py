@@ -79,7 +79,7 @@ class TestOpenTelemetryConsumerTracing:
         mock_tracer = MagicMock()
         mock_span = MagicMock()
         mock_tracer.start_span.return_value = mock_span
-        bus._tracer = mock_tracer
+        bus._consumer._tracer = mock_tracer
 
         # Also mock extract for context propagation
         with patch("eventsource.adapters.rabbitmq.consumer.extract") as mock_extract:
@@ -131,7 +131,7 @@ class TestOpenTelemetryConsumerTracing:
         mock_parent_span = MagicMock()
         mock_handler_span = MagicMock()
         mock_tracer.start_span.return_value = mock_handler_span
-        bus._tracer = mock_tracer
+        bus._consumer._tracer = mock_tracer
 
         await bus._dispatch_event(event, mock_message, mock_parent_span)
 
@@ -181,7 +181,7 @@ class TestOpenTelemetryConsumerTracing:
 
         # Mock the tracer via TracingMixin's _tracer attribute
         mock_tracer = MagicMock()
-        bus._tracer = mock_tracer
+        bus._consumer._tracer = mock_tracer
 
         # Without parent_span, handler spans should not be created
         await bus._dispatch_event(event, mock_message, parent_span=None)
@@ -228,7 +228,7 @@ class TestOpenTelemetryConsumerTracing:
         mock_parent_span = MagicMock()
         mock_handler_span = MagicMock()
         mock_tracer.start_span.return_value = mock_handler_span
-        bus._tracer = mock_tracer
+        bus._consumer._tracer = mock_tracer
 
         from eventsource.domain.exceptions import HandlerDispatchError
 
@@ -259,16 +259,16 @@ class TestOpenTelemetryGracefulDegradation:
         bus = RabbitMQEventBus(config=config)
 
         # _tracer is always set with composition-based tracing
-        assert bus._tracer is not None
+        assert bus._consumer._tracer is not None
 
         from eventsource.adapters.rabbitmq import OTEL_AVAILABLE
 
         if not OTEL_AVAILABLE:
             # When OTEL is not available, _tracer should be a NullTracer (disabled)
-            assert bus._tracer.enabled is False
+            assert bus._consumer._tracer.enabled is False
         else:
             # When OTEL is available, tracer should be enabled
-            assert bus._tracer.enabled is True
+            assert bus._consumer._tracer.enabled is True
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio

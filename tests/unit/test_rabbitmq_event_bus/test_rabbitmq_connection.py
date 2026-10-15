@@ -67,7 +67,7 @@ class TestRabbitMQEventBusConnection:
         await bus.connect()
 
         mock_connection.channel.assert_called_once()
-        assert bus._channel is mock_channel
+        assert bus._connection_manager._channel is mock_channel
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -175,12 +175,12 @@ class TestRabbitMQEventBusConnection:
         await bus.connect()
         await bus.disconnect()
 
-        assert bus._connection is None
-        assert bus._channel is None
-        assert bus._exchange is None
-        assert bus._dlq_exchange is None
-        assert bus._consumer_queue is None
-        assert bus._dlq_queue is None
+        assert bus._connection_manager._connection is None
+        assert bus._connection_manager._channel is None
+        assert bus._topology._exchange is None
+        assert bus._topology._dlq_exchange is None
+        assert bus._topology._consumer_queue is None
+        assert bus._topology._dlq_queue is None
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -221,11 +221,11 @@ class TestRabbitMQEventBusConnection:
         async def mock_consumer() -> None:
             await asyncio.sleep(100)
 
-        bus._consumer_task = asyncio.create_task(mock_consumer())
+        bus._consumer._consumer_task = asyncio.create_task(mock_consumer())
 
         await bus.disconnect()
 
-        assert bus._consumer_task is None
+        assert bus._consumer._consumer_task is None
 
 
 class TestRabbitMQConnectionStateTransitions:
@@ -239,10 +239,10 @@ class TestRabbitMQConnectionStateTransitions:
 
         assert bus.is_connected is False
         assert bus.is_consuming is False
-        assert bus._connection is None
-        assert bus._channel is None
-        assert bus._exchange is None
-        assert bus._consumer_queue is None
+        assert bus._connection_manager._connection is None
+        assert bus._connection_manager._channel is None
+        assert bus._topology._exchange is None
+        assert bus._topology._consumer_queue is None
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
@@ -271,12 +271,12 @@ class TestRabbitMQConnectionStateTransitions:
         # After connect
         await bus.connect()
         assert bus.is_connected is True
-        assert bus._connection is not None
-        assert bus._channel is not None
+        assert bus._connection_manager._connection is not None
+        assert bus._connection_manager._channel is not None
 
         # After disconnect
         await bus.disconnect()
         assert bus.is_connected is False
-        assert bus._connection is None
-        assert bus._channel is None
-        assert bus._exchange is None
+        assert bus._connection_manager._connection is None
+        assert bus._connection_manager._channel is None
+        assert bus._topology._exchange is None
