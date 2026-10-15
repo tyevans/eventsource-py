@@ -48,6 +48,9 @@ class InMemoryEventStore:
     def __len__(self) -> int:
         return len(self._events)
 
+    def __bool__(self) -> bool:
+        return True
+
     async def get_event_count(self) -> int:
         return len(self._events)
 
