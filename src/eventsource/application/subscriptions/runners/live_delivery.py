@@ -49,25 +49,16 @@ class LiveDeliveryMixin:
         _batch_only: bool
 
         async def _record_filtered(self, envelope: EventEnvelope) -> None: ...
-        async def _maybe_checkpoint_in_batch(
-            self, position: Position, event: DomainEvent
-        ) -> None: ...
+        async def _maybe_checkpoint_in_batch(self, pos: Position, event: DomainEvent) -> None: ...
         async def _maybe_checkpoint(self, position: Position, event: DomainEvent) -> None: ...
-        async def _save_checkpoint_with_retry(
-            self, position: Position, event: DomainEvent
-        ) -> None: ...
-        async def _maybe_save_periodic_checkpoint(
-            self, position: Position, event: DomainEvent
-        ) -> None: ...
+        async def _save_checkpoint_with_retry(self, pos: Position, event: DomainEvent) -> None: ...
 
     def _passes_filter(self, envelope: EventEnvelope) -> bool:
         """Whether the envelope's event passes the configured event filter."""
         return self._filter is None or self._filter.matches(envelope.event)
 
     async def _call_guarded[T](
-        self,
-        operation: Callable[[], Awaitable[T]],
-        operation_name: str,
+        self, operation: Callable[[], Awaitable[T]], operation_name: str
     ) -> T:
         """Call `operation` under `processing_timeout` and optional circuit breaker."""
 
@@ -95,21 +86,21 @@ class LiveDeliveryMixin:
                     )
                 except Exception as e:
                     batch_succeeded = False
+                    extra = {
+                        "subscription": self.subscription.name,
+                        "batch_size": len(deliverable),
+                        "error": str(e),
+                    }
                     logger.warning(
-                        "Live batch handler failed, falling back to per-event delivery",
-                        extra={
-                            "subscription": self.subscription.name,
-                            "batch_size": len(deliverable),
-                            "error": str(e),
-                        },
+                        "Live batch handler failed, falling back to per-event delivery", extra=extra
                     )
                 else:
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
+                        per_event_ms = duration_ms / len(deliverable)
                         for event in deliverable:
                             self._metrics.record_event_processed(
-                                event_type=event.event_type,
-                                duration_ms=duration_ms / len(deliverable),
+                                event_type=event.event_type, duration_ms=per_event_ms
                             )
 
         if not batch_succeeded:
@@ -147,27 +138,22 @@ class LiveDeliveryMixin:
 
     async def _process_live_event(self, envelope: EventEnvelope) -> None:
         """Process one envelope read from the global feed, applying filters."""
-        event = envelope.event
-        position = envelope.position
-        with self._tracer.span(
-            "eventsource.live_runner.process_event",
-            {
-                ATTR_SUBSCRIPTION_NAME: self.subscription.name,
-                ATTR_EVENT_ID: str(event.event_id),
-                ATTR_EVENT_TYPE: event.event_type,
-                ATTR_POSITION: render_position(position),
-            },
-        ):
+        event, position = envelope.event, envelope.position
+        span_attrs = {
+            ATTR_SUBSCRIPTION_NAME: self.subscription.name,
+            ATTR_EVENT_ID: str(event.event_id),
+            ATTR_EVENT_TYPE: event.event_type,
+            ATTR_POSITION: render_position(position),
+        }
+        with self._tracer.span("eventsource.live_runner.process_event", span_attrs):
             if self._filter and not self._filter.matches(event):
                 self._stats.events_skipped_filtered += 1
-                logger.debug(
-                    "Event filtered out",
-                    extra={
-                        "subscription": self.subscription.name,
-                        "event_id": str(event.event_id),
-                        "event_type": event.event_type,
-                    },
-                )
+                extra = {
+                    "subscription": self.subscription.name,
+                    "event_id": str(event.event_id),
+                    "event_type": event.event_type,
+                }
+                logger.debug("Event filtered out", extra=extra)
                 if position is not None:
                     await self.subscription.record_event_processed(
                         position=position, event_id=event.event_id, event_type=event.event_type
@@ -180,18 +166,14 @@ class LiveDeliveryMixin:
             async with await self._flow_controller.acquire():
                 start_time = time.perf_counter()
                 try:
-                    subscriber = self.subscription.subscriber
+                    sub = self.subscription.subscriber
                     if self._batch_only:
-                        batch_subscriber = cast(BatchSubscriber, subscriber)
-                        await self._call_guarded(
-                            lambda: settle_handler_result(batch_subscriber.handle_batch([event])),
-                            "handle_batch",
-                        )
+                        batch_sub = cast(BatchSubscriber, sub)
+                        op = lambda: settle_handler_result(batch_sub.handle_batch([event]))  # noqa: E731
+                        await self._call_guarded(op, "handle_batch")
                     else:
-                        await self._call_guarded(
-                            lambda: settle_handler_result(subscriber.handle(event)),
-                            "handle_event",
-                        )
+                        op = lambda: settle_handler_result(sub.handle(event))  # noqa: E731
+                        await self._call_guarded(op, "handle_event")
                     self._stats.events_processed += 1
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     if self._metrics:
@@ -200,17 +182,16 @@ class LiveDeliveryMixin:
                         )
                         self._metrics.record_lag(self.subscription.lag)
 
+                    pos = (
+                        position
+                        if position is not None
+                        else self.subscription.last_processed_position
+                    )
+                    await self.subscription.record_event_processed(
+                        position=pos, event_id=event.event_id, event_type=event.event_type
+                    )
                     if position is not None:
-                        await self.subscription.record_event_processed(
-                            position=position, event_id=event.event_id, event_type=event.event_type
-                        )
                         await self._maybe_checkpoint(position, event)
-                    else:
-                        await self.subscription.record_event_processed(
-                            position=self.subscription.last_processed_position,
-                            event_id=event.event_id,
-                            event_type=event.event_type,
-                        )
                 except Exception as e:
                     self._stats.events_failed += 1
                     duration_ms = (time.perf_counter() - start_time) * 1000
@@ -224,14 +205,12 @@ class LiveDeliveryMixin:
                     if not self.config.continue_on_error:
                         raise
                     await self.subscription.record_events_unseen(1)
-                    logger.warning(
-                        "Live event processing failed, continuing",
-                        extra={
-                            "subscription": self.subscription.name,
-                            "event_id": str(event.event_id),
-                            "error": str(e),
-                        },
-                    )
+                    extra = {
+                        "subscription": self.subscription.name,
+                        "event_id": str(event.event_id),
+                        "error": str(e),
+                    }
+                    logger.warning("Live event processing failed, continuing", extra=extra)
 
 
 __all__ = ["LiveDeliveryMixin"]

@@ -1,32 +1,4 @@
-"""
-Canonical protocol definitions for the eventsource library.
-
-This module contains the authoritative definitions for all protocols
-used throughout the library. Import protocols from here for type hints
-and protocol implementations.
-
-Protocols:
-- EventHandler: Async handler for domain events (primary, async-only)
-- SyncEventHandler: Sync handler for domain events
-- FlexibleEventHandler: Handler that may be sync or async
-- EventSubscriber: Handler that declares event subscriptions (ABC-based)
-- FlexibleEventSubscriber: Protocol version of EventSubscriber for flexible typing
-
-Example:
-    >>> from eventsource.ports.handlers import EventHandler, EventSubscriber
-    >>>
-    >>> class MyHandler:
-    ...     async def handle(self, event: DomainEvent) -> None:
-    ...         await self.process(event)
-    >>>
-    >>> class MyProjection(EventSubscriber):
-    ...     def subscribed_to(self) -> list[type[DomainEvent]]:
-    ...         return [OrderCreated, OrderShipped]
-    ...
-    ...     async def handle(self, event: DomainEvent) -> None:
-    ...         if isinstance(event, OrderCreated):
-    ...             await self._handle_created(event)
-"""
+"""Canonical protocol definitions for event handlers and subscribers."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable
@@ -37,73 +9,25 @@ from eventsource.domain.event import DomainEvent
 
 @runtime_checkable
 class EventHandler(Protocol):
-    """
-    Protocol for async event handlers.
-
-    Event handlers process domain events, typically for:
-    - Updating read models (projections)
-    - Sending notifications
-    - Triggering workflows
-
-    All handlers should be async for consistency. Use SyncEventHandler
-    if you need synchronous handling.
-
-    Example:
-        >>> class MyHandler:
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         await self.process(event)
-    """
+    """Protocol for async event handlers processing domain events."""
 
     async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle a domain event asynchronously.
-
-        Args:
-            event: The domain event to process
-
-        Raises:
-            Exception: If handling fails
-        """
+        """Handle a domain event asynchronously."""
         ...
 
 
 @runtime_checkable
 class SyncEventHandler(Protocol):
-    """
-    Protocol for synchronous event handlers.
-
-    Use for handlers that don't require async I/O, such as:
-    - In-memory state updates
-    - Simple logging
-    - Test mocks
-
-    Example:
-        >>> class SimpleLogger:
-        ...     def handle(self, event: DomainEvent) -> None:
-        ...         print(f"Event: {event.event_type}")
-    """
+    """Protocol for synchronous event handlers that do not require async I/O."""
 
     def handle(self, event: DomainEvent) -> None:
-        """
-        Handle a domain event synchronously.
-
-        Args:
-            event: The domain event to process
-        """
+        """Handle a domain event synchronously."""
         ...
 
 
 @runtime_checkable
 class FlexibleEventHandler(Protocol):
-    """
-    Protocol for handlers that may be sync or async.
-
-    Used primarily by EventBus implementations that need to support
-    both sync and async handlers. Prefer EventHandler for new code.
-
-    Note: This protocol exists for backward compatibility with
-    existing EventBus subscribers.
-    """
+    """Protocol for handlers that may be sync or async."""
 
     def handle(self, event: DomainEvent) -> Awaitable[None] | None:
         """Handle event, returning Awaitable if async."""
@@ -111,54 +35,22 @@ class FlexibleEventHandler(Protocol):
 
 
 class EventSubscriber(ABC):
-    """
-    Abstract base class for event subscribers.
-
-    Subscribers declare which event types they handle and provide
-    a handler method. This is the primary interface for projections.
-
-    Unlike EventHandler (Protocol), this is an ABC to allow
-    additional methods in subclasses (e.g., reset, get_checkpoint).
-
-    Example:
-        >>> class OrderProjection(EventSubscriber):
-        ...     def subscribed_to(self) -> list[type[DomainEvent]]:
-        ...         return [OrderCreated, OrderShipped]
-        ...
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         if isinstance(event, OrderCreated):
-        ...             await self._handle_created(event)
-    """
+    """Abstract base class for event subscribers declaring handled event types."""
 
     @abstractmethod
     def subscribed_to(self) -> list[type[DomainEvent]]:
-        """
-        Return list of event types this subscriber handles.
-
-        Returns:
-            List of event type classes
-        """
+        """Return list of event types this subscriber handles."""
         pass
 
     @abstractmethod
     async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle a domain event.
-
-        Args:
-            event: The event to handle
-        """
+        """Handle a domain event."""
         pass
 
 
 @runtime_checkable
 class FlexibleEventSubscriber(Protocol):
-    """
-    Protocol version of EventSubscriber for flexible typing.
-
-    Used when you need to accept both sync and async subscribers
-    in type hints. For most cases, use EventSubscriber (ABC) instead.
-    """
+    """Protocol version of EventSubscriber for flexible sync/async typing."""
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
         """Return list of event types this subscriber handles."""
@@ -170,62 +62,20 @@ class FlexibleEventSubscriber(Protocol):
 
 
 class AsyncEventHandler(ABC):
-    """
-    Base class for async event handlers.
-
-    Provides a more structured approach than the EventHandler protocol
-    for handlers that need additional methods like event filtering.
-
-    This is the canonical location for AsyncEventHandler.
-
-    Example:
-        >>> from eventsource.ports.handlers import AsyncEventHandler
-        >>>
-        >>> class OrderEmailHandler(AsyncEventHandler):
-        ...     def event_types(self) -> list[type[DomainEvent]]:
-        ...         return [OrderCreated, OrderShipped]
-        ...
-        ...     async def handle(self, event: DomainEvent) -> None:
-        ...         if isinstance(event, OrderCreated):
-        ...             await self.send_confirmation_email(event)
-    """
+    """Base class for async event handlers with event type filtering."""
 
     @abstractmethod
     async def handle(self, event: DomainEvent) -> None:
-        """
-        Handle an event asynchronously.
-
-        Args:
-            event: The event to handle
-
-        Raises:
-            Exception: If handling fails
-        """
+        """Handle an event asynchronously."""
         pass
 
     def can_handle(self, event: DomainEvent) -> bool:
-        """
-        Check if this handler can handle the given event.
-
-        By default, checks if event type is in the handler's event types.
-        Override for custom filtering logic.
-
-        Args:
-            event: The event to check
-
-        Returns:
-            True if this handler can handle the event
-        """
+        """Return True if this handler supports the given event's type."""
         return type(event) in self.event_types()
 
     @abstractmethod
     def event_types(self) -> list[type[DomainEvent]]:
-        """
-        Return list of event types this handler supports.
-
-        Returns:
-            List of event classes this handler can process
-        """
+        """Return list of event types this handler supports."""
         pass
 
 

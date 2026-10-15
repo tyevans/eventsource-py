@@ -97,20 +97,14 @@ class DLQRepositoryConformance(ABC):
         assert retrying[0].id == entry.id
 
     async def test_get_failed_events_filters_by_projection_name(self, store: DLQRepository) -> None:
-        await store.add_failed_event(
-            event_id=uuid4(),
-            projection_name="A",
-            event_type="Created",
-            event_data={},
-            error=RuntimeError("boom"),
-        )
-        await store.add_failed_event(
-            event_id=uuid4(),
-            projection_name="B",
-            event_type="Created",
-            event_data={},
-            error=RuntimeError("boom"),
-        )
+        for proj in ("A", "B"):
+            await store.add_failed_event(
+                event_id=uuid4(),
+                projection_name=proj,
+                event_type="Created",
+                event_data={},
+                error=RuntimeError("boom"),
+            )
         entries = await store.get_failed_events(projection_name="A")
         assert len(entries) == 1
         assert entries[0].projection_name == "A"
@@ -161,20 +155,14 @@ class DLQRepositoryConformance(ABC):
     async def test_get_failure_stats_counts_failed_and_retrying_separately(
         self, store: DLQRepository
     ) -> None:
-        await store.add_failed_event(
-            event_id=uuid4(),
-            projection_name="A",
-            event_type="Created",
-            event_data={},
-            error=RuntimeError("boom"),
-        )
-        await store.add_failed_event(
-            event_id=uuid4(),
-            projection_name="B",
-            event_type="Created",
-            event_data={},
-            error=RuntimeError("boom"),
-        )
+        for proj in ("A", "B"):
+            await store.add_failed_event(
+                event_id=uuid4(),
+                projection_name=proj,
+                event_type="Created",
+                event_data={},
+                error=RuntimeError("boom"),
+            )
         (retrying_entry,) = (e for e in await store.get_failed_events() if e.projection_name == "B")
         await store.mark_retrying(retrying_entry.id)
         stats = await store.get_failure_stats()
@@ -185,21 +173,14 @@ class DLQRepositoryConformance(ABC):
     async def test_get_projection_failure_counts_orders_by_count_descending(
         self, store: DLQRepository
     ) -> None:
-        for _ in range(2):
+        for proj in ("Busy", "Busy", "Quiet"):
             await store.add_failed_event(
                 event_id=uuid4(),
-                projection_name="Busy",
+                projection_name=proj,
                 event_type="Created",
                 event_data={},
                 error=RuntimeError("boom"),
             )
-        await store.add_failed_event(
-            event_id=uuid4(),
-            projection_name="Quiet",
-            event_type="Created",
-            event_data={},
-            error=RuntimeError("boom"),
-        )
         counts = await store.get_projection_failure_counts()
         assert [c.projection_name for c in counts] == ["Busy", "Quiet"]
         assert counts[0].failure_count == 2
@@ -215,8 +196,7 @@ class DLQRepositoryConformance(ABC):
             event_data={},
             error=RuntimeError("boom"),
         )
-        deleted = await store.delete_resolved_events(older_than_days=0)
-        assert deleted == 0
+        assert await store.delete_resolved_events(older_than_days=0) == 0
         assert len(await store.get_failed_events()) == 1
 
     async def test_delete_resolved_events_day_zero_deletes_resolved_entries(
@@ -232,6 +212,5 @@ class DLQRepositoryConformance(ABC):
         )
         (entry,) = await store.get_failed_events()
         await store.mark_resolved(entry.id, "alice")
-        deleted = await store.delete_resolved_events(older_than_days=0)
-        assert deleted == 1
+        assert await store.delete_resolved_events(older_than_days=0) == 1
         assert await store.get_failed_event_by_id(entry.id) is None
