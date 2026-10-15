@@ -1,11 +1,4 @@
-"""
-Lifecycle and shutdown coordination mixin for SubscriptionManager.
-
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0002 (Single-Responsibility Modules and File Limits)
-- TASK-0008 (Decompose Monolithic Modules SubscriptionManager and Shutdown)
-"""
+"""Lifecycle and shutdown coordination mixin for SubscriptionManager (ADR-0002, ADR-0007, TASK-0008)."""
 
 from __future__ import annotations
 
@@ -114,10 +107,7 @@ class ManagerLifecycleMixin:
         """Internal callback invoked when a shutdown signal is trapped."""
         logger.info("Shutdown signal received by SubscriptionManager")
 
-    async def run_until_shutdown(
-        self,
-        shutdown_timeout: float | None = None,
-    ) -> ShutdownResult:
+    async def run_until_shutdown(self, shutdown_timeout: float | None = None) -> ShutdownResult:
         """Run the manager until a shutdown signal is received."""
         if shutdown_timeout is not None:
             self._shutdown_coordinator.timeout = shutdown_timeout
@@ -142,11 +132,7 @@ class ManagerLifecycleMixin:
             self._last_shutdown_result = result
             return result
         except Exception as e:
-            logger.error(
-                "Error during run_until_shutdown",
-                extra={"error": str(e)},
-                exc_info=True,
-            )
+            logger.error("Error during run_until_shutdown", extra={"error": str(e)}, exc_info=True)
             await self.stop()
             raise
         finally:
@@ -205,15 +191,13 @@ class ManagerLifecycleMixin:
 
         try:
             results = await asyncio.gather(
-                *(task for _, task in drain_tasks),
-                return_exceptions=True,
+                *(task for _, task in drain_tasks), return_exceptions=True
             )
             total_remaining = 0
             for (name, _), result in zip(drain_tasks, results, strict=True):
                 if isinstance(result, BaseException):
                     logger.error(
-                        "Drain task failed",
-                        extra={"subscription": name, "error": str(result)},
+                        "Drain task failed", extra={"subscription": name, "error": str(result)}
                     )
                 elif result > 0:
                     total_remaining += result
@@ -222,10 +206,7 @@ class ManagerLifecycleMixin:
                         extra={"subscription": name, "remaining_events": result},
                     )
                 else:
-                    logger.debug(
-                        "Subscription drained successfully",
-                        extra={"subscription": name},
-                    )
+                    logger.debug("Subscription drained successfully", extra={"subscription": name})
 
             if total_remaining > 0:
                 logger.warning(
@@ -237,8 +218,7 @@ class ManagerLifecycleMixin:
                 )
             else:
                 logger.info(
-                    "All events drained successfully",
-                    extra={"total_drained": total_in_flight},
+                    "All events drained successfully", extra={"total_drained": total_in_flight}
                 )
         except Exception as e:
             logger.error("Error during drain phase", extra={"error": str(e)}, exc_info=True)
@@ -251,8 +231,7 @@ class ManagerLifecycleMixin:
         for name, subscription in self._registry.items():
             if subscription.last_event_id is None or subscription.last_event_type is None:
                 logger.debug(
-                    "Skipping checkpoint save - no event info",
-                    extra={"subscription": name},
+                    "Skipping checkpoint save - no event info", extra={"subscription": name}
                 )
                 continue
 
@@ -278,8 +257,7 @@ class ManagerLifecycleMixin:
                 )
             except Exception as e:
                 logger.error(
-                    "Failed to save checkpoint",
-                    extra={"subscription": name, "error": str(e)},
+                    "Failed to save checkpoint", extra={"subscription": name, "error": str(e)}
                 )
 
         logger.info("Final checkpoints saved", extra={"checkpoints_saved": saved_count})
