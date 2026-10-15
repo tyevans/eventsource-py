@@ -1,7 +1,7 @@
 ---
 id: TASK-0293
 title: "Add append_events(*events, expected_version=None) helper to InMemoryTestHarness"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

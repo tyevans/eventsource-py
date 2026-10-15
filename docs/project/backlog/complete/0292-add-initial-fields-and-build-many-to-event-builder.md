@@ -1,7 +1,7 @@
 ---
 id: TASK-0292
 title: "Add initial keyword fields and build_many(count) to EventBuilder"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

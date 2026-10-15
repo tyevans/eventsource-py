@@ -1,7 +1,7 @@
 ---
 id: TASK-0286
 title: "Compact live_delivery, scenario, pg snapshots, kafka metrics, and shutdown_runner below 250 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

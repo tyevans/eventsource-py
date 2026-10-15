@@ -1,7 +1,7 @@
 ---
 id: TASK-0289
 title: "Compact remaining 300+ line test modules below 275 lines so 100% of repository is < 300 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

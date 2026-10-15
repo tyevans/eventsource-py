@@ -1,7 +1,7 @@
 ---
 id: TASK-0290
 title: "Compact test modules at 298-299 lines below 275 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
