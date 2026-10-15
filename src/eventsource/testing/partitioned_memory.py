@@ -1,21 +1,4 @@
-"""Feed-less in-memory store used to prove the capability-by-omission model.
-
-`PartitionedMemoryStore` implements `EventAppender`, `StreamReader`,
-`EventLookup`, and `CategoryQuery` -- but deliberately *not*
-`GlobalEventFeed`. Events live in per-stream lists with no shared global
-order, so envelopes always carry `position=None` and the class exposes no
-`read_all`/`current_position` attributes at all (not even ones that raise).
-This is the thing a consumer coded against `GlobalEventFeed` should fail to
-type-check against, and the thing `GlobalFeedConformance` should never be
-run against.
-
-Kept sqlalchemy-free. Expected-version dispatch comes from
-`eventsource.adapters._common`, which is backend-agnostic port semantics
-shared by every store adapter -- not a specific adapter, which this package
-still must not depend on. It used to be a deliberate copy of the in-memory
-adapter's private method, one of four verbatim copies now down to one
-definition.
-"""
+"""Feed-less in-memory store used to prove the capability-by-omission model."""
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
@@ -38,13 +21,7 @@ from eventsource.ports import (
 
 
 class PartitionedMemoryStore:
-    """In-memory store with per-stream partitions and no global feed.
-
-    Implements `EventAppender`, `StreamReader`, `EventLookup`, and
-    `CategoryQuery`. Does not implement `GlobalEventFeed`: there is no
-    `read_all` or `current_position` method, and `EventEnvelope.position`
-    is always None.
-    """
+    """In-memory store with per-stream partitions and no global feed (`position` is always None)."""
 
     def __init__(self, event_registry: EventRegistry | None = None) -> None:
         self._event_registry = event_registry or default_registry
@@ -60,17 +37,12 @@ class PartitionedMemoryStore:
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
-
-        # Same reason as InMemoryEventStore: this store never deserializes,
-        # so an unregistered event type would go unnoticed here and fail on
-        # the first read against a serializing backend.
         check_registered(events, self._event_registry)
 
         async with self._lock:
             key = stream.render()
             existing = self._streams.get(key, [])
             current_version = len(existing)
-
             check_expected(current_version, expected, stream)
 
             seen_in_batch: set[UUID] = set()
@@ -97,37 +69,26 @@ class PartitionedMemoryStore:
 
             for envelope in new_envelopes:
                 self._event_ids.add(envelope.event.event_id)
-
             self._streams[key] = existing + new_envelopes
-
             return AppendResult(stream=stream, new_version=version, position=None)
 
     def read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions | None = None,
+        self, stream: StreamId, options: StreamReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or StreamReadOptions()
-        return self._do_read_stream(stream, opts)
+        return self._do_read_stream(stream, options or StreamReadOptions())
 
     async def _do_read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions,
+        self, stream: StreamId, options: StreamReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         envelopes = list(self._streams.get(stream.render(), []))
-
         if options.from_version is not None:
             envelopes = [e for e in envelopes if e.stream_version >= options.from_version]
         if options.to_version is not None:
             envelopes = [e for e in envelopes if e.stream_version <= options.to_version]
-
         if options.direction == ReadDirection.BACKWARD:
             envelopes = list(reversed(envelopes))
-
         if options.limit is not None:
             envelopes = envelopes[: options.limit]
-
         for envelope in envelopes:
             yield envelope
 
@@ -138,25 +99,19 @@ class PartitionedMemoryStore:
         return event_id in self._event_ids
 
     def read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions | None = None,
+        self, category: str, options: CategoryReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or CategoryReadOptions()
-        return self._do_read_category(category, opts)
+        return self._do_read_category(category, options or CategoryReadOptions())
 
     async def _do_read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions,
+        self, category: str, options: CategoryReadOptions
     ) -> AsyncIterator[EventEnvelope]:
         envelopes = [
             envelope
-            for envelopes in self._streams.values()
-            for envelope in envelopes
+            for stream_envelopes in self._streams.values()
+            for envelope in stream_envelopes
             if envelope.stream_id.category == category
         ]
-
         if options.tenant_id is not None:
             envelopes = [
                 e for e in envelopes if getattr(e.event, "tenant_id", None) == options.tenant_id
@@ -164,18 +119,9 @@ class PartitionedMemoryStore:
         if options.from_timestamp is not None:
             envelopes = [e for e in envelopes if e.stored_at >= options.from_timestamp]
 
-        # `position` is always `None` on this adapter (see module docstring),
-        # so there is no position key to break `stored_at` ties with. `sorted`
-        # is stable, so ties fall back to the order envelopes were collected
-        # above: `self._streams` dict-insertion order (i.e. first-append-wins
-        # across streams), then per-stream append order. That is a
-        # deterministic, if adapter-specific, tie-break -- not `stored_at`
-        # collisions resolved by a storage-assigned sequence like the other
-        # adapters, but stable and reproducible for a given append sequence.
+        # Stable sort preserves dict-insertion then per-stream append order on stored_at ties.
         envelopes = sorted(envelopes, key=lambda e: e.stored_at)
-
         if options.limit is not None:
             envelopes = envelopes[: options.limit]
-
         for envelope in envelopes:
             yield envelope

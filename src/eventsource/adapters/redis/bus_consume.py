@@ -7,17 +7,16 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from eventsource.adapters.redis.config import DecodedStreams, RedisConnectionError
-from eventsource.observability.attributes import (
-    ATTR_EVENT_ID,
-    ATTR_EVENT_TYPE,
-    ATTR_MESSAGING_SYSTEM,
+from eventsource.adapters.redis.config import (
+    DecodedStreams,
+    RedisConnectionError,
+    RedisEventBusConfig,
 )
+from eventsource.observability import attributes as attr
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
-    from eventsource.adapters.redis.config import RedisEventBusConfig
     from eventsource.adapters.redis.models import RedisEventBusStats
     from eventsource.domain.event import DomainEvent
     from eventsource.observability import Tracer
@@ -50,35 +49,25 @@ class RedisBusConsumeMixin:
             await self.connect()
         if not self._redis:
             raise RuntimeError("Redis client not initialized")
-
         await self._ensure_consumer_group_exists()
-        actual_consumer_name = consumer_name or self._config.consumer_name
+        cfg = self._config
+        actual_consumer_name = consumer_name or cfg.consumer_name
         if actual_consumer_name is None:
             raise ValueError("Consumer name must be set")
         self._consuming = True
-
-        logger.info(
-            f"Starting Redis event consumer: {actual_consumer_name}",
-            extra={
-                "consumer_name": actual_consumer_name,
-                "stream": self._config.stream_name,
-                "consumer_group": self._config.consumer_group,
-            },
-        )
-
+        log_extra = {"consumer_name": actual_consumer_name, "stream": cfg.stream_name}
+        log_extra["consumer_group"] = cfg.consumer_group
+        logger.info(f"Starting Redis event consumer: {actual_consumer_name}", extra=log_extra)
         while self._consuming:
             try:
                 raw_msgs = await self._redis.xreadgroup(
-                    groupname=self._config.consumer_group,
+                    groupname=cfg.consumer_group,
                     consumername=actual_consumer_name,
-                    streams={self._config.stream_name: ">"},
-                    count=self._config.stream_read_count,
-                    block=self._config.block_ms,
+                    streams={cfg.stream_name: ">"},
+                    count=cfg.stream_read_count,
+                    block=cfg.block_ms,
                 )
-                messages = cast(DecodedStreams, raw_msgs)
-                if not messages:
-                    continue
-                for _stream_name, stream_messages in messages:
+                for _stream_name, stream_messages in cast(DecodedStreams, raw_msgs) or ():
                     for message_id, message_data in stream_messages:
                         await self._process_message(message_id, message_data, actual_consumer_name)
             except asyncio.CancelledError:
@@ -96,7 +85,6 @@ class RedisBusConsumeMixin:
             except Exception as e:
                 logger.error(f"Error in consumer loop: {e}", exc_info=True)
                 await asyncio.sleep(1)
-
         self._consuming = False
         logger.info("Consumer loop stopped")
 
@@ -115,7 +103,6 @@ class RedisBusConsumeMixin:
     async def _process_message(
         self, message_id: str, message_data: dict[str, str], consumer_name: str
     ) -> None:
-        """Process a single message from the stream."""
         if not self._redis:
             return
         event_type_name = message_data.get("event_type", "unknown")
@@ -123,14 +110,13 @@ class RedisBusConsumeMixin:
         processing_start = datetime.now(UTC)
         msg_meta = {"message_id": message_id, "event_type": event_type_name, "event_id": event_id}
         span_attrs = {
-            ATTR_EVENT_TYPE: event_type_name,
-            ATTR_EVENT_ID: event_id,
-            ATTR_MESSAGING_SYSTEM: "redis",
+            attr.ATTR_EVENT_TYPE: event_type_name,
+            attr.ATTR_EVENT_ID: event_id,
+            attr.ATTR_MESSAGING_SYSTEM: "redis",
             "message.id": message_id,
             "consumer.name": consumer_name,
         }
         stream, group = self._config.stream_name, self._config.consumer_group
-
         with self._tracer.span("eventsource.event_bus.process", span_attrs) as span:
             try:
                 logger.debug(f"Processing message {message_id}: {event_type_name}", extra=msg_meta)
@@ -143,16 +129,12 @@ class RedisBusConsumeMixin:
                         logger.debug(f"Processing lag: {lag:.3f}s", extra={"lag_seconds": lag})
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Failed to calculate processing lag: {e}")
-
-                event = self._deserialize_event(event_type_name, message_data)
-                if event is None:
+                if (event := self._deserialize_event(event_type_name, message_data)) is None:
                     logger.warning(
-                        f"Unknown event type: {event_type_name}, skipping",
-                        extra={"event_type": event_type_name, "message_id": message_id},
+                        f"Unknown event type: {event_type_name}, skipping", extra=msg_meta
                     )
                     await self._redis.xack(stream, group, message_id)
                     return
-
                 await self._dispatch_event(event, message_id)
                 await self._redis.xack(stream, group, message_id)
                 self._stats.events_consumed += 1
@@ -171,10 +153,9 @@ class RedisBusConsumeMixin:
                 if span:
                     span.set_attribute("processing.success", False)
                     span.record_exception(e)
+                err_extra = {**msg_meta, "error": str(e), "duration_ms": duration_ms}
                 logger.error(
-                    f"Failed to process message {message_id}: {e}",
-                    exc_info=True,
-                    extra={**msg_meta, "error": str(e), "duration_ms": duration_ms},
+                    f"Failed to process message {message_id}: {e}", exc_info=True, extra=err_extra
                 )
 
 

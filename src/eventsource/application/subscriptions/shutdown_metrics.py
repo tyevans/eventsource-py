@@ -1,17 +1,10 @@
-"""
-Shutdown metrics instruments and snapshot models.
-
-Governed by:
-- ADR-0007 (Domain-Driven Design and Bounded Contexts)
-- ADR-0002 (Single-Responsibility Modules and File Limits)
-"""
+"""Shutdown metrics instruments and snapshot models (ADR-0002, ADR-0007)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-# Optional OpenTelemetry import - graceful degradation when not available
 try:
     from opentelemetry import metrics
 
@@ -20,8 +13,6 @@ except ImportError:
     OTEL_METRICS_AVAILABLE = False
     metrics = None  # type: ignore[assignment]
 
-
-# Module-level meter and instruments - lazy initialization
 _meter: Any = None
 _shutdown_initiated_counter: Any = None
 _shutdown_completed_counter: Any = None
@@ -44,41 +35,34 @@ def _get_meter() -> Any:
 def _init_shutdown_metrics() -> None:
     """Initialize shutdown metrics instruments if not already done."""
     global _shutdown_initiated_counter, _shutdown_completed_counter
-    global _shutdown_duration_histogram, _drain_duration_histogram
-    global _events_drained_counter
+    global _shutdown_duration_histogram, _drain_duration_histogram, _events_drained_counter
 
-    meter = _get_meter()
-    if meter is None:
+    if (meter := _get_meter()) is None:
         return
-
     if _shutdown_initiated_counter is None:
         _shutdown_initiated_counter = meter.create_counter(
             name="eventsource.shutdown.initiated_total",
             unit="1",
             description="Total number of shutdown operations initiated",
         )
-
     if _shutdown_completed_counter is None:
         _shutdown_completed_counter = meter.create_counter(
             name="eventsource.shutdown.completed_total",
             unit="1",
             description="Total number of shutdown operations completed",
         )
-
     if _shutdown_duration_histogram is None:
         _shutdown_duration_histogram = meter.create_histogram(
             name="eventsource.shutdown.duration_seconds",
             unit="s",
             description="Duration of shutdown operations in seconds",
         )
-
     if _drain_duration_histogram is None:
         _drain_duration_histogram = meter.create_histogram(
             name="eventsource.shutdown.drain_duration_seconds",
             unit="s",
             description="Duration of drain phase in seconds",
         )
-
     if _events_drained_counter is None:
         _events_drained_counter = meter.create_counter(
             name="eventsource.shutdown.events_drained_total",
@@ -133,13 +117,8 @@ def reset_shutdown_metrics() -> None:
     global _meter, _shutdown_initiated_counter, _shutdown_completed_counter
     global _shutdown_duration_histogram, _drain_duration_histogram
     global _events_drained_counter, _in_flight_gauge_value
-
-    _meter = None
-    _shutdown_initiated_counter = None
-    _shutdown_completed_counter = None
-    _shutdown_duration_histogram = None
-    _drain_duration_histogram = None
-    _events_drained_counter = None
+    _meter = _shutdown_initiated_counter = _shutdown_completed_counter = None
+    _shutdown_duration_histogram = _drain_duration_histogram = _events_drained_counter = None
     _in_flight_gauge_value = 0
 
 

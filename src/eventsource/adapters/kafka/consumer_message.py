@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from eventsource.adapters.kafka.consumer_helpers import get_header_value, get_retry_delay_remaining
-from eventsource.adapters.kafka.models import DeserializationError
+from eventsource.adapters.kafka.models import DeserializationError, KafkaEventBusStats
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from eventsource.adapters._bus.retry_scheduler import RetryScheduler
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
-    from eventsource.adapters.kafka.models import KafkaEventBusStats
     from eventsource.adapters.kafka.serialization import EventSerializer
 
 try:
@@ -30,9 +29,7 @@ try:
 
     PROPAGATION_AVAILABLE = OTEL_AVAILABLE
 except ImportError:
-    extract = None  # type: ignore[assignment]
-    Status = None  # type: ignore[assignment, misc]
-    StatusCode = None  # type: ignore[assignment, misc]
+    extract = Status = StatusCode = None  # type: ignore[assignment, misc]
     PROPAGATION_AVAILABLE = False
 
 logger = logging.getLogger("eventsource.bus.kafka")
@@ -58,7 +55,6 @@ class KafkaConsumerMessageMixin:
     _warn_uncommitted: Any
 
     async def _process_message(self, message: Any, skip_await_retry: bool = False) -> None:
-        """Process a single Kafka message with optional tracing."""
         if not skip_await_retry and (remaining := get_retry_delay_remaining(message.headers)) > 0:
 
             async def _retry_action(msg: Any = message) -> None:
@@ -67,43 +63,31 @@ class KafkaConsumerMessageMixin:
             name = f"kafka-retry-p{message.partition}-o{message.offset}"
             self._retry_scheduler.schedule(remaining, _retry_action, name=name)
             return
-
         self._stats.events_consumed += 1
         self._stats.last_consume_at = datetime.now(UTC)
         t, p, o = message.topic, message.partition, message.offset
         event_type_name = self._get_header_value(message.headers, "event_type")
         if self._metrics and event_type_name:
-            attrs = {
-                "messaging.system": "kafka",
-                "messaging.destination": t,
-                "messaging.kafka.partition": p,
-                "event.type": event_type_name,
-            }
-            self._metrics.messages_consumed.add(1, attributes=attrs)
-
+            m_attrs = {"messaging.system": "kafka", "messaging.destination": t}
+            m_attrs.update({"messaging.kafka.partition": p, "event.type": event_type_name})
+            self._metrics.messages_consumed.add(1, attributes=m_attrs)
         msg_meta = {"topic": t, "partition": p, "offset": o}
         if not event_type_name:
             logger.error("Message missing event_type header", extra=msg_meta)
             if self._consumer:
                 await self._consumer.commit()
             return
-
         logger.debug("Processing message", extra={"event_type": event_type_name, **msg_meta})
         if self._enable_tracing and PROPAGATION_AVAILABLE and extract is not None:
-            context = extract(self._extract_trace_context(message.headers))
-            span_attrs = {
-                attr.ATTR_MESSAGING_SYSTEM: "kafka",
-                "messaging.source": t,
-                "messaging.source_kind": "topic",
-                attr.ATTR_MESSAGING_OPERATION: "receive",
-                "messaging.kafka.partition": p,
-                "messaging.kafka.offset": o,
-                "messaging.kafka.consumer_group": self._config.consumer_group,
-                attr.ATTR_EVENT_TYPE: event_type_name,
-            }
-            span_name = f"eventsource.event_bus.consume {event_type_name}"
+            ctx = extract(self._extract_trace_context(message.headers))
+            s_attrs = {attr.ATTR_MESSAGING_SYSTEM: "kafka", "messaging.source": t}
+            s_attrs.update({"messaging.source_kind": "topic", "messaging.kafka.partition": p})
+            s_attrs.update({attr.ATTR_MESSAGING_OPERATION: "receive", "messaging.kafka.offset": o})
+            s_attrs["messaging.kafka.consumer_group"] = self._config.consumer_group
+            s_attrs[attr.ATTR_EVENT_TYPE] = event_type_name
+            name = f"eventsource.event_bus.consume {event_type_name}"
             with self._tracer.span_with_kind(
-                name=span_name, kind=SpanKindEnum.CONSUMER, attributes=span_attrs, context=context
+                name=name, kind=SpanKindEnum.CONSUMER, attributes=s_attrs, context=ctx
             ) as span:
                 await self._process_message_with_span(message, event_type_name, span)
         else:
@@ -133,26 +117,21 @@ class KafkaConsumerMessageMixin:
             except DeserializationError as e:
                 err_extra = {"event_type": event_type_name, "error": str(e)}
                 logger.error("Deserialization error, sending directly to DLQ", extra=err_extra)
-                reason = "deserialization_error"
-                retained = await self._send_to_dlq(message, e, retry_count, reason=reason)
-                if retained and self._consumer:
-                    await self._consumer.commit()
-                elif not retained:
-                    self._warn_uncommitted(message, reason)
+                if await self._send_to_dlq(message, e, retry_count, reason="deserialization_error"):
+                    if self._consumer:
+                        await self._consumer.commit()
+                else:
+                    self._warn_uncommitted(message, "deserialization_error")
                 self._fail_span(span, e)
-                self._record_duration(start_time, message.topic)
-                return
-
+                return self._record_duration(start_time, message.topic)
             if span is not None:
                 span.set_attribute(attr.ATTR_EVENT_ID, str(event.event_id))
                 span.set_attribute(attr.ATTR_AGGREGATE_ID, str(event.aggregate_id))
                 span.set_attribute(attr.ATTR_AGGREGATE_TYPE, event.aggregate_type)
-
             if handlers := self._handlers_for(type(event)):
                 await self._dispatch_to_handlers(event, handlers)
             else:
                 logger.debug("No handlers for event type", extra={"event_type": event_type_name})
-
             if self._consumer:
                 await self._consumer.commit()
             self._stats.events_processed_success += 1
