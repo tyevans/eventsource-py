@@ -33,28 +33,11 @@ TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class InMemoryEventBus(BaseEventBus):
-    """
-    In-memory event bus for event distribution.
+    """In-memory event bus for event distribution within the same process.
 
-    This implementation distributes events to handlers within the same process.
-    Supports both synchronous (blocking) and asynchronous (fire-and-forget) modes.
-
-    Features:
-    - Thread-safe subscription management
-    - Support for sync and async handlers
-    - Wildcard subscriptions (receive all events)
-    - Error isolation (handler failures don't stop other handlers)
-    - Optional OpenTelemetry tracing
-    - Background task management with proper cleanup
-
-    Example:
-        >>> bus = InMemoryEventBus()
-        >>> bus.subscribe(OrderCreated, my_handler)
-        >>> await bus.publish([OrderCreated(...)])
-
-    Thread Safety:
-        - Subscription methods (subscribe, unsubscribe) are thread-safe
-        - Publishing should only be called from async context
+    Supports synchronous and asynchronous modes, thread-safe subscriptions,
+    wildcard handlers, error isolation, optional OpenTelemetry tracing, and
+    background task cleanup.
     """
 
     def __init__(
@@ -65,16 +48,7 @@ class InMemoryEventBus(BaseEventBus):
         event_registry: EventRegistry | None = None,
         max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
     ) -> None:
-        """
-        Initialize the event bus with empty subscriber registry.
-
-        Args:
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: If True and OpenTelemetry is available, emit traces.
-                          Ignored if tracer is explicitly provided.
-            event_registry: Optional registry for resolving event classes.
-        """
+        """Initialize the event bus with empty subscriber registry."""
         super().__init__(
             event_registry=event_registry,
             max_background_tasks=max_background_tasks,
@@ -113,20 +87,7 @@ class InMemoryEventBus(BaseEventBus):
         events: list[DomainEvent],
         background: bool = False,
     ) -> None:
-        """
-        Publish events to all registered subscribers.
-
-        Events are processed sequentially to maintain ordering guarantees.
-        Handler failures are logged but don't prevent other handlers from running.
-
-        Args:
-            events: Events to publish
-            background: If True, dispatch events in background without blocking
-
-        Note:
-            Background publishing improves API response times but introduces
-            eventual consistency - read-after-write may see stale data briefly.
-        """
+        """Publish events sequentially to all registered subscribers."""
         if not events:
             return
 
@@ -138,7 +99,6 @@ class InMemoryEventBus(BaseEventBus):
                 extra={"event_count": len(events)},
             )
         else:
-            # Synchronous - wait for all handlers
             await self._publish_all(events)
 
     def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
@@ -147,12 +107,7 @@ class InMemoryEventBus(BaseEventBus):
         self._stats["background_tasks_completed"] += 1
 
     async def _publish_all(self, events: list[DomainEvent]) -> None:
-        """
-        Publish all events sequentially.
-
-        Args:
-            events: Events to publish
-        """
+        """Publish all events sequentially."""
         for event in events:
             with self._published_lock:
                 self._published.append(event)
@@ -160,12 +115,7 @@ class InMemoryEventBus(BaseEventBus):
             self._stats["events_published"] += 1
 
     async def _dispatch_event(self, event: DomainEvent) -> None:
-        """
-        Dispatch a single event to all matching handlers.
-
-        Args:
-            event: The event to dispatch
-        """
+        """Dispatch a single event to all matching handlers."""
         event_type = type(event)
         handlers = self._handlers_for(event_type)
 
@@ -201,26 +151,12 @@ class InMemoryEventBus(BaseEventBus):
     async def _invoke_handlers(
         self, handlers: tuple[HandlerAdapter, ...], event: DomainEvent
     ) -> None:
-        """
-        Invoke all handlers for an event concurrently.
-
-        Args:
-            handlers: Tuple of HandlerAdapter instances
-            event: The event to handle
-        """
-        # Process handlers concurrently but wait for all to complete
+        """Invoke all handlers for an event concurrently."""
         tasks = [self._safe_handle(adapter, event) for adapter in handlers]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _safe_handle(self, adapter: HandlerAdapter, event: DomainEvent) -> None:
-        """
-        Safely execute a handler, catching and logging exceptions.
-
-        Args:
-            adapter: The HandlerAdapter wrapping the handler
-            event: The event to handle
-        """
-        # Trace handler execution with dynamic attributes and error recording
+        """Safely execute a handler, catching and logging exceptions."""
         with self._tracer.span(
             "eventsource.event_bus.handle",
             {
@@ -260,31 +196,11 @@ class InMemoryEventBus(BaseEventBus):
                 )
 
     def get_stats(self) -> dict[str, int]:
-        """
-        Get statistics about event bus operation.
-
-        Returns:
-            Dictionary with counts:
-            - events_published: Total events published
-            - handlers_invoked: Total successful handler invocations
-            - handler_errors: Total handler errors
-            - background_tasks_created: Background tasks started
-            - background_tasks_completed: Background tasks finished
-        """
+        """Get statistics about event bus operation."""
         return dict(self._stats)
 
     async def shutdown(self, timeout: float = 30.0) -> None:
-        """
-        Shutdown the event bus and wait for background tasks to complete.
-
-        Args:
-            timeout: Maximum time to wait for tasks to complete in seconds
-
-        Note:
-            After shutdown, new publish calls with background=True will still
-            create tasks, but those won't be waited for. Call this method
-            during application shutdown to ensure all events are processed.
-        """
+        """Shutdown the event bus and wait for background tasks to complete."""
         await self._drain_background(timeout)
         logger.info("Event bus shutdown complete")
 
