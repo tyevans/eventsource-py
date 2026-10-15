@@ -22,14 +22,22 @@ Example:
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Any, TypeVar
 
-from eventsource.adapters.memory import InMemoryCheckpointRepository, InMemoryDLQRepository
+from eventsource.adapters.memory import (
+    InMemoryCheckpointRepository,
+    InMemoryDLQRepository,
+    InMemorySnapshotStore,
+)
 from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.adapters.memory.store import InMemoryEventStore
+from eventsource.application.aggregates import AggregateRepository
+from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.event import DomainEvent
+from eventsource.testing.assertions import EventAssertions
 
 TEvent = TypeVar("TEvent", bound=DomainEvent)
+TAggregate = TypeVar("TAggregate", bound=AggregateRoot[Any])
 
 
 class InMemoryTestHarness:
@@ -45,6 +53,7 @@ class InMemoryTestHarness:
     - event_bus: InMemoryEventBus for publishing/subscribing to events
     - checkpoint_repo: InMemoryCheckpointRepository for projection checkpoints
     - dlq_repo: InMemoryDLQRepository for dead letter queue
+    - snapshot_store: InMemorySnapshotStore for aggregate state snapshots
 
     Example:
         >>> @pytest.fixture
@@ -76,6 +85,7 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
+        self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
 
     @property
     def event_store(self) -> InMemoryEventStore:
@@ -142,6 +152,16 @@ class InMemoryTestHarness:
         return self._dlq_repo
 
     @property
+    def snapshot_store(self) -> InMemorySnapshotStore:
+        """Get the in-memory snapshot store."""
+        return self._snapshot_store
+
+    @property
+    def assertions(self) -> EventAssertions:
+        """Get an EventAssertions helper bound to currently published events."""
+        return EventAssertions(self.published_events)
+
+    @property
     def published_events(self) -> list[DomainEvent]:
         """
         Get all events published through the event bus.
@@ -158,6 +178,25 @@ class InMemoryTestHarness:
             >>> assert harness.published_events[0] == event1
         """
         return self._event_bus.published_events
+
+    def create_repository(
+        self,
+        aggregate_factory: type[TAggregate],
+        *,
+        snapshot_threshold: int | None = None,
+        with_snapshots: bool = False,
+    ) -> AggregateRepository[TAggregate]:
+        """Create an AggregateRepository pre-wired to the harness store, bus, and optional snapshot store."""
+        return AggregateRepository(
+            event_store=self._event_store,
+            aggregate_factory=aggregate_factory,
+            event_publisher=self._event_bus,
+            snapshot_store=self._snapshot_store
+            if (with_snapshots or snapshot_threshold is not None)
+            else None,
+            snapshot_threshold=snapshot_threshold,
+            enable_tracing=False,
+        )
 
     def reset(self) -> None:
         """
@@ -177,6 +216,7 @@ class InMemoryTestHarness:
         self._event_bus = InMemoryEventBus(enable_tracing=False)
         self._checkpoint_repo = InMemoryCheckpointRepository(enable_tracing=False)
         self._dlq_repo = InMemoryDLQRepository(enable_tracing=False)
+        self._snapshot_store = InMemorySnapshotStore(enable_tracing=False)
 
     def clear_published_events(self) -> None:
         """
