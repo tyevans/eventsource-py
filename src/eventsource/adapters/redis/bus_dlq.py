@@ -1,9 +1,4 @@
-"""Dead letter queue and pending message recovery for Redis event bus.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Dead letter queue and pending message recovery for Redis event bus."""
 
 from __future__ import annotations
 
@@ -11,10 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from eventsource.adapters.redis.config import (
-    DecodedEntry,
-    DecodedPending,
-)
+from eventsource.adapters.redis.config import DecodedEntry, DecodedPending
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -48,25 +40,7 @@ class RedisBusDLQMixin:
         max_retries: int | None = None,
         stream_read_count: int | None = None,
     ) -> dict[str, int]:
-        """Recover pending messages that have been idle too long.
-
-        Uses XPENDING to find messages that have been read but not acknowledged,
-        and XCLAIM to reclaim them for reprocessing. Messages that have been
-        retried too many times are sent to a dead letter queue.
-
-        Args:
-            min_idle_time_ms: Minimum idle time in ms before claiming (default: from config)
-            max_retries: Maximum retries before sending to DLQ (default: from config)
-            stream_read_count: Maximum messages to recover in one batch (default: from config)
-
-        Returns:
-            Dictionary with recovery statistics:
-            - checked: Number of pending messages checked
-            - claimed: Number of messages claimed
-            - reprocessed: Number of messages reprocessed successfully
-            - dlq: Number of messages sent to DLQ
-            - failed: Number of recovery failures
-        """
+        """Recover pending messages that have been idle too long via XPENDING and XCLAIM."""
         if not self._connected:
             await self.connect()
 
@@ -80,13 +54,7 @@ class RedisBusDLQMixin:
         if stream_read_count is None:
             stream_read_count = self._config.stream_read_count
 
-        stats = {
-            "checked": 0,
-            "claimed": 0,
-            "reprocessed": 0,
-            "dlq": 0,
-            "failed": 0,
-        }
+        stats = {"checked": 0, "claimed": 0, "reprocessed": 0, "dlq": 0, "failed": 0}
 
         try:
             pending_info = await self._redis.xpending(
@@ -286,14 +254,7 @@ class RedisBusDLQMixin:
                     count=count,
                 ),
             )
-
-            return [
-                {
-                    "message_id": msg_id,
-                    "data": data,
-                }
-                for msg_id, data in messages
-            ]
+            return [{"message_id": msg_id, "data": data} for msg_id, data in messages]
 
         except Exception as e:
             logger.error(f"Failed to get DLQ messages: {e}", exc_info=True)
@@ -320,7 +281,6 @@ class RedisBusDLQMixin:
                 return False
 
             _, data = messages[0]
-
             replay_data = {
                 k: v
                 for k, v in data.items()
@@ -334,17 +294,12 @@ class RedisBusDLQMixin:
                     fields=cast("dict[Any, Any]", replay_data),
                 ),
             )
-
             await self._redis.xdel(self._config.dlq_stream_name, message_id)
 
             logger.info(
                 f"Replayed DLQ message {message_id} as {new_message_id}",
-                extra={
-                    "original_message_id": message_id,
-                    "new_message_id": new_message_id,
-                },
+                extra={"original_message_id": message_id, "new_message_id": new_message_id},
             )
-
             return True
 
         except Exception as e:
