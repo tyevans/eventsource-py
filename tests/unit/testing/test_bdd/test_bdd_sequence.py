@@ -76,6 +76,12 @@ class TestThenEventSequence:
         assert len(result) == 1
         assert result[0].name == "test-name"
 
+    async def test_passes_for_variadic_event_types(self, harness: InMemoryTestHarness) -> None:
+        events = [_created(1), _updated(2), _deleted(3)]
+        await harness.event_bus.publish(events)
+        result = then_event_sequence(harness, SampleCreated, SampleUpdated, SampleDeleted)
+        assert result == events
+
 
 class TestThenEventCount:
     async def test_passes_for_correct_count(self, harness: InMemoryTestHarness) -> None:
