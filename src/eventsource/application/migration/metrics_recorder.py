@@ -52,44 +52,13 @@ class MigrationMetrics:
         if self._meter is None:
             self._setup_noop()
             return
-
-        self._events_copied_counter = self._meter.create_counter(
-            name="migration.events.copied",
-            unit="events",
-            description="Total number of events copied during bulk copy phase",
-        )
-        self._meter.create_observable_gauge(
-            name="migration.events.copied.rate",
-            callbacks=[self._observe_events_copied_rate],
-            unit="events/s",
-            description="Current rate of events being copied (events per second)",
-        )
-        self._meter.create_observable_gauge(
-            name="migration.sync.lag",
-            callbacks=[self._observe_sync_lag],
-            unit="events",
-            description="Current sync lag in number of events during dual-write",
-        )
-        self._phase_duration_histogram = self._meter.create_histogram(
-            name="migration.phase.duration",
-            unit="s",
-            description="Time spent in each migration phase in seconds",
-        )
-        self._cutover_duration_histogram = self._meter.create_histogram(
-            name="migration.cutover.duration",
-            unit="ms",
-            description="Time taken for cutover operations in milliseconds",
-        )
-        self._failed_target_writes_counter = self._meter.create_counter(
-            name="migration.target.writes.failed",
-            unit="writes",
-            description="Number of failed writes to target store during dual-write",
-        )
-        self._verification_failures_counter = self._meter.create_counter(
-            name="migration.verification.failures",
-            unit="failures",
-            description="Number of consistency verification failures",
-        )
+        self._events_copied_counter = self._meter.create_counter(name="migration.events.copied", unit="events", description="Total number of events copied during bulk copy phase")  # fmt: skip
+        self._meter.create_observable_gauge(name="migration.events.copied.rate", callbacks=[self._observe_events_copied_rate], unit="events/s", description="Current rate of events being copied (events per second)")  # fmt: skip
+        self._meter.create_observable_gauge(name="migration.sync.lag", callbacks=[self._observe_sync_lag], unit="events", description="Current sync lag in number of events during dual-write")  # fmt: skip
+        self._phase_duration_histogram = self._meter.create_histogram(name="migration.phase.duration", unit="s", description="Time spent in each migration phase in seconds")  # fmt: skip
+        self._cutover_duration_histogram = self._meter.create_histogram(name="migration.cutover.duration", unit="ms", description="Time taken for cutover operations in milliseconds")  # fmt: skip
+        self._failed_target_writes_counter = self._meter.create_counter(name="migration.target.writes.failed", unit="writes", description="Number of failed writes to target store during dual-write")  # fmt: skip
+        self._verification_failures_counter = self._meter.create_counter(name="migration.verification.failures", unit="failures", description="Number of consistency verification failures")  # fmt: skip
 
     def _setup_noop(self) -> None:
         self._events_copied_counter = NoOpCounter()
@@ -116,8 +85,7 @@ class MigrationMetrics:
             yield Observation(value=self._sync_lag_value, attributes=self._base_attributes())
 
     def record_events_copied(self, count: int, rate_events_per_sec: float | None = None) -> None:
-        attrs = self._base_attributes()
-        self._events_copied_counter.add(count, attrs)
+        self._events_copied_counter.add(count, self._base_attributes())
         if rate_events_per_sec is not None:
             self._events_copied_rate_value = rate_events_per_sec
         self._events_copied_count += count
@@ -126,13 +94,15 @@ class MigrationMetrics:
         self._sync_lag_value = max(0, lag_events)
 
     def record_phase_duration(self, phase: str, duration_seconds: float) -> None:
-        attrs = {**self._base_attributes(), "phase": phase}
-        self._phase_duration_histogram.record(duration_seconds, attrs)
+        self._phase_duration_histogram.record(
+            duration_seconds, {**self._base_attributes(), "phase": phase}
+        )
         self._phase_durations[phase] = self._phase_durations.get(phase, 0.0) + duration_seconds
 
     def record_cutover_duration(self, duration_ms: float, success: bool = True) -> None:
-        attrs = {**self._base_attributes(), "success": str(success).lower()}
-        self._cutover_duration_histogram.record(duration_ms, attrs)
+        self._cutover_duration_histogram.record(
+            duration_ms, {**self._base_attributes(), "success": str(success).lower()}
+        )
         self._cutover_durations.append(duration_ms)
 
     def record_failed_target_write(self, error_type: str | None = None) -> None:
@@ -171,26 +141,26 @@ class MigrationMetrics:
 
     def get_snapshot(self) -> MigrationMetricSnapshot:
         return MigrationMetricSnapshot(
-            events_copied=self._events_copied_count,
-            events_copied_rate=self._events_copied_rate_value,
-            sync_lag_events=self._sync_lag_value,
-            failed_target_writes=self._failed_writes_count,
-            verification_failures=self._verification_failures_count,
-            phase_durations=dict(self._phase_durations),
-            cutover_durations=list(self._cutover_durations),
+            self._events_copied_count,
+            self._events_copied_rate_value,
+            self._sync_lag_value,
+            self._failed_writes_count,
+            self._verification_failures_count,
+            dict(self._phase_durations),
+            list(self._cutover_durations),
         )
 
     @property
     def metrics_enabled(self) -> bool:
-        return self.enable_metrics and OTEL_METRICS_AVAILABLE
+        return self.enable_metrics and OTEL_METRICS_AVAILABLE  # fmt: skip
 
     @property
     def current_sync_lag(self) -> int:
-        return self._sync_lag_value
+        return self._sync_lag_value  # fmt: skip
 
     @property
     def current_copy_rate(self) -> float:
-        return self._events_copied_rate_value
+        return self._events_copied_rate_value  # fmt: skip
 
 
 __all__ = ["MigrationMetrics"]

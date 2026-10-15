@@ -60,9 +60,7 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
     _handler_circuit_breaker: CircuitBreaker | None = field(default=None, init=False, repr=False)
     _retry: RetryableOperation | None = field(default=None, init=False, repr=False)
     _metrics: SubscriptionMetrics | None = field(default=None, init=False, repr=False)
-    _handlers: dict[type[DomainEvent], _LiveEventHandler] = field(
-        default_factory=dict, init=False, repr=False
-    )
+    _handlers: dict[type[DomainEvent], _LiveEventHandler] = field(default_factory=dict, init=False, repr=False)  # fmt: skip
 
     def __post_init__(self) -> None:
         self._tracer = self.tracer or create_tracer(__name__, self.enable_tracing)
@@ -74,26 +72,22 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
         self._batch_capable = supports_batch_handling(subscriber)
         self._batch_only = not self._has_handle and self._batch_capable
         if not self._has_handle and not self._batch_capable:
-            msg = (
+            raise TypeError(
                 f"Subscriber {type(subscriber).__name__!r} for subscription "
                 f"{self.subscription.name!r} implements neither handle() nor "
                 "handle_batch(); it satisfies no subscriber Protocol and has "
                 "no way to receive events."
             )
-            raise TypeError(msg)
         self._filter = EventFilter.from_config_and_subscriber(self.config, subscriber)
         if self.config.circuit_breaker_enabled:
             cb_cfg = self.config.get_circuit_breaker_config()
             self._infra_circuit_breaker = CircuitBreaker(cb_cfg)
             self._handler_circuit_breaker = CircuitBreaker(cb_cfg)
-        self._retry = RetryableOperation(
-            config=self.config.get_retry_config(), circuit_breaker=self._infra_circuit_breaker
-        )
+        self._retry = RetryableOperation(config=self.config.get_retry_config(), circuit_breaker=self._infra_circuit_breaker)  # fmt: skip
         self._metrics = SubscriptionMetrics(self.subscription.name, self.enable_metrics)
 
     async def start(self, buffer_events: bool = False) -> None:
-        span_attrs = {ATTR_SUBSCRIPTION_NAME: self.subscription.name}
-        with self._tracer.span("eventsource.live_runner.start", span_attrs):
+        with self._tracer.span("eventsource.live_runner.start", {ATTR_SUBSCRIPTION_NAME: self.subscription.name}):  # fmt: skip
             if self._running:
                 return
             self._running, self._buffer_enabled = True, buffer_events
@@ -104,17 +98,13 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
                 await self.subscription.transition_to(SubscriptionState.LIVE)
                 if self._metrics:
                     self._metrics.record_state("live")
-            log_extra: dict[str, object] = {
-                "subscription": self.subscription.name,
-                "buffer_enabled": buffer_events,
-            }
+            log_extra: dict[str, object] = {"subscription": self.subscription.name, "buffer_enabled": buffer_events}  # fmt: skip
             if self.config.tenant_id:
                 log_extra["tenant_id"] = str(self.config.tenant_id)
             logger.info("Live runner started", extra=log_extra)
 
     async def stop(self) -> None:
-        span_attrs = {ATTR_SUBSCRIPTION_NAME: self.subscription.name}
-        with self._tracer.span("eventsource.live_runner.stop", span_attrs):
+        with self._tracer.span("eventsource.live_runner.stop", {ATTR_SUBSCRIPTION_NAME: self.subscription.name}):  # fmt: skip
             if not self._running:
                 return
             self._running, self._subscribed = False, False
@@ -129,34 +119,31 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
                 "skipped_filtered": self._stats.events_skipped_filtered,
                 "failed": self._stats.events_failed,
             }
-            logger.info(
-                "Live runner stopped",
-                extra={"subscription": self.subscription.name, "stats": stats},
-            )
+            logger.info("Live runner stopped", extra={"subscription": self.subscription.name, "stats": stats})  # fmt: skip
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        return self._running  # fmt: skip
 
     @property
     def _stop_requested(self) -> bool:
-        return self._stop_event.is_set()
+        return self._stop_event.is_set()  # fmt: skip
 
     @property
     def buffer_size(self) -> int:
-        return self._buffered_wakes
+        return self._buffered_wakes  # fmt: skip
 
     @property
     def pause_buffer_size(self) -> int:
-        return self._paused_wakes
+        return self._paused_wakes  # fmt: skip
 
     @property
     def events_buffered_during_pause(self) -> int:
-        return self._events_buffered_during_pause
+        return self._events_buffered_during_pause  # fmt: skip
 
     @property
     def stats(self) -> LiveRunnerStats:
-        return self._stats
+        return self._stats  # fmt: skip
 
     @property
     def flow_controller(self) -> FlowController:
@@ -165,19 +152,19 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
 
     @property
     def flow_control_stats(self) -> FlowControlStats:
-        return self.flow_controller.stats
+        return self.flow_controller.stats  # fmt: skip
 
     @property
     def handler_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._handler_circuit_breaker
+        return self._handler_circuit_breaker  # fmt: skip
 
     @property
     def infra_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._infra_circuit_breaker
+        return self._infra_circuit_breaker  # fmt: skip
 
     @property
     def retry_operation(self) -> RetryableOperation | None:
-        return self._retry
+        return self._retry  # fmt: skip
 
     @property
     def event_filter(self) -> EventFilter:
@@ -186,7 +173,7 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
 
     @property
     def filter_stats(self) -> FilterStats:
-        return self.event_filter.stats
+        return self.event_filter.stats  # fmt: skip
 
     @property
     def metrics(self) -> SubscriptionMetrics:

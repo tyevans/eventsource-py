@@ -39,23 +39,15 @@ def create_shutdown_result(
 ) -> ShutdownResult:
     """Create a ShutdownResult and update metrics snapshot on coordinator."""
     duration = (datetime.now(UTC) - start_time).total_seconds()
-    if forced and error_msg and "double signal" in error_msg.lower():
-        outcome = "forced"
-    else:
-        outcome = "timeout" if forced else "clean"
-    reason = coordinator._shutdown_reason
-    if forced and reason != ShutdownReason.DOUBLE_SIGNAL:
-        reason = ShutdownReason.TIMEOUT
+    outcome = "forced" if (forced and error_msg and "double signal" in error_msg.lower()) else ("timeout" if forced else "clean")  # fmt: skip
+    reason = ShutdownReason.TIMEOUT if (forced and coordinator._shutdown_reason != ShutdownReason.DOUBLE_SIGNAL) else coordinator._shutdown_reason  # fmt: skip
     in_flight = coordinator._in_flight_at_start
     not_drained = max(0, in_flight - events_drained)
     try:
         record_shutdown_completed(outcome, duration)
     except Exception as e:
         logger.debug("Failed to record shutdown completed metric", extra={"error": str(e)})
-    drain_dur = coordinator._drain_duration_seconds
-    coordinator._last_metrics_snapshot = ShutdownMetricsSnapshot(
-        duration, drain_dur, events_drained, checkpoints_saved, in_flight, outcome
-    )
+    coordinator._last_metrics_snapshot = ShutdownMetricsSnapshot(duration, coordinator._drain_duration_seconds, events_drained, checkpoints_saved, in_flight, outcome)  # fmt: skip
     logger.info(
         "Shutdown complete",
         extra={
@@ -72,18 +64,7 @@ def create_shutdown_result(
             "events_not_drained": not_drained,
         },
     )
-    return ShutdownResult(
-        coordinator._phase,
-        duration,
-        subscriptions_stopped,
-        events_drained,
-        checkpoints_saved,
-        forced,
-        error_msg,
-        reason,
-        in_flight,
-        not_drained,
-    )
+    return ShutdownResult(coordinator._phase, duration, subscriptions_stopped, events_drained, checkpoints_saved, forced, error_msg, reason, in_flight, not_drained)  # fmt: skip
 
 
 async def execute_shutdown_sequence(
@@ -94,21 +75,11 @@ async def execute_shutdown_sequence(
     close_func: Callable[[], Awaitable[None]] | None = None,
 ) -> ShutdownResult:
     """Execute graceful shutdown sequence across coordinator phases."""
-    start_time = datetime.now(UTC)
-    drained, saved, stopped = 0, 0, 0
-    forced, error_msg = False, None
+    start_time, drained, saved, stopped, forced, error_msg = datetime.now(UTC), 0, 0, 0, False, None
     coordinator._drain_duration_seconds = coordinator._drain_start_time = 0.0
     stop_timeout, drain_timeout, checkpoint_timeout = coordinator._get_adjusted_timeouts()
     if coordinator._shutdown_deadline is not None:
-        logger.info(
-            "Using deadline-adjusted timeouts",
-            extra={
-                "stop_timeout": stop_timeout,
-                "drain_timeout": drain_timeout,
-                "checkpoint_timeout": checkpoint_timeout,
-                "deadline": coordinator._shutdown_deadline.isoformat(),
-            },
-        )
+        logger.info("Using deadline-adjusted timeouts", extra={"stop_timeout": stop_timeout, "drain_timeout": drain_timeout, "checkpoint_timeout": checkpoint_timeout, "deadline": coordinator._shutdown_deadline.isoformat()})  # fmt: skip
     try:
         record_shutdown_initiated()
     except Exception as e:
@@ -117,8 +88,7 @@ async def execute_shutdown_sequence(
     try:
         await coordinator._execute_pre_shutdown_hooks()
         coordinator._phase = ShutdownPhase.STOPPING
-        extra_stop = {"phase": coordinator._phase.value, "timeout": stop_timeout}
-        logger.info("Shutdown phase: stopping", extra=extra_stop)
+        logger.info("Shutdown phase: stopping", extra={"phase": coordinator._phase.value, "timeout": stop_timeout})  # fmt: skip
         try:
             await asyncio.wait_for(stop_func(), timeout=stop_timeout)
             stopped = 1
@@ -126,28 +96,17 @@ async def execute_shutdown_sequence(
             logger.warning("Stop phase timed out", extra={"timeout": stop_timeout})
             forced = True
         if coordinator._phase == ShutdownPhase.FORCED:
-            msg = "Forced by double signal"
-            return coordinator._create_result(start_time, stopped, drained, saved, True, msg)
+            return coordinator._create_result(start_time, stopped, drained, saved, True, "Forced by double signal")  # fmt: skip
 
         if drain_func and not forced and drain_timeout > 0:
             coordinator._phase = ShutdownPhase.DRAINING
             drain_start = coordinator._drain_start_time = time.perf_counter()
-            extra_drain = {
-                "phase": coordinator._phase.value,
-                "timeout": drain_timeout,
-                "checkpoint_interval": coordinator.checkpoint_interval,
-            }
-            logger.info("Shutdown phase: draining in-flight events", extra=extra_drain)
+            logger.info("Shutdown phase: draining in-flight events", extra={"phase": coordinator._phase.value, "timeout": drain_timeout, "checkpoint_interval": coordinator.checkpoint_interval})  # fmt: skip
             if checkpoint_func and coordinator.checkpoint_interval > 0:
                 coordinator._start_periodic_checkpoints(checkpoint_func)
             try:
                 drained = await asyncio.wait_for(drain_func(), timeout=drain_timeout)
-                periodic_saved = coordinator._periodic_checkpoints_saved
-                extra_done = {
-                    "events_drained": drained,
-                    "periodic_checkpoints_saved": periodic_saved,
-                }
-                logger.info("Events drained successfully", extra=extra_done)
+                logger.info("Events drained successfully", extra={"events_drained": drained, "periodic_checkpoints_saved": coordinator._periodic_checkpoints_saved})  # fmt: skip
             except TimeoutError:
                 logger.warning("Drain phase timed out", extra={"timeout": drain_timeout})
                 forced = True
@@ -162,13 +121,11 @@ async def execute_shutdown_sequence(
         elif drain_func and drain_timeout == 0:
             logger.info("Skipping drain phase due to time constraint")
         if coordinator._phase == ShutdownPhase.FORCED:
-            msg = "Forced by double signal"
-            return coordinator._create_result(start_time, stopped, drained, saved, True, msg)
+            return coordinator._create_result(start_time, stopped, drained, saved, True, "Forced by double signal")  # fmt: skip
 
         if checkpoint_func and checkpoint_timeout > 0:
             coordinator._phase = ShutdownPhase.CHECKPOINTING
-            extra_cp = {"phase": coordinator._phase.value, "timeout": checkpoint_timeout}
-            logger.info("Shutdown phase: saving checkpoints", extra=extra_cp)
+            logger.info("Shutdown phase: saving checkpoints", extra={"phase": coordinator._phase.value, "timeout": checkpoint_timeout})  # fmt: skip
             try:
                 saved = await asyncio.wait_for(checkpoint_func(), timeout=checkpoint_timeout)
                 logger.info("Checkpoints saved successfully", extra={"checkpoints_saved": saved})
