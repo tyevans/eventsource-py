@@ -197,6 +197,18 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
         except AggregateNotFoundError:
             return None
 
+    async def exists(self, aggregate_id: UUID) -> bool:
+        """
+        Check if an aggregate exists.
+
+        Args:
+            aggregate_id: ID of the aggregate to check
+
+        Returns:
+            True if aggregate has events, False otherwise.
+        """
+        return await super().exists(aggregate_id)
+
     async def execute(
         self,
         aggregate_id: UUID,
