@@ -1,49 +1,8 @@
 """
 Subscription management for eventsource.
 
-This module provides catch-up subscriptions with seamless transition
-to live event streaming.
-
-Example:
-    >>> from eventsource.application.subscriptions import SubscriptionManager, SubscriptionConfig
-    >>>
-    >>> manager = SubscriptionManager(event_store, event_bus, checkpoint_repo)
-    >>> await manager.subscribe(my_projection)
-    >>> await manager.start()
-
-Classes:
-    SubscriptionConfig: Configuration for subscriptions
-    StartPosition: Type for start position options
-    CheckpointStrategy: Enum for checkpoint strategies
-    SubscriptionState: Enum for subscription states
-    SubscriptionStatus: Status snapshot for health checks
-    Subscription: Main subscription class with state machine
-
-Protocols:
-    Subscriber: Protocol for async event subscribers
-    SyncSubscriber: Protocol for sync event subscribers
-    BatchSubscriber: Protocol for batch event subscribers
-
-Base Classes:
-    BaseSubscriber: Abstract base class for subscribers
-    BatchAwareSubscriber: Base class with batch processing support
-    FilteringSubscriber: Base class with event filtering support
-
-Type Aliases:
-    EventHandler: Async handler for single events
-    BatchHandler: Async handler for event batches
-
-Functions:
-    is_valid_transition: Check if state transition is valid
-    supports_batch_handling: Check if subscriber supports batch processing
-    get_subscribed_event_types: Get event types from subscriber
-
-Exceptions:
-    SubscriptionError: Base exception
-    SubscriptionConfigError: Invalid configuration
-    SubscriptionStateError: Invalid state operation
-    SubscriptionAlreadyExistsError: Duplicate subscription
-    CheckpointNotFoundError: Missing checkpoint
+Provides catch-up subscriptions with seamless transition to live event
+streaming, flow control, error classification, health checks, and metrics.
 """
 
 from eventsource.application.subscriptions.config import (
@@ -184,10 +143,7 @@ from eventsource.application.subscriptions.transition import (
     TransitionPhase,
     TransitionResult,
 )
-from eventsource.ports.coordination import (
-    LeaderChangeCallback,
-    LeaderElector,
-)
+from eventsource.ports.coordination import LeaderChangeCallback, LeaderElector
 from eventsource.ports.exceptions import (
     CheckpointNotFoundError,
     EventBusConnectionError,
@@ -199,148 +155,49 @@ from eventsource.ports.exceptions import (
     TransitionError,
 )
 
+# fmt: off
 __all__ = [
-    # Manager and Components
-    "SubscriptionManager",
-    "SubscriptionRegistry",
-    "SubscriptionLifecycleManager",
-    "HealthCheckProvider",
-    "PauseResumeController",
-    # Configuration
-    "SubscriptionConfig",
-    "StartPosition",
-    "CheckpointStrategy",
-    "create_catch_up_config",
-    "create_live_only_config",
-    # Filtering
-    "EventFilter",
-    "FilterStats",
-    "matches_event_type",
+    # Manager, Configuration, and Filtering
+    "SubscriptionManager", "SubscriptionRegistry", "SubscriptionLifecycleManager",
+    "HealthCheckProvider", "PauseResumeController", "SubscriptionConfig",
+    "StartPosition", "CheckpointStrategy", "create_catch_up_config",
+    "create_live_only_config", "EventFilter", "FilterStats", "matches_event_type",
     "matches_pattern",
-    # Subscription
-    "Subscription",
-    "SubscriptionState",
-    "SubscriptionStatus",
-    "is_valid_transition",
-    "VALID_TRANSITIONS",
-    "EventHandler",
-    "BatchHandler",
-    "PauseReason",
-    # Flow Control
-    "FlowController",
-    "FlowControlContext",
-    "FlowControlStats",
-    # Subscriber Protocols
-    "Subscriber",
-    "SyncSubscriber",
-    "BatchSubscriber",
-    # Subscriber Base Classes
-    "BaseSubscriber",
-    "BatchAwareSubscriber",
-    "FilteringSubscriber",
-    # Subscriber Utilities
-    "supports_batch_handling",
-    "get_subscribed_event_types",
-    # Transition
-    "TransitionCoordinator",
-    "TransitionPhase",
-    "TransitionResult",
-    "StartFromResolver",
-    # Shutdown
-    "ShutdownCoordinator",
-    "ShutdownPhase",
-    "ShutdownResult",
-    "ShutdownMetricsSnapshot",
-    # Shutdown Metrics
-    "SHUTDOWN_OTEL_METRICS_AVAILABLE",
-    "record_shutdown_initiated",
-    "record_shutdown_completed",
-    "record_drain_duration",
-    "record_events_drained",
-    "record_in_flight_at_shutdown",
-    "get_in_flight_at_shutdown",
+    # Subscription, Flow Control, and Subscribers
+    "Subscription", "SubscriptionState", "SubscriptionStatus", "is_valid_transition",
+    "VALID_TRANSITIONS", "EventHandler", "BatchHandler", "PauseReason",
+    "FlowController", "FlowControlContext", "FlowControlStats", "Subscriber",
+    "SyncSubscriber", "BatchSubscriber", "BaseSubscriber", "BatchAwareSubscriber",
+    "FilteringSubscriber", "supports_batch_handling", "get_subscribed_event_types",
+    # Transition and Shutdown
+    "TransitionCoordinator", "TransitionPhase", "TransitionResult", "StartFromResolver",
+    "ShutdownCoordinator", "ShutdownPhase", "ShutdownResult", "ShutdownMetricsSnapshot",
+    "SHUTDOWN_OTEL_METRICS_AVAILABLE", "record_shutdown_initiated",
+    "record_shutdown_completed", "record_drain_duration", "record_events_drained",
+    "record_in_flight_at_shutdown", "get_in_flight_at_shutdown",
     "reset_shutdown_metrics",
-    # Retry and Circuit Breaker
-    "RetryConfig",
-    "RetryStats",
-    "RetryError",
-    "RetryableOperation",
-    "CircuitBreaker",
-    "CircuitBreakerConfig",
-    "CircuitBreakerOpenError",
-    "CircuitState",
-    "TRANSIENT_EXCEPTIONS",
-    "calculate_backoff",
-    "retry_async",
-    "is_retryable_exception",
-    # Exceptions
-    "SubscriptionError",
-    "SubscriptionConfigError",
-    "SubscriptionStateError",
-    "SubscriptionAlreadyExistsError",
-    "CheckpointNotFoundError",
-    "EventStoreConnectionError",
-    "EventBusConnectionError",
-    "TransitionError",
-    # Error Handling
-    "ErrorCategory",
-    "ErrorSeverity",
-    "ErrorClassification",
-    "ErrorClassifier",
-    "ErrorInfo",
-    "ErrorStats",
-    "ErrorCallback",
-    "SyncErrorCallback",
-    "ErrorHandlerRegistry",
-    "ErrorHandlingStrategy",
-    "ErrorHandlingConfig",
-    "SubscriptionErrorHandler",
-    "get_default_classifier",
-    "RecentErrorInfo",
-    # Health Checks
-    "HealthStatus",
-    "HealthIndicator",
-    "HealthCheckResult",
-    "HealthCheckConfig",
-    "SubscriptionHealthChecker",
-    "ManagerHealthChecker",
-    # Health Check API (PHASE3-003)
-    "ManagerHealth",
-    "SubscriptionHealth",
-    "ReadinessStatus",
-    "LivenessStatus",
-    # Metrics (PHASE3-004)
-    "OTEL_METRICS_AVAILABLE",
-    "SubscriptionMetrics",
-    "MetricSnapshot",
-    "StateValue",
-    "STATE_MAPPING",
-    "NoOpCounter",
-    "NoOpHistogram",
-    "NoOpGauge",
-    "get_metrics",
-    "clear_metrics_registry",
-    "reset_meter",
-    # Coordination (P3) -- LeaderElector/LeaderChangeCallback
-    # are the eventsource.ports.coordination port; InMemoryLeaderElector and
-    # SharedLeaderState now live in eventsource.adapters.memory (not re-exported
-    # here -- application may not import adapters.memory).
-    "LeaderElector",
-    "LeaderChangeCallback",
-    "verify_leadership_lease",
-    # Work Redistribution Signals (P3-003)
-    "COORDINATION_TOPIC_PREFIX",
-    "SHUTDOWN_NOTIFICATIONS_TOPIC",
-    "HEARTBEAT_TOPIC",
-    "WORK_ASSIGNMENT_TOPIC",
-    "ShutdownIntent",
-    "ShutdownNotification",
-    "HeartbeatMessage",
-    "WorkAssignment",
-    "PeerShutdownCallback",
-    "HeartbeatCallback",
-    "WorkAssignmentCallback",
-    "PeerTimeoutCallback",
-    "PeerInfo",
-    "WorkRedistributionCoordinator",
+    # Retry, Circuit Breaker, Exceptions, and Error Handling
+    "RetryConfig", "RetryStats", "RetryError", "RetryableOperation", "CircuitBreaker",
+    "CircuitBreakerConfig", "CircuitBreakerOpenError", "CircuitState",
+    "TRANSIENT_EXCEPTIONS", "calculate_backoff", "retry_async",
+    "is_retryable_exception", "SubscriptionError", "SubscriptionConfigError",
+    "SubscriptionStateError", "SubscriptionAlreadyExistsError",
+    "CheckpointNotFoundError", "EventStoreConnectionError", "EventBusConnectionError",
+    "TransitionError", "ErrorCategory", "ErrorSeverity", "ErrorClassification",
+    "ErrorClassifier", "ErrorInfo", "ErrorStats", "ErrorCallback", "SyncErrorCallback",
+    "ErrorHandlerRegistry", "ErrorHandlingStrategy", "ErrorHandlingConfig",
+    "SubscriptionErrorHandler", "get_default_classifier", "RecentErrorInfo",
+    # Health Checks, Metrics, and Coordination
+    "HealthStatus", "HealthIndicator", "HealthCheckResult", "HealthCheckConfig",
+    "SubscriptionHealthChecker", "ManagerHealthChecker", "ManagerHealth",
+    "SubscriptionHealth", "ReadinessStatus", "LivenessStatus",
+    "OTEL_METRICS_AVAILABLE", "SubscriptionMetrics", "MetricSnapshot", "StateValue",
+    "STATE_MAPPING", "NoOpCounter", "NoOpHistogram", "NoOpGauge", "get_metrics",
+    "clear_metrics_registry", "reset_meter", "LeaderElector", "LeaderChangeCallback",
+    "verify_leadership_lease", "COORDINATION_TOPIC_PREFIX",
+    "SHUTDOWN_NOTIFICATIONS_TOPIC", "HEARTBEAT_TOPIC", "WORK_ASSIGNMENT_TOPIC",
+    "ShutdownIntent", "ShutdownNotification", "HeartbeatMessage", "WorkAssignment",
+    "PeerShutdownCallback", "HeartbeatCallback", "WorkAssignmentCallback",
+    "PeerTimeoutCallback", "PeerInfo", "WorkRedistributionCoordinator",
 ]
+# fmt: on
