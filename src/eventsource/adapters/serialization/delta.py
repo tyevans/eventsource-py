@@ -111,13 +111,10 @@ class DeltaCodec:
             and sz >= self.min_payload_size
         )
         if can_delta and base_payload is not None:
-            zdict = self._to_bytes(base_payload)
-            comp = zlib.compressobj(level=self.compression_level, zdict=zdict)
+            comp = zlib.compressobj(level=self.compression_level, zdict=self._to_bytes(base_payload))  # fmt: skip
             d_bytes = comp.compress(raw_bytes) + comp.flush()
             d_sz = len(d_bytes)
-            ratio_ok = d_sz < (sz * self.ratio_threshold)
-            cum_ok = (cumulative_chain_bytes + d_sz) < (sz * self.cumulative_ratio_threshold)
-            if ratio_ok and cum_ok:
+            if d_sz < (sz * self.ratio_threshold) and (cumulative_chain_bytes + d_sz) < (sz * self.cumulative_ratio_threshold):  # fmt: skip
                 return DeltaPayload(True, base_version, d_bytes, h, zlib.crc32(d_bytes), sz, d_sz)
 
         comp = zlib.compressobj(level=self.compression_level)
@@ -128,23 +125,17 @@ class DeltaCodec:
         """Decompress delta payload, verifying CRC32 and SHA256 content hash."""
         actual_crc = zlib.crc32(delta.compressed_bytes)
         if actual_crc != delta.payload_checksum:
-            raise DeltaIntegrityError(
-                f"Checksum mismatch on compressed frame: expected {delta.payload_checksum:#x}, got {actual_crc:#x}"
-            )
+            raise DeltaIntegrityError(f"Checksum mismatch on compressed frame: expected {delta.payload_checksum:#x}, got {actual_crc:#x}")  # fmt: skip
         if delta.is_delta:
             if base_payload is None:
-                raise DeltaChainError(
-                    f"Cannot decompress delta payload without base_version={delta.base_version}"
-                )
+                raise DeltaChainError(f"Cannot decompress delta payload without base_version={delta.base_version}")  # fmt: skip
             decompressor = zlib.decompressobj(zdict=self._to_bytes(base_payload))
         else:
             decompressor = zlib.decompressobj()
         raw_bytes = decompressor.decompress(delta.compressed_bytes) + decompressor.flush()
         actual_hash = hashlib.sha256(raw_bytes).hexdigest()
         if actual_hash != delta.content_hash:
-            raise DeltaIntegrityError(
-                f"Content hash mismatch on decompressed payload: expected {delta.content_hash}, got {actual_hash}"
-            )
+            raise DeltaIntegrityError(f"Content hash mismatch on decompressed payload: expected {delta.content_hash}, got {actual_hash}")  # fmt: skip
         return raw_bytes
 
     def decompress_to_dict(self, delta: DeltaPayload, *, base_payload: _In | None = None) -> Any:
@@ -157,10 +148,4 @@ def is_delta_dict(val: Any) -> bool:
     return isinstance(val, dict) and bool(val.get("__delta__"))
 
 
-__all__ = [
-    "DeltaChainError",
-    "DeltaCodec",
-    "DeltaIntegrityError",
-    "DeltaPayload",
-    "is_delta_dict",
-]
+__all__ = ["DeltaChainError", "DeltaCodec", "DeltaIntegrityError", "DeltaPayload", "is_delta_dict"]

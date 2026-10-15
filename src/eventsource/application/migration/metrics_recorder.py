@@ -34,7 +34,6 @@ class MigrationMetrics:
     _cutover_duration_histogram: Any = field(default=None, init=False, repr=False)
     _failed_target_writes_counter: Any = field(default=None, init=False, repr=False)
     _verification_failures_counter: Any = field(default=None, init=False, repr=False)
-
     _events_copied_count: int = field(default=0, init=False, repr=False)
     _failed_writes_count: int = field(default=0, init=False, repr=False)
     _verification_failures_count: int = field(default=0, init=False, repr=False)
@@ -42,10 +41,7 @@ class MigrationMetrics:
     _cutover_durations: list[float] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.enable_metrics and OTEL_METRICS_AVAILABLE:
-            self._setup_metrics()
-        else:
-            self._setup_noop()
+        self._setup_metrics() if (self.enable_metrics and OTEL_METRICS_AVAILABLE) else self._setup_noop()  # fmt: skip
 
     def _setup_metrics(self) -> None:
         self._meter = _get_meter()
@@ -74,9 +70,7 @@ class MigrationMetrics:
         if OTEL_METRICS_AVAILABLE:
             from opentelemetry.metrics import Observation
 
-            yield Observation(
-                value=self._events_copied_rate_value, attributes=self._base_attributes()
-            )
+            yield Observation(value=self._events_copied_rate_value, attributes=self._base_attributes())  # fmt: skip
 
     def _observe_sync_lag(self, options: Any) -> Any:
         if OTEL_METRICS_AVAILABLE:
@@ -94,28 +88,20 @@ class MigrationMetrics:
         self._sync_lag_value = max(0, lag_events)
 
     def record_phase_duration(self, phase: str, duration_seconds: float) -> None:
-        self._phase_duration_histogram.record(
-            duration_seconds, {**self._base_attributes(), "phase": phase}
-        )
+        self._phase_duration_histogram.record(duration_seconds, {**self._base_attributes(), "phase": phase})  # fmt: skip
         self._phase_durations[phase] = self._phase_durations.get(phase, 0.0) + duration_seconds
 
     def record_cutover_duration(self, duration_ms: float, success: bool = True) -> None:
-        self._cutover_duration_histogram.record(
-            duration_ms, {**self._base_attributes(), "success": str(success).lower()}
-        )
+        self._cutover_duration_histogram.record(duration_ms, {**self._base_attributes(), "success": str(success).lower()})  # fmt: skip
         self._cutover_durations.append(duration_ms)
 
     def record_failed_target_write(self, error_type: str | None = None) -> None:
-        attrs = self._base_attributes()
-        if error_type:
-            attrs["error_type"] = error_type
+        attrs = {**self._base_attributes(), **({"error_type": error_type} if error_type else {})}
         self._failed_target_writes_counter.add(1, attrs)
         self._failed_writes_count += 1
 
     def record_verification_failure(self, failure_type: str | None = None) -> None:
-        attrs = self._base_attributes()
-        if failure_type:
-            attrs["failure_type"] = failure_type
+        attrs = {**self._base_attributes(), **({"failure_type": failure_type} if failure_type else {})}  # fmt: skip
         self._verification_failures_counter.add(1, attrs)
         self._verification_failures_count += 1
 
@@ -151,16 +137,13 @@ class MigrationMetrics:
         )
 
     @property
-    def metrics_enabled(self) -> bool:
-        return self.enable_metrics and OTEL_METRICS_AVAILABLE  # fmt: skip
+    def metrics_enabled(self) -> bool: return self.enable_metrics and OTEL_METRICS_AVAILABLE  # fmt: skip
 
     @property
-    def current_sync_lag(self) -> int:
-        return self._sync_lag_value  # fmt: skip
+    def current_sync_lag(self) -> int: return self._sync_lag_value  # fmt: skip
 
     @property
-    def current_copy_rate(self) -> float:
-        return self._events_copied_rate_value  # fmt: skip
+    def current_copy_rate(self) -> float: return self._events_copied_rate_value  # fmt: skip
 
 
 __all__ = ["MigrationMetrics"]

@@ -41,9 +41,7 @@ class BaseEventBus(EventBus):
         return self._tasks.max_pending
 
     def subscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
+        self, event_type: type[DomainEvent], handler: FlexibleEventHandler | EventHandlerFunc
     ) -> None:
         adapter = self._registry.add(event_type, handler)
         logger.info(
@@ -52,14 +50,11 @@ class BaseEventBus(EventBus):
         )
 
     def unsubscribe(
-        self,
-        event_type: type[DomainEvent],
-        handler: FlexibleEventHandler | EventHandlerFunc,
+        self, event_type: type[DomainEvent], handler: FlexibleEventHandler | EventHandlerFunc
     ) -> bool:
         removed = self._registry.remove(event_type, handler)
         logger.info(
-            f"Unsubscribe from {event_type.__name__}: "
-            f"{'removed' if removed else 'handler not found'}",
+            f"Unsubscribe from {event_type.__name__}: {'removed' if removed else 'handler not found'}",
             extra={"event_type": event_type.__name__, "removed": removed},
         )
         return removed
@@ -72,10 +67,7 @@ class BaseEventBus(EventBus):
 
     def subscribe_to_all_events(self, handler: FlexibleEventHandler | EventHandlerFunc) -> None:
         adapter = self._registry.add_wildcard(handler)
-        logger.info(
-            f"Registered wildcard handler {adapter.name}",
-            extra={"handler": adapter.name},
-        )
+        logger.info(f"Registered wildcard handler {adapter.name}", extra={"handler": adapter.name})
 
     def unsubscribe_from_all_events(self, handler: FlexibleEventHandler | EventHandlerFunc) -> bool:
         removed = self._registry.remove_wildcard(handler)
@@ -106,7 +98,6 @@ class BaseEventBus(EventBus):
         """Resolve an event class by name, for deserializing consumed messages."""
         if self._event_registry is not None:
             return self._event_registry.get_or_none(event_type_name)
-
         from eventsource.domain.event_registry import default_registry
 
         return default_registry.get_or_none(event_type_name)
@@ -114,20 +105,13 @@ class BaseEventBus(EventBus):
     async def _track_background(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None] | None:
         """Schedule a coroutine as a tracked background task, or run inline at capacity."""
         if self._tasks.at_capacity:
-            logger.debug(
-                "Background publish at capacity (%s); running inline",
-                self._tasks.max_pending,
-            )
+            logger.debug("Background publish at capacity (%s); running inline", self._tasks.max_pending)  # fmt: skip
             await coro
             return None
         return self._tasks.submit(coro, on_done=self._on_background_task_done)
 
     def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
-        """Log any unexpected failure."""
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
+        if not task.cancelled() and (exc := task.exception()) is not None:
             logger.error(f"Background task failed: {exc}", exc_info=exc)
 
     @property
@@ -144,7 +128,6 @@ class BaseEventBus(EventBus):
         pending = list(self._tasks.tasks)
         if not pending:
             return
-
         logger.info(f"Draining {len(pending)} background task(s)")
         try:
             _done, remaining = await asyncio.wait(
@@ -152,8 +135,7 @@ class BaseEventBus(EventBus):
             )
             if remaining:
                 logger.warning(
-                    f"{len(remaining)} background task(s) did not complete within "
-                    f"{timeout}s; cancelling",
+                    f"{len(remaining)} background task(s) did not complete within {timeout}s; cancelling",
                     extra={"remaining_tasks": len(remaining)},
                 )
                 for task in remaining:

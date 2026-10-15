@@ -44,20 +44,14 @@ class RabbitMQPublisherManyMixin:
     _publish_semaphore: asyncio.Semaphore
 
     async def _publish_single_no_stats(self, event: DomainEvent) -> None:
-        """Publish a single event without updating statistics. Implemented by publisher."""
         raise NotImplementedError
 
-    async def publish_many(
-        self,
-        events: list[DomainEvent],
-        wait_for_confirm: bool = True,
-    ) -> None:
+    async def publish_many(self, events: list[DomainEvent], wait_for_confirm: bool = True) -> None:
         """Publish multiple events concurrently in chunks with optional batch span tracing."""
         if not self._topology.exchange:
             raise RuntimeError("Exchange not initialized")
 
-        total_events = len(events)
-        chunk_size = self._config.publish_chunk_size
+        total_events, chunk_size = len(events), self._config.publish_chunk_size
         max_concurrent = self._config.max_concurrent_publishes
         self._logger.debug(
             f"Publishing batch of {total_events} events",
@@ -65,30 +59,26 @@ class RabbitMQPublisherManyMixin:
                 "batch_size": total_events,
                 "chunk_size": chunk_size,
                 "max_concurrent": max_concurrent,
-            },
+            },  # fmt: skip
         )
 
         span = None
         if self._enable_tracing and PROPAGATION_AVAILABLE and self._tracer is not None:
-            span = self._tracer.start_span(
-                "eventsource.event_bus.publish_batch",
-                kind=SpanKindEnum.PRODUCER,
-                attributes={
-                    ATTR_MESSAGING_SYSTEM: "rabbitmq",
-                    ATTR_MESSAGING_DESTINATION: self._config.exchange_name,
-                    ATTR_EVENT_COUNT: total_events,
-                    "messaging.destination_kind": "exchange",
-                    "messaging.batch.size": total_events,
-                    "messaging.batch.chunk_size": chunk_size,
-                    "messaging.batch.max_concurrent": max_concurrent,
-                },
-            )
+            attrs = {
+                ATTR_MESSAGING_SYSTEM: "rabbitmq",
+                ATTR_MESSAGING_DESTINATION: self._config.exchange_name,
+                ATTR_EVENT_COUNT: total_events,
+                "messaging.destination_kind": "exchange",
+                "messaging.batch.size": total_events,
+                "messaging.batch.chunk_size": chunk_size,
+                "messaging.batch.max_concurrent": max_concurrent,
+            }
+            span = self._tracer.start_span("eventsource.event_bus.publish_batch", kind=SpanKindEnum.PRODUCER, attributes=attrs)  # fmt: skip
 
         try:
             self._stats.batch_publishes += 1
             published_count = 0
             errors: list[Exception] = []
-
             for chunk_start in range(0, total_events, chunk_size):
                 chunk = events[chunk_start : min(chunk_start + chunk_size, total_events)]
                 published_count += await self._publish_chunk_concurrent(chunk, errors)
@@ -107,7 +97,7 @@ class RabbitMQPublisherManyMixin:
                         "failures": len(errors),
                         "published": published_count,
                         "total": total_events,
-                    },
+                    },  # fmt: skip
                 )
                 if span:
                     span.set_attribute("messaging.batch.published", published_count)
@@ -122,7 +112,6 @@ class RabbitMQPublisherManyMixin:
             if span:
                 span.set_attribute("messaging.batch.published", published_count)
                 span.set_status(Status(StatusCode.OK))
-
         except Exception as e:
             if span:
                 span.record_exception(e)
@@ -133,13 +122,7 @@ class RabbitMQPublisherManyMixin:
             if span:
                 span.end()
 
-    async def _publish_chunk_concurrent(
-        self,
-        events: list[DomainEvent],
-        errors: list[Exception],
-    ) -> int:
-        """Publish a chunk of events concurrently using the shared ``_publish_semaphore``."""
-
+    async def _publish_chunk_concurrent(self, events: list[DomainEvent], errors: list[Exception]) -> int:  # fmt: skip
         async def publish_with_semaphore(event: DomainEvent) -> bool:
             async with self._publish_semaphore:
                 try:
@@ -147,20 +130,11 @@ class RabbitMQPublisherManyMixin:
                     return True
                 except Exception as e:
                     errors.append(e)
-                    self._logger.warning(
-                        f"Failed to publish event in batch: {e}",
-                        extra={
-                            "event_id": str(event.event_id),
-                            "event_type": event.event_type,
-                            "error": str(e),
-                        },
-                    )
+                    extra = {"event_id": str(event.event_id), "event_type": event.event_type, "error": str(e)}  # fmt: skip
+                    self._logger.warning(f"Failed to publish event in batch: {e}", extra=extra)
                     return False
 
-        results = await asyncio.gather(
-            *[publish_with_semaphore(event) for event in events],
-            return_exceptions=False,
-        )
+        results = await asyncio.gather(*[publish_with_semaphore(event) for event in events], return_exceptions=False)  # fmt: skip
         return sum(1 for result in results if result)
 
 

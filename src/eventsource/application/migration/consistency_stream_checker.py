@@ -67,43 +67,30 @@ class ConsistencyStreamCheckerMixin:
         sc_str, tc_str = str(source_count), str(target_count)
         sv_str, tv_str = str(source_version), str(target_version)
         if source_count > 0 and target_count == 0:
-            _add_v(
-                "stream_missing", sc_str, "0", details="Stream exists in source but not in target"
-            )
+            _add_v("stream_missing", sc_str, "0", details="Stream exists in source but not in target")  # fmt: skip
         elif source_count == 0 and target_count > 0:
             _add_v("stream_extra", "0", tc_str, details="Stream exists in target but not in source")
         if source_count != target_count:
-            msg = f"Event count mismatch: {source_count} vs {target_count}"
-            _add_v("count_mismatch", sc_str, tc_str, details=msg)
+            _add_v("count_mismatch", sc_str, tc_str, details=f"Event count mismatch: {source_count} vs {target_count}")  # fmt: skip
         if source_version != target_version:
-            msg = f"Version mismatch: {source_version} vs {target_version}"
-            _add_v("version_mismatch", sv_str, tv_str, details=msg)
+            _add_v("version_mismatch", sv_str, tv_str, details=f"Version mismatch: {source_version} vs {target_version}")  # fmt: skip
 
         hash_match: bool | None = None
-        if (
-            level in (VerificationLevel.HASH, VerificationLevel.FULL)
-            and source_count == target_count > 0
-        ):
-            for src_ev, tgt_ev in self._sample_events(
-                source_events, target_events, sample_percentage
-            ):
+        if level in (VerificationLevel.HASH, VerificationLevel.FULL) and source_count == target_count > 0:  # fmt: skip
+            for src_ev, tgt_ev in self._sample_events(source_events, target_events, sample_percentage):  # fmt: skip
                 if level == VerificationLevel.HASH:
-                    src_h = self._compute_event_hash(src_ev)
-                    tgt_h = self._compute_event_hash(tgt_ev)
+                    src_h, tgt_h = self._compute_event_hash(src_ev), self._compute_event_hash(tgt_ev)  # fmt: skip
                     if src_h != tgt_h:
                         hash_match, pos = False, src_ev.stream_version
                         mismatched_positions.append(pos)
-                        msg = "Event content hash mismatch"
-                        _add_v("hash_mismatch", src_h[:16], tgt_h[:16], pos, msg)
-                elif level == VerificationLevel.FULL and (
-                    mismatch := self._compare_events_full(src_ev, tgt_ev)
-                ):
+                        _add_v("hash_mismatch", src_h[:16], tgt_h[:16], pos, "Event content hash mismatch")  # fmt: skip
+                elif level == VerificationLevel.FULL and (mismatch := self._compare_events_full(src_ev, tgt_ev)):  # fmt: skip
                     mismatched_positions.append(src_ev.stream_version)
                     _add_v("content_mismatch", pos=src_ev.stream_version, details=mismatch)
             if hash_match is None and level == VerificationLevel.HASH:
                 hash_match = True
 
-        args = (
+        res = StreamConsistency(
             stream_id,
             aggregate_id,
             aggregate_type,
@@ -115,7 +102,7 @@ class ConsistencyStreamCheckerMixin:
             hash_match,
             mismatched_positions,
         )
-        return StreamConsistency(*args), violations
+        return res, violations
 
     def _sample_events(
         self,
