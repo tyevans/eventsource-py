@@ -66,37 +66,29 @@ class SubscriptionHealthIndicatorsMixin:
         """Check error statistics indicator."""
         events_failed = self.subscription.events_failed
         error_rate = self._error_handler.stats.error_rate_per_minute if self._error_handler else 0.0
-
+        base_details: dict[str, object] = {
+            "total_errors": events_failed,
+            "error_rate_per_minute": error_rate,
+        }
         if events_failed >= self.config.max_errors_critical:
             return HealthIndicator(
-                name="errors",
-                status=HealthStatus.CRITICAL,
-                message=f"Critical error count: {events_failed}",
-                details={
-                    "total_errors": events_failed,
-                    "error_rate_per_minute": error_rate,
-                    "threshold": self.config.max_errors_critical,
-                },
+                "errors",
+                HealthStatus.CRITICAL,
+                f"Critical error count: {events_failed}",
+                {**base_details, "threshold": self.config.max_errors_critical},
             )
         if (
             events_failed >= self.config.max_errors_warning
             or error_rate > self.config.max_error_rate_per_minute
         ):
             return HealthIndicator(
-                name="errors",
-                status=HealthStatus.DEGRADED,
-                message=f"Elevated error count: {events_failed}",
-                details={
-                    "total_errors": events_failed,
-                    "error_rate_per_minute": error_rate,
-                    "warning_threshold": self.config.max_errors_warning,
-                },
+                "errors",
+                HealthStatus.DEGRADED,
+                f"Elevated error count: {events_failed}",
+                {**base_details, "warning_threshold": self.config.max_errors_warning},
             )
         return HealthIndicator(
-            name="errors",
-            status=HealthStatus.HEALTHY,
-            message="Error rate within acceptable limits",
-            details={"total_errors": events_failed, "error_rate_per_minute": error_rate},
+            "errors", HealthStatus.HEALTHY, "Error rate within acceptable limits", base_details
         )
 
     def _check_lag(self) -> HealthIndicator:
@@ -104,26 +96,20 @@ class SubscriptionHealthIndicatorsMixin:
         lag = self.subscription.lag
         if lag >= self.config.max_lag_events_critical:
             return HealthIndicator(
-                name="lag",
-                status=HealthStatus.CRITICAL,
-                message=f"Critical lag: {lag} events behind",
-                details={"lag_events": lag, "threshold": self.config.max_lag_events_critical},
+                "lag",
+                HealthStatus.CRITICAL,
+                f"Critical lag: {lag} events behind",
+                {"lag_events": lag, "threshold": self.config.max_lag_events_critical},
             )
         if lag >= self.config.max_lag_events_warning:
             return HealthIndicator(
-                name="lag",
-                status=HealthStatus.DEGRADED,
-                message=f"High lag: {lag} events behind",
-                details={
-                    "lag_events": lag,
-                    "warning_threshold": self.config.max_lag_events_warning,
-                },
+                "lag",
+                HealthStatus.DEGRADED,
+                f"High lag: {lag} events behind",
+                {"lag_events": lag, "warning_threshold": self.config.max_lag_events_warning},
             )
         return HealthIndicator(
-            name="lag",
-            status=HealthStatus.HEALTHY,
-            message=f"Lag within limits: {lag} events",
-            details={"lag_events": lag},
+            "lag", HealthStatus.HEALTHY, f"Lag within limits: {lag} events", {"lag_events": lag}
         )
 
     def _check_circuit_breaker(
@@ -173,27 +159,21 @@ class SubscriptionHealthIndicatorsMixin:
         dlq_count = self._error_handler.dlq_count
         if dlq_count >= self.config.max_dlq_events_critical:
             return HealthIndicator(
-                name="dlq",
-                status=HealthStatus.CRITICAL,
-                message=f"Critical DLQ backlog: {dlq_count} events",
-                details={"dlq_count": dlq_count, "threshold": self.config.max_dlq_events_critical},
+                "dlq",
+                HealthStatus.CRITICAL,
+                f"Critical DLQ backlog: {dlq_count} events",
+                {"dlq_count": dlq_count, "threshold": self.config.max_dlq_events_critical},
             )
         if dlq_count >= self.config.max_dlq_events_warning:
             return HealthIndicator(
-                name="dlq",
-                status=HealthStatus.DEGRADED,
-                message=f"DLQ backlog: {dlq_count} events",
-                details={
-                    "dlq_count": dlq_count,
-                    "warning_threshold": self.config.max_dlq_events_warning,
-                },
+                "dlq",
+                HealthStatus.DEGRADED,
+                f"DLQ backlog: {dlq_count} events",
+                {"dlq_count": dlq_count, "warning_threshold": self.config.max_dlq_events_warning},
             )
         if dlq_count > 0:
             return HealthIndicator(
-                "dlq",
-                HealthStatus.HEALTHY,
-                f"DLQ has {dlq_count} events",
-                {"dlq_count": dlq_count},
+                "dlq", HealthStatus.HEALTHY, f"DLQ has {dlq_count} events", {"dlq_count": dlq_count}
             )
         return HealthIndicator("dlq", HealthStatus.HEALTHY, "DLQ is empty", {"dlq_count": 0})
 
