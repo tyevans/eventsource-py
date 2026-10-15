@@ -61,9 +61,7 @@ class ReadModelRepositoryConformance(ABC):
         await store.save(model)
         loaded = await store.get(model.id)
         assert loaded is not None
-        assert loaded.id == model.id
-        assert loaded.name == "alpha"
-        assert loaded.count == 3
+        assert (loaded.id, loaded.name, loaded.count) == (model.id, "alpha", 3)
 
     async def test_get_of_an_absent_id_returns_none(self, store: Repo) -> None:
         assert await store.get(uuid4()) is None
@@ -73,14 +71,11 @@ class ReadModelRepositoryConformance(ABC):
         await store.save(model)
         first = await store.get(model.id)
         assert first is not None
-
         await asyncio.sleep(0.01)
         first.name = "after"
         await store.save(first)
-
         second = await store.get(model.id)
-        assert second is not None
-        assert second.name == "after"
+        assert second is not None and second.name == "after"
         assert second.updated_at >= first.updated_at
         assert await store.count() == 1
 
@@ -115,8 +110,7 @@ class ReadModelRepositoryConformance(ABC):
         assert await store.soft_delete(model.id) is True
         assert await store.get(model.id) is None
         recovered = await store.get_deleted(model.id)
-        assert recovered is not None
-        assert recovered.id == model.id
+        assert recovered is not None and recovered.id == model.id
 
     async def test_restore_makes_a_soft_deleted_model_visible_again(self, store: Repo) -> None:
         model = _model()
@@ -126,15 +120,13 @@ class ReadModelRepositoryConformance(ABC):
         assert await store.get(model.id) is not None
 
     async def test_find_deleted_returns_only_soft_deleted_models(self, store: Repo) -> None:
-        live = _model(name="live")
-        gone = _model(name="gone")
+        live, gone = _model(name="live"), _model(name="gone")
         await store.save_many([live, gone])
         await store.soft_delete(gone.id)
         assert [m.id for m in await store.find_deleted()] == [gone.id]
 
     async def test_find_filters_on_equality(self, store: Repo) -> None:
-        alpha = _model(name="alpha")
-        beta = _model(name="beta")
+        alpha, beta = _model(name="alpha"), _model(name="beta")
         await store.save_many([alpha, beta])
         found = await store.find(Query(filters=[Filter.eq("name", "alpha")]))
         assert [m.id for m in found] == [alpha.id]
@@ -174,7 +166,6 @@ class ReadModelRepositoryConformance(ABC):
         assert await names(Filter.gte("note", "a")) == ["present"]
         assert await names(Filter.lt("note", "zzz")) == ["present"]
         assert await names(Filter.lte("note", "zzz")) == ["present"]
-
         assert await names(Filter.ne("note", "set")) == ["absent"]
         assert await names(Filter.not_in("note", ["set"])) == ["absent"]
 
@@ -191,27 +182,20 @@ class ReadModelRepositoryConformance(ABC):
         """A typo'd field name is a bug, not an empty result set."""
         bogus = Query(filters=[Filter.eq("no_such_field", "x")])
         await store.save(_model())
-        with pytest.raises(ValueError, match="no_such_field"):
-            await store.find(bogus)
-        with pytest.raises(ValueError, match="no_such_field"):
-            await store.count(bogus)
-        with pytest.raises(ValueError, match="no_such_field"):
-            await store.find_deleted(bogus)
+        for op in (store.find, store.count, store.find_deleted):
+            with pytest.raises(ValueError, match="no_such_field"):
+                await op(bogus)
 
     async def test_an_unknown_operator_raises(self, store: Repo) -> None:
         """Never silently drop every row -- an unknown operator is a bug."""
         bogus = Query(filters=[_bad_filter("name", "like", "x")])
         await store.save(_model())
-        with pytest.raises(ValueError, match="like"):
-            await store.find(bogus)
-        with pytest.raises(ValueError, match="like"):
-            await store.count(bogus)
-        with pytest.raises(ValueError, match="like"):
-            await store.find_deleted(bogus)
+        for op in (store.find, store.count, store.find_deleted):
+            with pytest.raises(ValueError, match="like"):
+                await op(bogus)
 
     async def test_find_filters_on_uuid_values(self, store: Repo) -> None:
-        wanted = _model(name="wanted")
-        other = _model(name="other")
+        wanted, other = _model(name="wanted"), _model(name="other")
         await store.save_many([wanted, other])
         found = await store.find(Query(filters=[Filter.eq("id", wanted.id)]))
         assert [m.id for m in found] == [wanted.id]
@@ -226,15 +210,12 @@ class ReadModelRepositoryConformance(ABC):
         assert [m.count for m in one] == [1]
 
     async def test_include_deleted_shows_soft_deleted_rows(self, store: Repo) -> None:
-        live = _model(name="live")
-        gone = _model(name="gone")
+        live, gone = _model(name="live"), _model(name="gone")
         await store.save_many([live, gone])
         await store.soft_delete(gone.id)
-
         everything = await store.find(Query(include_deleted=True))
         assert sorted(m.name for m in everything) == ["gone", "live"]
         assert await store.count(Query(include_deleted=True)) == 2
-
         filtered = await store.find(
             Query(filters=[Filter.eq("name", "gone")], include_deleted=True)
         )
@@ -246,8 +227,7 @@ class ReadModelRepositoryConformance(ABC):
         assert [m.count for m in found] == [2, 1]
 
     async def test_find_excludes_soft_deleted_models(self, store: Repo) -> None:
-        live = _model(name="live")
-        gone = _model(name="gone")
+        live, gone = _model(name="live"), _model(name="gone")
         await store.save_many([live, gone])
         await store.soft_delete(gone.id)
         assert [m.id for m in await store.find()] == [live.id]
@@ -258,8 +238,7 @@ class ReadModelRepositoryConformance(ABC):
         assert await store.count(Query(filters=[Filter.eq("name", "alpha")])) == 1
 
     async def test_truncate_returns_the_count_and_empties_the_table(self, store: Repo) -> None:
-        live = _model(name="live")
-        gone = _model(name="gone")
+        live, gone = _model(name="live"), _model(name="gone")
         await store.save_many([live, gone])
         await store.soft_delete(gone.id)
         assert await store.truncate() == 2
@@ -275,8 +254,7 @@ class ReadModelRepositoryConformance(ABC):
         loaded.name = "bumped"
         await store.save_with_version_check(loaded)
         after = await store.get(model.id)
-        assert after is not None
-        assert after.version == before + 1
+        assert after is not None and after.version == before + 1
 
     async def test_save_with_version_check_rejects_a_stale_version(self, store: Repo) -> None:
         model = _model()
@@ -288,10 +266,8 @@ class ReadModelRepositoryConformance(ABC):
         # are pinned below to return unaliased objects.
         second = await store.get(model.id)
         assert second is not None
-
         first.name = "winner"
         await store.save_with_version_check(first)
-
         second.name = "loser"
         with pytest.raises(ReadModelVersionConflictError):
             await store.save_with_version_check(second)
@@ -304,15 +280,11 @@ class ReadModelRepositoryConformance(ABC):
         """Mutating a read result must not reach storage."""
         model = _model(name="stored")
         await store.save(model)
-
         loaded = await store.get(model.id)
         assert loaded is not None
         loaded.name = "mutated locally"
-
         again = await store.get(model.id)
-        assert again is not None
-        assert again.name == "stored"
-
+        assert again is not None and again.name == "stored"
         [from_many] = await store.get_many([model.id])
         assert from_many.name == "stored"
         [from_find] = await store.find()
@@ -323,16 +295,13 @@ class ReadModelRepositoryConformance(ABC):
         model = _model(name="first")
         await store.save(model)
         version_after_save = model.version
-
         # A second, unrelated write against the same id.
         update = await store.get(model.id)
         assert update is not None
         update.name = "second"
         await store.save(update)
-
         # The caller's original object is untouched by both writes.
-        assert model.name == "first"
-        assert model.version == version_after_save
+        assert (model.name, model.version) == ("first", version_after_save)
 
 
 __all__ = ["ReadModelRepositoryConformance"]
