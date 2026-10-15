@@ -1,9 +1,4 @@
-"""
-Migration monitoring status and outcome result models.
-
-This module defines models for real-time migration status reporting
-and final migration completion results.
-"""
+"""Migration monitoring status and outcome result models."""
 
 from __future__ import annotations
 
@@ -19,29 +14,7 @@ from eventsource.ports.migration.models.routing import SyncLag
 
 @dataclass(frozen=True)
 class MigrationStatus:
-    """
-    Real-time migration status.
-
-    Provides comprehensive status information for monitoring.
-    This class is immutable because it represents a snapshot.
-
-    Attributes:
-        migration_id: Migration identifier.
-        tenant_id: Tenant being migrated.
-        phase: Current migration phase.
-        progress_percent: Progress percentage (0-100).
-        events_total: Total events to migrate.
-        events_copied: Events copied so far.
-        events_remaining: Events remaining to copy.
-        sync_lag_events: Current sync lag in events.
-        sync_lag_ms: Estimated sync lag in milliseconds.
-        error_count: Number of errors encountered.
-        started_at: When migration started.
-        phase_started_at: When current phase started.
-        estimated_completion: Estimated completion time.
-        current_rate_events_per_sec: Current processing rate.
-        is_paused: Whether migration is paused.
-    """
+    """Immutable real-time migration status snapshot for monitoring."""
 
     migration_id: UUID
     tenant_id: UUID
@@ -60,12 +33,7 @@ class MigrationStatus:
     is_paused: bool
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            Dictionary representation suitable for JSON.
-        """
+        """Convert to dictionary for JSON serialization."""
         return {
             "migration_id": str(self.migration_id),
             "tenant_id": str(self.tenant_id),
@@ -96,21 +64,7 @@ class MigrationStatus:
         rate_events_per_sec: float = 0.0,
         estimated_completion: datetime | None = None,
     ) -> MigrationStatus:
-        """
-        Create status from a Migration instance.
-
-        Args:
-            migration: The migration to create status for.
-            sync_lag: Current sync lag, if available.
-            rate_events_per_sec: Current processing rate.
-            estimated_completion: Estimated completion time.
-
-        Returns:
-            MigrationStatus instance.
-        """
-        lag_events = sync_lag.events if sync_lag else 0
-        lag_ms = sync_lag.lag_ms if sync_lag else 0.0
-
+        """Create status from a Migration instance."""
         return cls(
             migration_id=migration.id,
             tenant_id=migration.tenant_id,
@@ -119,8 +73,8 @@ class MigrationStatus:
             events_total=migration.events_total,
             events_copied=migration.events_copied,
             events_remaining=migration.events_remaining,
-            sync_lag_events=lag_events,
-            sync_lag_ms=lag_ms,
+            sync_lag_events=sync_lag.events if sync_lag else 0,
+            sync_lag_ms=sync_lag.lag_ms if sync_lag else 0.0,
             error_count=migration.error_count,
             started_at=migration.started_at,
             phase_started_at=migration.current_phase_started_at,
@@ -132,22 +86,7 @@ class MigrationStatus:
 
 @dataclass(frozen=True)
 class MigrationResult:
-    """
-    Final result of a completed migration.
-
-    Contains summary information about the migration outcome.
-    This class is immutable because it represents a completed operation.
-
-    Attributes:
-        migration_id: Migration identifier.
-        success: Whether migration succeeded.
-        duration_seconds: Total duration in seconds.
-        events_migrated: Total events migrated.
-        final_phase: Final migration phase.
-        error_message: Error message if failed.
-        consistency_verified: Whether consistency was verified.
-        subscriptions_migrated: Number of subscriptions migrated.
-    """
+    """Immutable final result of a completed migration."""
 
     migration_id: UUID
     success: bool
@@ -159,12 +98,7 @@ class MigrationResult:
     subscriptions_migrated: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            Dictionary representation suitable for JSON.
-        """
+        """Convert to dictionary for JSON serialization."""
         return {
             "migration_id": str(self.migration_id),
             "success": self.success,
@@ -178,22 +112,12 @@ class MigrationResult:
 
     @classmethod
     def from_migration(cls, migration: Migration) -> MigrationResult:
-        """
-        Create result from a completed Migration instance.
-
-        Args:
-            migration: The completed migration.
-
-        Returns:
-            MigrationResult instance.
-        """
+        """Create result from a completed Migration instance."""
         duration = migration.duration
-        duration_seconds = duration.total_seconds() if duration else 0.0
-
         return cls(
             migration_id=migration.id,
             success=migration.phase == MigrationPhase.COMPLETED,
-            duration_seconds=duration_seconds,
+            duration_seconds=duration.total_seconds() if duration else 0.0,
             events_migrated=migration.events_copied,
             final_phase=migration.phase,
             error_message=migration.last_error,
@@ -201,7 +125,4 @@ class MigrationResult:
         )
 
 
-__all__ = [
-    "MigrationResult",
-    "MigrationStatus",
-]
+__all__ = ["MigrationResult", "MigrationStatus"]

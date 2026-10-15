@@ -45,9 +45,7 @@ class SnapshotConformance(ABC):
     async def test_save_and_get_snapshot_round_trips(self, store: SnapshotStore) -> None:
         snapshot = make_snapshot()
         await store.save_snapshot(snapshot)
-
         loaded = await store.get_snapshot(snapshot.aggregate_id, snapshot.aggregate_type)
-
         assert loaded == snapshot
 
     async def test_get_snapshot_returns_none_when_missing(self, store: SnapshotStore) -> None:
@@ -55,13 +53,14 @@ class SnapshotConformance(ABC):
 
     async def test_save_overwrites_existing_snapshot(self, store: SnapshotStore) -> None:
         aggregate_id = uuid4()
+        now = datetime.now(UTC)
         first = Snapshot(
             aggregate_id=aggregate_id,
             aggregate_type="Order",
             version=1,
             state={"status": "open"},
             schema_version=1,
-            created_at=datetime.now(UTC),
+            created_at=now,
         )
         second = Snapshot(
             aggregate_id=aggregate_id,
@@ -73,18 +72,12 @@ class SnapshotConformance(ABC):
         )
         await store.save_snapshot(first)
         await store.save_snapshot(second)
-
-        loaded = await store.get_snapshot(aggregate_id, "Order")
-
-        assert loaded == second
+        assert await store.get_snapshot(aggregate_id, "Order") == second
 
     async def test_delete_snapshot_returns_true_when_deleted(self, store: SnapshotStore) -> None:
         snapshot = make_snapshot()
         await store.save_snapshot(snapshot)
-
-        deleted = await store.delete_snapshot(snapshot.aggregate_id, snapshot.aggregate_type)
-
-        assert deleted is True
+        assert await store.delete_snapshot(snapshot.aggregate_id, snapshot.aggregate_type) is True
         assert await store.get_snapshot(snapshot.aggregate_id, snapshot.aggregate_type) is None
 
     async def test_delete_snapshot_returns_false_when_missing(self, store: SnapshotStore) -> None:
@@ -93,9 +86,7 @@ class SnapshotConformance(ABC):
     async def test_snapshot_exists(self, store: SnapshotStore) -> None:
         snapshot = make_snapshot()
         assert await store.snapshot_exists(snapshot.aggregate_id, snapshot.aggregate_type) is False
-
         await store.save_snapshot(snapshot)
-
         assert await store.snapshot_exists(snapshot.aggregate_id, snapshot.aggregate_type) is True
 
     async def test_different_aggregate_types_are_independent(self, store: SnapshotStore) -> None:
@@ -109,7 +100,6 @@ class SnapshotConformance(ABC):
             created_at=datetime.now(UTC),
         )
         await store.save_snapshot(order_snapshot)
-
         assert await store.get_snapshot(aggregate_id, "Order") == order_snapshot
         assert await store.get_snapshot(aggregate_id, "User") is None
 
@@ -138,18 +128,9 @@ class SnapshotTypeInvalidationConformance(ABC):
         user_snapshot = make_snapshot(aggregate_type="User")
         await store.save_snapshot(order_snapshot)
         await store.save_snapshot(user_snapshot)
-
-        count = await store.delete_snapshots_by_type("Order")
-
-        assert count == 1
-        assert (
-            await store.get_snapshot(order_snapshot.aggregate_id, order_snapshot.aggregate_type)
-            is None
-        )
-        assert (
-            await store.get_snapshot(user_snapshot.aggregate_id, user_snapshot.aggregate_type)
-            == user_snapshot
-        )
+        assert await store.delete_snapshots_by_type("Order") == 1
+        assert await store.get_snapshot(order_snapshot.aggregate_id, "Order") is None
+        assert await store.get_snapshot(user_snapshot.aggregate_id, "User") == user_snapshot
 
     async def test_delete_snapshots_by_type_filters_by_schema_version(
         self, store: _InvalidatableSnapshotStore
@@ -158,10 +139,7 @@ class SnapshotTypeInvalidationConformance(ABC):
         new = make_snapshot(aggregate_type="Order", schema_version=2)
         await store.save_snapshot(old)
         await store.save_snapshot(new)
-
-        count = await store.delete_snapshots_by_type("Order", schema_version_below=2)
-
-        assert count == 1
+        assert await store.delete_snapshots_by_type("Order", schema_version_below=2) == 1
         assert await store.get_snapshot(old.aggregate_id, old.aggregate_type) is None
         assert await store.get_snapshot(new.aggregate_id, new.aggregate_type) == new
 
@@ -196,14 +174,9 @@ class SnapshotDeserializationConformance(ABC):
     ) -> None:
         aggregate_id = uuid4()
         await self._write_raw_state(
-            store,
-            aggregate_id=aggregate_id,
-            aggregate_type="Order",
-            raw_state="{not valid json",
+            store, aggregate_id=aggregate_id, aggregate_type="Order", raw_state="{not valid json"
         )
-
         with pytest.raises(SnapshotDeserializationError) as exc_info:
             await store.get_snapshot(aggregate_id, "Order")
-
         assert exc_info.value.aggregate_id == aggregate_id
         assert exc_info.value.aggregate_type == "Order"

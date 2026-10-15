@@ -59,7 +59,6 @@ class KafkaDLQAdmin:
         """Retrieve messages from the dead letter queue."""
         if not self._connection.is_connected:
             raise EventBusConnectionError("Not connected to Kafka")
-
         group_id = None
         if use_consumer_group:
             if not self._config.dlq_consumer_group:
@@ -67,51 +66,41 @@ class KafkaDLQAdmin:
                     "dlq_consumer_group must be set in config to use consumer group mode"
                 )
             group_id = self._config.dlq_consumer_group
-
         messages: list[dict[str, Any]] = []
+        opts = {
+            "group_id": group_id,
+            "auto_offset_reset": "earliest",
+            "enable_auto_commit": False,
+            "consumer_timeout_ms": timeout_ms,
+        }
         try:
-            async with self._dlq_consumer(
-                self._config.dlq_topic_name,
-                group_id=group_id,
-                auto_offset_reset="earliest",
-                enable_auto_commit=False,
-                consumer_timeout_ms=timeout_ms,
-            ) as dlq_consumer:
-                async for message in dlq_consumer:
+            async with self._dlq_consumer(self._config.dlq_topic_name, **opts) as dlq_consumer:
+                async for msg in dlq_consumer:
                     if len(messages) >= limit:
                         break
-                    headers: dict[str, str] = (
-                        {k: v.decode("utf-8") for k, v in message.headers}
-                        if message.headers
-                        else {}
-                    )
+                    hdrs = {k: v.decode("utf-8") for k, v in msg.headers} if msg.headers else {}
                     try:
-                        payload = json_loads(message.value) if message.value else None
+                        payload = json_loads(msg.value) if msg.value else None
                     except (ValueError, TypeError):
-                        payload = message.value.hex() if message.value else None
-
+                        payload = msg.value.hex() if msg.value else None
                     messages.append(
                         {
-                            "topic": message.topic,
-                            "partition": message.partition,
-                            "offset": message.offset,
-                            "key": message.key.decode("utf-8") if message.key else None,
-                            "timestamp": message.timestamp,
-                            "headers": headers,
+                            "topic": msg.topic,
+                            "partition": msg.partition,
+                            "offset": msg.offset,
+                            "key": msg.key.decode("utf-8") if msg.key else None,
+                            "timestamp": msg.timestamp,
+                            "headers": hdrs,
                             "payload": payload,
-                            "replay_count": int(headers.get("dlq_replay_count", "0")),
+                            "replay_count": int(hdrs.get("dlq_replay_count", "0")),
                         }
                     )
-
                 if use_consumer_group and messages:
                     await dlq_consumer.commit()
         except TimeoutError:
             pass
-
-        logger.debug(
-            "Retrieved DLQ messages",
-            extra={"count": len(messages), "limit": limit, "consumer_group": group_id},
-        )
+        extra = {"count": len(messages), "limit": limit, "consumer_group": group_id}
+        logger.debug("Retrieved DLQ messages", extra=extra)
         return messages
 
     async def replay_message(self, partition: int, offset: int, force: bool = False) -> bool:
@@ -119,42 +108,36 @@ class KafkaDLQAdmin:
         if not self._connection.is_connected:
             raise EventBusConnectionError("Not connected to Kafka")
         producer = self._connection.require_producer()
-
         async with self._dlq_consumer(group_id=None, enable_auto_commit=False) as dlq_consumer:
             try:
                 tp = TopicPartition(self._config.dlq_topic_name, partition)
                 dlq_consumer.assign([tp])
                 dlq_consumer.seek(tp, offset)
-
                 message = await asyncio.wait_for(dlq_consumer.getone(), timeout=5.0)
                 if message.offset != offset:
                     raise ValueError(f"Message not found at offset {offset}")
-
                 current_replay_count = 0
                 for key, value in message.headers or []:
                     if key == "dlq_replay_count":
                         with contextlib.suppress(ValueError, UnicodeDecodeError):
                             current_replay_count = int(value.decode("utf-8"))
                         break
-
                 max_replays = self._config.dlq_max_replay_attempts
                 if not force and current_replay_count >= max_replays:
-                    logger.warning(
-                        "Replay rejected: max replay attempts exceeded",
-                        extra={
-                            "dlq_partition": partition,
-                            "dlq_offset": offset,
-                            "replay_count": current_replay_count,
-                            "max_replay_attempts": max_replays,
-                            "event_type": get_header_value(message.headers, "event_type"),
-                        },
-                    )
+                    ev_type = get_header_value(message.headers, "event_type")
+                    extra = {
+                        "dlq_partition": partition,
+                        "dlq_offset": offset,
+                        "replay_count": current_replay_count,
+                        "max_replay_attempts": max_replays,
+                        "event_type": ev_type,
+                    }
+                    logger.warning("Replay rejected: max replay attempts exceeded", extra=extra)
                     raise ValueError(
                         f"Message at partition {partition}, offset {offset} has been replayed "
                         f"{current_replay_count} times, exceeding max of {max_replays}. "
                         f"Use force=True to override."
                     )
-
                 original_headers: list[tuple[str, bytes]] = [
                     (k, v)
                     for k, v in (message.headers or [])
@@ -167,24 +150,20 @@ class KafkaDLQAdmin:
                         ("dlq_replay_count", str(new_replay_count).encode("utf-8")),
                     ]
                 )
-
                 await producer.send(
                     topic=self._config.topic_name,
                     key=message.key,
                     value=message.value,
                     headers=original_headers,
                 )
-
-                logger.info(
-                    "DLQ message replayed",
-                    extra={
-                        "dlq_partition": partition,
-                        "dlq_offset": offset,
-                        "target_topic": self._config.topic_name,
-                        "event_type": get_header_value(original_headers, "event_type"),
-                        "replay_count": new_replay_count,
-                    },
-                )
+                extra = {
+                    "dlq_partition": partition,
+                    "dlq_offset": offset,
+                    "target_topic": self._config.topic_name,
+                    "event_type": get_header_value(original_headers, "event_type"),
+                    "replay_count": new_replay_count,
+                }
+                logger.info("DLQ message replayed", extra=extra)
                 return True
             except TimeoutError as err:
                 raise ValueError(
@@ -195,13 +174,10 @@ class KafkaDLQAdmin:
         """Get the approximate number of messages in the DLQ across all partitions."""
         if not self._connection.is_connected:
             raise EventBusConnectionError("Not connected to Kafka")
-
         total_count = 0
         async with self._dlq_consumer(self._config.dlq_topic_name, group_id=None) as dlq_consumer:
             partitions = dlq_consumer.partitions_for_topic(self._config.dlq_topic_name)
-            if not partitions:
-                return 0
-            for partition_id in partitions:
+            for partition_id in partitions or ():
                 tp = TopicPartition(self._config.dlq_topic_name, partition_id)
                 dlq_consumer.assign([tp])
                 beginning = await dlq_consumer.beginning_offsets([tp])
