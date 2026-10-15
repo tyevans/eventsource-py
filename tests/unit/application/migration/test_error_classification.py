@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+import eventsource.application.migration.exceptions as mig_exc
 from eventsource.application.migration.error_classification import (
     CONNECTIVITY_RETRY_CONFIG,
     CUTOVER_RETRY_CONFIG,
@@ -14,36 +15,17 @@ from eventsource.application.migration.error_classification import (
     ErrorSeverity,
     RetryConfig,
 )
-from eventsource.application.migration.exceptions import (
-    BulkCopyError,
-    CircuitBreakerOpenError,
-    ConsistencyError,
-    CutoverError,
-    CutoverLagError,
-    CutoverTimeoutError,
-    DualWriteError,
-    InvalidPhaseTransitionError,
-    MigrationAlreadyExistsError,
-    MigrationError,
-    MigrationNotFoundError,
-    MigrationStateError,
-    PositionMappingError,
-)
 from eventsource.ports.migration.models import MigrationPhase
 
 
 class TestErrorSeverity:
     def test_severity_values(self) -> None:
-        assert ErrorSeverity.CRITICAL.value == "critical"
-        assert ErrorSeverity.ERROR.value == "error"
-        assert ErrorSeverity.WARNING.value == "warning"
-        assert ErrorSeverity.INFO.value == "info"
+        assert (ErrorSeverity.CRITICAL.value, ErrorSeverity.ERROR.value) == ("critical", "error")
+        assert (ErrorSeverity.WARNING.value, ErrorSeverity.INFO.value) == ("warning", "info")
 
     def test_should_alert(self) -> None:
-        assert ErrorSeverity.CRITICAL.should_alert is True
-        assert ErrorSeverity.ERROR.should_alert is True
-        assert ErrorSeverity.WARNING.should_alert is False
-        assert ErrorSeverity.INFO.should_alert is False
+        assert ErrorSeverity.CRITICAL.should_alert and ErrorSeverity.ERROR.should_alert
+        assert not ErrorSeverity.WARNING.should_alert and not ErrorSeverity.INFO.should_alert
 
     def test_log_level(self) -> None:
         assert ErrorSeverity.CRITICAL.log_level == logging.CRITICAL
@@ -59,14 +41,14 @@ class TestErrorRecoverability:
         assert ErrorRecoverability.FATAL.value == "fatal"
 
     def test_should_retry(self) -> None:
-        assert ErrorRecoverability.RECOVERABLE.should_retry is False
-        assert ErrorRecoverability.TRANSIENT.should_retry is True
-        assert ErrorRecoverability.FATAL.should_retry is False
+        assert not ErrorRecoverability.RECOVERABLE.should_retry
+        assert ErrorRecoverability.TRANSIENT.should_retry
+        assert not ErrorRecoverability.FATAL.should_retry
 
     def test_should_abort(self) -> None:
-        assert ErrorRecoverability.RECOVERABLE.should_abort is False
-        assert ErrorRecoverability.TRANSIENT.should_abort is False
-        assert ErrorRecoverability.FATAL.should_abort is True
+        assert not ErrorRecoverability.RECOVERABLE.should_abort
+        assert not ErrorRecoverability.TRANSIENT.should_abort
+        assert ErrorRecoverability.FATAL.should_abort
 
 
 class TestRetryConfig:
@@ -113,28 +95,27 @@ class TestRetryConfig:
         assert 100.0 <= cfg.get_delay_ms(0) <= 110.0
 
     def test_to_dict(self) -> None:
-        expected = {
+        assert RetryConfig(max_attempts=5).to_dict() == {
             "max_attempts": 5,
             "base_delay_ms": 100.0,
             "max_delay_ms": 30000.0,
             "exponential_base": 2.0,
             "jitter_factor": 0.1,
         }
-        assert RetryConfig(max_attempts=5).to_dict() == expected
 
 
 class TestDefaultRetryConfigs:
     def test_transient_config(self) -> None:
-        assert TRANSIENT_RETRY_CONFIG.max_attempts == 5
-        assert TRANSIENT_RETRY_CONFIG.base_delay_ms == 100.0
+        c = TRANSIENT_RETRY_CONFIG
+        assert (c.max_attempts, c.base_delay_ms) == (5, 100.0)
 
     def test_connectivity_config(self) -> None:
-        assert CONNECTIVITY_RETRY_CONFIG.max_attempts == 10
-        assert CONNECTIVITY_RETRY_CONFIG.base_delay_ms == 500.0
+        c = CONNECTIVITY_RETRY_CONFIG
+        assert (c.max_attempts, c.base_delay_ms) == (10, 500.0)
 
     def test_cutover_config(self) -> None:
-        assert CUTOVER_RETRY_CONFIG.max_attempts == 3
-        assert CUTOVER_RETRY_CONFIG.base_delay_ms == 1000.0
+        c = CUTOVER_RETRY_CONFIG
+        assert (c.max_attempts, c.base_delay_ms) == (3, 1000.0)
 
 
 class TestErrorClassification:
@@ -142,25 +123,21 @@ class TestErrorClassification:
         c = ErrorClassification(
             ErrorSeverity.ERROR, ErrorRecoverability.TRANSIENT, "TEST_ERROR", "test", "Fix the test"
         )
-        assert (c.severity, c.recoverability) == (
-            ErrorSeverity.ERROR,
-            ErrorRecoverability.TRANSIENT,
-        )
-        assert (c.error_code, c.category, c.suggested_action) == (
-            "TEST_ERROR",
-            "test",
-            "Fix the test",
-        )
+        assert c.severity == ErrorSeverity.ERROR
+        assert c.recoverability == ErrorRecoverability.TRANSIENT
+        assert c.error_code == "TEST_ERROR" and c.category == "test"
+        assert c.suggested_action == "Fix the test"
         assert (c.retry_config, c.documentation_url, c.metrics_labels) == (None, None, {})
 
     def test_with_retry_config(self) -> None:
+        rc = RetryConfig(max_attempts=5)
         c = ErrorClassification(
             ErrorSeverity.WARNING,
             ErrorRecoverability.TRANSIENT,
             "TRANSIENT_ERROR",
             "connectivity",
             "Retry",
-            retry_config=RetryConfig(max_attempts=5),
+            retry_config=rc,
         )
         assert c.retry_config is not None and c.retry_config.max_attempts == 5
 
@@ -194,20 +171,21 @@ class TestErrorClassification:
 
 class TestErrorIntegration:
     def test_all_exceptions_have_classification(self) -> None:
+        uid, p1, p2 = uuid4(), MigrationPhase.PENDING, MigrationPhase.CUTOVER
         exceptions = [
-            MigrationError("test"),
-            MigrationNotFoundError(uuid4()),
-            MigrationAlreadyExistsError(uuid4(), uuid4()),
-            MigrationStateError("test", uuid4(), MigrationPhase.PENDING),
-            InvalidPhaseTransitionError(uuid4(), MigrationPhase.PENDING, MigrationPhase.CUTOVER),
-            CutoverError("test", uuid4()),
-            CutoverTimeoutError(uuid4(), 150.0, 100.0),
-            CutoverLagError(uuid4(), 500, 100),
-            ConsistencyError("test", uuid4()),
-            BulkCopyError(uuid4(), None, "error"),
-            DualWriteError(uuid4(), "error"),
-            PositionMappingError("test", uuid4()),
-            CircuitBreakerOpenError("op", 10.0),
+            mig_exc.MigrationError("test"),
+            mig_exc.MigrationNotFoundError(uid),
+            mig_exc.MigrationAlreadyExistsError(uid, uid),
+            mig_exc.MigrationStateError("test", uid, p1),
+            mig_exc.InvalidPhaseTransitionError(uid, p1, p2),
+            mig_exc.CutoverError("test", uid),
+            mig_exc.CutoverTimeoutError(uid, 150.0, 100.0),
+            mig_exc.CutoverLagError(uid, 500, 100),
+            mig_exc.ConsistencyError("test", uid),
+            mig_exc.BulkCopyError(uid, None, "error"),
+            mig_exc.DualWriteError(uid, "error"),
+            mig_exc.PositionMappingError("test", uid),
+            mig_exc.CircuitBreakerOpenError("op", 10.0),
         ]
         for exc in exceptions:
             c = exc.classification
@@ -215,13 +193,13 @@ class TestErrorIntegration:
             assert c.error_code and c.category and c.suggested_action
 
     def test_transient_errors_have_retry_config(self) -> None:
-        transient_errors = [
-            CutoverTimeoutError(uuid4(), 150.0, 100.0),
-            CutoverLagError(uuid4(), 500, 100),
-            BulkCopyError(uuid4(), None, "error"),
-            DualWriteError(uuid4(), "error"),
-            CircuitBreakerOpenError("op", 10.0),
-        ]
-        for exc in transient_errors:
+        uid = uuid4()
+        for exc in [
+            mig_exc.CutoverTimeoutError(uid, 150.0, 100.0),
+            mig_exc.CutoverLagError(uid, 500, 100),
+            mig_exc.BulkCopyError(uid, None, "error"),
+            mig_exc.DualWriteError(uid, "error"),
+            mig_exc.CircuitBreakerOpenError("op", 10.0),
+        ]:
             assert exc.recoverability_type == ErrorRecoverability.TRANSIENT
             assert exc.retry_config is not None, f"{type(exc).__name__} missing retry_config"
