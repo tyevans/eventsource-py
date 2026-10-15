@@ -32,16 +32,20 @@ class TestTransitionToDualWrite:
             "router": MagicMock(),
         }
 
-    @pytest.mark.asyncio
-    async def test_transition_to_dual_write_creates_interceptor(
-        self, coordinator_deps: dict
-    ) -> None:
+    async def _run_transition(self, coordinator_deps: dict):
         migration_id, tenant_id = uuid4(), uuid4()
         migration = create_test_migration(
             id=migration_id, tenant_id=tenant_id, phase=MigrationPhase.BULK_COPY
         )
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
         await coordinator._transition_to_dual_write(migration, AsyncMock())
+        return migration_id, tenant_id, coordinator
+
+    @pytest.mark.asyncio
+    async def test_transition_to_dual_write_creates_interceptor(
+        self, coordinator_deps: dict
+    ) -> None:
+        _, tenant_id, _ = await self._run_transition(coordinator_deps)
         coordinator_deps["router"].set_dual_write_interceptor.assert_called_once()
         call_args = coordinator_deps["router"].set_dual_write_interceptor.call_args
         assert call_args[0][0] == tenant_id
@@ -51,12 +55,7 @@ class TestTransitionToDualWrite:
     async def test_transition_to_dual_write_creates_lag_tracker(
         self, coordinator_deps: dict
     ) -> None:
-        migration_id, tenant_id = uuid4(), uuid4()
-        migration = create_test_migration(
-            id=migration_id, tenant_id=tenant_id, phase=MigrationPhase.BULK_COPY
-        )
-        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-        await coordinator._transition_to_dual_write(migration, AsyncMock())
+        migration_id, tenant_id, coordinator = await self._run_transition(coordinator_deps)
         assert migration_id in coordinator._lag_trackers
         lag_tracker = coordinator._lag_trackers[migration_id]
         assert isinstance(lag_tracker, SyncLagTracker)
@@ -64,12 +63,7 @@ class TestTransitionToDualWrite:
 
     @pytest.mark.asyncio
     async def test_transition_to_dual_write_updates_phase(self, coordinator_deps: dict) -> None:
-        migration_id, tenant_id = uuid4(), uuid4()
-        migration = create_test_migration(
-            id=migration_id, tenant_id=tenant_id, phase=MigrationPhase.BULK_COPY
-        )
-        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-        await coordinator._transition_to_dual_write(migration, AsyncMock())
+        migration_id, tenant_id, _ = await self._run_transition(coordinator_deps)
         coordinator_deps["migration_repo"].update_phase.assert_called_once_with(
             migration_id, MigrationPhase.DUAL_WRITE
         )
@@ -89,27 +83,30 @@ class TestTriggerCutover:
             "lock_manager": AsyncMock(),
         }
 
-    @pytest.mark.asyncio
-    async def test_trigger_cutover_requires_lock_manager(self, coordinator_deps: dict) -> None:
-        migration_id = uuid4()
-        coordinator_deps.pop("lock_manager")
-        migration = create_test_migration(
-            id=migration_id, tenant_id=uuid4(), phase=MigrationPhase.DUAL_WRITE
-        )
+    def _setup_migration(
+        self,
+        coordinator_deps: dict,
+        phase: MigrationPhase = MigrationPhase.DUAL_WRITE,
+    ):
+        migration_id, tenant_id = uuid4(), uuid4()
+        migration = create_test_migration(id=migration_id, tenant_id=tenant_id, phase=phase)
         coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
+        return migration_id, tenant_id, coordinator
+
+    @pytest.mark.asyncio
+    async def test_trigger_cutover_requires_lock_manager(self, coordinator_deps: dict) -> None:
+        coordinator_deps.pop("lock_manager")
+        migration_id, _, coordinator = self._setup_migration(coordinator_deps)
         coordinator._lag_trackers[migration_id] = MagicMock()
         with pytest.raises(MigrationError, match="lock_manager not provided"):
             await coordinator.trigger_cutover(migration_id)
 
     @pytest.mark.asyncio
     async def test_trigger_cutover_raises_if_not_dual_write(self, coordinator_deps: dict) -> None:
-        migration_id = uuid4()
-        migration = create_test_migration(
-            id=migration_id, tenant_id=uuid4(), phase=MigrationPhase.BULK_COPY
+        migration_id, _, coordinator = self._setup_migration(
+            coordinator_deps, phase=MigrationPhase.BULK_COPY
         )
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
-        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
         with pytest.raises(MigrationStateError) as exc_info:
             await coordinator.trigger_cutover(migration_id)
         assert "bulk_copy" in str(exc_info.value).lower()
@@ -117,23 +114,13 @@ class TestTriggerCutover:
 
     @pytest.mark.asyncio
     async def test_trigger_cutover_raises_if_no_lag_tracker(self, coordinator_deps: dict) -> None:
-        migration_id = uuid4()
-        migration = create_test_migration(
-            id=migration_id, tenant_id=uuid4(), phase=MigrationPhase.DUAL_WRITE
-        )
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
-        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
+        migration_id, _, coordinator = self._setup_migration(coordinator_deps)
         with pytest.raises(MigrationError, match="No sync lag tracker found"):
             await coordinator.trigger_cutover(migration_id)
 
     @pytest.mark.asyncio
     async def test_trigger_cutover_success(self, coordinator_deps: dict) -> None:
-        migration_id, tenant_id = uuid4(), uuid4()
-        migration = create_test_migration(
-            id=migration_id, tenant_id=tenant_id, phase=MigrationPhase.DUAL_WRITE
-        )
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
-        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
+        migration_id, _, coordinator = self._setup_migration(coordinator_deps)
         lag = SyncLag(
             events=0, source_position=100, target_position=100, timestamp=datetime.now(UTC)
         )
@@ -146,18 +133,12 @@ class TestTriggerCutover:
                 execute_cutover=AsyncMock(return_value=cutover_result)
             )
             result = await coordinator.trigger_cutover(migration_id)
-        assert result.success is True
-        assert result.duration_ms == 50.0
+        assert result.success is True and result.duration_ms == 50.0
         assert coordinator_deps["migration_repo"].update_phase.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_trigger_cutover_failure_rollback(self, coordinator_deps: dict) -> None:
-        migration_id, tenant_id = uuid4(), uuid4()
-        migration = create_test_migration(
-            id=migration_id, tenant_id=tenant_id, phase=MigrationPhase.DUAL_WRITE
-        )
-        coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
-        coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
+        migration_id, _, coordinator = self._setup_migration(coordinator_deps)
         coordinator._lag_trackers[migration_id] = MagicMock()
         cutover_result = CutoverResult(
             success=False, duration_ms=80.0, error_message="Timeout exceeded", rolled_back=True
@@ -167,8 +148,7 @@ class TestTriggerCutover:
                 execute_cutover=AsyncMock(return_value=cutover_result)
             )
             result = await coordinator.trigger_cutover(migration_id)
-        assert result.success is False
-        assert result.rolled_back is True
+        assert result.success is False and result.rolled_back is True
         update_calls = coordinator_deps["migration_repo"].update_phase.call_args_list
         assert update_calls[-1][0][1] == MigrationPhase.DUAL_WRITE
         coordinator_deps["migration_repo"].record_error.assert_called()
@@ -196,8 +176,7 @@ class TestIsCutoverReady:
             calculate_lag=AsyncMock(), is_sync_ready=MagicMock(return_value=True)
         )
         ready, error = await coordinator.is_cutover_ready(migration_id)
-        assert ready is True
-        assert error is None
+        assert ready is True and error is None
 
     @pytest.mark.asyncio
     async def test_is_cutover_ready_returns_false_when_lag_high(self) -> None:
@@ -214,8 +193,7 @@ class TestIsCutoverReady:
             calculate_lag=AsyncMock(), is_sync_ready=MagicMock(return_value=False), current_lag=lag
         )
         ready, error = await coordinator.is_cutover_ready(migration_id)
-        assert ready is False
-        assert "Sync lag too high" in error and "500" in error
+        assert ready is False and "Sync lag too high" in error and "500" in error
 
     @pytest.mark.asyncio
     async def test_is_cutover_ready_returns_false_if_wrong_phase(self) -> None:
@@ -225,5 +203,4 @@ class TestIsCutoverReady:
         )
         coordinator = self._make_coordinator(migration)
         ready, error = await coordinator.is_cutover_ready(migration_id)
-        assert ready is False
-        assert "bulk_copy" in error.lower()
+        assert ready is False and "bulk_copy" in error.lower()

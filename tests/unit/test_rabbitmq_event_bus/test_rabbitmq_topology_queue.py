@@ -6,9 +6,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from eventsource.adapters.rabbitmq import (
-    RabbitMQEventBusConfig,
-)
+from eventsource.adapters.rabbitmq import RabbitMQEventBus, RabbitMQEventBusConfig
+
+
+def _setup_mocks(
+    mock_aio_pika: MagicMock,
+) -> tuple[AsyncMock, AsyncMock, AsyncMock, AsyncMock]:
+    mock_connection = AsyncMock(is_closed=False)
+    mock_channel = AsyncMock(is_closed=False)
+    mock_exchange = AsyncMock()
+    mock_queue = AsyncMock()
+    mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
+    mock_connection.channel = AsyncMock(return_value=mock_channel)
+    mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
+    mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
+    return mock_connection, mock_channel, mock_exchange, mock_queue
 
 
 class TestRabbitMQQueueDeclaration:
@@ -16,7 +28,6 @@ class TestRabbitMQQueueDeclaration:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -29,20 +40,7 @@ class TestRabbitMQQueueDeclaration:
     async def test_declare_queue_basic(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that connect declares a queue."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, mock_channel, _, _ = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -55,36 +53,23 @@ class TestRabbitMQQueueDeclaration:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_declare_queue_with_dlq_arguments(self, mock_aio_pika: MagicMock) -> None:
-        """Test that queue includes DLQ arguments when enabled."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
         config = RabbitMQEventBusConfig(
             exchange_name="test-events",
             consumer_group="test-group",
             enable_dlq=True,
         )
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, mock_channel, _, _ = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
-        # Find the call for the main queue (not DLQ)
-        main_queue_call = None
-        for call in mock_channel.declare_queue.call_args_list:
-            if call.kwargs["name"] == config.queue_name:
-                main_queue_call = call
-                break
-
+        main_queue_call = next(
+            (
+                call
+                for call in mock_channel.declare_queue.call_args_list
+                if call.kwargs["name"] == config.queue_name
+            ),
+            None,
+        )
         assert main_queue_call is not None
         call_kwargs = main_queue_call.kwargs
         assert "arguments" in call_kwargs
@@ -96,20 +81,7 @@ class TestRabbitMQQueueDeclaration:
     async def test_declare_queue_without_dlq_arguments(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that queue has no DLQ arguments when DLQ disabled."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, mock_channel, _, _ = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -121,20 +93,7 @@ class TestRabbitMQQueueDeclaration:
     async def test_queue_reference_stored(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that queue reference is stored after declaration."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, _, _, mock_queue = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -146,7 +105,6 @@ class TestRabbitMQQueueBinding:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -159,20 +117,7 @@ class TestRabbitMQQueueBinding:
     async def test_bind_queue_to_exchange(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that queue is bound to exchange."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, _, _, mock_queue = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -183,20 +128,7 @@ class TestRabbitMQQueueBinding:
     async def test_bind_queue_with_wildcard_routing_key(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that queue is bound with '#' routing key."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, _, _, mock_queue = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
@@ -208,20 +140,7 @@ class TestRabbitMQQueueBinding:
     async def test_bind_queue_to_correct_exchange(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that queue is bound to the correct exchange."""
-        from eventsource.adapters.rabbitmq import RabbitMQEventBus
-
-        mock_connection = AsyncMock()
-        mock_connection.is_closed = False
-        mock_channel = AsyncMock()
-        mock_channel.is_closed = False
-        mock_exchange = AsyncMock()
-        mock_queue = AsyncMock()
-        mock_aio_pika.connect_robust = AsyncMock(return_value=mock_connection)
-        mock_connection.channel = AsyncMock(return_value=mock_channel)
-        mock_channel.declare_exchange = AsyncMock(return_value=mock_exchange)
-        mock_channel.declare_queue = AsyncMock(return_value=mock_queue)
-
+        _, _, mock_exchange, mock_queue = _setup_mocks(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
 

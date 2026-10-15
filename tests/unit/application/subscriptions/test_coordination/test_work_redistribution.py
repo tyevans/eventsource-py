@@ -14,6 +14,19 @@ from eventsource.application.subscriptions.coordination import (
 )
 
 
+def _make_shutdown(
+    instance_id: str = "worker-2", subscriptions: tuple[str, ...] = ("sub-1",)
+) -> ShutdownNotification:
+    now = datetime.now(UTC)
+    return ShutdownNotification(
+        instance_id=instance_id,
+        intent=ShutdownIntent.GRACEFUL,
+        initiated_at=now,
+        expected_completion_at=now + timedelta(seconds=30),
+        subscriptions=subscriptions,
+    )
+
+
 @pytest.mark.asyncio
 class TestWorkRedistributionCoordinator:
     """Tests for WorkRedistributionCoordinator."""
@@ -72,17 +85,9 @@ class TestWorkRedistributionCoordinator:
             received_notifications.append(notification)
 
         coordinator.on_peer_shutdown(callback)
-        now = datetime.now(UTC)
-        notification = ShutdownNotification(
-            instance_id="worker-2",
-            intent=ShutdownIntent.GRACEFUL,
-            initiated_at=now,
-            expected_completion_at=now + timedelta(seconds=30),
-            subscriptions=("sub-1",),
-        )
+        notification = _make_shutdown("worker-2")
         await coordinator.handle_peer_shutdown(notification)
-        assert len(received_notifications) == 1
-        assert received_notifications[0] == notification
+        assert received_notifications == [notification]
         assert "worker-2" in coordinator.known_peers
         assert coordinator.known_peers["worker-2"].status == "draining"
 
@@ -94,15 +99,7 @@ class TestWorkRedistributionCoordinator:
             received_notifications.append(notification)
 
         coordinator.on_peer_shutdown(callback)
-        now = datetime.now(UTC)
-        notification = ShutdownNotification(
-            instance_id="worker-1",
-            intent=ShutdownIntent.GRACEFUL,
-            initiated_at=now,
-            expected_completion_at=now + timedelta(seconds=30),
-            subscriptions=("sub-1",),
-        )
-        await coordinator.handle_peer_shutdown(notification)
+        await coordinator.handle_peer_shutdown(_make_shutdown("worker-1"))
         assert len(received_notifications) == 0
         assert "worker-1" not in coordinator.known_peers
 
@@ -121,9 +118,7 @@ class TestWorkRedistributionCoordinator:
             in_flight_count=5,
         )
         await coordinator.handle_heartbeat(heartbeat)
-        assert len(received_heartbeats) == 1
-        assert received_heartbeats[0] == heartbeat
-        assert "worker-2" in coordinator.known_peers
+        assert received_heartbeats == [heartbeat]
         assert coordinator.known_peers["worker-2"].status == "healthy"
         assert coordinator.healthy_peer_count == 1
 
@@ -135,8 +130,9 @@ class TestWorkRedistributionCoordinator:
             received_heartbeats.append(heartbeat)
 
         coordinator.on_heartbeat(callback)
-        heartbeat = HeartbeatMessage(instance_id="worker-1", timestamp=datetime.now(UTC))
-        await coordinator.handle_heartbeat(heartbeat)
+        await coordinator.handle_heartbeat(
+            HeartbeatMessage(instance_id="worker-1", timestamp=datetime.now(UTC))
+        )
         assert len(received_heartbeats) == 0
         assert "worker-1" not in coordinator.known_peers
 
@@ -155,8 +151,7 @@ class TestWorkRedistributionCoordinator:
             assigned_at=datetime.now(UTC),
         )
         await coordinator.handle_work_assignment(assignment)
-        assert len(received_assignments) == 1
-        assert received_assignments[0] == assignment
+        assert received_assignments == [assignment]
 
     async def test_handle_work_assignment_ignores_other_target(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
@@ -187,31 +182,16 @@ class TestWorkRedistributionCoordinator:
 
         coordinator.on_peer_shutdown(failing_callback)
         coordinator.on_peer_shutdown(success_callback)
-        now = datetime.now(UTC)
-        notification = ShutdownNotification(
-            instance_id="worker-2",
-            intent=ShutdownIntent.GRACEFUL,
-            initiated_at=now,
-            expected_completion_at=now + timedelta(seconds=30),
-            subscriptions=(),
-        )
-        await coordinator.handle_peer_shutdown(notification)
+        await coordinator.handle_peer_shutdown(_make_shutdown("worker-2", ()))
         assert successful_callbacks == ["worker-2"]
 
     async def test_remove_callbacks(self) -> None:
         coordinator = WorkRedistributionCoordinator(instance_id="worker-1")
 
-        async def shutdown_cb(n: ShutdownNotification) -> None:
-            pass
-
-        async def heartbeat_cb(h: HeartbeatMessage) -> None:
-            pass
-
-        async def timeout_cb(p: str) -> None:
-            pass
-
-        async def assignment_cb(a: WorkAssignment) -> None:
-            pass
+        async def shutdown_cb(n: ShutdownNotification) -> None: ...
+        async def heartbeat_cb(h: HeartbeatMessage) -> None: ...
+        async def timeout_cb(p: str) -> None: ...
+        async def assignment_cb(a: WorkAssignment) -> None: ...
 
         coordinator.on_peer_shutdown(shutdown_cb)
         coordinator.on_heartbeat(heartbeat_cb)
