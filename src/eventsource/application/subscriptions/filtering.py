@@ -1,7 +1,4 @@
-"""
-Event filtering for subscription event delivery (exact event types, fnmatch patterns,
-aggregate types, and tenant IDs).
-"""
+"""Event filtering for subscription event delivery (event types, patterns, aggregates, tenants)."""
 
 from __future__ import annotations
 
@@ -31,11 +28,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EventFilter:
-    """
-    Filters events based on event type, fnmatch pattern, aggregate type, and tenant ID.
-
-    If no filters are configured (all None), the filter matches all events.
-    """
+    """Filters events based on event type, fnmatch pattern, aggregate type, and tenant ID."""
 
     event_types: tuple[type[DomainEvent], ...] | None = None
     event_type_patterns: tuple[str, ...] | None = None
@@ -50,7 +43,6 @@ class EventFilter:
     _stats: FilterStats = field(default_factory=FilterStats, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Initialize internal sets and pre-compiled patterns for fast lookups."""
         if self.event_types:
             self._event_type_set = set(self.event_types)
         if self.aggregate_types:
@@ -75,7 +67,6 @@ class EventFilter:
 
     @classmethod
     def from_config(cls, config: SubscriptionConfig) -> EventFilter:
-        """Create filter from subscription configuration."""
         return cls(
             event_types=config.event_types,
             aggregate_types=config.aggregate_types,
@@ -84,23 +75,18 @@ class EventFilter:
 
     @classmethod
     def from_subscriber(cls, subscriber: Subscriber) -> EventFilter:
-        """Create filter from subscriber's subscribed_to() method."""
         event_types = get_subscribed_event_types(subscriber)
         return cls(event_types=tuple(event_types)) if event_types else cls()
 
     @classmethod
     def from_config_and_subscriber(
-        cls,
-        config: SubscriptionConfig,
-        subscriber: Subscriber,
+        cls, config: SubscriptionConfig, subscriber: Subscriber
     ) -> EventFilter:
-        """Create filter from config, falling back to subscriber's subscribed_to()."""
         event_types = config.event_types
         if event_types is None:
             subscribed = get_subscribed_event_types(subscriber)
             if subscribed:
                 event_types = tuple(subscribed)
-
         return cls(
             event_types=event_types,
             aggregate_types=config.aggregate_types,
@@ -109,12 +95,10 @@ class EventFilter:
 
     @classmethod
     def from_patterns(cls, *patterns: str) -> EventFilter:
-        """Create filter from event type name patterns."""
         return cls(event_type_patterns=patterns)
 
     @property
     def is_configured(self) -> bool:
-        """Check if the filter has any criteria configured."""
         return (
             self.event_types is not None
             or self.event_type_patterns is not None
@@ -124,15 +108,12 @@ class EventFilter:
 
     @property
     def stats(self) -> FilterStats:
-        """Get filter statistics."""
         return self._stats
 
     def matches(self, event: DomainEvent) -> bool:
-        """Check if an event matches all filter criteria."""
         if not self._has_any_filter:
             self._stats.record_match()
             return True
-
         if (
             not self._matches_event_type(event)
             or not self._matches_event_type_pattern(event)
@@ -141,63 +122,46 @@ class EventFilter:
         ):
             self._stats.record_skip()
             return False
-
         self._stats.record_match()
         return True
 
     def matches_envelope(self, envelope: EventEnvelope) -> bool:
-        """Check if an event envelope matches all filter criteria."""
         if not self._has_any_filter:
             self._stats.record_match()
             return True
         return self.matches(envelope.event)
 
     def _matches_event_type(self, event: DomainEvent) -> bool:
-        """Check if event matches configured event types."""
-        if self._event_type_set is None:
-            return True
-        return type(event) in self._event_type_set
+        return self._event_type_set is None or type(event) in self._event_type_set
 
     def _matches_event_type_pattern(self, event: DomainEvent) -> bool:
-        """Check if event type name matches any configured exact or wildcard pattern."""
         if self.event_type_patterns is None:
             return True
-
         event_type_name = event.event_type
         if event_type_name in self._exact_patterns:
             return True
-        if not self._compiled_patterns:
-            return False
-        return any(
-            pattern.match(event_type_name) is not None for pattern in self._compiled_patterns
+        return bool(
+            self._compiled_patterns
+            and any(p.match(event_type_name) is not None for p in self._compiled_patterns)
         )
 
     def _matches_aggregate_type(self, event: DomainEvent) -> bool:
-        """Check if event's aggregate type is in configured types."""
-        if self._aggregate_type_set is None:
-            return True
-        return event.aggregate_type in self._aggregate_type_set
+        return self._aggregate_type_set is None or event.aggregate_type in self._aggregate_type_set
 
     def _matches_tenant_id(self, event: DomainEvent) -> bool:
-        """Check if event's tenant_id matches the configured tenant_id."""
-        if self.tenant_id is None:
-            return True
-        return event.tenant_id == self.tenant_id
+        return self.tenant_id is None or event.tenant_id == self.tenant_id
 
     @property
     def event_type_names(self) -> list[str] | None:
-        """Get event type names for query optimization, or None if no types configured."""
         if self._event_type_set is None:
             return None
         names = [event_type.event_type_name() for event_type in self._event_type_set]
         return names if names else None
 
     def reset_stats(self) -> None:
-        """Reset filter statistics."""
         self._stats = FilterStats()
 
     def __repr__(self) -> str:
-        """String representation of the filter."""
         parts = []
         if self.event_types:
             parts.append(f"event_types={[t.__name__ for t in self.event_types]}")
@@ -207,13 +171,7 @@ class EventFilter:
             parts.append(f"aggregates={list(self.aggregate_types)}")
         if self.tenant_id:
             parts.append(f"tenant_id={self.tenant_id}")
-
         return f"EventFilter({', '.join(parts)})" if parts else "EventFilter(all)"
 
 
-__all__ = [
-    "EventFilter",
-    "FilterStats",
-    "matches_event_type",
-    "matches_pattern",
-]
+__all__ = ["EventFilter", "FilterStats", "matches_event_type", "matches_pattern"]

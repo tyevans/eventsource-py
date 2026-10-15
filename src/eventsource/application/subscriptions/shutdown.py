@@ -61,21 +61,15 @@ class ShutdownCoordinator:
         self.timeout, self.drain_timeout = timeout, drain_timeout
         self.checkpoint_timeout, self.checkpoint_interval = checkpoint_timeout, checkpoint_interval
         self._signal_manager = ShutdownSignalManager(timeout=timeout)
-        self._hook_manager = ShutdownHookManager()
-        self._deadline_manager = ShutdownDeadlineManager(timeout=timeout)
+        self._hook_manager, self._deadline_manager = (
+            ShutdownHookManager(),
+            ShutdownDeadlineManager(timeout=timeout),
+        )
         self._periodic_manager = PeriodicCheckpointManager(checkpoint_interval=checkpoint_interval)
         self._last_metrics_snapshot: ShutdownMetricsSnapshot | None = None
-        self._in_flight_at_start: int = 0
-        self._drain_start_time = self._drain_duration_seconds = 0.0
+        self._in_flight_at_start, self._drain_start_time, self._drain_duration_seconds = 0, 0.0, 0.0
 
-    @property
-    def _phase(self) -> ShutdownPhase:
-        return self._signal_manager.phase
-
-    @_phase.setter
-    def _phase(self, value: ShutdownPhase) -> None:
-        self._signal_manager.phase = value
-
+    _phase = _delegate("_signal_manager", "phase")
     _shutdown_event = _delegate("_signal_manager", "shutdown_event")
     _shutdown_requested = _delegate("_signal_manager", "shutdown_requested")
     _shutdown_reason = _delegate("_signal_manager", "shutdown_reason")
@@ -86,6 +80,11 @@ class ShutdownCoordinator:
     _periodic_checkpoint_task = _delegate("_periodic_manager", "_periodic_checkpoint_task")
     _periodic_checkpoints_saved = _delegate("_periodic_manager", "_periodic_checkpoints_saved")
     _shutdown_deadline = _delegate("_deadline_manager", "_shutdown_deadline")
+    is_shutting_down = _delegate("_signal_manager", "shutdown_requested")
+    phase = _delegate("_signal_manager", "phase")
+    deadline = _delegate("_deadline_manager", "deadline")
+    last_metrics_snapshot = property(lambda self: self._last_metrics_snapshot)
+    is_forced = property(lambda self: bool(self._phase == ShutdownPhase.FORCED))
 
     def register_signals(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._signal_manager.register_signals(loop)
@@ -132,10 +131,6 @@ class ShutdownCoordinator:
     def get_remaining_shutdown_time(self) -> float:
         return self._deadline_manager.get_remaining_shutdown_time()
 
-    @property
-    def deadline(self) -> datetime | None:
-        return self._deadline_manager.deadline
-
     def _get_adjusted_timeouts(self) -> tuple[float, float, float]:
         return self._deadline_manager.get_adjusted_timeouts(
             self.drain_timeout, self.checkpoint_timeout
@@ -147,22 +142,6 @@ class ShutdownCoordinator:
             record_in_flight_at_shutdown(count)
         except Exception as e:
             logger.debug("Failed to record in-flight count metric", extra={"error": str(e)})
-
-    @property
-    def is_shutting_down(self) -> bool:
-        return self._signal_manager.shutdown_requested
-
-    @property
-    def phase(self) -> ShutdownPhase:
-        return self._phase
-
-    @property
-    def is_forced(self) -> bool:
-        return self._phase == ShutdownPhase.FORCED
-
-    @property
-    def last_metrics_snapshot(self) -> ShutdownMetricsSnapshot | None:
-        return self._last_metrics_snapshot
 
     def _create_result(
         self,
@@ -183,13 +162,11 @@ class ShutdownCoordinator:
         checkpoint_func: Callable[[], Awaitable[int]] | None = None,
         close_func: Callable[[], Awaitable[None]] | None = None,
     ) -> ShutdownResult:
-        """Execute graceful shutdown sequence."""
         return await execute_shutdown_sequence(
             self, stop_func, drain_func, checkpoint_func, close_func
         )
 
     def reset(self) -> None:
-        """Reset the coordinator for reuse."""
         self._signal_manager.reset()
         self._signal_manager.callbacks.clear()
         self._hook_manager.clear()
@@ -201,19 +178,19 @@ class ShutdownCoordinator:
 
 
 __all__ = [
+    "OTEL_METRICS_AVAILABLE",
+    "PostShutdownHook",
+    "PreShutdownHook",
+    "ShutdownCoordinator",
+    "ShutdownMetricsSnapshot",
     "ShutdownPhase",
     "ShutdownReason",
     "ShutdownResult",
-    "ShutdownMetricsSnapshot",
-    "ShutdownCoordinator",
-    "PreShutdownHook",
-    "PostShutdownHook",
-    "OTEL_METRICS_AVAILABLE",
-    "record_shutdown_initiated",
-    "record_shutdown_completed",
+    "get_in_flight_at_shutdown",
     "record_drain_duration",
     "record_events_drained",
     "record_in_flight_at_shutdown",
-    "get_in_flight_at_shutdown",
+    "record_shutdown_completed",
+    "record_shutdown_initiated",
     "reset_shutdown_metrics",
 ]
