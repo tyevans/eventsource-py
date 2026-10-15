@@ -196,3 +196,40 @@ class TestProjectionCoordinator:
         assert health["handler_count"] == 1
         assert "TestProjection" in health["projections"]
         assert "TestHandler" in health["handlers"]
+
+    @pytest.mark.asyncio
+    async def test_registry_register_and_coordinator_sequence_init(self) -> None:
+        """ProjectionRegistry.register and ProjectionCoordinator([proj, handler]) wire items directly."""
+        seen: list[str] = []
+
+        class TestProjection(Projection):
+            async def handle(self, event: DomainEvent) -> None:
+                seen.append("proj")
+
+            async def reset(self) -> None:
+                pass
+
+        class TestHandler(EventHandlerBase):
+            def can_handle(self, event: DomainEvent) -> bool:
+                return True
+
+            async def handle(self, event: DomainEvent) -> None:
+                seen.append("handler")
+
+        proj = TestProjection()
+        handler = TestHandler()
+        reg = ProjectionRegistry(projections=[proj], handlers=[handler])
+        assert reg.get_projection_count() == 1
+        assert reg.get_handler_count() == 1
+
+        with pytest.raises(TypeError, match="Expected Projection or EventHandlerBase"):
+            reg.register("invalid")  # type: ignore[arg-type]
+
+        coord = ProjectionCoordinator([proj, handler])
+        event = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
+        count = await coord.dispatch_events([event])
+        assert count == 1
+        assert sorted(seen) == ["handler", "proj"]
+
+        empty_coord = ProjectionCoordinator()
+        assert empty_coord.registry.get_projection_count() == 0
