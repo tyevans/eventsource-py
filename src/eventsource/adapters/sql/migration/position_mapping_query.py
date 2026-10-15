@@ -59,14 +59,7 @@ class PostgreSQLPositionMappingQueryMixin:
         ) -> int | None: ...
 
     async def get(self, mapping_id: int) -> PositionMapping | None:
-        """Get a position mapping by its database ID.
-
-        Args:
-            mapping_id: Database ID of the mapping
-
-        Returns:
-            PositionMapping instance or None if not found
-        """
+        """Get a position mapping by its database ID."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.get",
             {
@@ -96,18 +89,7 @@ class PostgreSQLPositionMappingQueryMixin:
         migration_id: UUID,
         source_position: Position,
     ) -> PositionMapping | None:
-        """Find mapping by exact source position.
-
-        Uses the unique index on (migration_id, source_position_token) for
-        efficient O(log n) lookup.
-
-        Args:
-            migration_id: UUID of the migration
-            source_position: Exact source position to find
-
-        Returns:
-            PositionMapping instance or None if not found
-        """
+        """Find mapping by exact source position via unique index."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.find_by_source_position",
             {
@@ -145,15 +127,7 @@ class PostgreSQLPositionMappingQueryMixin:
         migration_id: UUID,
         target_position: Position,
     ) -> PositionMapping | None:
-        """Find mapping by exact target position.
-
-        Args:
-            migration_id: UUID of the migration
-            target_position: Exact target position to find
-
-        Returns:
-            PositionMapping instance or None if not found
-        """
+        """Find mapping by exact target position."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.find_by_target_position",
             {
@@ -192,17 +166,7 @@ class PostgreSQLPositionMappingQueryMixin:
         migration_id: UUID,
         event_id: UUID,
     ) -> PositionMapping | None:
-        """Find mapping by event ID.
-
-        Uses the index on event_id for efficient lookup.
-
-        Args:
-            migration_id: UUID of the migration
-            event_id: UUID of the event
-
-        Returns:
-            PositionMapping instance or None if not found
-        """
+        """Find mapping by event ID."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.find_by_event_id",
             {
@@ -241,19 +205,7 @@ class PostgreSQLPositionMappingQueryMixin:
         limit: int = 100,
         offset: int = 0,
     ) -> list[PositionMapping]:
-        """List mappings for a migration with pagination.
-
-        Results are ordered by `id` ascending, which is source-position
-        order under the class's monotonicity precondition.
-
-        Args:
-            migration_id: UUID of the migration
-            limit: Maximum number of results (default 100)
-            offset: Number of results to skip (default 0)
-
-        Returns:
-            List of PositionMapping instances
-        """
+        """List mappings for a migration with pagination ordered by id ascending."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.list_by_migration",
             {
@@ -292,18 +244,7 @@ class PostgreSQLPositionMappingQueryMixin:
         start_position: Position,
         end_position: Position,
     ) -> list[PositionMapping]:
-        """List mappings within a source position range.
-
-        Returns all mappings where start_position <= source_position <= end_position.
-
-        Args:
-            migration_id: UUID of the migration
-            start_position: Start of source position range (inclusive)
-            end_position: End of source position range (inclusive)
-
-        Returns:
-            List of PositionMapping instances ordered by source_position
-        """
+        """List mappings within an inclusive source position range."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.list_in_source_range",
             {
@@ -324,14 +265,7 @@ class PostgreSQLPositionMappingQueryMixin:
             return await self.list_by_migration(migration_id, limit=count, offset=lower_ordinal)
 
     async def count_by_migration(self, migration_id: UUID) -> int:
-        """Count total mappings for a migration.
-
-        Args:
-            migration_id: UUID of the migration
-
-        Returns:
-            Number of mappings
-        """
+        """Count total mappings for a migration."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.count_by_migration",
             {
@@ -355,15 +289,7 @@ class PostgreSQLPositionMappingQueryMixin:
         self,
         migration_id: UUID,
     ) -> tuple[Position, Position] | None:
-        """Get the first and last mapping's source positions for a migration.
-
-        Args:
-            migration_id: UUID of the migration
-
-        Returns:
-            Tuple of (first_source_position, last_source_position) or None
-            if no mappings exist
-        """
+        """Get the first and last mapping's source positions for a migration."""
         with self._tracer.span(
             "eventsource.position_mapping_repo.get_position_bounds",
             {

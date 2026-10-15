@@ -25,22 +25,10 @@ from eventsource.ports.positions import Position
 
 
 class SQLCheckpointRepository:
-    """
-    SQLAlchemy-backed checkpoint repository, serving both PostgreSQL and SQLite.
+    """SQLAlchemy-backed checkpoint repository serving both PostgreSQL and SQLite.
 
-    Stores checkpoints in the `projection_checkpoints` table. Dialect
-    differences (UUID/timestamp representation, current-time expression,
-    array vs. IN-list filtering) are resolved per call via
-    `eventsource.adapters._sql.dialect`.
-
-    Example:
-        >>> async with engine.begin() as conn:
-        ...     repo = SQLCheckpointRepository(conn)
-        ...     await repo.update_checkpoint(
-        ...         "MyProjection",
-        ...         event.event_id,
-        ...         event.event_type,
-        ...     )
+    Stores checkpoints in the `projection_checkpoints` table. Dialect differences
+    are resolved per call via `eventsource.adapters._sql.dialect`.
     """
 
     def __init__(
@@ -49,28 +37,13 @@ class SQLCheckpointRepository:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ):
-        """
-        Initialize the checkpoint repository.
-
-        Args:
-            conn: Database connection or engine
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize the checkpoint repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._conn = conn
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
-        """
-        Get the last processed event ID for a projection.
-
-        Args:
-            projection_name: Name of the projection
-
-        Returns:
-            Last processed event ID, or None if no checkpoint exists
-        """
+        """Get the last processed event ID for a projection, or None if none exists."""
         with self._tracer.span(
             "eventsource.checkpoint.get_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
@@ -93,16 +66,7 @@ class SQLCheckpointRepository:
         event_id: UUID,
         event_type: str,
     ) -> None:
-        """
-        Update the checkpoint for a projection.
-
-        Uses UPSERT pattern for idempotency.
-
-        Args:
-            projection_name: Name of the projection
-            event_id: Event ID that was processed
-            event_type: Type of event processed
-        """
+        """Update the checkpoint for a projection using an idempotent UPSERT."""
         with self._tracer.span(
             "eventsource.checkpoint.update_checkpoint",
             {
@@ -139,21 +103,11 @@ class SQLCheckpointRepository:
         projection_name: str,
         event_types: list[str] | None = None,
     ) -> LagMetrics | None:
-        """
-        Get lag metrics for a projection.
-
-        Args:
-            projection_name: Name of the projection
-            event_types: List of event types this projection handles
-
-        Returns:
-            LagMetrics if checkpoint exists, None otherwise
-        """
+        """Get lag metrics for a projection, or None if no checkpoint exists."""
         with self._tracer.span(
             "eventsource.checkpoint.get_lag_metrics",
             {ATTR_PROJECTION_NAME: projection_name},
         ):
-            # Default to empty list if no event types provided
             if event_types is None:
                 event_types = []
 
@@ -171,11 +125,7 @@ class SQLCheckpointRepository:
                 else:
                     event_filter = ""
 
-                # event_filter is not caller data: it is either the empty
-                # string, a fixed literal, or ":etN" bind-parameter
-                # placeholders generated from range(len(event_types)). Every
-                # value, including the event types themselves, is passed
-                # separately in `params` and bound by the driver.
+                # event_filter contains only fixed literals or generated :etN bind placeholders
                 query = text(
                     f"""
                     WITH latest_relevant_event AS (
@@ -204,7 +154,6 @@ class SQLCheckpointRepository:
             if not row:
                 return None
 
-            # Extract values
             last_event_id = str(uuid_result(row[1])) if row[1] is not None else None
             latest_event_id = str(uuid_result(row[2])) if row[2] is not None else None
             last_processed_at = ts_result(row[5])
@@ -214,8 +163,6 @@ class SQLCheckpointRepository:
             if last_processed_at is not None and latest_event_time is not None:
                 raw_lag = (latest_event_time - last_processed_at).total_seconds()
 
-            # Calculate actual lag
-            # If last_event_id matches latest_event_id, projection is up-to-date
             if (
                 last_event_id
                 and latest_event_id
@@ -236,12 +183,7 @@ class SQLCheckpointRepository:
             )
 
     async def reset_checkpoint(self, projection_name: str) -> None:
-        """
-        Reset the checkpoint for a projection.
-
-        Args:
-            projection_name: Name of the projection
-        """
+        """Reset the checkpoint for a projection."""
         with self._tracer.span(
             "eventsource.checkpoint.reset_checkpoint",
             {ATTR_PROJECTION_NAME: projection_name},
@@ -256,22 +198,7 @@ class SQLCheckpointRepository:
                 await conn.execute(query, params)
 
     async def get_position(self, subscription_id: str) -> Position | None:
-        """
-        Get last processed global-feed position for a subscription.
-
-        The token is stored opaquely: this repository never inspects its
-        `store_id`.
-
-        Args:
-            subscription_id: Identifier for the subscription (typically projection name)
-
-        Returns:
-            Last processed position, or None if no checkpoint exists or the
-            row carries no token. A row holding only the legacy integer
-            position therefore reads None and the subscription restarts
-            catch-up -- reconstructing a token would require inventing a
-            store_id.
-        """
+        """Get last processed global-feed position for a subscription, or None if unset."""
         with self._tracer.span(
             "eventsource.checkpoint.get_position",
             {ATTR_PROJECTION_NAME: subscription_id},
@@ -295,19 +222,7 @@ class SQLCheckpointRepository:
         event_id: UUID,
         event_type: str,
     ) -> None:
-        """
-        Save checkpoint with an opaque global-feed position.
-
-        Updates the position, event_id, and event_type for the checkpoint.
-        Uses UPSERT pattern for idempotency. The token is written verbatim;
-        its `store_id` is not validated here.
-
-        Args:
-            subscription_id: Identifier for the subscription (typically projection name)
-            position: Opaque global-feed position of the event
-            event_id: Event ID that was processed
-            event_type: Type of event processed
-        """
+        """Save checkpoint with an opaque global-feed position using an idempotent UPSERT."""
         with self._tracer.span(
             "eventsource.checkpoint.save_position",
             {
@@ -346,12 +261,7 @@ class SQLCheckpointRepository:
                 await conn.execute(query, params)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
-        """
-        Get all projection checkpoints.
-
-        Returns:
-            List of CheckpointData for all projections
-        """
+        """Get all projection checkpoints ordered by projection_name."""
         with self._tracer.span(
             "eventsource.checkpoint.get_all_checkpoints",
             {},

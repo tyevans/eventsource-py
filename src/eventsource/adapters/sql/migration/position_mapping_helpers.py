@@ -38,10 +38,7 @@ def row_to_mapping(row: Sequence[Any]) -> PositionMapping:
     """
     source_token, target_token = row[2], row[3]
     if source_token is None or target_token is None:
-        raise PositionDecodeError(
-            f"position mapping row {row[0]!r} has no position token "
-            "(legacy int-only row is not decodable)"
-        )
+        raise PositionDecodeError(f"position mapping row {row[0]!r} has no position token")
     return PositionMapping(
         migration_id=row[1],
         source_position=Position.from_str(source_token),
