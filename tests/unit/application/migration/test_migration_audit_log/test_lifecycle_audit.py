@@ -1,7 +1,4 @@
-"""
-Unit tests confirming MigrationCoordinator writes lifecycle audit entries
-when an audit_log_repo is configured.
-"""
+"""Unit tests confirming MigrationCoordinator writes lifecycle audit entries."""
 
 from __future__ import annotations
 
@@ -11,11 +8,7 @@ from uuid import uuid4
 import pytest
 
 from eventsource.application.migration.coordinator import MigrationCoordinator
-from eventsource.ports.migration.models import (
-    AuditEventType,
-    Migration,
-    MigrationPhase,
-)
+from eventsource.ports.migration.models import AuditEventType, Migration, MigrationPhase
 from tests.unit.application.migration.test_migration_audit_log._fakes import (
     FakeAuditLogRepository,
 )
@@ -25,20 +18,17 @@ pytestmark = pytest.mark.asyncio
 
 class TestAuditLogIsOptional:
     async def test_coordinator_works_without_audit_log_repo(self) -> None:
-        """Omitting audit_log_repo is not a behavior change -- the
-        coordinator still starts a migration exactly as before."""
+        """Omitting audit_log_repo starts a migration cleanly."""
         tenant_id = uuid4()
         migration_repo = AsyncMock()
         migration_repo.get_by_tenant = AsyncMock(return_value=None)
         migration_repo.create = AsyncMock()
-        routing_repo = AsyncMock()
-        router = MagicMock()
 
         coordinator = MigrationCoordinator(
             source_store=AsyncMock(),
             migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
+            routing_repo=AsyncMock(),
+            router=MagicMock(),
             enable_tracing=False,
         )
         coordinator._run_bulk_copy = AsyncMock()  # type: ignore[method-assign]
@@ -48,27 +38,23 @@ class TestAuditLogIsOptional:
             target_store=AsyncMock(),
             target_store_id="dedicated",
         )
-
         assert migration is not None
 
 
 class TestStartMigrationAudit:
     async def test_start_migration_records_migration_started(self) -> None:
-        """start_migration() writes a MIGRATION_STARTED audit entry through
-        the coordinator's real call path."""
+        """start_migration() writes a MIGRATION_STARTED audit entry."""
         tenant_id = uuid4()
         migration_repo = AsyncMock()
         migration_repo.get_by_tenant = AsyncMock(return_value=None)
         migration_repo.create = AsyncMock()
-        routing_repo = AsyncMock()
-        router = MagicMock()
         audit_log = FakeAuditLogRepository()
 
         coordinator = MigrationCoordinator(
             source_store=AsyncMock(),
             migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
+            routing_repo=AsyncMock(),
+            router=MagicMock(),
             audit_log_repo=audit_log,
             enable_tracing=False,
         )
@@ -93,20 +79,15 @@ class TestStartMigrationAudit:
 
 class TestTransitionToDualWriteAudit:
     async def test_transition_records_phase_changed(self) -> None:
-        """_transition_to_dual_write() writes a PHASE_CHANGED audit entry
-        (BULK_COPY -> DUAL_WRITE) through the real transition method."""
+        """_transition_to_dual_write() writes a PHASE_CHANGED audit entry."""
         migration_id = uuid4()
-        tenant_id = uuid4()
-        target_store = AsyncMock()
-
         migration = Migration(
             id=migration_id,
-            tenant_id=tenant_id,
+            tenant_id=uuid4(),
             source_store_id="default",
             target_store_id="dedicated",
             phase=MigrationPhase.BULK_COPY,
         )
-
         migration_repo = AsyncMock()
         migration_repo.update_phase = AsyncMock()
         routing_repo = AsyncMock()
@@ -122,7 +103,7 @@ class TestTransitionToDualWriteAudit:
             enable_tracing=False,
         )
 
-        await coordinator._transition_to_dual_write(migration, target_store)
+        await coordinator._transition_to_dual_write(migration, AsyncMock())
 
         phase_changes = [
             e for e in audit_log.entries if e.event_type == AuditEventType.PHASE_CHANGED
@@ -135,32 +116,26 @@ class TestTransitionToDualWriteAudit:
 
 class TestAbortMigrationAudit:
     async def test_abort_records_migration_aborted(self) -> None:
-        """abort_migration() writes a MIGRATION_ABORTED audit entry through
-        the real abort path."""
+        """abort_migration() writes a MIGRATION_ABORTED audit entry."""
         migration_id = uuid4()
-        tenant_id = uuid4()
-
         migration = Migration(
             id=migration_id,
-            tenant_id=tenant_id,
+            tenant_id=uuid4(),
             source_store_id="default",
             target_store_id="dedicated",
             phase=MigrationPhase.BULK_COPY,
         )
-
         migration_repo = AsyncMock()
         migration_repo.get = AsyncMock(return_value=migration)
         migration_repo.update_phase = AsyncMock()
         migration_repo.record_error = AsyncMock()
-        routing_repo = AsyncMock()
-        router = MagicMock()
         audit_log = FakeAuditLogRepository()
 
         coordinator = MigrationCoordinator(
             source_store=AsyncMock(),
             migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
+            routing_repo=AsyncMock(),
+            router=MagicMock(),
             audit_log_repo=audit_log,
             enable_tracing=False,
         )
@@ -175,31 +150,25 @@ class TestAbortMigrationAudit:
 
 class TestFailMigrationAudit:
     async def test_fail_migration_records_migration_failed(self) -> None:
-        """_fail_migration() writes a MIGRATION_FAILED audit entry through
-        the real failure path."""
+        """_fail_migration() writes a MIGRATION_FAILED audit entry."""
         migration_id = uuid4()
-        tenant_id = uuid4()
-
         migration = Migration(
             id=migration_id,
-            tenant_id=tenant_id,
+            tenant_id=uuid4(),
             source_store_id="default",
             target_store_id="dedicated",
             phase=MigrationPhase.BULK_COPY,
         )
-
         migration_repo = AsyncMock()
         migration_repo.update_phase = AsyncMock()
         migration_repo.record_error = AsyncMock()
-        routing_repo = AsyncMock()
-        router = MagicMock()
         audit_log = FakeAuditLogRepository()
 
         coordinator = MigrationCoordinator(
             source_store=AsyncMock(),
             migration_repo=migration_repo,
-            routing_repo=routing_repo,
-            router=router,
+            routing_repo=AsyncMock(),
+            router=MagicMock(),
             audit_log_repo=audit_log,
             enable_tracing=False,
         )

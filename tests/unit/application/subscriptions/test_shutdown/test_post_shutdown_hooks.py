@@ -12,9 +12,7 @@ from eventsource.application.subscriptions.shutdown import (
     ShutdownReason,
     ShutdownResult,
 )
-from eventsource.application.subscriptions.shutdown import (
-    __all__ as shutdown_all,
-)
+from eventsource.application.subscriptions.shutdown import __all__ as shutdown_all
 
 
 def _stopped_result() -> ShutdownResult:
@@ -43,8 +41,6 @@ async def _slow_hook(result: ShutdownResult) -> None:
 
 
 class TestPostShutdownHooks:
-    """Tests for post-shutdown hook functionality."""
-
     def test_register_hook(self):
         coordinator = ShutdownCoordinator()
         coordinator.on_post_shutdown(_noop_hook)
@@ -65,17 +61,14 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_receive_result(self):
-        coordinator = ShutdownCoordinator()
-        hook = AsyncMock()
+        coordinator, hook, test_result = ShutdownCoordinator(), AsyncMock(), _stopped_result()
         coordinator.on_post_shutdown(hook)
-        test_result = _stopped_result()
         await coordinator._execute_post_shutdown_hooks(test_result)
         hook.assert_awaited_once_with(test_result)
 
     @pytest.mark.asyncio
     async def test_hooks_execute_in_order(self):
-        coordinator = ShutdownCoordinator()
-        order: list[int] = []
+        coordinator, order = ShutdownCoordinator(), []
 
         async def hook1(result):
             order.append(1)
@@ -90,8 +83,7 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hook_exception_continues_execution(self):
-        coordinator = ShutdownCoordinator()
-        success_hook = AsyncMock()
+        coordinator, success_hook = ShutdownCoordinator(), AsyncMock()
         coordinator.on_post_shutdown(_failing_hook)
         coordinator.on_post_shutdown(success_hook)
         await coordinator._execute_post_shutdown_hooks(_stopped_result())
@@ -99,8 +91,7 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hook_timeout_continues_execution(self):
-        coordinator = ShutdownCoordinator()
-        success_hook = AsyncMock()
+        coordinator, success_hook = ShutdownCoordinator(), AsyncMock()
         coordinator.on_post_shutdown(_slow_hook)
         coordinator.on_post_shutdown(success_hook)
         await coordinator._execute_post_shutdown_hooks(_stopped_result())
@@ -108,8 +99,7 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_execute_after_forced_shutdown(self):
-        coordinator = ShutdownCoordinator()
-        received: list[ShutdownResult] = []
+        coordinator, received = ShutdownCoordinator(), []
 
         async def check_forced(result: ShutdownResult):
             received.append(result)
@@ -127,16 +117,14 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_execute_via_shutdown(self):
-        coordinator = ShutdownCoordinator()
-        hook = AsyncMock()
+        coordinator, hook = ShutdownCoordinator(), AsyncMock()
         coordinator.on_post_shutdown(hook)
         result = await coordinator.shutdown(stop_func=_noop_stop)
         hook.assert_awaited_once_with(result)
 
     @pytest.mark.asyncio
     async def test_hooks_receive_full_result_info(self):
-        coordinator = ShutdownCoordinator()
-        hook = AsyncMock()
+        coordinator, hook = ShutdownCoordinator(), AsyncMock()
         coordinator.on_post_shutdown(hook)
         await coordinator.shutdown(
             stop_func=_noop_stop,
@@ -144,8 +132,7 @@ class TestPostShutdownHooks:
             checkpoint_func=AsyncMock(return_value=5),
         )
         received_result = hook.call_args[0][0]
-        assert received_result.events_drained == 42
-        assert received_result.checkpoints_saved == 5
+        assert (received_result.events_drained, received_result.checkpoints_saved) == (42, 5)
         assert received_result.phase == ShutdownPhase.STOPPED
 
     def test_reset_clears_hooks(self):
@@ -161,39 +148,27 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_execute_after_all_phases(self):
-        coordinator = ShutdownCoordinator()
-        phase_order: list[str] = []
+        coordinator, phase_order = ShutdownCoordinator(), []
 
-        async def stop_func():
-            phase_order.append("stop")
+        def make_phase(name: str, ret=None):
+            async def _fn(*_args):
+                phase_order.append(name)
+                return ret
 
-        async def drain_func():
-            phase_order.append("drain")
-            return 0
+            return _fn
 
-        async def checkpoint_func():
-            phase_order.append("checkpoint")
-            return 0
-
-        async def close_func():
-            phase_order.append("close")
-
-        async def post_hook(result):
-            phase_order.append("post_hook")
-
-        coordinator.on_post_shutdown(post_hook)
+        coordinator.on_post_shutdown(make_phase("post_hook"))
         await coordinator.shutdown(
-            stop_func=stop_func,
-            drain_func=drain_func,
-            checkpoint_func=checkpoint_func,
-            close_func=close_func,
+            stop_func=make_phase("stop"),
+            drain_func=make_phase("drain", 0),
+            checkpoint_func=make_phase("checkpoint", 0),
+            close_func=make_phase("close"),
         )
         assert phase_order == ["stop", "drain", "checkpoint", "close", "post_hook"]
 
     @pytest.mark.asyncio
     async def test_hooks_can_access_result_reason(self):
-        coordinator = ShutdownCoordinator()
-        hook = AsyncMock()
+        coordinator, hook = ShutdownCoordinator(), AsyncMock()
         coordinator.on_post_shutdown(hook)
         coordinator.request_shutdown(ShutdownReason.PROGRAMMATIC)
         await coordinator.shutdown(stop_func=_noop_stop)
@@ -201,8 +176,7 @@ class TestPostShutdownHooks:
 
     @pytest.mark.asyncio
     async def test_hooks_execute_even_when_shutdown_errors(self):
-        coordinator = ShutdownCoordinator()
-        hook = AsyncMock()
+        coordinator, hook = ShutdownCoordinator(), AsyncMock()
 
         async def failing_stop():
             raise RuntimeError("Stop failed")

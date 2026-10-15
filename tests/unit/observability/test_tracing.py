@@ -8,8 +8,6 @@ import pytest
 
 
 class TestOTELAvailable:
-    """Tests for OTEL_AVAILABLE constant."""
-
     def test_otel_available_is_boolean(self):
         from eventsource.observability import OTEL_AVAILABLE
 
@@ -22,13 +20,10 @@ class TestOTELAvailable:
 
 
 class TestGetTracer:
-    """Tests for get_tracer function."""
-
     def test_returns_tracer_when_available(self):
         from eventsource.observability import get_tracer
 
-        tracer = get_tracer("test_module")
-        assert tracer is not None
+        assert get_tracer("test_module") is not None
 
     def test_returns_none_when_unavailable(self, monkeypatch):
         monkeypatch.setattr("eventsource.observability.tracing.OTEL_AVAILABLE", False)
@@ -38,8 +33,6 @@ class TestGetTracer:
 
 
 class TestShouldTrace:
-    """Tests for should_trace function."""
-
     def test_true_when_enabled_and_available(self):
         from eventsource.observability import should_trace
 
@@ -58,8 +51,6 @@ class TestShouldTrace:
 
 
 class TestTracedDecorator:
-    """Tests for @traced decorator."""
-
     @pytest.fixture
     def mock_tracer(self):
         tracer = Mock()
@@ -80,8 +71,7 @@ class TestTracedDecorator:
             async def operation(self) -> str:
                 return "result"
 
-        result = await MyClass().operation()
-        assert result == "result"
+        assert await MyClass().operation() == "result"
         mock_tracer.start_as_current_span.assert_called_once_with("test.operation", attributes={})
 
     def test_sync_method_traced(self, mock_tracer):
@@ -95,8 +85,7 @@ class TestTracedDecorator:
             def operation(self) -> str:
                 return "result"
 
-        result = MyClass().operation()
-        assert result == "result"
+        assert MyClass().operation() == "result"
         mock_tracer.start_as_current_span.assert_called_once()
 
     @pytest.mark.asyncio
@@ -111,8 +100,7 @@ class TestTracedDecorator:
             async def operation(self) -> str:
                 return "result"
 
-        result = await MyClass().operation()
-        assert result == "result"
+        assert await MyClass().operation() == "result"
         mock_tracer.start_as_current_span.assert_not_called()
 
     @pytest.mark.asyncio
@@ -127,8 +115,7 @@ class TestTracedDecorator:
             async def operation(self) -> str:
                 return "result"
 
-        result = await MyClass().operation()
-        assert result == "result"
+        assert await MyClass().operation() == "result"
 
     @pytest.mark.asyncio
     async def test_static_attributes_included(self, mock_tracer):
@@ -171,8 +158,7 @@ class TestTracedDecorator:
             async def operation(self) -> str:
                 return "result"
 
-        result = await MyClass().operation()
-        assert result == "result"
+        assert await MyClass().operation() == "result"
 
     def test_preserves_function_metadata(self):
         from eventsource.observability import traced
@@ -184,7 +170,6 @@ class TestTracedDecorator:
             @traced("test.operation")
             async def my_method(self) -> None:
                 """My docstring."""
-                pass
 
         obj = MyClass()
         assert obj.my_method.__name__ == "my_method"
@@ -192,20 +177,10 @@ class TestTracedDecorator:
 
 
 class TestImports:
-    """Test module imports work correctly."""
-
     def test_import_from_observability(self):
-        from eventsource.observability import (
-            OTEL_AVAILABLE,
-            get_tracer,
-            should_trace,
-            traced,
-        )
+        from eventsource.observability import OTEL_AVAILABLE, get_tracer, should_trace, traced
 
-        assert OTEL_AVAILABLE is not None
-        assert get_tracer is not None
-        assert should_trace is not None
-        assert traced is not None
+        assert all(x is not None for x in (OTEL_AVAILABLE, get_tracer, should_trace, traced))
 
     def test_import_from_tracing(self):
         from eventsource.observability.tracing import (
@@ -215,7 +190,4 @@ class TestImports:
             traced,
         )
 
-        assert OTEL_AVAILABLE is not None
-        assert get_tracer is not None
-        assert should_trace is not None
-        assert traced is not None
+        assert all(x is not None for x in (OTEL_AVAILABLE, get_tracer, should_trace, traced))
