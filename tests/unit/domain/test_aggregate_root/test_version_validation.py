@@ -19,28 +19,17 @@ from tests.unit.domain.test_aggregate_root._fixtures import (
 
 
 class TestEventVersionValidation:
-    """Tests for event version validation feature (TD-004).
-
-    These tests verify:
-    - AC1: Events with version gaps raise EventVersionError
-    - AC2: Events with version regression raise EventVersionError
-    - AC3: Historical replay (is_new=False) works without validation
-    - AC4: validate_versions=False disables validation
-    - AC5: Error messages include expected vs actual version
-    - AC6: Warning logged when validation disabled but versions mismatch
-    """
+    """Tests for event version validation feature (TD-004)."""
 
     def test_version_gap_raises_error(self) -> None:
         """AC1: Skipping versions raises EventVersionError."""
         aggregate = CounterAggregate(uuid4())
-        # Create event with version 3, but aggregate is at version 0, so expected is 1
         event = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=3,  # Expected: 1
+            aggregate_version=3,
             increment=5,
         )
-
         with pytest.raises(EventVersionError) as exc_info:
             aggregate.apply_event(event)
 
@@ -52,7 +41,6 @@ class TestEventVersionValidation:
     def test_version_regression_raises_error(self) -> None:
         """AC2: Going backward in versions raises EventVersionError."""
         aggregate = CounterAggregate(uuid4())
-        # First, apply a valid event at version 1
         event1 = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
@@ -62,14 +50,12 @@ class TestEventVersionValidation:
         aggregate.apply_event(event1)
         assert aggregate.version == 1
 
-        # Try to apply an event with the same version (regression)
         event2 = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=1,  # Expected: 2
+            aggregate_version=1,
             increment=3,
         )
-
         with pytest.raises(EventVersionError) as exc_info:
             aggregate.apply_event(event2)
 
@@ -79,16 +65,12 @@ class TestEventVersionValidation:
     def test_version_zero_event_raises_error(self) -> None:
         """Version 0 event should raise EventVersionError (version must be >= 1)."""
         aggregate = CounterAggregate(uuid4())
-        # This test demonstrates that version 0 would be caught as wrong
-        # because expected version for a new aggregate is 1
-        # Note: DomainEvent validates aggregate_version >= 1, so we test with version 2
         event = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=2,  # Expected: 1
+            aggregate_version=2,
             increment=5,
         )
-
         with pytest.raises(EventVersionError) as exc_info:
             aggregate.apply_event(event)
 
@@ -98,7 +80,6 @@ class TestEventVersionValidation:
     def test_historical_replay_skips_validation(self) -> None:
         """AC3: Events applied with is_new=False skip validation."""
         aggregate = CounterAggregate(uuid4())
-        # Create events with gaps and regressions - would fail validation
         events: list[DomainEvent] = [
             CounterIncremented(
                 aggregate_id=aggregate.aggregate_id,
@@ -109,37 +90,31 @@ class TestEventVersionValidation:
             CounterIncremented(
                 aggregate_id=aggregate.aggregate_id,
                 aggregate_type="Counter",
-                aggregate_version=5,  # Gap! Expected would be 2
+                aggregate_version=5,
                 increment=5,
             ),
             CounterIncremented(
                 aggregate_id=aggregate.aggregate_id,
                 aggregate_type="Counter",
-                aggregate_version=3,  # Regression! Expected would be 6
+                aggregate_version=3,
                 increment=3,
             ),
         ]
-
-        # Should not raise - validation skipped for replay
         aggregate.load_from_history(events)
 
-        # State should reflect all events applied
-        assert aggregate.version == 3  # Last event's version
+        assert aggregate.version == 3
         assert aggregate.state is not None
-        assert aggregate.state.value == 18  # 10 + 5 + 3
+        assert aggregate.state.value == 18
 
     def test_validation_disabled_accepts_any_version(self) -> None:
         """AC4: validate_versions=False allows any version."""
         aggregate = LenientCounterAggregate(uuid4())
-        # Create event with wrong version
         event = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=99,  # Expected: 1
+            aggregate_version=99,
             increment=5,
         )
-
-        # Should not raise
         aggregate.apply_event(event)
 
         assert aggregate.version == 99
@@ -155,7 +130,6 @@ class TestEventVersionValidation:
             aggregate_version=5,
             increment=5,
         )
-
         with pytest.raises(EventVersionError) as exc_info:
             aggregate.apply_event(event)
 
@@ -171,14 +145,12 @@ class TestEventVersionValidation:
         event = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=99,  # Expected: 1
+            aggregate_version=99,
             increment=5,
         )
-
         with caplog.at_level(logging.WARNING):
             aggregate.apply_event(event)
 
-        # Verify warning was logged
         assert "Version mismatch" in caplog.text
         assert "validation disabled" in caplog.text
         assert "expected 1" in caplog.text
@@ -190,14 +162,12 @@ class TestEventVersionValidation:
         event = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=1,  # Correct version
+            aggregate_version=1,
             increment=5,
         )
-
         with caplog.at_level(logging.WARNING):
             aggregate.apply_event(event)
 
-        # No warning should be logged for correct version
         assert "Version mismatch" not in caplog.text
 
     def test_validation_enabled_by_default(self) -> None:
@@ -208,8 +178,6 @@ class TestEventVersionValidation:
     def test_command_methods_work_with_validation(self) -> None:
         """Command methods should work correctly with version validation enabled."""
         aggregate = CounterAggregate(uuid4())
-
-        # Commands should automatically use correct versions
         aggregate.increment(5)
         assert aggregate.version == 1
 
@@ -225,22 +193,18 @@ class TestEventVersionValidation:
     def test_declarative_aggregate_validation(self) -> None:
         """DeclarativeAggregate should also support version validation."""
         aggregate = DeclarativeCounterAggregate(uuid4())
-
-        # Test that validation works on declarative aggregates
         event = CounterIncremented(
             aggregate_id=aggregate.aggregate_id,
             aggregate_type="Counter",
-            aggregate_version=5,  # Wrong version
+            aggregate_version=5,
             increment=5,
         )
-
         with pytest.raises(EventVersionError):
             aggregate.apply_event(event)
 
     def test_version_validation_after_history_load(self) -> None:
         """Version validation should work correctly after loading history."""
         agg_id = uuid4()
-        # Load some history
         events: list[DomainEvent] = [
             CounterIncremented(
                 aggregate_id=agg_id,
@@ -255,19 +219,16 @@ class TestEventVersionValidation:
                 increment=5,
             ),
         ]
-
         aggregate = CounterAggregate(agg_id)
         aggregate.load_from_history(events)
         assert aggregate.version == 2
 
-        # Now apply a new event with wrong version
         bad_event = CounterIncremented(
             aggregate_id=agg_id,
             aggregate_type="Counter",
-            aggregate_version=5,  # Expected: 3
+            aggregate_version=5,
             increment=1,
         )
-
         with pytest.raises(EventVersionError) as exc_info:
             aggregate.apply_event(bad_event)
 
@@ -278,8 +239,6 @@ class TestEventVersionValidation:
         """Version validation should work with different event types."""
         agg_id = uuid4()
         aggregate = CounterAggregate(agg_id)
-
-        # Apply first event
         event1 = CounterIncremented(
             aggregate_id=agg_id,
             aggregate_type="Counter",
@@ -288,14 +247,12 @@ class TestEventVersionValidation:
         )
         aggregate.apply_event(event1)
 
-        # Try applying different event type with wrong version
         event2 = CounterNamed(
             aggregate_id=agg_id,
             aggregate_type="Counter",
-            aggregate_version=5,  # Expected: 2
+            aggregate_version=5,
             name="TestCounter",
         )
-
         with pytest.raises(EventVersionError) as exc_info:
             aggregate.apply_event(event2)
 
