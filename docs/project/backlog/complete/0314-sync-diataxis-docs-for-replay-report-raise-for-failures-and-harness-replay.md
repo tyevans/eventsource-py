@@ -1,7 +1,7 @@
 ---
-id: TASK-0313
-title: "Add await harness.replay(projections, **kwargs) helper to InMemoryTestHarness"
-status: Refined
+id: TASK-0314
+title: "Sync Diataxis projections and testing guides for ReplayReport.raise_for_failures and harness.replay"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
@@ -14,10 +14,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0313: Add await harness.replay(projections, **kwargs) helper to InMemoryTestHarness
+# TASK-0314: Sync Diataxis projections and testing guides for ReplayReport.raise_for_failures and harness.replay
 
 ## Summary
-Add `async def replay(self, projections, **kwargs) -> ReplayReport` to `InMemoryTestHarness` in `src/eventsource/testing/harness.py` (delegating to `replay(self._event_store, projections, **kwargs)`) with unit tests.
+Update `docs/guides/projections.md` and `docs/guides/testing.md` to document `ReplayReport.raise_for_failures()` and `await harness.replay(projection)`.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 260` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).
