@@ -310,13 +310,19 @@ published domain events:
   seeds one or more pre-existing events (or sequences of events) into
   `harness.event_store`, automatically grouped by `(aggregate_id, aggregate_type)`
   stream and using `ExpectedVersion.any_()` when `expected_version` is omitted.
+- **`await harness.publish_events(*events, persist=False, expected_version=None)`**:
+  publishes one or more events through `harness.event_bus` (and optionally
+  appends them to `harness.event_store` when `persist=True`).
 - **`await harness.replay(projections, **kwargs)`**:
   replays all events stored in `harness.event_store` into a single projection or
   a sequence of projections and returns a `ReplayReport` (accepting all optional
   keyword arguments supported by `replay()`, such as `strict=True` or
   `tenant_id=...`).
-- **`harness.snapshot_store`**: provides a pre-configured `InMemorySnapshotStore`
-  that is reset alongside all other components when `harness.reset()` is called.
+- **`harness.snapshot_store` & `harness.outbox_repo`**: provide pre-configured
+  `InMemorySnapshotStore` and `InMemoryOutboxRepository` instances that are reset
+  alongside `checkpoint_repo` and `dlq_repo` when `harness.reset()` is called.
+  All in-memory repositories (`snapshot_store`, `checkpoint_repo`, `dlq_repo`,
+  `outbox_repo`) and `harness` itself support `len(...)`.
 - **`harness.assertions`**: returns an `EventAssertions` wrapper over
   `harness.published_events` supporting `len(harness.assertions)` and expressive
   helpers (`assert_event_published`, `assert_no_event_published`,
@@ -347,7 +353,8 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
         create_if_missing=False,
     )
 
-    # EventAssertions wrapper over harness.published_events
+    # EventAssertions wrapper and len(harness)
+    assert len(harness) == 2
     assert len(harness.assertions) == 2
     harness.assertions.assert_event_count(2)
     harness.assertions.assert_event_type_count(OrderShipped, 1)
@@ -359,6 +366,7 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
     assert shipped.aggregate_id == order_id
 
     # Verify automatic snapshot creation in harness.snapshot_store at version 2
+    assert len(harness.snapshot_store) == 1
     snapshot = await harness.snapshot_store.get_snapshot(order_id, "Order")
     assert snapshot is not None
     assert snapshot.version == 2
