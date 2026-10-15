@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import subprocess
 import time
 from collections.abc import AsyncGenerator
@@ -10,20 +11,11 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+import sqlalchemy.ext.asyncio as sa_async
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
 
-from eventsource.adapters.postgresql.store import (
-    _HORIZON_PREDICATE,
-    _HORIZON_QUERY,
-    _SELECT_COLUMNS,
-    PostgreSQLEventStore,
-)
+import eventsource.adapters.postgresql.store as pg_store
+from eventsource.adapters.postgresql.store import PostgreSQLEventStore
 from eventsource.adapters.sql.schemas import get_schema
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
@@ -40,10 +32,9 @@ except ImportError:
 
 
 def _is_docker_available() -> bool:
-    try:
+    with contextlib.suppress(Exception):
         return subprocess.run(["docker", "info"], capture_output=True, timeout=5).returncode == 0
-    except Exception:
-        return False
+    return False
 
 
 DOCKER_AVAILABLE = _is_docker_available()
@@ -57,6 +48,7 @@ pytestmark = [
     pytest.mark.integration,
     skip_if_no_postgres_infra,
 ]
+_BASE_SELECT = f"SELECT {pg_store._SELECT_COLUMNS} FROM events WHERE {pg_store._HORIZON_PREDICATE}"
 
 
 class BenchmarkCatchupEvent(DomainEvent):
@@ -72,12 +64,14 @@ def pg_registry() -> EventRegistry:
 
 
 @pytest.fixture(scope="module")
-async def pg_bench_engine() -> AsyncGenerator[AsyncEngine]:
+async def pg_bench_engine() -> AsyncGenerator[sa_async.AsyncEngine]:
     """Start PostgreSQL container, initialize schema, and pre-populate 50,000 events."""
     container = PostgresContainer("postgres:16")
     container.start()
     url = container.get_connection_url().replace("postgresql://", "postgresql+asyncpg://")
-    engine = create_async_engine(url.replace("psycopg2", "asyncpg"), pool_size=20, max_overflow=10)
+    engine = sa_async.create_async_engine(
+        url.replace("psycopg2", "asyncpg"), pool_size=20, max_overflow=10
+    )
     seed_sql = (
         "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, tenant_id, "
         "actor_id, version, timestamp, payload, created_at, txid) SELECT gen_random_uuid(), "
@@ -89,80 +83,61 @@ async def pg_bench_engine() -> AsyncGenerator[AsyncEngine]:
         "FROM (SELECT gen_random_uuid() AS id, i FROM generate_series(1, 50000) AS i) AS s;"
     )
     async with engine.connect() as conn:
-        raw_conn = await conn.get_raw_connection()
-        await raw_conn.driver_connection.execute(get_schema("events"))
-        await raw_conn.driver_connection.execute(seed_sql)
+        driver_conn = (await conn.get_raw_connection()).driver_connection
+        await driver_conn.execute(get_schema("events"))
+        await driver_conn.execute(seed_sql)
         await conn.commit()
-        await raw_conn.driver_connection.execute("VACUUM ANALYZE events;")
+        await driver_conn.execute("VACUUM ANALYZE events;")
     yield engine
     await engine.dispose()
     container.stop()
 
 
-async def _run_explain(engine: AsyncEngine, query_body: str, **params: Any) -> list[str]:
-    session_factory = async_sessionmaker(engine, class_=AsyncSession)
-    async with session_factory() as session:
-        horizon = (await session.execute(text(_HORIZON_QUERY))).scalar_one()
+async def _run_explain(engine: sa_async.AsyncEngine, query_body: str, **params: Any) -> list[str]:
+    async with sa_async.async_sessionmaker(engine, class_=sa_async.AsyncSession)() as session:
+        horizon = (await session.execute(text(pg_store._HORIZON_QUERY))).scalar_one()
         sql = f"EXPLAIN (ANALYZE, BUFFERS) {query_body}"
         result = await session.execute(text(sql), {"txid_horizon": horizon, **params})
         return [row[0] for row in result.fetchall()]
 
 
 class TestPostgreSQLCatchupIndexUtilization:
-    async def test_catchup_range_query_plan_uses_primary_index(
-        self, pg_bench_engine: AsyncEngine
-    ) -> None:
-        query = (
-            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
-            "AND global_position > :from_position ORDER BY global_position ASC LIMIT :limit"
-        )
-        plan_text = "\n".join(
-            await _run_explain(pg_bench_engine, query, from_position=25000, limit=500)
-        )
+    async def test_catchup_range_query_plan_uses_primary_index(self, pg_bench_engine) -> None:
+        query = f"{_BASE_SELECT} AND global_position > :from_position ORDER BY global_position ASC LIMIT :limit"
+        plan = await _run_explain(pg_bench_engine, query, from_position=25000, limit=500)
+        plan_text = "\n".join(plan)
         assert "Index Scan using events_pkey on events" in plan_text
         assert "Seq Scan" not in plan_text and "Sort" not in plan_text
 
-    async def test_catchup_from_beginning_plan_uses_index(
-        self, pg_bench_engine: AsyncEngine
-    ) -> None:
-        query = (
-            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
-            "ORDER BY global_position ASC LIMIT :limit"
-        )
+    async def test_catchup_from_beginning_plan_uses_index(self, pg_bench_engine) -> None:
+        query = f"{_BASE_SELECT} ORDER BY global_position ASC LIMIT :limit"
         plan_text = "\n".join(await _run_explain(pg_bench_engine, query, limit=500))
         assert "Index Scan using events_pkey on events" in plan_text
         assert "Seq Scan" not in plan_text
 
-    async def test_catchup_with_aggregate_type_filter_plan(
-        self, pg_bench_engine: AsyncEngine
-    ) -> None:
+    async def test_catchup_with_aggregate_type_filter_plan(self, pg_bench_engine) -> None:
         query = (
-            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
-            "AND aggregate_type = :aggregate_type AND global_position > :from_position "
-            "ORDER BY global_position ASC LIMIT :limit"
+            f"{_BASE_SELECT} AND aggregate_type = :aggregate_type "
+            "AND global_position > :from_position ORDER BY global_position ASC LIMIT :limit"
         )
         plan = await _run_explain(
             pg_bench_engine, query, aggregate_type="BenchmarkEntity", from_position=10000, limit=500
         )
         plan_text = "\n".join(plan)
-        expected_scans = (
-            "Index Scan using events_pkey on events",
-            "Index Scan using idx_events_type_position on events",
-            "Index Scan using idx_events_aggregate_type on events",
+        scans = ("events_pkey", "idx_events_type_position", "idx_events_aggregate_type")
+        assert (
+            any(f"Index Scan using {idx} on events" in plan_text for idx in scans)
+            and "Seq Scan" not in plan_text
         )
-        assert any(idx in plan_text for idx in expected_scans) and "Seq Scan" not in plan_text
 
-    async def test_current_position_backward_index_scan(self, pg_bench_engine: AsyncEngine) -> None:
-        query = f"SELECT MAX(global_position) FROM events WHERE {_HORIZON_PREDICATE}"
+    async def test_current_position_backward_index_scan(self, pg_bench_engine) -> None:
+        query = f"SELECT MAX(global_position) FROM events WHERE {pg_store._HORIZON_PREDICATE}"
         plan_text = "\n".join(await _run_explain(pg_bench_engine, query))
         assert "Index Scan Backward using events_pkey on events" in plan_text
         assert "Seq Scan" not in plan_text
 
-    async def test_catchup_buffer_access_is_bounded(self, pg_bench_engine: AsyncEngine) -> None:
-        query = (
-            f"SELECT {_SELECT_COLUMNS} FROM events WHERE {_HORIZON_PREDICATE} "
-            "AND global_position > :from_position ORDER BY global_position ASC LIMIT 500"
-        )
+    async def test_catchup_buffer_access_is_bounded(self, pg_bench_engine) -> None:
+        query = f"{_BASE_SELECT} AND global_position > :from_position ORDER BY global_position ASC LIMIT 500"
         plan_lines = await _run_explain(pg_bench_engine, query, from_position=20000)
         buffer_lines = [line for line in plan_lines if "Buffers:" in line]
         assert buffer_lines, "Expected buffer statistics in EXPLAIN output"
@@ -177,7 +152,7 @@ class TestPostgreSQLCatchupIndexUtilization:
 
 class TestPostgreSQLCatchupScaleAndConcurrency:
     async def test_catchup_throughput_under_concurrent_writers(
-        self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
+        self, pg_bench_engine, pg_registry
     ) -> None:
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         stop_writers = asyncio.Event()
@@ -215,9 +190,7 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
         assert throughput > 5000, f"Expected throughput > 5000 events/s, got {throughput:.1f}"
         assert median_batch_time_ms < 50.0, f"Median batch >= 50ms: {median_batch_time_ms:.2f}ms"
 
-    async def test_catchup_monotonic_ordering(
-        self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
-    ) -> None:
+    async def test_catchup_monotonic_ordering(self, pg_bench_engine, pg_registry) -> None:
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         envelopes = [env async for env in store.read_all(options=FeedReadOptions(limit=1000))]
         assert len(envelopes) == 1000
@@ -227,7 +200,7 @@ class TestPostgreSQLCatchupScaleAndConcurrency:
         assert positions == sorted(positions)
 
     async def test_catchup_safe_horizon_uncommitted_boundary(
-        self, pg_bench_engine: AsyncEngine, pg_registry: EventRegistry
+        self, pg_bench_engine, pg_registry
     ) -> None:
         store = PostgreSQLEventStore(pg_bench_engine, event_registry=pg_registry)
         conn = await pg_bench_engine.connect()

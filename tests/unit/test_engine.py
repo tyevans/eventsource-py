@@ -21,18 +21,7 @@ def _stock_async_engine(path: str, **kwargs: Any) -> AsyncEngine:
 
 
 async def test_sqlite_engine_holds_read_write_in_one_transaction(tmp_path):
-    """A connection's transaction must begin at its first SELECT, not later.
-
-    Two separate connections on a file-backed (WAL) database. Connection A
-    starts a transaction and reads. Connection B then inserts a row and
-    commits. Connection A reads again -- it must still see the count from
-    before B's commit, because A's snapshot was fixed when its transaction
-    began at the first SELECT.
-
-    Under sqlite3's legacy isolation this fails: no BEGIN is emitted before
-    the SELECT, so connection A has no open transaction yet when it runs its
-    first read, and its second read observes B's commit.
-    """
+    """A connection's transaction must begin at its first SELECT, not later."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     async with engine.begin() as conn:
         await conn.execute(text("CREATE TABLE t (id INTEGER PRIMARY KEY)"))
@@ -59,18 +48,7 @@ async def test_sqlite_engine_holds_read_write_in_one_transaction(tmp_path):
 
 
 async def test_sqlite_engine_applies_pragmas(tmp_path):
-    """WAL mode, foreign keys, and busy_timeout must be on for every pooled
-    connection to a file-backed database.
-
-    ``busy_timeout`` is asserted against the literal ``5000``, not against
-    ``SQLITE_PRAGMAS["busy_timeout"]`` -- the latter is tautological (it
-    reads the same module constant the code under test also reads, so it
-    can't tell "applied correctly" from "applied some other, wrong value"
-    apart; a mutation testing run against this file found exactly that: the
-    literal ``5000`` mutated to ``5001`` with all tests still green). This
-    also pins the documented default from the module docstring, so a
-    silent change to it would be caught here rather than only in behavior.
-    """
+    """WAL mode, foreign keys, and busy_timeout (5000) must be applied on file-backed DBs."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db")
     async with engine.connect() as conn:
         journal = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
@@ -83,14 +61,7 @@ async def test_sqlite_engine_applies_pragmas(tmp_path):
 
 
 async def test_memory_sqlite_applies_pragmas_except_journal_mode():
-    """:memory: databases must get every pragma except journal_mode -- WAL
-    is skipped there deliberately (see ``_apply_pragmas``), but that must
-    not skip the *rest* of the loop too.
-
-    ``busy_timeout`` is asserted against the literal ``5000`` for the same
-    tautology reason as ``test_sqlite_engine_applies_pragmas`` above --
-    comparing against ``SQLITE_PRAGMAS["busy_timeout"]`` can never fail.
-    """
+    """:memory: databases must get every pragma except journal_mode."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.connect() as conn:
         journal = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
@@ -103,16 +74,7 @@ async def test_memory_sqlite_applies_pragmas_except_journal_mode():
 
 
 async def test_memory_sqlite_applies_busy_timeout_after_journal_mode_skip(monkeypatch):
-    """``busy_timeout`` must still be applied after the ``journal_mode``
-    pragma is skipped for :memory: -- i.e. the skip is a ``continue``, not a
-    ``break`` that also drops every pragma after it in iteration order.
-
-    ``busy_timeout`` defaults to 5000 (SQLite's own compiled default) as it
-    happens, so asserting the pragma equals ``SQLITE_PRAGMAS["busy_timeout"]``
-    (also 5000) can't tell "applied" from "never touched" apart. Monkeypatch
-    a value that could never be a coincidental default to make the
-    assertion actually discriminate.
-    """
+    """busy_timeout must still be applied after journal_mode is skipped for :memory:."""
     import eventsource.adapters._sql.engine as engine_module
 
     monkeypatch.setitem(engine_module.SQLITE_PRAGMAS, "busy_timeout", 4321)
@@ -129,7 +91,6 @@ async def test_memory_sqlite_shares_one_connection():
     async with engine.begin() as conn:
         await conn.execute(text("CREATE TABLE t (id INTEGER PRIMARY KEY)"))
     async with engine.connect() as conn:
-        # Would raise OperationalError: no such table, on a fresh connection.
         await conn.execute(text("SELECT COUNT(*) FROM t"))
     await engine.dispose()
 
@@ -141,8 +102,7 @@ def test_postgres_url_passes_through_without_sqlite_config():
 
 
 def test_postgres_url_forwards_kwargs():
-    """Non-SQLite URLs must still forward **kwargs to SQLAlchemy, not just
-    the bare url -- the passthrough branch must not drop them."""
+    """Non-SQLite URLs must still forward **kwargs to SQLAlchemy."""
     engine = create_async_engine("postgresql+asyncpg://u:p@localhost/db", echo=True)
     assert engine.echo is True
 
@@ -168,12 +128,7 @@ async def test_sqlite_engine_rolls_back_a_transaction(tmp_path):
 
 
 async def _autocommit_write_survives(factory, url: str, route: str) -> int:
-    """Write one row through an AUTOCOMMIT connection, no explicit commit.
-
-    ``route`` selects which of SQLAlchemy's three documented ways of asking
-    for AUTOCOMMIT is used. Returns the row count observed afterwards by a
-    fresh engine.
-    """
+    """Write one row through an AUTOCOMMIT connection and return observed row count."""
     engine = factory(url)
     async with engine.begin() as conn:
         await conn.execute(text("CREATE TABLE t (id INTEGER PRIMARY KEY)"))
@@ -208,21 +163,7 @@ async def _autocommit_write_survives(factory, url: str, route: str) -> int:
     ["engine_argument", "engine_execution_options", "connection_execution_options"],
 )
 async def test_sqlite_autocommit_write_persists_without_explicit_commit(tmp_path, route):
-    """AUTOCOMMIT writes must persist, however AUTOCOMMIT was requested.
-
-    Our "begin" listener fires even for AUTOCOMMIT connections, where
-    SQLAlchemy itself emits no transaction. If it issued BEGIN anyway, the
-    write below would run inside a real transaction that nothing ever
-    commits, and closing the connection would silently roll it back.
-
-    Each route sets AUTOCOMMIT up differently and must be checked
-    separately: notably, an engine-level ``isolation_level`` argument does
-    not appear in ``Connection.get_execution_options()``.
-
-    The result is compared against a stock SQLAlchemy engine, so this asserts
-    that our factory does not differ from SQLAlchemy on persistence rather
-    than just asserting a hardcoded count.
-    """
+    """AUTOCOMMIT writes must persist across all three SQLAlchemy AUTOCOMMIT routes."""
     stock_count = await _autocommit_write_survives(
         _stock_async_engine, f"{tmp_path}/stock-{route}.db", route
     )
@@ -236,13 +177,5 @@ async def test_sqlite_autocommit_write_persists_without_explicit_commit(tmp_path
 
 
 def test_module_lives_under_sql_adapters():
-    """`create_async_engine` is adapter-ring content (ADR 0029).
-
-    It constructs a SQLAlchemy AsyncEngine and registers dialect-specific
-    driver listeners, so it belongs under `adapters/`. `_sql/` rather than
-    `sql/` because `adapters/_sql/__init__.py` is import-free while
-    `adapters/sql/__init__.py` eagerly imports three modules, one of which
-    reaches into `application/projections/` -- the front-door import chain
-    must not widen while relocating the module that chain names.
-    """
+    """`create_async_engine` is adapter-ring content under `_sql/` (ADR 0029)."""
     assert create_async_engine.__module__ == "eventsource.adapters._sql.engine"
