@@ -11,35 +11,26 @@ from eventsource.domain.event_registry import (
     EventTypeNotFoundError,
     register_event,
 )
-from tests.unit.domain.test_event_registry._fixtures import (
-    OrderCreated,
-    OrderShipped,
-)
+from tests.unit.domain.test_event_registry._fixtures import OrderCreated, OrderShipped
 
 
 class TestDuplicateRegistration:
     """Tests for duplicate registration handling."""
 
     def test_same_class_same_type_is_idempotent(self) -> None:
-        """Registering same class with same type is idempotent."""
         registry = EventRegistry()
-
         registry.register(OrderCreated)
-        registry.register(OrderCreated)  # Should not raise
-
+        registry.register(OrderCreated)
         assert len(registry) == 1
 
     def test_different_class_same_type_raises_error(self) -> None:
-        """Registering different class with same type raises error."""
         registry = EventRegistry()
 
-        # Create a class with same event_type as OrderCreated
         class DuplicateOrder(DomainEvent):
-            event_type: str = "OrderCreated"  # Same as OrderCreated
+            event_type: str = "OrderCreated"
             aggregate_type: str = "Order"
 
         registry.register(OrderCreated)
-
         with pytest.raises(DuplicateEventTypeError) as exc_info:
             registry.register(DuplicateOrder)
 
@@ -50,39 +41,49 @@ class TestDuplicateRegistration:
         assert "already registered" in str(error)
 
 
+class TestBulkAndClassRegistration:
+    """Tests for constructor pre-registration, register_all, and class-based membership/unregister."""
+
+    def test_init_with_events_registers_all(self) -> None:
+        registry = EventRegistry([OrderCreated, OrderShipped])
+        assert len(registry) == 2
+        assert OrderCreated in registry
+        assert OrderShipped in registry
+
+    def test_register_all_fluent_chaining(self) -> None:
+        registry = EventRegistry()
+        returned = registry.register_all(OrderCreated, OrderShipped)
+        assert returned is registry
+        assert registry.contains(OrderCreated)
+        assert registry.contains(OrderShipped)
+
+    def test_class_based_contains_and_unregister(self) -> None:
+        registry = EventRegistry([OrderCreated, OrderShipped])
+        assert OrderCreated in registry
+        assert registry.contains(OrderCreated)
+        assert registry.unregister(OrderCreated) is True
+        assert OrderCreated not in registry
+        assert not registry.contains(OrderCreated)
+        assert registry.unregister(OrderCreated) is False
+
+
 class TestRegistryClearAndUnregister:
     """Tests for clear and unregister operations."""
 
     def test_clear_removes_all_registrations(self) -> None:
-        """clear removes all registrations."""
-        registry = EventRegistry()
-        registry.register(OrderCreated)
-        registry.register(OrderShipped)
-
+        registry = EventRegistry([OrderCreated, OrderShipped])
         registry.clear()
-
         assert len(registry) == 0
         assert registry.list_types() == []
 
     def test_unregister_removes_specific_type(self) -> None:
-        """unregister removes specific event type."""
-        registry = EventRegistry()
-        registry.register(OrderCreated)
-        registry.register(OrderShipped)
-
-        result = registry.unregister("OrderCreated")
-
-        assert result is True
+        registry = EventRegistry([OrderCreated, OrderShipped])
+        assert registry.unregister("OrderCreated") is True
         assert "OrderCreated" not in registry
         assert "OrderShipped" in registry
 
     def test_unregister_returns_false_for_unknown(self) -> None:
-        """unregister returns False for unknown type."""
-        registry = EventRegistry()
-
-        result = registry.unregister("NonExistent")
-
-        assert result is False
+        assert EventRegistry().unregister("NonExistent") is False
 
 
 class TestDecoratorRegistration:
@@ -129,11 +130,7 @@ class TestDecoratorRegistration:
             aggregate_type: str = "Test"
             custom_field: str = "value"
 
-        # Class should be usable
-        event = TestEvent(
-            aggregate_id=uuid4(),
-            custom_field="test",
-        )
+        event = TestEvent(aggregate_id=uuid4(), custom_field="test")
         assert event.custom_field == "test"
 
 
@@ -142,48 +139,36 @@ class TestErrorMessages:
 
     def test_not_found_error_is_helpful(self) -> None:
         """EventTypeNotFoundError has helpful message."""
-        registry = EventRegistry()
-        registry.register(OrderCreated)
-        registry.register(OrderShipped)
-
-        try:
+        registry = EventRegistry([OrderCreated, OrderShipped])
+        with pytest.raises(EventTypeNotFoundError) as exc_info:
             registry.get("BadgeIssued")
-            pytest.fail("Should have raised")
-        except EventTypeNotFoundError as e:
-            # Error should contain useful information
-            assert "BadgeIssued" in str(e)  # The missing type
-            assert "OrderCreated" in str(e)  # Available types
-            assert "OrderShipped" in str(e)  # Available types
-            assert "Did you forget to register" in str(e)  # Helpful hint
+        err_str = str(exc_info.value)
+        assert "BadgeIssued" in err_str
+        assert "OrderCreated" in err_str
+        assert "OrderShipped" in err_str
+        assert "Did you forget to register" in err_str
 
     def test_not_found_error_empty_registry(self) -> None:
         """Error message is helpful even with empty registry."""
         registry = EventRegistry()
-
-        try:
+        with pytest.raises(EventTypeNotFoundError) as exc_info:
             registry.get("SomeEvent")
-            pytest.fail("Should have raised")
-        except EventTypeNotFoundError as e:
-            assert "SomeEvent" in str(e)
-            assert "none" in str(e)  # Shows no types available
+        assert "SomeEvent" in str(exc_info.value)
+        assert "none" in str(exc_info.value)
 
     def test_duplicate_error_is_helpful(self) -> None:
         """DuplicateEventTypeError has helpful message."""
-        registry = EventRegistry()
+        registry = EventRegistry([OrderCreated])
 
         class DuplicateOrder(DomainEvent):
             event_type: str = "OrderCreated"
             aggregate_type: str = "Order"
 
-        registry.register(OrderCreated)
-
-        try:
+        with pytest.raises(DuplicateEventTypeError) as exc_info:
             registry.register(DuplicateOrder)
-            pytest.fail("Should have raised")
-        except DuplicateEventTypeError as e:
-            assert "OrderCreated" in str(e)
-            assert "already registered" in str(e)
-            assert "DuplicateOrder" in str(e)
+        assert "OrderCreated" in str(exc_info.value)
+        assert "already registered" in str(exc_info.value)
+        assert "DuplicateOrder" in str(exc_info.value)
 
 
 class TestVersionedEventSchemas:
@@ -204,11 +189,9 @@ class TestVersionedEventSchemas:
             event_version: int = 2
             aggregate_type: str = "Order"
             order_number: str
-            order_items: list[str] = []  # New field in v2
+            order_items: list[str] = []
 
-        registry.register(OrderCreatedV1)
-        registry.register(OrderCreatedV2)
-
+        registry.register_all(OrderCreatedV1, OrderCreatedV2)
         assert registry.get("OrderCreated") is OrderCreatedV1
         assert registry.get("OrderCreated.v2") is OrderCreatedV2
 
@@ -222,11 +205,10 @@ class TestVersionedEventSchemas:
             aggregate_type: str = "Order"
 
         class OrderCreatedV2(DomainEvent):
-            event_type: str = "OrderCreated"  # Same type name!
+            event_type: str = "OrderCreated"
             event_version: int = 2
             aggregate_type: str = "Order"
 
         registry.register(OrderCreatedV1)
-
         with pytest.raises(DuplicateEventTypeError):
             registry.register(OrderCreatedV2)

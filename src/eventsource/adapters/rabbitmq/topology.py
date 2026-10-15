@@ -73,139 +73,114 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
             return None
         try:
             declared = await channel.declare_queue(name=queue_name, passive=True)
-            message_count = declared.declaration_result.message_count or 0
-            consumer_count = declared.declaration_result.consumer_count or 0
-            state = "running" if consumer_count > 0 else "idle"
+            msg_cnt = declared.declaration_result.message_count or 0
+            con_cnt = declared.declaration_result.consumer_count or 0
+            state = "running" if con_cnt > 0 else "idle"
             self._logger.debug(
                 f"Queue info retrieved: {queue_name}",
                 extra={
                     "queue_name": queue_name,
-                    "message_count": message_count,
-                    "consumer_count": consumer_count,
+                    "message_count": msg_cnt,
+                    "consumer_count": con_cnt,
                     "state": state,
                 },
             )
             return QueueInfo(
-                name=queue_name,
-                message_count=message_count,
-                consumer_count=consumer_count,
-                state=state,
+                name=queue_name, message_count=msg_cnt, consumer_count=con_cnt, state=state
             )
         except Exception as e:
-            self._logger.error(
-                f"Failed to get queue info: {e}",
-                exc_info=True,
-                extra={
-                    "queue_name": queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
+            err_extra = {"queue_name": queue_name, "error": str(e), "error_type": type(e).__name__}
+            self._logger.error(f"Failed to get queue info: {e}", exc_info=True, extra=err_extra)
             return QueueInfo(
-                name=queue_name,
-                message_count=0,
-                consumer_count=0,
-                state="error",
-                error=str(e),
+                name=queue_name, message_count=0, consumer_count=0, state="error", error=str(e)
             )
 
     async def _declare_exchange(self) -> None:
         """Declare the main event exchange with the configured exchange type."""
-        channel = self._connection.require_channel()
+        channel, cfg = self._connection.require_channel(), self._config
         exchange_type_map = {
             "topic": ExchangeType.TOPIC,
             "direct": ExchangeType.DIRECT,
             "fanout": ExchangeType.FANOUT,
             "headers": ExchangeType.HEADERS,
         }
-        exchange_type = exchange_type_map.get(
-            self._config.exchange_type.lower(), ExchangeType.TOPIC
-        )
+        ex_type = exchange_type_map.get(cfg.exchange_type.lower(), ExchangeType.TOPIC)
         self._exchange = await channel.declare_exchange(
-            name=self._config.exchange_name,
-            type=exchange_type,
-            durable=self._config.durable,
-            auto_delete=self._config.auto_delete,
+            name=cfg.exchange_name, type=ex_type, durable=cfg.durable, auto_delete=cfg.auto_delete
         )
         self._logger.info(
-            f"Declared exchange: {self._config.exchange_name}",
+            f"Declared exchange: {cfg.exchange_name}",
             extra={
-                "exchange_name": self._config.exchange_name,
-                "exchange_type": self._config.exchange_type,
-                "durable": self._config.durable,
-                "auto_delete": self._config.auto_delete,
+                "exchange_name": cfg.exchange_name,
+                "exchange_type": cfg.exchange_type,
+                "durable": cfg.durable,
+                "auto_delete": cfg.auto_delete,
             },
         )
 
     async def _declare_queue(self) -> None:
         """Declare the consumer queue with optional DLQ arguments."""
-        channel = self._connection.require_channel()
+        channel, cfg = self._connection.require_channel(), self._config
         arguments: dict[str, Any] = {}
-        if self._config.enable_dlq:
-            arguments["x-dead-letter-exchange"] = self._config.dlq_exchange_name
-            arguments["x-dead-letter-routing-key"] = self._config.queue_name
+        if cfg.enable_dlq:
+            arguments["x-dead-letter-exchange"] = cfg.dlq_exchange_name
+            arguments["x-dead-letter-routing-key"] = cfg.queue_name
         self._consumer_queue = await channel.declare_queue(
-            name=self._config.queue_name,
-            durable=self._config.durable,
-            auto_delete=self._config.auto_delete,
-            arguments=arguments if arguments else None,
+            name=cfg.queue_name,
+            durable=cfg.durable,
+            auto_delete=cfg.auto_delete,
+            arguments=arguments or None,
         )
         self._logger.info(
-            f"Declared queue: {self._config.queue_name}",
+            f"Declared queue: {cfg.queue_name}",
             extra={
-                "queue_name": self._config.queue_name,
-                "durable": self._config.durable,
-                "auto_delete": self._config.auto_delete,
-                "dlq_enabled": self._config.enable_dlq,
+                "queue_name": cfg.queue_name,
+                "durable": cfg.durable,
+                "auto_delete": cfg.auto_delete,
+                "dlq_enabled": cfg.enable_dlq,
             },
         )
 
     async def _declare_dlq(self) -> None:
         """Declare the dead letter direct exchange, queue, and binding."""
-        channel = self._connection.require_channel()
+        channel, cfg = self._connection.require_channel(), self._config
         self._dlq_exchange = await channel.declare_exchange(
-            name=self._config.dlq_exchange_name,
+            name=cfg.dlq_exchange_name,
             type=ExchangeType.DIRECT,
-            durable=self._config.durable,
-            auto_delete=self._config.auto_delete,
+            durable=cfg.durable,
+            auto_delete=cfg.auto_delete,
         )
         self._logger.info(
-            f"Declared DLQ exchange: {self._config.dlq_exchange_name}",
-            extra={
-                "dlq_exchange_name": self._config.dlq_exchange_name,
-                "durable": self._config.durable,
-            },
+            f"Declared DLQ exchange: {cfg.dlq_exchange_name}",
+            extra={"dlq_exchange_name": cfg.dlq_exchange_name, "durable": cfg.durable},
         )
-        dlq_arguments: dict[str, Any] = {}
-        if self._config.dlq_message_ttl is not None:
-            dlq_arguments["x-message-ttl"] = self._config.dlq_message_ttl
-        if self._config.dlq_max_length is not None:
-            dlq_arguments["x-max-length"] = self._config.dlq_max_length
+        dlq_args: dict[str, Any] = {}
+        if cfg.dlq_message_ttl is not None:
+            dlq_args["x-message-ttl"] = cfg.dlq_message_ttl
+        if cfg.dlq_max_length is not None:
+            dlq_args["x-max-length"] = cfg.dlq_max_length
         self._dlq_queue = await channel.declare_queue(
-            name=self._config.dlq_queue_name,
-            durable=self._config.durable,
-            auto_delete=self._config.auto_delete,
-            arguments=dlq_arguments if dlq_arguments else None,
+            name=cfg.dlq_queue_name,
+            durable=cfg.durable,
+            auto_delete=cfg.auto_delete,
+            arguments=dlq_args or None,
         )
         self._logger.info(
-            f"Declared DLQ queue: {self._config.dlq_queue_name}",
+            f"Declared DLQ queue: {cfg.dlq_queue_name}",
             extra={
-                "dlq_queue_name": self._config.dlq_queue_name,
-                "durable": self._config.durable,
-                "dlq_message_ttl": self._config.dlq_message_ttl,
-                "dlq_max_length": self._config.dlq_max_length,
+                "dlq_queue_name": cfg.dlq_queue_name,
+                "durable": cfg.durable,
+                "dlq_message_ttl": cfg.dlq_message_ttl,
+                "dlq_max_length": cfg.dlq_max_length,
             },
         )
-        await self._dlq_queue.bind(
-            exchange=self._dlq_exchange,
-            routing_key=self._config.queue_name,
-        )
+        await self._dlq_queue.bind(exchange=self._dlq_exchange, routing_key=cfg.queue_name)
         self._logger.info(
-            f"Bound DLQ queue {self._config.dlq_queue_name} to DLQ exchange "
-            f"{self._config.dlq_exchange_name} with routing key '{self._config.queue_name}'",
+            f"Bound DLQ queue {cfg.dlq_queue_name} to DLQ exchange "
+            f"{cfg.dlq_exchange_name} with routing key '{cfg.queue_name}'",
             extra={
-                "dlq_queue_name": self._config.dlq_queue_name,
-                "dlq_exchange_name": self._config.dlq_exchange_name,
-                "routing_key": self._config.queue_name,
+                "dlq_queue_name": cfg.dlq_queue_name,
+                "dlq_exchange_name": cfg.dlq_exchange_name,
+                "routing_key": cfg.queue_name,
             },
         )

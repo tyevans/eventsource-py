@@ -1,12 +1,4 @@
-"""Kafka consume loop: poll, dispatch, commit, retry, and DLQ routing.
-
-Extracted from ``KafkaEventBus`` so the consume-side mechanics live in one
-focused collaborator.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Kafka consume loop: poll, dispatch, commit, retry, and DLQ routing."""
 
 from __future__ import annotations
 
@@ -64,19 +56,12 @@ class KafkaConsumerLoop(
         on_start: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the consume loop."""
-        self._config = config
-        self._connection = connection
-        self._serializer = serializer
-        self._stats = stats
-        self._metrics = metrics
-        self._retry_policy = retry_policy
-        self._handlers_for = handlers_for
-        self._resolve_event_class = resolve_event_class
-        self._tracer = tracer
-        self._enable_tracing = enable_tracing
-        self._shutdown_event = shutdown_event
-        self._on_start = on_start
-
+        self._config, self._connection = config, connection
+        self._serializer, self._stats = serializer, stats
+        self._metrics, self._retry_policy = metrics, retry_policy
+        self._handlers_for, self._resolve_event_class = handlers_for, resolve_event_class
+        self._tracer, self._enable_tracing = tracer, enable_tracing
+        self._shutdown_event, self._on_start = shutdown_event, on_start
         self._consuming = False
         self._consume_task: asyncio.Task[None] | None = None
         self._retry_scheduler = RetryScheduler()
@@ -96,16 +81,8 @@ class KafkaConsumerLoop(
         """The active aiokafka producer, or None."""
         return self._connection.producer
 
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
-
     async def start(self, auto_reconnect: bool = True) -> None:
-        """Start consuming events from Kafka.
-
-        Blocks and continuously polls for messages, dispatching them to
-        registered handlers. Use stop() from another coroutine to stop.
-        """
+        """Start consuming events from Kafka until stopped or disconnected."""
         if not self._connection.is_connected or not self._consumer:
             raise EventBusConnectionError("Not connected to Kafka. Call connect() first.")
 
@@ -115,7 +92,6 @@ class KafkaConsumerLoop(
 
         self._consuming = True
         self._shutdown_event.clear()
-
         if self._on_start is not None:
             self._on_start()
 
@@ -128,51 +104,38 @@ class KafkaConsumerLoop(
             },
         )
 
-        reconnect_delay = 1.0
-        max_reconnect_delay = 60.0
-
+        reconnect_delay, max_reconnect_delay = 1.0, 60.0
         while self._consuming and not self._shutdown_event.is_set():
             try:
                 async for message in self._consumer:
                     if self._shutdown_event.is_set() or not self._consuming:
                         break
-
                     await self._process_message(message)
                     reconnect_delay = 1.0
-
                 if not self._consuming or self._shutdown_event.is_set():
                     break
-
             except asyncio.CancelledError:
                 logger.info("Consumer cancelled")
                 raise
             except Exception as e:
                 if self._metrics:
                     self._metrics.connection_errors.add(
-                        1,
-                        attributes={
-                            "error.type": type(e).__name__,
-                        },
+                        1, attributes={"error.type": type(e).__name__}
                     )
-
                 logger.error(
                     "Consumer error",
                     extra={"error": str(e), "auto_reconnect": auto_reconnect},
                     exc_info=True,
                 )
-
                 if not auto_reconnect or not self._consuming:
                     raise
 
                 logger.info(
-                    "Attempting to reconnect consumer",
-                    extra={"delay_seconds": reconnect_delay},
+                    "Attempting to reconnect consumer", extra={"delay_seconds": reconnect_delay}
                 )
-
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
                 self._connection.record_reconnection()
-
                 try:
                     await self._connection.reconnect_consumer()
                 except Exception as reconnect_error:
@@ -200,10 +163,8 @@ class KafkaConsumerLoop(
         """Start consuming in a background task."""
         if self._consume_task is not None and not self._consume_task.done():
             raise RuntimeError("Consumer already running in background")
-
         self._consume_task = asyncio.create_task(
-            self.start(),
-            name=f"kafka-consumer-{self._config.consumer_name}",
+            self.start(), name=f"kafka-consumer-{self._config.consumer_name}"
         )
         return self._consume_task
 

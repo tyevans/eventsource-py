@@ -57,15 +57,10 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         tracer: Tracer | None,
         enable_tracing: bool,
     ) -> None:
-        self._config = config
-        self._connection = connection
-        self._topology = topology
-        self._stats = stats
-        self._retry_policy = retry_policy
-        self._handlers_for = handlers_for
-        self._resolve_event_class = resolve_event_class
-        self._tracer = tracer
-        self._enable_tracing = enable_tracing
+        self._config, self._connection, self._topology = config, connection, topology
+        self._stats, self._retry_policy = stats, retry_policy
+        self._handlers_for, self._resolve_event_class = handlers_for, resolve_event_class
+        self._tracer, self._enable_tracing = tracer, enable_tracing
         self._consuming = False
         self._consumer_task: asyncio.Task[None] | None = None
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
@@ -88,14 +83,11 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
             )
 
         self._consuming = True
-        consumer_name = self._config.consumer_name
+        cname, qname = self._config.consumer_name, self._config.queue_name
+        base_extra = {"consumer_name": cname, "queue": qname}
         self._logger.info(
-            f"Starting RabbitMQ consumer: {consumer_name}",
-            extra={
-                "consumer_name": consumer_name,
-                "queue": self._config.queue_name,
-                "prefetch_count": self._config.prefetch_count,
-            },
+            f"Starting RabbitMQ consumer: {cname}",
+            extra={**base_extra, "prefetch_count": self._config.prefetch_count},
         )
 
         try:
@@ -105,42 +97,26 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
                         break
                     await self._process_message(message)
         except asyncio.CancelledError:
-            self._logger.info(
-                "Consumer loop cancelled",
-                extra={"consumer_name": consumer_name, "queue": self._config.queue_name},
-            )
+            self._logger.info("Consumer loop cancelled", extra=base_extra)
         except Exception as e:
-            self._logger.error(
-                f"Error in consumer loop: {e}",
-                exc_info=True,
-                extra={
-                    "consumer_name": consumer_name,
-                    "queue": self._config.queue_name,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                },
-            )
+            err_extra = {**base_extra, "error": str(e), "error_type": type(e).__name__}
+            self._logger.error(f"Error in consumer loop: {e}", exc_info=True, extra=err_extra)
             raise
         finally:
             self._consuming = False
-            self._logger.info(
-                "Consumer loop stopped",
-                extra={
-                    "consumer_name": consumer_name,
-                    "queue": self._config.queue_name,
-                    "events_consumed": self._stats.events_consumed,
-                    "events_processed_success": self._stats.events_processed_success,
-                    "events_processed_failed": self._stats.events_processed_failed,
-                },
-            )
+            stop_extra = {
+                **base_extra,
+                "events_consumed": self._stats.events_consumed,
+                "events_processed_success": self._stats.events_processed_success,
+                "events_processed_failed": self._stats.events_processed_failed,
+            }
+            self._logger.info("Consumer loop stopped", extra=stop_extra)
 
     async def stop(self) -> None:
         """Stop the consumer loop gracefully."""
         self._consuming = False
-        self._logger.info(
-            "Stop consuming requested",
-            extra={"consumer_name": self._config.consumer_name, "queue": self._config.queue_name},
-        )
+        extra = {"consumer_name": self._config.consumer_name, "queue": self._config.queue_name}
+        self._logger.info("Stop consuming requested", extra=extra)
 
     def start_in_background(
         self,
@@ -160,10 +136,8 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         if not self._connection._was_consuming:
             return
         self._connection._was_consuming = False
-        self._logger.info(
-            "Resuming consumer after reconnection",
-            extra={"consumer_name": self._config.consumer_name, "queue": self._config.queue_name},
-        )
+        extra = {"consumer_name": self._config.consumer_name, "queue": self._config.queue_name}
+        self._logger.info("Resuming consumer after reconnection", extra=extra)
         self.start_in_background()
 
     async def stop_gracefully(self, timeout: float) -> None:
@@ -179,10 +153,8 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=timeout / 2)
                 self._logger.debug("Consumer task completed gracefully")
             except TimeoutError:
-                self._logger.warning(
-                    "Consumer task did not stop in time, cancelling",
-                    extra={"timeout": timeout / 2},
-                )
+                msg = "Consumer task did not stop in time, cancelling"
+                self._logger.warning(msg, extra={"timeout": timeout / 2})
                 self._consumer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._consumer_task
@@ -196,8 +168,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
     async def drain_in_flight(self, timeout: float) -> None:
         """Wait for any in-flight message processing and retries to complete."""
         await self.drain_retries(timeout)
-        drain_time = min(timeout / 4, 5.0)
-        if drain_time > 0:
+        if (drain_time := min(timeout / 4, 5.0)) > 0:
             await asyncio.sleep(drain_time)
 
     async def drain_retries(self, timeout: float | None = None) -> None:
@@ -205,8 +176,4 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         await self._retry_scheduler.drain(timeout)
 
 
-__all__ = [
-    "PROPAGATION_AVAILABLE",
-    "RabbitMQConsumer",
-    "extract",
-]
+__all__ = ["PROPAGATION_AVAILABLE", "RabbitMQConsumer", "extract"]
