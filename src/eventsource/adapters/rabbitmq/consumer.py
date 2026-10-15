@@ -77,19 +77,11 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
     async def start(self) -> None:
         """Start consuming events from the RabbitMQ queue until stopped or disconnected."""
         if not self._topology.consumer_queue:
-            raise RuntimeError(
-                "Consumer queue not initialized -- internal call-order bug: "
-                "start() was reached without topology having been declared first"
-            )
-
+            raise RuntimeError("Consumer queue not initialized -- internal call-order bug: start() was reached without topology having been declared first")  # fmt: skip
         self._consuming = True
         cname, qname = self._config.consumer_name, self._config.queue_name
         base_extra = {"consumer_name": cname, "queue": qname}
-        self._logger.info(
-            f"Starting RabbitMQ consumer: {cname}",
-            extra={**base_extra, "prefetch_count": self._config.prefetch_count},
-        )
-
+        self._logger.info(f"Starting RabbitMQ consumer: {cname}", extra={**base_extra, "prefetch_count": self._config.prefetch_count})  # fmt: skip
         try:
             async with self._topology.consumer_queue.iterator() as queue_iter:
                 async for message in queue_iter:
@@ -104,23 +96,17 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
             raise
         finally:
             self._consuming = False
-            stop_extra = {
-                **base_extra,
-                "events_consumed": self._stats.events_consumed,
-                "events_processed_success": self._stats.events_processed_success,
-                "events_processed_failed": self._stats.events_processed_failed,
-            }
+            s = self._stats
+            stop_extra = {**base_extra, "events_consumed": s.events_consumed, "events_processed_success": s.events_processed_success, "events_processed_failed": s.events_processed_failed}  # fmt: skip
             self._logger.info("Consumer loop stopped", extra=stop_extra)
 
     async def stop(self) -> None:
         """Stop the consumer loop gracefully."""
         self._consuming = False
-        extra = {"consumer_name": self._config.consumer_name, "queue": self._config.queue_name}
-        self._logger.info("Stop consuming requested", extra=extra)
+        self._logger.info("Stop consuming requested", extra={"consumer_name": self._config.consumer_name, "queue": self._config.queue_name})  # fmt: skip
 
     def start_in_background(
-        self,
-        runner: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        self, runner: Callable[[], Coroutine[Any, Any, None]] | None = None
     ) -> asyncio.Task[None]:
         """Start consuming in a background task."""
         if self._consumer_task is not None:
@@ -136,8 +122,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         if not self._connection._was_consuming:
             return
         self._connection._was_consuming = False
-        extra = {"consumer_name": self._config.consumer_name, "queue": self._config.queue_name}
-        self._logger.info("Resuming consumer after reconnection", extra=extra)
+        self._logger.info("Resuming consumer after reconnection", extra={"consumer_name": self._config.consumer_name, "queue": self._config.queue_name})  # fmt: skip
         self.start_in_background()
 
     async def stop_gracefully(self, timeout: float) -> None:
@@ -145,7 +130,6 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
         if not self._consuming:
             self._logger.debug("Not consuming, skipping consumer stop")
             return
-
         self._logger.debug("Stopping consumer...")
         self._consuming = False
         if self._consumer_task:
@@ -153,8 +137,7 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=timeout / 2)
                 self._logger.debug("Consumer task completed gracefully")
             except TimeoutError:
-                msg = "Consumer task did not stop in time, cancelling"
-                self._logger.warning(msg, extra={"timeout": timeout / 2})
+                self._logger.warning("Consumer task did not stop in time, cancelling", extra={"timeout": timeout / 2})  # fmt: skip
                 self._consumer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._consumer_task

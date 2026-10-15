@@ -10,31 +10,16 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from eventsource.domain.stream_id import CATEGORY_PATTERN
-from eventsource.domain.types import (
-    AggregateId,
-    CausationId,
-    CorrelationId,
-    EventId,
-    TenantId,
-)
+from eventsource.domain.types import AggregateId, CausationId, CorrelationId, EventId, TenantId
 
 logger = logging.getLogger(__name__)
-
 _CATEGORY_REGEX = CATEGORY_PATTERN
 
 
 class DomainEvent(BaseModel):
-    """
-    Base class for all domain events with automatic ``event_type`` derivation.
-
-    Events are immutable and capture everything needed to reconstruct state.
-    Declare ``event_type`` explicitly only when the wire name must differ from
-    the class name, and set ``suppress_event_type_warning = True`` to silence
-    the mismatch warning.
-    """
+    """Base class for immutable domain events with automatic ``event_type`` derivation."""
 
     model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
-
     suppress_event_type_warning: ClassVar[bool] = False
 
     event_id: EventId = Field(default_factory=uuid4, description="Unique event identifier")
@@ -67,31 +52,23 @@ class DomainEvent(BaseModel):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Warn if explicit ``event_type`` differs from class name."""
         super().__init_subclass__(**kwargs)
-
-        explicit_type: str | None = None
-        has_explicit_type = False
-
-        if "event_type" in cls.__dict__:
-            value = cls.__dict__["event_type"]
-            if isinstance(value, str):
-                explicit_type = value
-                has_explicit_type = True
-
-        if has_explicit_type and explicit_type and explicit_type != cls.__name__:
-            suppress = getattr(cls, "suppress_event_type_warning", False)
-            if not suppress:
-                logger.warning(
-                    "Event class %s has event_type='%s' which differs from class name. "
-                    "This may cause confusion. Set suppress_event_type_warning=True "
-                    "to silence this warning.",
-                    cls.__name__,
-                    explicit_type,
-                )
+        value = cls.__dict__.get("event_type")
+        if (
+            isinstance(value, str)
+            and value
+            and value != cls.__name__
+            and not getattr(cls, "suppress_event_type_warning", False)
+        ):
+            logger.warning(
+                "Event class %s has event_type='%s' which differs from class name. "
+                "This may cause confusion. Set suppress_event_type_warning=True "
+                "to silence this warning.",
+                cls.__name__,
+                value,
+            )
 
     @model_validator(mode="after")
     def _validate_aggregate_type(self) -> Self:
-        # After-validator so class-level defaults (`aggregate_type: str = "Order"`)
-        # are checked without enabling validate_default=True across all fields.
         v = self.aggregate_type
         if not _CATEGORY_REGEX.match(v):
             raise ValueError(
@@ -103,12 +80,7 @@ class DomainEvent(BaseModel):
 
     @classmethod
     def event_type_name(cls) -> str:
-        """
-        Canonical wire name for this event class.
-
-        Returns a non-empty explicit ``event_type`` field default if declared,
-        else the class name. Safe to call only after class creation completes.
-        """
+        """Return non-empty explicit ``event_type`` field default if declared, else class name."""
         field_info = cls.model_fields.get("event_type")
         if field_info is not None and isinstance(field_info.default, str) and field_info.default:
             return field_info.default
@@ -119,8 +91,7 @@ class DomainEvent(BaseModel):
     def _ensure_event_type(cls, data: Any) -> Any:
         """Ensure event_type is set when constructing from a dictionary."""
         if isinstance(data, dict) and not data.get("event_type"):
-            data = dict(data)
-            data["event_type"] = cls.event_type_name()
+            data = {**data, "event_type": cls.event_type_name()}
         return data
 
     def __str__(self) -> str:
@@ -134,14 +105,10 @@ class DomainEvent(BaseModel):
     def __repr__(self) -> str:
         """Detailed string representation."""
         return (
-            f"{self.__class__.__name__}("
-            f"event_id={self.event_id!r}, "
-            f"event_type={self.event_type!r}, "
-            f"aggregate_id={self.aggregate_id!r}, "
-            f"aggregate_type={self.aggregate_type!r}, "
-            f"aggregate_version={self.aggregate_version}, "
-            f"tenant_id={self.tenant_id!r}, "
-            f"occurred_at={self.occurred_at!r})"
+            f"{self.__class__.__name__}(event_id={self.event_id!r}, "
+            f"event_type={self.event_type!r}, aggregate_id={self.aggregate_id!r}, "
+            f"aggregate_type={self.aggregate_type!r}, aggregate_version={self.aggregate_version}, "
+            f"tenant_id={self.tenant_id!r}, occurred_at={self.occurred_at!r})"
         )
 
     def with_causation(self, causing_event: DomainEvent) -> Self:

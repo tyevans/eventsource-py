@@ -25,27 +25,17 @@ class EventRegistry:
         if events is not None:
             self.register_all(*events)
 
-    def register[TEvent: "DomainEvent"](
-        self,
-        event_class: type[TEvent],
-        event_type: str | None = None,
-    ) -> type[TEvent]:
+    def register[TEvent: "DomainEvent"](self, event_class: type[TEvent], event_type: str | None = None) -> type[TEvent]:  # fmt: skip
         """Register an event class in the registry (raises DuplicateEventTypeError on conflict)."""
         resolved_type = self._resolve_event_type(event_class, event_type)
         with self._lock:
             if resolved_type in self._registry:
-                existing = self._registry[resolved_type]
-                if existing is not event_class:
+                if (existing := self._registry[resolved_type]) is not event_class:
                     raise DuplicateEventTypeError(resolved_type, existing, event_class)
                 return event_class
-
             self._registry[resolved_type] = event_class
-            logger.debug(
-                "Registered event type '%s' -> %s",
-                resolved_type,
-                event_class.__name__,
-                extra={"event_type": resolved_type, "event_class": event_class.__name__},
-            )
+            extra = {"event_type": resolved_type, "event_class": event_class.__name__}
+            logger.debug("Registered event type '%s' -> %s", resolved_type, event_class.__name__, extra=extra)  # fmt: skip
             return event_class
 
     def register_all(self, *event_classes: type[DomainEvent]) -> Self:
@@ -54,11 +44,7 @@ class EventRegistry:
             self.register(cls)
         return self
 
-    def _resolve_event_type[TEvent: "DomainEvent"](
-        self,
-        event_class: type[TEvent],
-        event_type: str | None,
-    ) -> str:
+    def _resolve_event_type[TEvent: "DomainEvent"](self, event_class: type[TEvent], event_type: str | None) -> str:  # fmt: skip
         """Resolve the event type name from explicit parameter or event_type_name()."""
         return event_type if event_type is not None else event_class.event_type_name()
 
@@ -102,46 +88,34 @@ class EventRegistry:
         with self._lock:
             if event_type in self._registry:
                 del self._registry[event_type]
-                logger.debug(
-                    "Unregistered event type '%s'", event_type, extra={"event_type": event_type}
-                )
+                logger.debug("Unregistered event type '%s'", event_type, extra={"event_type": event_type})  # fmt: skip
                 return True
             return False
 
     def __len__(self) -> int:
-        """Return the number of registered event types."""
         with self._lock:
             return len(self._registry)
 
     def __bool__(self) -> bool:
-        """Registry is always truthy, even when empty."""
         return True
 
     def __contains__(self, event_type: str | type[DomainEvent]) -> bool:
-        """Support 'in' operator for checking registration by name or class."""
         return self.contains(event_type)
 
     def __iter__(self) -> Iterator[str]:
-        """Iterate over a snapshot of registered event type names."""
         with self._lock:
             return iter(list(self._registry.keys()))
 
 
-# Module-level default registry instance
 default_registry = EventRegistry()
 
 
 @overload
 def register_event[TEvent: "DomainEvent"](event_class: type[TEvent]) -> type[TEvent]: ...
-
-
 @overload
 def register_event[TEvent: "DomainEvent"](
-    event_class: None = None,
-    *,
-    event_type: str | None = None,
-    registry: EventRegistry | None = None,
-) -> Callable[[type[TEvent]], type[TEvent]]: ...
+    event_class: None = None, *, event_type: str | None = None, registry: EventRegistry | None = None
+) -> Callable[[type[TEvent]], type[TEvent]]: ...  # fmt: skip
 
 
 def register_event[TEvent: "DomainEvent"](
