@@ -11,6 +11,7 @@ import threading
 from collections import deque
 from typing import TypeVar
 
+from eventsource.adapters.memory.bus import InMemoryEventBus
 from eventsource.domain.event import DomainEvent
 from eventsource.ports.bus import EventBus, EventHandlerFunc
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
@@ -20,23 +21,35 @@ TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
 class RecordingEventBus(EventBus):
-    """Wraps any EventBus and records the events published through it.
+    """Wraps any EventBus (or a default InMemoryEventBus) and records published events.
 
     Args:
-        wrapped: The bus to delegate to.
+        wrapped: The bus to delegate to. Defaults to ``InMemoryEventBus(enable_tracing=False)``.
         max_events: Maximum events to retain; oldest are dropped past this.
             None retains everything -- only safe for short-lived tests.
 
     Example:
-        >>> bus = RecordingEventBus(InMemoryEventBus())
+        >>> bus = RecordingEventBus()
         >>> await bus.publish([OrderCreated(...)])
-        >>> assert len(bus.published_events) == 1
+        >>> assert len(bus) == 1
     """
 
-    def __init__(self, wrapped: EventBus, *, max_events: int | None = 10_000) -> None:
-        self._wrapped = wrapped
+    def __init__(
+        self,
+        wrapped: EventBus | None = None,
+        *,
+        max_events: int | None = 10_000,
+    ) -> None:
+        self._wrapped: EventBus = (
+            wrapped if wrapped is not None else InMemoryEventBus(enable_tracing=False)
+        )
         self._lock = threading.RLock()
         self._published: deque[DomainEvent] = deque(maxlen=max_events)
+
+    def __len__(self) -> int:
+        """Return the number of currently recorded events."""
+        with self._lock:
+            return len(self._published)
 
     @property
     def wrapped(self) -> EventBus:
