@@ -1,7 +1,7 @@
 ---
 id: TASK-0224
 title: "Add architectural guard test enforcing < 350 line ceiling across src/eventsource/"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

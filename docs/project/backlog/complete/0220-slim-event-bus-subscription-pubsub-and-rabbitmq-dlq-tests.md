@@ -1,7 +1,7 @@
 ---
 id: TASK-0220
 title: "Slim event bus subscription, redis pubsub, and rabbitmq dlq test modules below 340 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters
