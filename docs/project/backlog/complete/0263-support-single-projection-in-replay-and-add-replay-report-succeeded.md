@@ -1,7 +1,7 @@
 ---
 id: TASK-0263
 title: "Support passing a single projection to replay() and add ReplayReport.succeeded property"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

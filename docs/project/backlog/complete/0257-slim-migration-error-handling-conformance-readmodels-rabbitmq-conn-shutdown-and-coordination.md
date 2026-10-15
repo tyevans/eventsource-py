@@ -1,7 +1,7 @@
 ---
 id: TASK-0257
 title: "Slim migration/error_handling.py, conformance_ports/readmodels.py, rabbitmq/connection.py, shutdown.py, and coordination_work.py below 295 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

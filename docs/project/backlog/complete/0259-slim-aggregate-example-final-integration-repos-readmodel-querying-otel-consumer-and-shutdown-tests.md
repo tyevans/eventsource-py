@@ -1,7 +1,7 @@
 ---
 id: TASK-0259
 title: "Slim aggregate_example.py, final_integration/_repositories.py, test_querying.py, otel consumer, and pre_shutdown_hooks tests below 300 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

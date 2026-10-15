@@ -1,7 +1,7 @@
 ---
 id: TASK-0264
 title: "Synchronize Diataxis guides for Scenario.then_event / then_no_events and single-projection replay"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
