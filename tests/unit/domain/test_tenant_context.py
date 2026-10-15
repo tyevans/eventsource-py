@@ -13,6 +13,7 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
@@ -28,18 +29,19 @@ from eventsource import (
     tenant_scope,
     tenant_scope_sync,
 )
+from eventsource.domain.exceptions import EventSourceError
+
+
+@pytest.fixture(autouse=True)
+def _clean_tenant_context() -> Iterator[None]:
+    """Clear context before and after each test."""
+    clear_tenant_context()
+    yield
+    clear_tenant_context()
 
 
 class TestBasicContextFunctions:
     """Tests for basic context get/set/clear functions."""
-
-    def setup_method(self) -> None:
-        """Clear context before each test."""
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        """Clear context after each test."""
-        clear_tenant_context()
 
     def test_get_current_tenant_returns_none_by_default(self) -> None:
         """get_current_tenant returns None when no tenant is set."""
@@ -69,12 +71,9 @@ class TestBasicContextFunctions:
 
     def test_multiple_sets_overwrite(self) -> None:
         """Setting tenant multiple times overwrites previous value."""
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-
+        tenant1, tenant2 = uuid4(), uuid4()
         set_current_tenant(tenant1)
         assert get_current_tenant() == tenant1
-
         set_current_tenant(tenant2)
         assert get_current_tenant() == tenant2
 
@@ -82,19 +81,10 @@ class TestBasicContextFunctions:
 class TestGetRequiredTenant:
     """Tests for get_required_tenant function."""
 
-    def setup_method(self) -> None:
-        """Clear context before each test."""
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        """Clear context after each test."""
-        clear_tenant_context()
-
     def test_get_required_tenant_raises_when_not_set(self) -> None:
         """get_required_tenant raises TenantContextNotSetError when no context."""
         with pytest.raises(TenantContextNotSetError) as exc_info:
             get_required_tenant()
-
         # Verify error message is helpful
         assert "set_current_tenant" in str(exc_info.value)
         assert "tenant_scope" in str(exc_info.value)
@@ -107,24 +97,14 @@ class TestGetRequiredTenant:
 
     def test_get_required_tenant_after_clear_raises(self) -> None:
         """get_required_tenant raises after context is cleared."""
-        tenant_id = uuid4()
-        set_current_tenant(tenant_id)
+        set_current_tenant(uuid4())
         clear_tenant_context()
-
         with pytest.raises(TenantContextNotSetError):
             get_required_tenant()
 
 
 class TestAsyncTenantScope:
     """Tests for async tenant_scope context manager."""
-
-    def setup_method(self) -> None:
-        """Clear context before each test."""
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        """Clear context after each test."""
-        clear_tenant_context()
 
     async def test_scope_sets_context(self) -> None:
         """tenant_scope sets context during scope."""
@@ -140,44 +120,33 @@ class TestAsyncTenantScope:
 
     async def test_scope_clears_on_exit(self) -> None:
         """tenant_scope restores previous context after scope."""
-        tenant_id = uuid4()
-        async with tenant_scope(tenant_id):
+        async with tenant_scope(uuid4()):
             pass
         assert get_current_tenant() is None
 
     async def test_scope_clears_on_exception(self) -> None:
         """tenant_scope restores context even when exception occurs."""
-        tenant_id = uuid4()
         with pytest.raises(ValueError, match="test error"):
-            async with tenant_scope(tenant_id):
+            async with tenant_scope(uuid4()):
                 raise ValueError("test error")
         assert get_current_tenant() is None
 
     async def test_nested_scopes(self) -> None:
         """Nested scopes work correctly with proper restoration."""
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-
+        tenant1, tenant2 = uuid4(), uuid4()
         assert get_current_tenant() is None
-
         async with tenant_scope(tenant1):
             assert get_current_tenant() == tenant1
-
             async with tenant_scope(tenant2):
                 assert get_current_tenant() == tenant2
-
             # tenant1 is restored after inner scope
             assert get_current_tenant() == tenant1
-
         # None is restored after outer scope
         assert get_current_tenant() is None
 
     async def test_triple_nested_scopes(self) -> None:
         """Triple nested scopes restore correctly."""
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-        tenant3 = uuid4()
-
+        tenant1, tenant2, tenant3 = uuid4(), uuid4(), uuid4()
         async with tenant_scope(tenant1):
             async with tenant_scope(tenant2):
                 async with tenant_scope(tenant3):
@@ -188,9 +157,7 @@ class TestAsyncTenantScope:
 
     async def test_nested_scope_exception_in_inner(self) -> None:
         """Exception in inner scope still restores outer context."""
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-
+        tenant1, tenant2 = uuid4(), uuid4()
         async with tenant_scope(tenant1):
             with pytest.raises(RuntimeError):
                 async with tenant_scope(tenant2):
@@ -202,14 +169,6 @@ class TestAsyncTenantScope:
 
 class TestSyncTenantScope:
     """Tests for sync tenant_scope_sync context manager."""
-
-    def setup_method(self) -> None:
-        """Clear context before each test."""
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        """Clear context after each test."""
-        clear_tenant_context()
 
     def test_sync_scope_sets_context(self) -> None:
         """tenant_scope_sync sets context during scope."""
@@ -225,23 +184,19 @@ class TestSyncTenantScope:
 
     def test_sync_scope_clears_on_exit(self) -> None:
         """tenant_scope_sync restores previous context after scope."""
-        tenant_id = uuid4()
-        with tenant_scope_sync(tenant_id):
+        with tenant_scope_sync(uuid4()):
             pass
         assert get_current_tenant() is None
 
     def test_sync_scope_clears_on_exception(self) -> None:
         """tenant_scope_sync restores context even when exception occurs."""
-        tenant_id = uuid4()
-        with pytest.raises(ValueError, match="test error"), tenant_scope_sync(tenant_id):
+        with pytest.raises(ValueError, match="test error"), tenant_scope_sync(uuid4()):
             raise ValueError("test error")
         assert get_current_tenant() is None
 
     def test_sync_nested_scopes(self) -> None:
         """Sync nested scopes work correctly."""
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-
+        tenant1, tenant2 = uuid4(), uuid4()
         with tenant_scope_sync(tenant1):
             assert get_current_tenant() == tenant1
             with tenant_scope_sync(tenant2):
@@ -252,14 +207,6 @@ class TestSyncTenantScope:
 
 class TestContextIsolation:
     """Tests for context isolation between concurrent async tasks."""
-
-    def setup_method(self) -> None:
-        """Clear context before each test."""
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        """Clear context after each test."""
-        clear_tenant_context()
 
     async def test_concurrent_tasks_have_isolated_context(self) -> None:
         """Concurrent async tasks don't share tenant context."""
@@ -272,15 +219,12 @@ class TestContextIsolation:
                 # Record what tenant this task sees
                 results[name] = get_current_tenant()
 
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-
+        tenant1, tenant2 = uuid4(), uuid4()
         # Run tasks concurrently
         await asyncio.gather(
             task_with_tenant("task1", tenant1),
             task_with_tenant("task2", tenant2),
         )
-
         # Each task should have seen its own tenant
         assert results["task1"] == tenant1
         assert results["task2"] == tenant2
@@ -297,7 +241,6 @@ class TestContextIsolation:
                 results[task_num] = get_current_tenant()
 
         await asyncio.gather(*[task_with_tenant(i, tenant_ids[i]) for i in range(num_tasks)])
-
         # All tasks should have seen their own tenant
         for i in range(num_tasks):
             assert results[i] == tenant_ids[i]
@@ -314,25 +257,18 @@ class TestContextIsolation:
 
         async with tenant_scope(tenant_id):
             # Create and await a task within the scope
-            task = asyncio.create_task(inner_task())
-            await task
-
+            await asyncio.create_task(inner_task())
         assert result == tenant_id
 
     async def test_context_not_leaked_after_task(self) -> None:
         """Context doesn't leak between sequential tasks."""
-        tenant1 = uuid4()
-        tenant2 = uuid4()
-
+        tenant1, tenant2 = uuid4(), uuid4()
         async with tenant_scope(tenant1):
             assert get_current_tenant() == tenant1
-
         # Context should be None now
         assert get_current_tenant() is None
-
         async with tenant_scope(tenant2):
             assert get_current_tenant() == tenant2
-
         # Context should be None again
         assert get_current_tenant() is None
 
@@ -342,31 +278,18 @@ class TestTenantContextNotSetError:
 
     def test_error_message_is_helpful(self) -> None:
         """Error message contains helpful information."""
-        error = TenantContextNotSetError()
-        message = str(error)
-
+        message = str(TenantContextNotSetError())
         assert "set_current_tenant" in message
         assert "tenant_scope" in message
         assert "No tenant context set" in message
 
     def test_error_is_eventsource_error(self) -> None:
         """TenantContextNotSetError inherits from EventSourceError."""
-        from eventsource.domain.exceptions import EventSourceError
-
-        error = TenantContextNotSetError()
-        assert isinstance(error, EventSourceError)
+        assert isinstance(TenantContextNotSetError(), EventSourceError)
 
 
 class TestClearIsFinal:
     """Tests for clear_tenant_context hard-reset behavior."""
-
-    def setup_method(self) -> None:
-        """Clear context before each test."""
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        """Clear context after each test."""
-        clear_tenant_context()
 
     def test_clear_invalidates_outstanding_tokens(self) -> None:
         """Clearing invalidates outstanding tokens."""
