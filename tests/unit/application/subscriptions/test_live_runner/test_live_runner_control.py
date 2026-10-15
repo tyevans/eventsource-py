@@ -92,13 +92,6 @@ class TestLiveRunnerStopPauseResponsiveness:
 
 
 # --- Tenant Isolation Tests ---
-#
-# `SubscriptionConfig.tenant_id` documents that, when set, "only events
-# belonging to the specified tenant are processed". Catch-up honors this via
-# `FeedReadOptions(tenant_id=self.config.tenant_id, ...)` (catchup.py:438).
-# The live drain must agree -- a tenant-scoped subscription that behaves
-# correctly during catch-up and then reads every tenant's events once live
-# is a data-isolation breach, not a latency issue.
 
 
 class TestLiveRunnerTenantIsolation:
@@ -113,19 +106,13 @@ class TestLiveRunnerTenantIsolation:
         subscriber: MockLiveSubscriber,
     ):
         """Test a tenant-scoped subscription only receives its own tenant's events."""
-        own_tenant = uuid4()
-        other_tenant = uuid4()
-
+        own_tenant, other_tenant = uuid4(), uuid4()
         config = SubscriptionConfig(
             batch_size=10,
             checkpoint_strategy=CheckpointStrategy.EVERY_EVENT,
             tenant_id=own_tenant,
         )
-        subscription = Subscription(
-            name="TenantScopedLive",
-            config=config,
-            subscriber=subscriber,
-        )
+        subscription = Subscription(name="TenantScopedLive", config=config, subscriber=subscriber)
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
@@ -139,7 +126,6 @@ class TestLiveRunnerTenantIsolation:
         await append_event(event_store, own_event)
         await append_event(event_store, other_event)
         await wake(event_bus)
-
         await asyncio.sleep(0.01)
 
         handled_data = [e.data for e in subscriber.handled_events]
@@ -156,18 +142,7 @@ class TestLiveRunnerTenantIsolation:
         event_store: InMemoryEventStore,
         subscriber: MockLiveSubscriber,
     ):
-        """Test the bounded feed read itself is tenant-scoped, not just the consumer-side filter.
-
-        `EventFilter` already drops another tenant's events before delivery
-        (that is what the previous test observes), which means a delivery-only
-        assertion cannot tell an indexed, tenant-scoped read apart from an
-        unscoped read that happens to get filtered afterwards. Catch-up pushes
-        the filter into the read itself (`FeedReadOptions(tenant_id=...)`,
-        catchup.py:438) rather than relying on the consumer -- the live drain
-        must match, both so the two runners agree (recurring-defects #1) and
-        so backends can use the indexed predicate instead of over-fetching
-        every tenant's rows.
-        """
+        """Test the bounded feed read itself is tenant-scoped, not just the consumer-side filter."""
         own_tenant = uuid4()
         config = SubscriptionConfig(
             batch_size=10,
@@ -175,9 +150,7 @@ class TestLiveRunnerTenantIsolation:
             tenant_id=own_tenant,
         )
         subscription = Subscription(
-            name="TenantScopedLiveSpy",
-            config=config,
-            subscriber=subscriber,
+            name="TenantScopedLiveSpy", config=config, subscriber=subscriber
         )
         recording_feed = _RecordingFeed(event_store)
         runner = LiveRunner(

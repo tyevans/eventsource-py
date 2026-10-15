@@ -11,13 +11,11 @@ from eventsource.application.migration.write_pause import WritePausedError, Writ
 class TestMetricsHistory:
     @pytest.mark.asyncio
     async def test_metrics_added_to_history(self) -> None:
-        manager = WritePauseManager()
-        tenant_id = uuid4()
+        manager, tenant_id = WritePauseManager(), uuid4()
         await manager.pause_writes(tenant_id)
         await manager.resume_writes(tenant_id)
         history = manager.get_metrics_history()
-        assert len(history) == 1
-        assert history[0].tenant_id == tenant_id
+        assert len(history) == 1 and history[0].tenant_id == tenant_id
 
     @pytest.mark.asyncio
     async def test_metrics_history_limit(self) -> None:
@@ -30,70 +28,56 @@ class TestMetricsHistory:
 
     @pytest.mark.asyncio
     async def test_metrics_history_returns_copy(self) -> None:
-        manager = WritePauseManager()
-        tenant_id = uuid4()
+        manager, tenant_id = WritePauseManager(), uuid4()
         await manager.pause_writes(tenant_id)
         await manager.resume_writes(tenant_id)
-        history1 = manager.get_metrics_history()
-        history2 = manager.get_metrics_history()
-        assert history1 is not history2
-        assert history1[0] is history2[0]
+        history1, history2 = manager.get_metrics_history(), manager.get_metrics_history()
+        assert history1 is not history2 and history1[0] is history2[0]
 
 
 class TestGetAllPaused:
     @pytest.mark.asyncio
     async def test_get_all_paused_empty(self) -> None:
-        manager = WritePauseManager()
-        assert await manager.get_all_paused() == []
+        assert await WritePauseManager().get_all_paused() == []
 
     @pytest.mark.asyncio
     async def test_get_all_paused_returns_all(self) -> None:
-        manager = WritePauseManager()
-        tenant_ids = [uuid4() for _ in range(3)]
+        manager, tenant_ids = WritePauseManager(), [uuid4() for _ in range(3)]
         for tid in tenant_ids:
             await manager.pause_writes(tid)
         paused = await manager.get_all_paused()
-        assert len(paused) == 3
-        assert set(paused) == set(tenant_ids)
+        assert len(paused) == 3 and set(paused) == set(tenant_ids)
 
 
 class TestGetPauseState:
     @pytest.mark.asyncio
     async def test_get_pause_state_when_not_paused(self) -> None:
-        manager = WritePauseManager()
-        assert await manager.get_pause_state(uuid4()) is None
+        assert await WritePauseManager().get_pause_state(uuid4()) is None
 
     @pytest.mark.asyncio
     async def test_get_pause_state_returns_info(self) -> None:
-        manager = WritePauseManager()
-        tenant_id = uuid4()
+        manager, tenant_id = WritePauseManager(), uuid4()
         await manager.pause_writes(tenant_id)
         await asyncio.sleep(0.01)
         state = await manager.get_pause_state(tenant_id)
-        assert state is not None
-        assert state["tenant_id"] == str(tenant_id)
-        assert state["duration_ms"] >= 10.0
-        assert state["waiting_count"] == 0
+        assert state is not None and state["tenant_id"] == str(tenant_id)
+        assert state["duration_ms"] >= 10.0 and state["waiting_count"] == 0
         assert "started_at" in state
 
 
 class TestForceResumeAll:
     @pytest.mark.asyncio
     async def test_force_resume_all_empty(self) -> None:
-        manager = WritePauseManager()
-        assert await manager.force_resume_all() == []
+        assert await WritePauseManager().force_resume_all() == []
 
     @pytest.mark.asyncio
     async def test_force_resume_all_resumes_all(self) -> None:
-        manager = WritePauseManager()
-        tenant_ids = [uuid4() for _ in range(3)]
+        manager, tenant_ids = WritePauseManager(), [uuid4() for _ in range(3)]
         for tid in tenant_ids:
             await manager.pause_writes(tid)
         metrics_list = await manager.force_resume_all()
-        assert len(metrics_list) == 3
-        assert all(m.tenant_id in tenant_ids for m in metrics_list)
-        for tid in tenant_ids:
-            assert manager.is_paused(tid) is False
+        assert len(metrics_list) == 3 and all(m.tenant_id in tenant_ids for m in metrics_list)
+        assert all(manager.is_paused(tid) is False for tid in tenant_ids)
 
 
 class TestConcurrentOperationsSafety:

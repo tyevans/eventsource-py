@@ -14,8 +14,6 @@ class BaseBusEvent(DomainEvent):
 
 
 class StubBus(BaseEventBus):
-    """Minimal concrete bus: records what it was asked to publish."""
-
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.published: list[DomainEvent] = []
@@ -27,16 +25,26 @@ class StubBus(BaseEventBus):
 def _handler(event: DomainEvent) -> None: ...
 
 
+async def _fail(msg: str) -> None:
+    raise ValueError(msg)
+
+
+async def _set_after(ev: asyncio.Event, delay: float = 0.0) -> None:
+    if delay:
+        await asyncio.sleep(delay)
+    ev.set()
+
+
 def test_subscription_methods_delegate_to_the_registry() -> None:
     bus = StubBus()
     bus.subscribe(BaseBusEvent, _handler)
     assert bus.get_subscriber_count(BaseBusEvent) == 1 and bus.get_subscriber_count() == 1
     bus.subscribe_to_all_events(_handler)
-    assert bus.get_wildcard_subscriber_count() == 1
-    assert bus.unsubscribe(BaseBusEvent, _handler) is True
-    assert bus.unsubscribe(BaseBusEvent, _handler) is False
-    assert bus.unsubscribe_from_all_events(_handler) is True
-    assert bus.unsubscribe_from_all_events(_handler) is False
+    assert bus.get_wildcard_subscriber_count() == 1 and bus.unsubscribe(BaseBusEvent, _handler)
+    assert not bus.unsubscribe(BaseBusEvent, _handler)
+    assert bus.unsubscribe_from_all_events(_handler) and not bus.unsubscribe_from_all_events(
+        _handler
+    )
 
 
 def test_clear_subscribers_empties_both_registries() -> None:
@@ -56,16 +64,14 @@ def test_subscribe_all_and_unsubscribe_all_use_subscribed_to() -> None:
 
     bus, sub = StubBus(), Subscriber()
     bus.subscribe_all(sub)
-    assert bus.get_subscriber_count(BaseBusEvent) == 1
-    assert bus.unsubscribe_all(sub) == 1
+    assert bus.get_subscriber_count(BaseBusEvent) == 1 and bus.unsubscribe_all(sub) == 1
     assert bus.get_subscriber_count(BaseBusEvent) == 0 and bus.unsubscribe_all(sub) == 0
 
 
 def test_resolve_event_class_uses_injected_registry_first() -> None:
     registry = EventRegistry()
     registry.register(BaseBusEvent, "CustomName")
-    bus = StubBus(event_registry=registry)
-    assert bus._resolve_event_class("CustomName") is BaseBusEvent
+    assert StubBus(event_registry=registry)._resolve_event_class("CustomName") is BaseBusEvent
 
 
 def test_resolve_event_class_falls_back_to_default_registry() -> None:
@@ -83,11 +89,7 @@ def test_resolve_event_class_returns_none_for_unknown_type() -> None:
 
 async def test_track_background_runs_and_is_drained() -> None:
     bus, ran = StubBus(), asyncio.Event()
-
-    async def work() -> None:
-        ran.set()
-
-    await bus._track_background(work())
+    await bus._track_background(_set_after(ran))
     assert bus.get_background_task_count() == 1
     await bus._drain_background(timeout=5.0)
     assert ran.is_set() and bus.get_background_task_count() == 0
@@ -101,11 +103,7 @@ async def test_drain_background_with_no_tasks_returns_immediately() -> None:
 
 async def test_background_task_failure_does_not_propagate() -> None:
     bus = StubBus()
-
-    async def boom() -> None:
-        raise ValueError("background failure")
-
-    await bus._track_background(boom())
+    await bus._track_background(_fail("background failure"))
     await bus._drain_background(timeout=5.0)
     assert bus.get_background_task_count() == 0
 
@@ -165,21 +163,16 @@ def test_get_subscriber_count_is_scoped_to_the_requested_event_type() -> None:
         aggregate_type: str = "BaseBus"
 
     bus = StubBus()
-    bus.subscribe(BaseBusEvent, _handler)
-    bus.subscribe(OtherBusEvent, _handler)
-    bus.subscribe(OtherBusEvent, _handler)
+    for evt in (BaseBusEvent, OtherBusEvent, OtherBusEvent):
+        bus.subscribe(evt, _handler)
     assert bus.get_subscriber_count(BaseBusEvent) == 1
     assert bus.get_subscriber_count(OtherBusEvent) == 2 and bus.get_subscriber_count() == 3
 
 
 async def test_on_background_task_done_logs_the_actual_task_exception(caplog) -> None:  # type: ignore[no-untyped-def]
     bus = StubBus()
-
-    async def boom() -> None:
-        raise ValueError("distinctive background failure")
-
     with caplog.at_level("ERROR", logger="eventsource.adapters._bus.base"):
-        await bus._track_background(boom())
+        await bus._track_background(_fail("distinctive background failure"))
         await bus._drain_background(timeout=5.0)
 
     own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
@@ -189,15 +182,7 @@ async def test_on_background_task_done_logs_the_actual_task_exception(caplog) ->
 
 async def test_drain_background_waits_for_every_pending_task_not_just_the_first() -> None:
     bus, fast_done, slow_done = StubBus(), asyncio.Event(), asyncio.Event()
-
-    async def fast() -> None:
-        fast_done.set()
-
-    async def slow() -> None:
-        await asyncio.sleep(0.1)
-        slow_done.set()
-
-    await bus._track_background(fast())
-    await bus._track_background(slow())
+    await bus._track_background(_set_after(fast_done))
+    await bus._track_background(_set_after(slow_done, 0.1))
     await bus._drain_background(timeout=5.0)
     assert fast_done.is_set() and slow_done.is_set()

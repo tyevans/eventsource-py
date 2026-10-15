@@ -55,10 +55,7 @@ class TestFailureStats:
 
 class TestAppendSourceFailure:
     async def test_source_failure_propagates(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
         aggregate_id, event, stream = _make_event_and_stream()
         source_store.append.side_effect = OptimisticLockError(aggregate_id, 0, 5)
@@ -69,10 +66,7 @@ class TestAppendSourceFailure:
 
 class TestAppendTargetFailure:
     async def test_target_failure_operation_succeeds(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
         _aggregate_id, event, stream = _make_event_and_stream()
         expected = AppendResult(
@@ -84,10 +78,7 @@ class TestAppendTargetFailure:
         assert await interceptor.append(stream, [event], ExpectedVersion.no_stream()) is expected
 
     async def test_target_failure_tracked(
-        self,
-        interceptor: DualWriteInterceptor,
-        source_store: MagicMock,
-        target_store: MagicMock,
+        self, interceptor: DualWriteInterceptor, source_store: MagicMock, target_store: MagicMock
     ) -> None:
         aggregate_id, event, stream = _make_event_and_stream()
         target_store.append.side_effect = Exception("Connection refused")
@@ -163,15 +154,9 @@ class TestFailureTracking:
         self, source_store: MagicMock, target_store: MagicMock, tenant_id: UUID
     ) -> None:
         inst = DualWriteInterceptor(source_store, target_store, tenant_id, enable_tracing=False)
+        pos = Position(store_id="source", key=(1,))
         inst._failed_writes.append(
-            FailedWrite(
-                timestamp=datetime.now(UTC),
-                aggregate_id=uuid4(),
-                aggregate_type="Test",
-                event_ids=[uuid4()],
-                error_message="Error",
-                source_position=Position(store_id="source", key=(1,)),
-            )
+            FailedWrite(datetime.now(UTC), uuid4(), "Test", [uuid4()], "Error", pos)
         )
         inst._affected_aggregates.add(uuid4())
         assert inst.clear_failure_history() == 1

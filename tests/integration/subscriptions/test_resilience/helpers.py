@@ -37,11 +37,9 @@ class ConcurrencyTrackingProjection:
         return [SubTestOrderCreated]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle an event with concurrency tracking."""
         async with self._lock:
             self.concurrent += 1
-            if self.concurrent > self.max_concurrent:
-                self.max_concurrent = self.concurrent
+            self.max_concurrent = max(self.max_concurrent, self.concurrent)
 
         try:
             await asyncio.sleep(self.process_delay)
@@ -53,7 +51,6 @@ class ConcurrencyTrackingProjection:
                 self.concurrent -= 1
 
     async def wait_for_events(self, count: int, timeout: float = 10.0) -> bool:
-        """Wait for events with timeout."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -77,7 +74,6 @@ class PositionalFailingProjection:
         return [SubTestOrderCreated]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle an event, potentially failing at specific positions."""
         async with self._lock:
             if self._position in self.fail_at_positions:
                 self.failures.append((self._position, event))
@@ -88,7 +84,6 @@ class PositionalFailingProjection:
             self._position += 1
 
     async def wait_for_events(self, count: int, timeout: float = 10.0) -> bool:
-        """Wait for events with timeout."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -111,20 +106,16 @@ class TransientFailingProjection:
         return [SubTestOrderCreated]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle event with transient failures."""
         event_id = str(event.event_id)
         async with self._lock:
             attempts = self.attempt_counts.get(event_id, 0) + 1
             self.attempt_counts[event_id] = attempts
-
             if attempts <= self.fail_count:
                 raise ConnectionError(f"Transient failure (attempt {attempts})")
-
             self.events.append(event)
             self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 10.0) -> bool:
-        """Wait for events with timeout."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -148,19 +139,16 @@ class VariableLatencyProjection:
         return [SubTestOrderCreated]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle event with variable latency."""
         delay = random.uniform(self.min_delay, self.max_delay)
         start = asyncio.get_event_loop().time()
         await asyncio.sleep(delay)
         processing_time = asyncio.get_event_loop().time() - start
-
         async with self._lock:
             self.events.append(event)
             self.event_count += 1
             self.processing_times.append(processing_time)
 
     async def wait_for_events(self, count: int, timeout: float = 30.0) -> bool:
-        """Wait for events with timeout."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
@@ -183,18 +171,15 @@ class ChaosProjection:
         return [SubTestOrderCreated]
 
     async def handle(self, event: DomainEvent) -> None:
-        """Handle event with random failures."""
         if random.random() < self.failure_rate:
             async with self._lock:
                 self.total_failures += 1
             raise RuntimeError("Random chaos failure")
-
         async with self._lock:
             self.events.append(event)
             self.event_count += 1
 
     async def wait_for_events(self, count: int, timeout: float = 30.0) -> bool:
-        """Wait for events with timeout."""
         start = datetime.now(UTC)
         while self.event_count < count:
             if (datetime.now(UTC) - start).total_seconds() > timeout:
