@@ -23,7 +23,6 @@ class TestGracefulShutdown:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -33,25 +32,20 @@ class TestGracefulShutdown:
 
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig) -> RabbitMQEventBus:
-        """Create a test event bus instance."""
         return RabbitMQEventBus(config=config)
 
     def test_shutdown_timeout_config_default(self) -> None:
-        """Test that shutdown_timeout has a default value."""
         config = RabbitMQEventBusConfig()
         assert config.shutdown_timeout == 30.0
 
     def test_shutdown_timeout_config_custom(self) -> None:
-        """Test custom shutdown_timeout configuration."""
         config = RabbitMQEventBusConfig(shutdown_timeout=60.0)
         assert config.shutdown_timeout == 60.0
 
     def test_is_shutdown_initial_state(self, bus: RabbitMQEventBus) -> None:
-        """Test that is_shutdown is False initially."""
         assert bus.is_shutdown is False
 
     def test_shutdown_initiated_flag_initial(self, bus: RabbitMQEventBus) -> None:
-        """Test that _shutdown_initiated is False initially."""
         assert bus._shutdown_initiated is False
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
@@ -59,7 +53,6 @@ class TestGracefulShutdown:
     async def test_shutdown_sets_shutdown_flag(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that shutdown sets the shutdown flag."""
         _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -72,7 +65,6 @@ class TestGracefulShutdown:
     async def test_shutdown_stops_consuming(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that shutdown stops consuming."""
         _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -85,7 +77,6 @@ class TestGracefulShutdown:
     async def test_shutdown_disconnects(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that shutdown calls disconnect."""
         mock_connection, mock_channel = _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -99,7 +90,6 @@ class TestGracefulShutdown:
     async def test_shutdown_is_idempotent(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that calling shutdown multiple times is safe."""
         _, mock_channel = _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -114,7 +104,6 @@ class TestGracefulShutdown:
     async def test_shutdown_cancels_consumer_task(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that shutdown cancels the consumer task."""
         _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -132,7 +121,6 @@ class TestGracefulShutdown:
     async def test_shutdown_when_not_connected(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that shutdown works when not connected."""
         bus = RabbitMQEventBus(config=config)
         await bus.shutdown(timeout=5.0)
         assert bus.is_shutdown is True
@@ -142,7 +130,6 @@ class TestGracefulShutdown:
     async def test_shutdown_when_not_consuming(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that shutdown works when not consuming."""
         _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         await bus.connect()
@@ -157,7 +144,6 @@ class TestGracefulShutdownContextManager:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(
             rabbitmq_url="amqp://test:test@localhost/",
             exchange_name="test-events",
@@ -170,7 +156,6 @@ class TestGracefulShutdownContextManager:
     async def test_context_manager_uses_shutdown(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that context manager calls shutdown instead of disconnect."""
         _mock_broker(mock_aio_pika)
         async with RabbitMQEventBus(config=config) as bus:
             assert bus.is_connected is True
@@ -180,7 +165,6 @@ class TestGracefulShutdownContextManager:
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
     async def test_context_manager_uses_config_timeout(self, mock_aio_pika: MagicMock) -> None:
-        """Test that context manager uses shutdown_timeout from config."""
         config = RabbitMQEventBusConfig(shutdown_timeout=10.0)
         _mock_broker(mock_aio_pika)
         async with RabbitMQEventBus(config=config) as bus:
@@ -192,7 +176,6 @@ class TestGracefulShutdownContextManager:
     async def test_context_manager_shutdown_on_exception(
         self, mock_aio_pika: MagicMock, config: RabbitMQEventBusConfig
     ) -> None:
-        """Test that context manager performs shutdown even on exception."""
         _mock_broker(mock_aio_pika)
         bus = RabbitMQEventBus(config=config)
         with pytest.raises(ValueError, match="Test exception"):
@@ -207,30 +190,25 @@ class TestStopConsumingGracefully:
 
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
-        """Create test configuration."""
         return RabbitMQEventBusConfig(rabbitmq_url="amqp://test:test@localhost/")
 
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig) -> RabbitMQEventBus:
-        """Create a test event bus instance."""
         return RabbitMQEventBus(config=config)
 
     @pytest.mark.asyncio
     async def test_stop_consuming_when_not_consuming(self, bus: RabbitMQEventBus) -> None:
-        """Test _stop_consuming_gracefully when not consuming does nothing."""
         bus._consumer._consuming = False
         await bus._stop_consuming_gracefully(timeout=5.0)
 
     @pytest.mark.asyncio
     async def test_stop_consuming_sets_flag(self, bus: RabbitMQEventBus) -> None:
-        """Test that _stop_consuming_gracefully sets consuming flag to False."""
         bus._consumer._consuming = True
         await bus._stop_consuming_gracefully(timeout=5.0)
         assert bus._consumer._consuming is False
 
     @pytest.mark.asyncio
     async def test_stop_consuming_cancels_slow_task(self, bus: RabbitMQEventBus) -> None:
-        """Test that slow consumer task is cancelled if it doesn't stop in time."""
         bus._consumer._consuming = True
 
         async def slow_consumer() -> None:
@@ -242,7 +220,6 @@ class TestStopConsumingGracefully:
 
     @pytest.mark.asyncio
     async def test_stop_consuming_waits_for_graceful_stop(self, bus: RabbitMQEventBus) -> None:
-        """Test that _stop_consuming_gracefully waits for task to complete."""
         bus._consumer._consuming = True
         completed = False
 
