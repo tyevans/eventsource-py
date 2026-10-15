@@ -43,7 +43,6 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
     _field_names: list[str]
 
     def _row_to_model(self, row: Sequence[Any]) -> TModel:
-        """Convert a database row to a model instance."""
         data: dict[str, Any] = {}
         for i, field_name in enumerate(self._field_names):
             value = row[i]
@@ -55,17 +54,11 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         return self._model_class.model_validate(data)
 
     def _span_attrs(self, **extra: Any) -> dict[str, Any]:
-        return {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "SELECT",
-            **extra,
-        }
+        return {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_DB_SYSTEM: "sqlite", ATTR_DB_OPERATION: "SELECT", **extra}  # fmt: skip
 
     async def get_many(self, ids: Iterable[UUID]) -> list[TModel]:
         """Get multiple read models by their IDs (missing IDs are ignored)."""
-        id_list = list(ids)
-        if not id_list:
+        if not (id_list := list(ids)):
             return []
         attrs = self._span_attrs(**{ATTR_BATCH_SIZE: len(id_list)})
         with self._tracer.span("eventsource.readmodel.get_many", attrs):
@@ -81,10 +74,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         """Check if a read model exists and is not soft-deleted."""
         attrs = self._span_attrs(**{ATTR_READMODEL_ID: str(id)})
         with self._tracer.span("eventsource.readmodel.exists", attrs):
-            query = (
-                f"SELECT 1 FROM {self._table_name} "  # nosec B608 - trusted table_name
-                "WHERE id = ? AND deleted_at IS NULL LIMIT 1"
-            )
+            query = f"SELECT 1 FROM {self._table_name} WHERE id = ? AND deleted_at IS NULL LIMIT 1"  # nosec B608
             cursor = await self._connection.execute(query, (str(id),))
             return (await cursor.fetchone()) is not None
 
@@ -92,9 +82,7 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         """Find read models matching a query and optional equality keyword filters."""
         query = _resolve_query(query, eq_filters)
         limit_val = query.limit if query.limit is not None else -1
-        attrs = self._span_attrs(
-            **{ATTR_QUERY_FILTER_COUNT: len(query.filters), ATTR_QUERY_LIMIT: limit_val}
-        )
+        attrs = self._span_attrs(**{ATTR_QUERY_FILTER_COUNT: len(query.filters), ATTR_QUERY_LIMIT: limit_val})  # fmt: skip
         with self._tracer.span("eventsource.readmodel.find", attrs):
             sql, params = self._build_select_query(query)
             cursor = await self._connection.execute(sql, params)
@@ -115,25 +103,21 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             return int(row[0]) if row else 0
 
     def _build_where_clause(self, query: Query) -> tuple[str, list[Any]]:
-        """Build WHERE SQL fragment and parameter list from Query."""
         where_clauses: list[str] = [] if query.include_deleted else ["deleted_at IS NULL"]
         params: list[Any] = []
         for filter_ in query.filters:
             clause, filter_params = self._filter_to_sql(filter_)
             where_clauses.append(clause)
             params.extend(filter_params)
-        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-        return where_sql, params
+        return (("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""), params
 
     def _build_select_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
-        """Build SELECT SQL and parameter tuple from Query."""
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
         where_sql, params = self._build_where_clause(query)
         if where_sql:
             parts.append(where_sql)
         if query.order_by:
             parts.append(f"ORDER BY {query.order_by} {query.order_direction.upper()}")
-        # SQLite rejects a bare OFFSET, so an offset with no limit needs LIMIT -1.
         if query.limit is not None:
             parts.append(f"LIMIT {query.limit}")
         elif query.offset:
@@ -143,7 +127,6 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         return " ".join(parts), tuple(params)
 
     def _build_count_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
-        """Build COUNT SQL and parameter tuple from Query."""
         parts = [f"SELECT COUNT(*) FROM {self._table_name}"]  # nosec B608
         where_sql, params = self._build_where_clause(query)
         if where_sql:
@@ -151,7 +134,6 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
         return " ".join(parts), tuple(params)
 
     def _filter_to_sql(self, filter_: Filter) -> tuple[str, list[Any]]:
-        """Convert a Filter to SQL clause with parameters via shared SQLITE dialect."""
         params: list[Any] = []
 
         def bind(value: Any) -> str:

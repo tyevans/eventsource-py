@@ -61,28 +61,24 @@ class SubscriptionLifecycleManager:
                 pos_token = render_position(start_pos)
                 if span and pos_token is not None:
                     span.set_attribute(attr.ATTR_POSITION, pos_token)
-                start_extra = {"subscription": name, "start_position": pos_token}
-                logger.info("Starting subscription", extra=start_extra)
-                coordinator = TransitionCoordinator(
-                    self.event_store, self.event_bus, self.checkpoint_repo, subscription
-                )
-                self._coordinators[name] = coordinator
-                result = await coordinator.execute()
+                logger.info("Starting subscription", extra={"subscription": name, "start_position": pos_token})  # fmt: skip
+                coord = TransitionCoordinator(self.event_store, self.event_bus, self.checkpoint_repo, subscription)  # fmt: skip
+                self._coordinators[name] = coord
+                result = await coord.execute()
                 if not result.success:
-                    err = result.error or SubscriptionError("Transition failed")
-                    await subscription.set_error(err)
-                    raise SubscriptionError(
-                        f"Subscription {name} failed to transition: {result.error}"
-                    )
+                    await subscription.set_error(result.error or SubscriptionError("Transition failed"))  # fmt: skip
+                    raise SubscriptionError(f"Subscription {name} failed to transition: {result.error}")  # fmt: skip
                 if span:
                     span.set_attribute(attr.ATTR_EVENTS_PROCESSED, result.catchup_events_processed)
-                ok_extra = {"subscription": name, "catchup_events": result.catchup_events_processed}
-                ok_extra["buffer_events"] = result.buffer_events_processed
-                ok_extra["final_position"] = render_position(result.final_position)
+                ok_extra = {
+                    "subscription": name,
+                    "catchup_events": result.catchup_events_processed,
+                    "buffer_events": result.buffer_events_processed,
+                    "final_position": render_position(result.final_position),
+                }
                 logger.info("Subscription started successfully", extra=ok_extra)
             except Exception as e:
-                extra = {"subscription": name, "error": str(e)}
-                logger.error("Failed to start subscription", extra=extra, exc_info=True)
+                logger.error("Failed to start subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
                 await subscription.set_error(e)
                 raise
 
@@ -93,52 +89,42 @@ class SubscriptionLifecycleManager:
         except Exception as e:
             return e
 
-    async def start_all(
-        self, subscriptions: list[Subscription], concurrent: bool = True
-    ) -> dict[str, Exception | None]:
-        extra_start = {"subscription_count": len(subscriptions), "concurrent": concurrent}
-        logger.info("Starting subscriptions", extra=extra_start)
+    async def start_all(self, subscriptions: list[Subscription], concurrent: bool = True) -> dict[str, Exception | None]:  # fmt: skip
+        logger.info("Starting subscriptions", extra={"subscription_count": len(subscriptions), "concurrent": concurrent})  # fmt: skip
         results: dict[str, Exception | None] = {}
         if concurrent and len(subscriptions) > 1:
-            coro, create_task = self.start_subscription_isolated, asyncio.create_task
-            tasks = [(s.name, create_task(coro(s), name=f"start_{s.name}")) for s in subscriptions]
+            coro = self.start_subscription_isolated
+            tasks = [(s.name, asyncio.create_task(coro(s), name=f"start_{s.name}")) for s in subscriptions]  # fmt: skip
             for name, task in tasks:
                 try:
                     results[name] = await task
                 except Exception as e:
-                    results[name], err_extra = e, {"subscription": name, "error": str(e)}
-                    logger.error(
-                        "Unexpected error starting subscription", extra=err_extra, exc_info=True
-                    )
+                    results[name] = e
+                    logger.error("Unexpected error starting subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
         else:
             for sub in subscriptions:
                 results[sub.name] = await self.start_subscription_isolated(sub)
         succeeded = sum(1 for r in results.values() if r is None)
         if failed := sum(1 for r in results.values() if r is not None):
-            extra_warn = {"succeeded": succeeded, "failed": failed}
-            logger.warning("Some subscriptions failed to start", extra=extra_warn)
+            logger.warning("Some subscriptions failed to start", extra={"succeeded": succeeded, "failed": failed})  # fmt: skip
         else:
             logger.info("All subscriptions started successfully", extra={"count": succeeded})
         return results
 
     async def stop_subscription(self, name: str, timeout: float = 30.0) -> None:
-        span_attrs = {attr.ATTR_SUBSCRIPTION_NAME: name}
-        with self._tracer.span("eventsource.lifecycle.stop_subscription", span_attrs):
+        with self._tracer.span("eventsource.lifecycle.stop_subscription", {attr.ATTR_SUBSCRIPTION_NAME: name}):  # fmt: skip
             if (coordinator := self._coordinators.get(name)) is None:
                 return
             try:
                 await asyncio.wait_for(coordinator.stop(), timeout=timeout)
                 logger.info("Subscription stopped", extra={"subscription": name})
             except TimeoutError:
-                extra = {"subscription": name, "timeout": timeout}
-                logger.warning("Subscription stop timed out", extra=extra)
+                logger.warning("Subscription stop timed out", extra={"subscription": name, "timeout": timeout})  # fmt: skip
 
     async def stop_all(self, subscriptions: list[Subscription], timeout: float = 30.0) -> None:
-        extra = {"subscription_count": len(subscriptions), "timeout": timeout}
-        logger.info("Stopping subscriptions", extra=extra)
+        logger.info("Stopping subscriptions", extra={"subscription_count": len(subscriptions), "timeout": timeout})  # fmt: skip
         if active := [s.name for s in subscriptions if s.name in self._coordinators]:
-            coros = (self.stop_subscription(n, timeout) for n in active)
-            await asyncio.gather(*coros, return_exceptions=True)
+            await asyncio.gather(*(self.stop_subscription(n, timeout) for n in active), return_exceptions=True)  # fmt: skip
         for sub in subscriptions:
             if not sub.is_terminal:
                 await sub.transition_to(SubscriptionState.STOPPED)

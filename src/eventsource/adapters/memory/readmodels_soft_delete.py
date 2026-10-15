@@ -1,8 +1,4 @@
-"""
-Soft delete operations mixin for InMemoryReadModelRepository.
-
-Provides soft-delete, restore, and soft-deleted querying for in-memory read models.
-"""
+"""Soft delete operations mixin for InMemoryReadModelRepository."""
 
 from __future__ import annotations
 
@@ -40,76 +36,33 @@ class InMemoryReadModelSoftDeleteMixin[TModel: ReadModel]:
         return matches_filter(model, filter_)
 
     async def soft_delete(self, id: UUID) -> bool:
-        """
-        Soft delete a read model by setting deleted_at.
-
-        Args:
-            id: Unique identifier of the read model to soft delete
-
-        Returns:
-            True if soft-deleted, False if not found or already deleted
-        """
-        with self._tracer.span(
-            "eventsource.readmodel.soft_delete",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_READMODEL_ID: str(id),
-            },
-        ):
+        """Soft delete a read model by setting deleted_at."""
+        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_READMODEL_ID: str(id)}
+        with self._tracer.span("eventsource.readmodel.soft_delete", attrs):
             async with self._lock:
                 model = self._models.get(id)
                 if model is None or model.is_deleted():
                     return False
-
                 model.deleted_at = datetime.now(UTC)
                 model.updated_at = model.deleted_at
                 return True
 
     async def restore(self, id: UUID) -> bool:
-        """
-        Restore a soft-deleted read model.
-
-        Args:
-            id: Unique identifier of the read model to restore
-
-        Returns:
-            True if restored, False if not found or not deleted
-        """
-        with self._tracer.span(
-            "eventsource.readmodel.restore",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_READMODEL_ID: str(id),
-            },
-        ):
+        """Restore a soft-deleted read model."""
+        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_READMODEL_ID: str(id)}
+        with self._tracer.span("eventsource.readmodel.restore", attrs):
             async with self._lock:
                 model = self._models.get(id)
                 if model is None or not model.is_deleted():
                     return False
-
                 model.deleted_at = None
                 model.updated_at = datetime.now(UTC)
                 return True
 
     async def get_deleted(self, id: UUID) -> TModel | None:
-        """
-        Get a soft-deleted read model by ID.
-
-        Only returns the model if it has been soft-deleted.
-
-        Args:
-            id: Unique identifier of the read model
-
-        Returns:
-            The soft-deleted read model if found, None otherwise
-        """
-        with self._tracer.span(
-            "eventsource.readmodel.get_deleted",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_READMODEL_ID: str(id),
-            },
-        ):
+        """Get a soft-deleted read model by ID, or None if not found or not deleted."""
+        attrs = {ATTR_READMODEL_TYPE: self._model_class.__name__, ATTR_READMODEL_ID: str(id)}
+        with self._tracer.span("eventsource.readmodel.get_deleted", attrs):
             async with self._lock:
                 model = self._models.get(id)
                 if model is None or not model.is_deleted():
@@ -117,48 +70,26 @@ class InMemoryReadModelSoftDeleteMixin[TModel: ReadModel]:
                 return self._detach(model)
 
     async def find_deleted(self, query: Query | None = None) -> list[TModel]:
-        """
-        Find only soft-deleted read models matching a query.
-
-        Args:
-            query: Query with filters, ordering, pagination
-
-        Returns:
-            List of soft-deleted read models
-        """
-        if query is None:
-            query = Query()
-
-        with self._tracer.span(
-            "eventsource.readmodel.find_deleted",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_QUERY_FILTER_COUNT: len(query.filters),
-                ATTR_QUERY_LIMIT: query.limit if query.limit is not None else -1,
-            },
-        ):
+        """Find only soft-deleted read models matching a query."""
+        query = query or Query()
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_QUERY_FILTER_COUNT: len(query.filters),
+            ATTR_QUERY_LIMIT: query.limit if query.limit is not None else -1,
+        }
+        with self._tracer.span("eventsource.readmodel.find_deleted", attrs):
             async with self._lock:
-                # Start with only deleted models
                 results = [m for m in self._models.values() if m.is_deleted()]
-
-                # Apply filters. Validated first: an empty candidate set
-                # must not hide a typo'd field or a bad operator.
                 check_filters(self._model_class, query.filters)
                 for filter_ in query.filters:
                     results = [m for m in results if self._apply_filter(m, filter_)]
-
-                # Apply ordering
                 if query.order_by:
-                    reverse = query.order_direction == "desc"
                     results.sort(
                         key=lambda m: getattr(m, query.order_by),  # type: ignore[arg-type]
-                        reverse=reverse,
+                        reverse=query.order_direction == "desc",
                     )
-
-                # Apply pagination
                 if query.offset:
                     results = results[query.offset :]
                 if query.limit is not None:
                     results = results[: query.limit]
-
                 return [self._detach(m) for m in results]
