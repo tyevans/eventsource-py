@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING
 
 from eventsource.application.migration.bulk_copier_reader import BulkCopierReaderMixin
-from eventsource.application.migration.bulk_copier_types import (
+from eventsource.application.migration.bulk_copier_types import (  # fmt: skip
     BulkCopyProgress,
     BulkCopyResult,
     RateLimiter,
@@ -41,15 +41,11 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """Initialize the bulk copier with source/target stores and migration repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._source = source_store
-        self._target = target_store
-        self._migration_repo = migration_repo
-        self._position_mapper = position_mapper
-        self._is_cancelled = False
-        self._is_paused = False
+        self._source, self._target = source_store, target_store
+        self._migration_repo, self._position_mapper = migration_repo, position_mapper
+        self._is_cancelled = self._is_paused = False
         self._pause_event = asyncio.Event()
         self._pause_event.set()
 
@@ -60,19 +56,13 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
     ) -> AsyncIterator[BulkCopyProgress]:
         """Run the bulk copy operation, yielding BulkCopyProgress updates."""
         config, tenant_id = migration.config, migration.tenant_id
-        span_attrs = {
-            "migration.id": str(migration.id),
-            "tenant_id": str(tenant_id),
-            "batch_size": config.batch_size,
-        }
+        span_attrs = {"migration.id": str(migration.id), "tenant_id": str(tenant_id), "batch_size": config.batch_size}  # fmt: skip
         with self._tracer.span("eventsource.bulk_copier.run", span_attrs):
             self._is_cancelled = False
             start_time = time.monotonic()
             metrics = get_migration_metrics(str(migration.id), str(tenant_id))
-            from_pos = migration.last_source_position
-            events_copied = migration.events_copied
-            last_target_pos = migration.last_target_position
-            last_source_pos = from_pos
+            from_pos = last_source_pos = migration.last_source_position
+            events_copied, last_target_pos = migration.events_copied, migration.last_target_position
 
             if migration.events_total == 0:
                 events_total = await self._count_tenant_events(tenant_id)
@@ -81,23 +71,13 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                 events_total = migration.events_total
 
             pos_label = from_pos.to_str() if from_pos else "start"
-            msg = "Starting bulk copy for tenant %s: %d events from position %s"
-            logger.info(msg, tenant_id, events_total, pos_label)
+            logger.info("Starting bulk copy for tenant %s: %d events from position %s", tenant_id, events_total, pos_label)  # fmt: skip
             rate_limiter = RateLimiter(config.max_bulk_copy_rate)
             batch: list[EventEnvelope] = []
             batch_start_pos = from_pos
 
             def _make_progress(rate: float, rem: float | None, done: bool) -> BulkCopyProgress:
-                return BulkCopyProgress(
-                    migration.id,
-                    events_copied,
-                    events_total,
-                    last_source_pos,
-                    last_target_pos,
-                    rate,
-                    rem,
-                    done,
-                )
+                return BulkCopyProgress(migration.id, events_copied, events_total, last_source_pos, last_target_pos, rate, rem, done)  # fmt: skip
 
             async def _flush_batch(cur: list[EventEnvelope]) -> float:
                 nonlocal events_copied, last_source_pos, last_target_pos
@@ -105,9 +85,7 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                 last_target_pos = written or last_target_pos
                 events_copied += len(cur)
                 last_source_pos = cur[-1].position
-                await self._migration_repo.update_progress(
-                    migration.id, events_copied, last_source_pos, last_target_pos
-                )
+                await self._migration_repo.update_progress(migration.id, events_copied, last_source_pos, last_target_pos)  # fmt: skip
                 elapsed_s = time.monotonic() - start_time
                 copy_rate = events_copied / elapsed_s if elapsed_s > 0 else 0
                 metrics.record_events_copied(len(cur), copy_rate)
@@ -144,18 +122,15 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                 raise BulkCopyError(migration.id, batch_start_pos, str(e)) from e
 
     def cancel(self) -> None:
-        """Cancel the bulk copy operation after the current batch completes."""
         self._is_cancelled = True
         logger.info("Bulk copy cancellation requested")
 
     def pause(self) -> None:
-        """Pause the bulk copy operation until resume() is called."""
         self._is_paused = True
         self._pause_event.clear()
         logger.info("Bulk copy paused")
 
     def resume(self) -> None:
-        """Resume a paused bulk copy operation."""
         self._is_paused = False
         self._pause_event.set()
         logger.info("Bulk copy resumed")

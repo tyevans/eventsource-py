@@ -15,7 +15,7 @@ from eventsource.application.subscriptions.runners.catchup_batch import CatchUpB
 from eventsource.application.subscriptions.runners.catchup_checkpoint import CatchUpCheckpointMixin
 from eventsource.application.subscriptions.runners.catchup_delivery import CatchUpDeliveryMixin
 from eventsource.application.subscriptions.runners.catchup_result import CatchUpResult
-from eventsource.application.subscriptions.subscription import (
+from eventsource.application.subscriptions.subscription import (  # fmt: skip
     Subscription,
     SubscriptionState,
     render_position,
@@ -50,47 +50,28 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
         self.event_store, self.checkpoint_repo = event_store, checkpoint_repo
         self.subscription, self.config = subscription, subscription.config
         self._running, self._reached_target = False, False
-        self._stop_event = asyncio.Event()
-        self._last_checkpoint_time: float = 0.0
-        self._filter = event_filter or EventFilter.from_config_and_subscriber(
-            self.config, subscription.subscriber
-        )
+        self._stop_event, self._last_checkpoint_time = asyncio.Event(), 0.0
+        self._filter = event_filter or EventFilter.from_config_and_subscriber(self.config, subscription.subscriber)  # fmt: skip
         self._batch_capable = supports_batch_handling(subscription.subscriber)
         self._flow_controller = FlowController()
         self._infra_circuit_breaker: CircuitBreaker | None = None
         self._handler_circuit_breaker: CircuitBreaker | None = None
         if self.config.circuit_breaker_enabled:
             cb_cfg = self.config.get_circuit_breaker_config()
-            self._infra_circuit_breaker = CircuitBreaker(cb_cfg)
-            self._handler_circuit_breaker = CircuitBreaker(cb_cfg)
-        self._retry = RetryableOperation(
-            config=self.config.get_retry_config(), circuit_breaker=self._infra_circuit_breaker
-        )
-        self._metrics = SubscriptionMetrics(
-            subscription_name=subscription.name, enable_metrics=enable_metrics
-        )
+            self._infra_circuit_breaker, self._handler_circuit_breaker = CircuitBreaker(cb_cfg), CircuitBreaker(cb_cfg)  # fmt: skip
+        self._retry = RetryableOperation(config=self.config.get_retry_config(), circuit_breaker=self._infra_circuit_breaker)  # fmt: skip
+        self._metrics = SubscriptionMetrics(subscription_name=subscription.name, enable_metrics=enable_metrics)  # fmt: skip
 
     async def run_until_position(self, target_position: Position) -> CatchUpResult:
         """Run catch-up in batches until reaching the target position, stop request, or error."""
         start_pos, sub_name = self.subscription.last_processed_position, self.subscription.name
         from_tok, to_tok = render_position(start_pos), render_position(target_position)
-        span_attrs = {
-            attr.ATTR_SUBSCRIPTION_NAME: sub_name,
-            attr.ATTR_FROM_POSITION: from_tok,
-            attr.ATTR_TO_POSITION: to_tok,
-            attr.ATTR_BATCH_SIZE: self.config.batch_size,
-        }
+        span_attrs = {attr.ATTR_SUBSCRIPTION_NAME: sub_name, attr.ATTR_FROM_POSITION: from_tok, attr.ATTR_TO_POSITION: to_tok, attr.ATTR_BATCH_SIZE: self.config.batch_size}  # fmt: skip
         with self._tracer.span("eventsource.catchup_runner.run_until_position", span_attrs) as span:
             self._running, self._reached_target = True, False
             self._stop_event.clear()
             self._last_checkpoint_time, total_processed = time.monotonic(), 0
-            log_extra: dict[str, object] = {
-                "subscription": sub_name,
-                "from_position": from_tok,
-                "to_position": to_tok,
-                "batch_size": self.config.batch_size,
-                "checkpoint_strategy": self.config.checkpoint_strategy.value,
-            }
+            log_extra: dict[str, object] = {"subscription": sub_name, "from_position": from_tok, "to_position": to_tok, "batch_size": self.config.batch_size, "checkpoint_strategy": self.config.checkpoint_strategy.value}  # fmt: skip
             if self.config.tenant_id:
                 log_extra["tenant_id"] = str(self.config.tenant_id)
             logger.info("Starting catch-up", extra=log_extra)
@@ -131,47 +112,47 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
 
     @property
     def is_running(self) -> bool:
-        return self._running  # fmt: skip
+        return self._running
 
     @property
     def _stop_requested(self) -> bool:
-        return self._stop_event.is_set()  # fmt: skip
+        return self._stop_event.is_set()
 
     @property
     def stop_requested(self) -> bool:
-        return self._stop_event.is_set()  # fmt: skip
+        return self._stop_event.is_set()
 
     @property
     def flow_controller(self) -> FlowController:
-        return self._flow_controller  # fmt: skip
+        return self._flow_controller
 
     @property
     def flow_control_stats(self) -> FlowControlStats:
-        return self._flow_controller.stats  # fmt: skip
+        return self._flow_controller.stats
 
     @property
     def handler_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._handler_circuit_breaker  # fmt: skip
+        return self._handler_circuit_breaker
 
     @property
     def infra_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._infra_circuit_breaker  # fmt: skip
+        return self._infra_circuit_breaker
 
     @property
     def retry_operation(self) -> RetryableOperation:
-        return self._retry  # fmt: skip
+        return self._retry
 
     @property
     def event_filter(self) -> EventFilter:
-        return self._filter  # fmt: skip
+        return self._filter
 
     @property
     def filter_stats(self) -> FilterStats:
-        return self._filter.stats  # fmt: skip
+        return self._filter.stats
 
     @property
     def metrics(self) -> SubscriptionMetrics:
-        return self._metrics  # fmt: skip
+        return self._metrics
 
 
 __all__ = ["CatchUpRunner"]
