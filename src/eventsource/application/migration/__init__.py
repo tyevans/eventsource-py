@@ -1,50 +1,7 @@
-"""
-Multi-tenant live migration system for eventsource.
+"""Multi-tenant live migration system for zero-downtime tenant event store transitions.
 
-This module provides zero-downtime migration of tenant event data
-between event stores (e.g., shared to dedicated PostgreSQL).
-
-Key Components:
-    - MigrationCoordinator: Orchestrates the migration lifecycle
-    - TenantStoreRouter: Routes operations based on migration state
-    - BulkCopier: Streams historical events to target store
-    - DualWriteInterceptor: Transparent dual-write during sync
-    - CutoverManager: Atomic switch with minimal pause
-
-Migration Phases:
-    1. PENDING: Migration created but not started
-    2. BULK_COPY: Historical events being copied to target
-    3. DUAL_WRITE: New events written to both stores
-    4. CUTOVER: Atomic switch to target store
-    5. COMPLETED: Migration finished successfully
-
-Usage:
-    >>> from eventsource.application.migration import (
-    ...     MigrationCoordinator,
-    ...     MigrationConfig,
-    ...     TenantStoreRouter,
-    ... )
-    >>>
-    >>> # Set up router
-    >>> router = TenantStoreRouter(default_store, routing_repo)
-    >>>
-    >>> # Create coordinator
-    >>> coordinator = MigrationCoordinator(
-    ...     source_store, migration_repo, routing_repo, router,
-    ... )
-    >>>
-    >>> # Start migration
-    >>> migration = await coordinator.start_migration(
-    ...     tenant_id=tenant_id,
-    ...     target_store=dedicated_store,
-    ... )
-    >>>
-    >>> # Monitor progress
-    >>> async for status in coordinator.stream_status(migration.id):
-    ...     print(f"Phase: {status.phase}, Progress: {status.progress_percent}%")
-
-See Also:
-    - FRD: docs/tasks/multi-tenant-live-migration/multi-tenant-live-migration.md
+Key Components: MigrationCoordinator, TenantStoreRouter, BulkCopier, DualWriteInterceptor, CutoverManager.
+Phases: PENDING -> BULK_COPY -> DUAL_WRITE -> CUTOVER -> COMPLETED.
 """
 
 from eventsource.application.migration.bulk_copier import BulkCopier
