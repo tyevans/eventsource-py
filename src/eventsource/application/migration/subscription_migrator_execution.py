@@ -1,6 +1,4 @@
-"""
-Subscription migration execution and checkpoint transition operations.
-"""
+"""Subscription migration execution and checkpoint transition operations."""
 
 from __future__ import annotations
 
@@ -32,7 +30,6 @@ class SubscriptionMigratorExecutionMixin:
     _checkpoint_repo: CheckpointRepository
     _tracer: Tracer
 
-    # Stub for method provided by SubscriptionMigratorPlanningMixin
     async def plan_migration(
         self,
         migration_id: UUID,
@@ -52,29 +49,7 @@ class SubscriptionMigratorExecutionMixin:
         """
         Migrate subscription checkpoints to target store positions.
 
-        Translates each subscription's checkpoint position from source
-        to target store and updates the checkpoint atomically.
-
-        Args:
-            migration_id: ID of the migration.
-            tenant_id: Tenant being migrated.
-            subscription_names: Names of subscriptions to migrate.
-            dry_run: If True, return plan without executing changes.
-
-        Returns:
-            MigrationSummary with results of all migrations.
-
-        Raises:
-            SubscriptionMigrationError: If a critical error occurs.
-
-        Example:
-            >>> summary = await migrator.migrate_subscriptions(
-            ...     migration_id=migration_id,
-            ...     tenant_id=tenant_id,
-            ...     subscription_names=["OrderProjection"],
-            ... )
-            >>> if summary.all_successful:
-            ...     print("All subscriptions migrated successfully")
+        Raises SubscriptionMigrationError if a critical error occurs.
         """
         with self._tracer.span(
             "eventsource.subscription_migrator.migrate_subscriptions",
@@ -97,7 +72,6 @@ class SubscriptionMigratorExecutionMixin:
                 },
             )
 
-            # If dry-run, just return the plan as a summary
             if dry_run:
                 plan = await self.plan_migration(
                     migration_id=migration_id,
@@ -107,7 +81,6 @@ class SubscriptionMigratorExecutionMixin:
                 end_time = datetime.now(UTC)
                 duration_ms = (end_time - start_time).total_seconds() * 1000
 
-                # Convert plan to summary format
                 dry_run_results = [
                     SubscriptionMigrationResult(
                         subscription_name=pm.subscription_name,
@@ -133,7 +106,6 @@ class SubscriptionMigratorExecutionMixin:
                     duration_ms=duration_ms,
                 )
 
-            # Execute actual migrations
             results: list[SubscriptionMigrationResult] = []
             successful_count = 0
             failed_count = 0
@@ -146,13 +118,8 @@ class SubscriptionMigratorExecutionMixin:
                         subscription_name=name,
                     )
                 except Exception as e:
-                    # Position translation and checkpoint-save failures are
-                    # already caught inside _migrate_single_subscription and
-                    # turned into a failed SubscriptionMigrationResult, so
-                    # they never reach here -- what does is something
-                    # unexpected (a broken checkpoint repository, for
-                    # instance), which is exactly the "critical error" this
-                    # method's docstring documents raising for.
+                    # Expected translation/save failures are caught in _migrate_single_subscription;
+                    # unexpected repository failures raise SubscriptionMigrationError.
                     raise SubscriptionMigrationError(
                         f"Critical error migrating subscription {name}: {e}",
                         migration_id=migration_id,
@@ -202,16 +169,7 @@ class SubscriptionMigratorExecutionMixin:
         migration_id: UUID,
         subscription_name: str,
     ) -> SubscriptionMigrationResult | None:
-        """
-        Migrate a single subscription's checkpoint.
-
-        Args:
-            migration_id: ID of the migration.
-            subscription_name: Name of the subscription to migrate.
-
-        Returns:
-            SubscriptionMigrationResult or None if subscription was skipped.
-        """
+        """Migrate a single subscription's checkpoint, or return None if skipped."""
         with self._tracer.span(
             "eventsource.subscription_migrator.migrate_single",
             {
@@ -219,10 +177,7 @@ class SubscriptionMigratorExecutionMixin:
                 "subscription.name": subscription_name,
             },
         ):
-            # The checkpoint repo returns a Position, and the mapper is
-            # token-keyed, so it flows straight through with no conversion.
             current_position = await self._checkpoint_repo.get_position(subscription_name)
-
             if current_position is None:
                 logger.debug(
                     "Subscription has no checkpoint, skipping",
@@ -233,7 +188,6 @@ class SubscriptionMigratorExecutionMixin:
                 )
                 return None
 
-            # Get the current checkpoint data for event_id and event_type
             checkpoints = await self._checkpoint_repo.get_all_checkpoints()
             checkpoint_data = next(
                 (c for c in checkpoints if c.projection_name == subscription_name),
@@ -250,7 +204,6 @@ class SubscriptionMigratorExecutionMixin:
                 )
                 return None
 
-            # Translate position
             try:
                 translation = await self._position_mapper.translate_position(
                     migration_id=migration_id,
@@ -274,8 +227,6 @@ class SubscriptionMigratorExecutionMixin:
                     error_message=f"Position translation failed: {e}",
                 )
 
-            # Update checkpoint with translated position. translation.target_position
-            # is already a Position -- no codec needed to save it.
             try:
                 await self._checkpoint_repo.save_position(
                     subscription_id=subscription_name,
@@ -330,28 +281,7 @@ class SubscriptionMigratorExecutionMixin:
         *,
         dry_run: bool = False,
     ) -> MigrationSummary:
-        """
-        Migrate all subscriptions for a tenant.
-
-        Convenience method that migrates all specified subscriptions
-        for a tenant during migration cutover.
-
-        Args:
-            migration_id: ID of the migration.
-            tenant_id: Tenant being migrated.
-            subscription_names: Optional list of subscription names.
-                If None, discovers subscriptions from checkpoints.
-            dry_run: If True, preview changes without executing.
-
-        Returns:
-            MigrationSummary with results.
-
-        Example:
-            >>> summary = await migrator.migrate_tenant_subscriptions(
-            ...     migration_id=migration.id,
-            ...     tenant_id=tenant_id,
-            ... )
-        """
+        """Migrate all specified (or checkpoint-discovered) subscriptions for a tenant."""
         with self._tracer.span(
             "eventsource.subscription_migrator.migrate_tenant_subscriptions",
             {
@@ -360,7 +290,6 @@ class SubscriptionMigratorExecutionMixin:
                 "dry_run": dry_run,
             },
         ):
-            # If no subscription names provided, get all from checkpoints
             if subscription_names is None:
                 checkpoints = await self._checkpoint_repo.get_all_checkpoints()
                 subscription_names = [c.projection_name for c in checkpoints]
