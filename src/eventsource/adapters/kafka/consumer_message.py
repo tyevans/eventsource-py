@@ -61,15 +61,13 @@ class KafkaConsumerMessageMixin:
                 await self._process_message(msg, skip_await_retry=True)
 
             name = f"kafka-retry-p{message.partition}-o{message.offset}"
-            self._retry_scheduler.schedule(remaining, _retry_action, name=name)
-            return
+            return self._retry_scheduler.schedule(remaining, _retry_action, name=name)  # type: ignore[return-value]
         self._stats.events_consumed += 1
         self._stats.last_consume_at = datetime.now(UTC)
         t, p, o = message.topic, message.partition, message.offset
         event_type_name = self._get_header_value(message.headers, "event_type")
         if self._metrics and event_type_name:
-            m_attrs = {"messaging.system": "kafka", "messaging.destination": t}
-            m_attrs.update({"messaging.kafka.partition": p, "event.type": event_type_name})
+            m_attrs = {"messaging.system": "kafka", "messaging.destination": t, "messaging.kafka.partition": p, "event.type": event_type_name}  # fmt: skip
             self._metrics.messages_consumed.add(1, attributes=m_attrs)
         msg_meta = {"topic": t, "partition": p, "offset": o}
         if not event_type_name:
@@ -80,22 +78,15 @@ class KafkaConsumerMessageMixin:
         logger.debug("Processing message", extra={"event_type": event_type_name, **msg_meta})
         if self._enable_tracing and PROPAGATION_AVAILABLE and extract is not None:
             ctx = extract(self._extract_trace_context(message.headers))
-            s_attrs = {attr.ATTR_MESSAGING_SYSTEM: "kafka", "messaging.source": t}
-            s_attrs.update({"messaging.source_kind": "topic", "messaging.kafka.partition": p})
-            s_attrs.update({attr.ATTR_MESSAGING_OPERATION: "receive", "messaging.kafka.offset": o})
-            s_attrs["messaging.kafka.consumer_group"] = self._config.consumer_group
-            s_attrs[attr.ATTR_EVENT_TYPE] = event_type_name
+            s_attrs = {attr.ATTR_MESSAGING_SYSTEM: "kafka", "messaging.source": t, "messaging.source_kind": "topic", "messaging.kafka.partition": p, attr.ATTR_MESSAGING_OPERATION: "receive", "messaging.kafka.offset": o, "messaging.kafka.consumer_group": self._config.consumer_group, attr.ATTR_EVENT_TYPE: event_type_name}  # fmt: skip
             name = f"eventsource.event_bus.consume {event_type_name}"
-            with self._tracer.span_with_kind(
-                name=name, kind=SpanKindEnum.CONSUMER, attributes=s_attrs, context=ctx
-            ) as span:
+            with self._tracer.span_with_kind(name=name, kind=SpanKindEnum.CONSUMER, attributes=s_attrs, context=ctx) as span:  # fmt: skip
                 await self._process_message_with_span(message, event_type_name, span)
         else:
             await self._process_message_with_span(message, event_type_name, None)
 
     def _extract_trace_context(self, headers: _Headers) -> dict[str, str]:
-        keys = ("traceparent", "tracestate", "baggage")
-        return {k: v.decode("utf-8") for k, v in (headers or ()) if k in keys}
+        return {k: v.decode("utf-8") for k, v in (headers or ()) if k in ("traceparent", "tracestate", "baggage")}  # fmt: skip
 
     def _fail_span(self, span: Any, exc: Exception) -> None:
         if span is not None and Status is not None and StatusCode is not None:
@@ -104,19 +95,15 @@ class KafkaConsumerMessageMixin:
 
     def _record_duration(self, start_time: float, topic: str) -> None:
         if self._metrics:
-            dur = (time.perf_counter() - start_time) * 1000
-            self._metrics.consume_duration.record(dur, attributes={"messaging.destination": topic})
+            self._metrics.consume_duration.record((time.perf_counter() - start_time) * 1000, attributes={"messaging.destination": topic})  # fmt: skip
 
-    async def _process_message_with_span(
-        self, message: Any, event_type_name: str, span: Any
-    ) -> None:
+    async def _process_message_with_span(self, message: Any, event_type_name: str, span: Any) -> None:  # fmt: skip
         start_time, retry_count = time.perf_counter(), self._get_retry_count(message.headers)
         try:
             try:
                 event = self._deserialize_message(message)
             except DeserializationError as e:
-                err_extra = {"event_type": event_type_name, "error": str(e)}
-                logger.error("Deserialization error, sending directly to DLQ", extra=err_extra)
+                logger.error("Deserialization error, sending directly to DLQ", extra={"event_type": event_type_name, "error": str(e)})  # fmt: skip
                 if await self._send_to_dlq(message, e, retry_count, reason="deserialization_error"):
                     if self._consumer:
                         await self._consumer.commit()

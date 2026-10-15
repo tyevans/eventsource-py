@@ -31,8 +31,7 @@ class SQLCheckpointRepository:
         enable_tracing: bool = True,
     ):
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
-        self._enable_tracing = self._tracer.enabled
-        self._conn = conn
+        self._enable_tracing, self._conn = self._tracer.enabled, conn
 
     async def get_checkpoint(self, projection_name: str) -> UUID | None:
         """Get the last processed event ID for a projection, or None if none exists."""
@@ -43,27 +42,16 @@ class SQLCheckpointRepository:
                 row = (await conn.execute(text(sql), {"p": projection_name})).fetchone()
                 return uuid_result(row[0]) if row else None
 
-    async def update_checkpoint(
-        self, projection_name: str, event_id: UUID, event_type: str
-    ) -> None:
+    async def update_checkpoint(self, projection_name: str, event_id: UUID, event_type: str) -> None:  # fmt: skip
         """Update the checkpoint for a projection using an idempotent UPSERT."""
         attrs = {ATTR_PROJECTION_NAME: projection_name, ATTR_EVENT_TYPE: event_type}
         with self._tracer.span("eventsource.checkpoint.update_checkpoint", attrs):
             now = datetime.now(UTC)
             async with sql_connection(self._conn, write=True) as conn:
                 d = dialect_of(conn)
-                query = text(
-                    "INSERT INTO projection_checkpoints (projection_name, last_event_id, "
-                    "last_event_type, last_processed_at, events_processed, created_at, updated_at) "
-                    "VALUES (:projection_name, :event_id, :event_type, :now, 1, :now, :now) "
-                    "ON CONFLICT (projection_name) DO UPDATE SET "
-                    "last_event_id = EXCLUDED.last_event_id, last_event_type = EXCLUDED.last_event_type, "
-                    "last_processed_at = EXCLUDED.last_processed_at, "
-                    "events_processed = projection_checkpoints.events_processed + 1, "
-                    "updated_at = EXCLUDED.updated_at"
-                )
+                sql = "INSERT INTO projection_checkpoints (projection_name, last_event_id, last_event_type, last_processed_at, events_processed, created_at, updated_at) VALUES (:projection_name, :event_id, :event_type, :now, 1, :now, :now) ON CONFLICT (projection_name) DO UPDATE SET last_event_id = EXCLUDED.last_event_id, last_event_type = EXCLUDED.last_event_type, last_processed_at = EXCLUDED.last_processed_at, events_processed = projection_checkpoints.events_processed + 1, updated_at = EXCLUDED.updated_at"  # fmt: skip
                 params = {"projection_name": projection_name, "event_id": uuid_param(event_id, d), "event_type": event_type, "now": ts_param(now, d)}  # fmt: skip
-                await conn.execute(query, params)
+                await conn.execute(text(sql), params)
 
     async def get_lag_metrics(
         self, projection_name: str, event_types: list[str] | None = None
@@ -84,7 +72,6 @@ class SQLCheckpointRepository:
                     params.update({f"et{i}": et for i, et in enumerate(event_types)})
                 else:
                     event_filter = ""
-
                 query = text(
                     f"WITH latest_relevant_event AS (SELECT event_id as max_id, timestamp as max_time "
                     f"FROM events {event_filter} ORDER BY timestamp DESC LIMIT 1) "
@@ -94,17 +81,14 @@ class SQLCheckpointRepository:
                     f"WHERE pc.projection_name = :projection_name"  # nosec B608
                 )
                 row = (await conn.execute(query, params)).fetchone()
-
             if not row:
                 return None
-
             last_id = str(uuid_result(row[1])) if row[1] is not None else None
             latest_id = str(uuid_result(row[2])) if row[2] is not None else None
             last_ts, latest_ts = ts_result(row[5]), ts_result(row[3])
             raw_lag = (latest_ts - last_ts).total_seconds() if last_ts and latest_ts else 0.0
             lag = 0.0 if (last_id and last_id == latest_id) or raw_lag < 0 else round(raw_lag, 1)
-            last_iso = last_ts.isoformat() if last_ts else None
-            return LagMetrics(row[0], last_id, latest_id, lag, row[4] or 0, last_iso)
+            return LagMetrics(row[0], last_id, latest_id, lag, row[4] or 0, last_ts.isoformat() if last_ts else None)  # fmt: skip
 
     async def reset_checkpoint(self, projection_name: str) -> None:
         """Reset the checkpoint for a projection."""
@@ -123,9 +107,7 @@ class SQLCheckpointRepository:
                 row = (await conn.execute(text(sql), {"s": subscription_id})).fetchone()
                 return Position.from_str(row[0]) if row and row[0] is not None else None
 
-    async def save_position(
-        self, subscription_id: str, position: Position, event_id: UUID, event_type: str
-    ) -> None:
+    async def save_position(self, subscription_id: str, position: Position, event_id: UUID, event_type: str) -> None:  # fmt: skip
         """Save checkpoint with an opaque global-feed position using an idempotent UPSERT."""
         token = position.to_str()
         span_attrs = {ATTR_PROJECTION_NAME: subscription_id, ATTR_EVENT_TYPE: event_type, "position_token": token}  # fmt: skip
@@ -133,27 +115,14 @@ class SQLCheckpointRepository:
             now = datetime.now(UTC)
             async with sql_connection(self._conn, write=True) as conn:
                 d = dialect_of(conn)
-                query = text(
-                    "INSERT INTO projection_checkpoints (projection_name, last_event_id, "
-                    "last_event_type, last_processed_at, events_processed, position_token, "
-                    "created_at, updated_at) VALUES (:subscription_id, :event_id, :event_type, "
-                    ":now, 1, :position_token, :now, :now) ON CONFLICT (projection_name) "
-                    "DO UPDATE SET last_event_id = EXCLUDED.last_event_id, "
-                    "last_event_type = EXCLUDED.last_event_type, "
-                    "last_processed_at = EXCLUDED.last_processed_at, "
-                    "events_processed = projection_checkpoints.events_processed + 1, "
-                    "position_token = EXCLUDED.position_token, updated_at = EXCLUDED.updated_at"
-                )
+                sql = "INSERT INTO projection_checkpoints (projection_name, last_event_id, last_event_type, last_processed_at, events_processed, position_token, created_at, updated_at) VALUES (:subscription_id, :event_id, :event_type, :now, 1, :position_token, :now, :now) ON CONFLICT (projection_name) DO UPDATE SET last_event_id = EXCLUDED.last_event_id, last_event_type = EXCLUDED.last_event_type, last_processed_at = EXCLUDED.last_processed_at, events_processed = projection_checkpoints.events_processed + 1, position_token = EXCLUDED.position_token, updated_at = EXCLUDED.updated_at"  # fmt: skip
                 params = {"subscription_id": subscription_id, "event_id": uuid_param(event_id, d), "event_type": event_type, "now": ts_param(now, d), "position_token": token}  # fmt: skip
-                await conn.execute(query, params)
+                await conn.execute(text(sql), params)
 
     async def get_all_checkpoints(self) -> list[CheckpointData]:
         """Get all projection checkpoints ordered by projection_name."""
         with self._tracer.span("eventsource.checkpoint.get_all_checkpoints", {}):
-            sql = (
-                "SELECT projection_name, last_event_id, last_event_type, last_processed_at, "
-                "events_processed, position_token FROM projection_checkpoints ORDER BY projection_name"
-            )
+            sql = "SELECT projection_name, last_event_id, last_event_type, last_processed_at, events_processed, position_token FROM projection_checkpoints ORDER BY projection_name"  # fmt: skip
             async with sql_connection(self._conn, write=False) as conn:
                 rows = (await conn.execute(text(sql))).fetchall()
             return [CheckpointData(r[0], uuid_result(r[1]), r[2], ts_result(r[3]), r[4] or 0, Position.from_str(r[5]) if r[5] else None) for r in rows]  # fmt: skip

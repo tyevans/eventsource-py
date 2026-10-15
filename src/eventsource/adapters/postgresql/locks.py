@@ -32,19 +32,11 @@ logger = logging.getLogger(__name__)
 class PostgreSQLLockManager:
     """Manages PostgreSQL advisory locks with a dedicated database session per held lock."""
 
-    def __init__(
-        self,
-        session_factory: async_sessionmaker[AsyncSession],
-        *,
-        holder_id: str | None = None,
-        tracer: Tracer | None = None,
-        enable_tracing: bool = True,
-    ):
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], *, holder_id: str | None = None, tracer: Tracer | None = None, enable_tracing: bool = True):  # fmt: skip
         """Initialize the lock manager with a SQLAlchemy async session factory."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-        self._session_factory = session_factory
-        self._holder_id = holder_id
+        self._session_factory, self._holder_id = session_factory, holder_id
         self._held_locks: dict[str, tuple[AsyncSession, int]] = {}
         self._lock = asyncio.Lock()
 
@@ -52,19 +44,11 @@ class PostgreSQLLockManager:
 
     @asynccontextmanager
     async def acquire(
-        self,
-        key: str,
-        *,
-        timeout: float | None = None,
-        retry_interval: float = 0.1,
+        self, key: str, *, timeout: float | None = None, retry_interval: float = 0.1
     ) -> AsyncIterator[LockInfo]:
         """Acquire an advisory lock as a context manager, releasing on exit."""
         lock_id = self._key_to_lock_id(key)
-        attrs = {
-            ATTR_LOCK_KEY: key,
-            ATTR_LOCK_ID: lock_id,
-            ATTR_LOCK_TIMEOUT: timeout if timeout is not None else -1,
-        }
+        attrs = {ATTR_LOCK_KEY: key, ATTR_LOCK_ID: lock_id, ATTR_LOCK_TIMEOUT: timeout if timeout is not None else -1}  # fmt: skip
         with self._tracer.span("eventsource.lock.acquire", attrs) as span:
             try:
                 session = await self._acquire_lock(key, lock_id, timeout, retry_interval)
@@ -72,7 +56,6 @@ class PostgreSQLLockManager:
                 if span is not None:
                     span.set_attribute(ATTR_LOCK_ACQUIRED, False)
                 raise
-
             if span is not None:
                 span.set_attribute(ATTR_LOCK_ACQUIRED, True)
             lock_info = LockInfo(key, lock_id, datetime.now(UTC), self._holder_id)
@@ -84,9 +67,7 @@ class PostgreSQLLockManager:
             finally:
                 await self._release_lock(key, session, lock_id)
 
-    async def _acquire_lock(
-        self, key: str, lock_id: int, timeout: float | None, retry_interval: float
-    ) -> AsyncSession:
+    async def _acquire_lock(self, key: str, lock_id: int, timeout: float | None, retry_interval: float) -> AsyncSession:  # fmt: skip
         """Internal method to acquire the lock."""
         return await acquire_advisory_lock_session(
             self._session_factory, key, lock_id, timeout, retry_interval
@@ -106,8 +87,7 @@ class PostgreSQLLockManager:
 
     async def try_acquire(self, key: str) -> LockInfo | None:
         """Try to acquire a lock without blocking; returns LockInfo or None."""
-        lock_id = self._key_to_lock_id(key)
-        session = self._session_factory()
+        lock_id, session = self._key_to_lock_id(key), self._session_factory()
         try:
             result = await session.execute(
                 text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": lock_id}
@@ -115,7 +95,6 @@ class PostgreSQLLockManager:
             if not result.scalar():
                 await session.close()
                 return None
-
             async with self._lock:
                 self._held_locks[key] = (session, lock_id)
             logger.debug("Acquired advisory lock (try): key=%s, lock_id=%d", key, lock_id)

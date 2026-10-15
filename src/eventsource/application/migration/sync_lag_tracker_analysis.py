@@ -1,6 +1,4 @@
-"""
-Sync lag convergence detection, statistics analysis, and history tracking.
-"""
+"""Sync lag convergence detection, statistics analysis, and history tracking."""
 
 from __future__ import annotations
 
@@ -37,12 +35,7 @@ class SyncLagAnalysisMixin:
         raise NotImplementedError
 
     def is_converged(self, max_lag: int | None = None) -> bool:
-        """
-        Check if stores are synchronized within the specified threshold.
-
-        A bounded count NEVER converges. `max_lag` may only tighten the
-        configured threshold; raises ValueError if `max_lag` exceeds it.
-        """
+        """Check if stores are synchronized within the specified threshold."""
         threshold = self._config.cutover_max_lag_events
         if max_lag is not None:
             if max_lag > threshold:
@@ -53,38 +46,31 @@ class SyncLagAnalysisMixin:
                     f"be evaluated honestly"
                 )
             threshold = max_lag
-
-        if self._current_lag is None:
-            return False
-
-        return self._current_lag.is_within_threshold(threshold)
+        return (
+            False if self._current_lag is None else self._current_lag.is_within_threshold(threshold)
+        )
 
     def is_sync_ready(self) -> bool:
         """Check if synchronization lag is within cutover_max_lag_events threshold."""
-        with self._tracer.span(
-            "eventsource.sync_lag.is_sync_ready",
-            {
-                ATTR_TENANT_ID: str(self._tenant_id) if self._tenant_id else None,
-                ATTR_SYNC_THRESHOLD: self._config.cutover_max_lag_events,
-                ATTR_IS_SYNC_READY: self.is_converged(),
-            },
-        ):
+        attrs = {
+            ATTR_TENANT_ID: str(self._tenant_id) if self._tenant_id else None,
+            ATTR_SYNC_THRESHOLD: self._config.cutover_max_lag_events,
+            ATTR_IS_SYNC_READY: self.is_converged(),
+        }
+        with self._tracer.span("eventsource.sync_lag.is_sync_ready", attrs):
             ready = self.is_converged()
-
             if ready:
+                suffix = f" for tenant {self._tenant_id}" if self._tenant_id else ""
+                lag_events = self._current_lag.events if self._current_lag else 0
                 logger.info(
-                    f"Sync ready for cutover: lag={self._current_lag.events if self._current_lag else 0} events, "
-                    f"threshold={self._config.cutover_max_lag_events}"
-                    + (f" for tenant {self._tenant_id}" if self._tenant_id else "")
+                    f"Sync ready for cutover: lag={lag_events} events, "
+                    f"threshold={self._config.cutover_max_lag_events}{suffix}"
                 )
-
             return ready
 
     def is_fully_converged(self) -> bool:
         """Check if stores are fully synchronized (zero lag)."""
-        if self._current_lag is None:
-            return False
-        return self._current_lag.is_converged
+        return False if self._current_lag is None else self._current_lag.is_converged
 
     def get_lag_stats(self) -> LagStats:
         """Get aggregate statistics about sync lag over the sample window."""
@@ -99,42 +85,27 @@ class SyncLagAnalysisMixin:
                 last_sample_at=None,
                 is_converging=False,
             )
-
         lags = [s.lag.events for s in self._lag_samples]
-        current = lags[-1] if lags else 0
-        avg = sum(lags) / len(lags)
-        max_lag = max(lags)
-        min_lag = min(lags)
-
-        # Determine if converging (recent samples are lower than earlier ones)
-        is_converging = self._is_converging()
-
         return LagStats(
-            current_lag=current,
-            average_lag=avg,
-            max_lag=max_lag,
-            min_lag=min_lag,
+            current_lag=lags[-1] if lags else 0,
+            average_lag=sum(lags) / len(lags),
+            max_lag=max(lags),
+            min_lag=min(lags),
             sample_count=len(self._lag_samples),
             first_sample_at=self._lag_samples[0].sampled_at,
             last_sample_at=self._lag_samples[-1].sampled_at,
-            is_converging=is_converging,
+            is_converging=self._is_converging(),
         )
 
     def _is_converging(self) -> bool:
         """Determine if lag is trending downward across the sample window."""
         if len(self._lag_samples) < 4:
             return False
-
         samples = list(self._lag_samples)
         mid = len(samples) // 2
-
         first_half = [s.lag.events for s in samples[:mid]]
         second_half = [s.lag.events for s in samples[mid:]]
-
-        first_avg = sum(first_half) / len(first_half)
-        second_avg = sum(second_half) / len(second_half)
-
-        return second_avg < first_avg
+        return (sum(second_half) / len(second_half)) < (sum(first_half) / len(first_half))
 
     def get_sample_history(self) -> list[SyncLag]:
         """Get the history of lag samples in chronological order."""
@@ -151,11 +122,8 @@ class SyncLagAnalysisMixin:
         """Manually record a lag measurement."""
         self._current_lag = lag
         self._add_sample(lag)
-
-        logger.debug(
-            f"Lag recorded: {lag.events} events behind"
-            + (f" for tenant {self._tenant_id}" if self._tenant_id else "")
-        )
+        suffix = f" for tenant {self._tenant_id}" if self._tenant_id else ""
+        logger.debug(f"Lag recorded: {lag.events} events behind{suffix}")
 
 
 __all__ = ["SyncLagAnalysisMixin"]

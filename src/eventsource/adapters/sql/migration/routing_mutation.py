@@ -27,11 +27,7 @@ class PostgreSQLTenantRoutingMutationMixin:
 
     async def get_or_default(self, tenant_id: UUID, default_store_id: str) -> TenantRouting:
         """Get routing configuration, creating default if not exists."""
-        attrs = {
-            ATTR_TENANT_ID: str(tenant_id),
-            "store_id": default_store_id,
-            ATTR_DB_SYSTEM: "postgresql",
-        }
+        attrs = {ATTR_TENANT_ID: str(tenant_id), "store_id": default_store_id, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span("eventsource.routing_repo.get_or_default", attrs):
             if (existing := await self.get_routing(tenant_id)) is not None:
                 return existing
@@ -42,13 +38,7 @@ class PostgreSQLTenantRoutingMutationMixin:
                 "ON CONFLICT (tenant_id) DO NOTHING RETURNING tenant_id, store_id, "
                 "migration_state, active_migration_id, created_at, updated_at"
             )
-            params = {
-                "tenant_id": tenant_id,
-                "store_id": default_store_id,
-                "state": TenantMigrationState.NORMAL.value,
-                "created_at": now,
-                "updated_at": now,
-            }
+            params = {"tenant_id": tenant_id, "store_id": default_store_id, "state": TenantMigrationState.NORMAL.value, "created_at": now, "updated_at": now}  # fmt: skip
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 row = (await conn.execute(query, params)).fetchone()
             if row is None:
@@ -70,13 +60,7 @@ class PostgreSQLTenantRoutingMutationMixin:
                 "VALUES (:tenant_id, :store_id, :state, :created_at, :updated_at) "
                 "ON CONFLICT (tenant_id) DO UPDATE SET store_id = EXCLUDED.store_id, updated_at = EXCLUDED.updated_at"
             )
-            params = {
-                "tenant_id": tenant_id,
-                "store_id": store_id,
-                "state": TenantMigrationState.NORMAL.value,
-                "created_at": now,
-                "updated_at": now,
-            }
+            params = {"tenant_id": tenant_id, "store_id": store_id, "state": TenantMigrationState.NORMAL.value, "created_at": now, "updated_at": now}  # fmt: skip
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
             await self._invalidate_cache(tenant_id)
@@ -88,22 +72,13 @@ class PostgreSQLTenantRoutingMutationMixin:
         migration_id: UUID | None = None,
     ) -> None:
         """Update the migration state and active_migration_id for routing decisions."""
-        attrs = {
-            ATTR_TENANT_ID: str(tenant_id),
-            "migration_state": state.value,
-            ATTR_DB_SYSTEM: "postgresql",
-        }
+        attrs = {ATTR_TENANT_ID: str(tenant_id), "migration_state": state.value, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span("eventsource.routing_repo.set_migration_state", attrs):
             query = text(
                 "UPDATE tenant_routing SET migration_state = :state, "
                 "active_migration_id = :migration_id, updated_at = :updated_at WHERE tenant_id = :tenant_id"
             )
-            params = {
-                "tenant_id": tenant_id,
-                "state": state.value,
-                "migration_id": migration_id,
-                "updated_at": datetime.now(UTC),
-            }
+            params = {"tenant_id": tenant_id, "state": state.value, "migration_id": migration_id, "updated_at": datetime.now(UTC)}  # fmt: skip
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
             await self._invalidate_cache(tenant_id)
@@ -116,12 +91,7 @@ class PostgreSQLTenantRoutingMutationMixin:
         migration_id: UUID | None = None,
     ) -> None:
         """Atomically update both store_id and migration_state in a single transaction."""
-        attrs = {
-            ATTR_TENANT_ID: str(tenant_id),
-            "store_id": store_id,
-            "migration_state": state.value,
-            ATTR_DB_SYSTEM: "postgresql",
-        }
+        attrs = {ATTR_TENANT_ID: str(tenant_id), "store_id": store_id, "migration_state": state.value, ATTR_DB_SYSTEM: "postgresql"}  # fmt: skip
         with self._tracer.span("eventsource.routing_repo.switch_routing", attrs):
             now = datetime.now(UTC)
             query = text(
@@ -131,14 +101,7 @@ class PostgreSQLTenantRoutingMutationMixin:
                 "migration_state = EXCLUDED.migration_state, active_migration_id = EXCLUDED.active_migration_id, "
                 "updated_at = EXCLUDED.updated_at"
             )
-            params = {
-                "tenant_id": tenant_id,
-                "store_id": store_id,
-                "state": state.value,
-                "migration_id": migration_id,
-                "created_at": now,
-                "updated_at": now,
-            }
+            params = {"tenant_id": tenant_id, "store_id": store_id, "state": state.value, "migration_id": migration_id, "created_at": now, "updated_at": now}  # fmt: skip
             async with _get_sql_connection()(self._conn, write=True) as conn:
                 await conn.execute(query, params)
             await self._invalidate_cache(tenant_id)
