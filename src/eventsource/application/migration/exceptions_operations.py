@@ -1,6 +1,4 @@
-"""
-Operation-specific migration exceptions: consistency, bulk copy, dual write, position mapping, circuit breaker.
-"""
+"""Operation-specific migration exceptions: consistency, bulk copy, dual write, position mapping, circuit breaker."""
 
 from __future__ import annotations
 
@@ -22,19 +20,7 @@ if TYPE_CHECKING:
 
 
 class ConsistencyError(MigrationError):
-    """
-    Raised when data consistency verification fails.
-
-    The migration system verifies data integrity by comparing event
-    counts and checksums between source and target stores. This error
-    indicates a mismatch that must be resolved before cutover.
-
-    Attributes:
-        source_count: Number of events in source store.
-        target_count: Number of events in target store.
-        stream_id: The specific stream where inconsistency was detected, if applicable.
-        details: Additional details about the inconsistency.
-    """
+    """Raised when data consistency verification between source and target stores fails."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.CRITICAL,
@@ -70,18 +56,7 @@ class ConsistencyError(MigrationError):
 
 
 class BulkCopyError(MigrationError):
-    """
-    Raised during bulk copy failures.
-
-    Bulk copy is the phase where historical events are copied from
-    source to target. This error indicates a failure during that
-    process, which is typically recoverable by resuming.
-
-    Attributes:
-        last_position: The last successfully copied source position
-            (None when nothing had been copied yet).
-        original_error: The underlying error message.
-    """
+    """Raised during bulk copy failures while copying historical events from source to target."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.ERROR,
@@ -113,16 +88,7 @@ class BulkCopyError(MigrationError):
 
 
 class DualWriteError(MigrationError):
-    """
-    Raised during dual-write failures.
-
-    During dual-write phase, events are written to both source and
-    target stores. If the target write fails, this error is raised.
-    The system can recover via background sync.
-
-    Attributes:
-        target_error: The error from the target store write.
-    """
+    """Raised when writing to the target store fails during the dual-write phase."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.WARNING,
@@ -152,17 +118,7 @@ class DualWriteError(MigrationError):
 
 
 class PositionMappingError(MigrationError):
-    """
-    Raised when position mapping between stores fails.
-
-    During migration, event positions in the source store must be mapped
-    to positions in the target store for subscription continuity. This
-    error indicates that mapping could not be established or is invalid.
-
-    Attributes:
-        source_position: The source store position that failed to map.
-        reason: Detailed reason for the mapping failure.
-    """
+    """Raised when position mapping between source and target stores fails."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.ERROR,
@@ -195,16 +151,7 @@ class PositionMappingError(MigrationError):
 
 
 class CircuitBreakerOpenError(MigrationError):
-    """
-    Raised when an operation is rejected due to open circuit breaker.
-
-    This error indicates that too many recent failures have occurred and
-    the system is protecting itself by rejecting new operations temporarily.
-
-    Attributes:
-        operation_name: Name of the operation that was rejected.
-        time_until_retry: Seconds until the circuit will try again.
-    """
+    """Raised when an operation is rejected due to an open circuit breaker."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.WARNING,
