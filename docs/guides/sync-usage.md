@@ -98,13 +98,15 @@ The constructor does not validate `store` at runtime — it is a structural (`Pr
 
 ## The sync method surface
 
-The adapter exposes one method per store port operation, all sharing the async method's name (no `_sync` suffix), taking the same positional arguments as the coroutine it wraps, and adding a keyword-only `timeout: float | None = None` at the end:
+The adapter exposes one method per store port operation plus two stream convenience helpers (`read_events` and `stream_exists`), all sharing the async method's name (no `_sync` suffix) and adding a keyword-only `timeout: float | None = None` at the end:
 
 | Sync method | Wraps | Returns |
 | --- | --- | --- |
-| `append(stream, events, expected, *, timeout=None)` | `append` | `AppendResult` |
+| `append(stream, events, expected=ExpectedVersion.any(), *, timeout=None)` | `append` | `AppendResult` |
 | `read_stream(stream, options=None, *, timeout=None)` | `read_stream` | `list[EventEnvelope]` |
+| `read_events(stream, options=None, *, timeout=None)` | `read_stream` (unwrapped) | `list[DomainEvent]` |
 | `get_stream_version(stream, *, timeout=None)` | `get_stream_version` | `int` |
+| `stream_exists(stream, *, timeout=None)` | `stream_exists` / `get_stream_version > 0` | `bool` |
 | `event_exists(event_id, *, timeout=None)` | `event_exists` | `bool` |
 | `read_all(from_position=None, options=None, *, timeout=None)` | `read_all` | `list[EventEnvelope]` |
 | `read_category(category, options=None, *, timeout=None)` | `read_category` | `list[EventEnvelope]` |
@@ -116,7 +118,7 @@ Every one of them routes through the same private `_run_sync` helper, so they sh
 - **Exceptions.** Anything the coroutine raises propagates unchanged to the sync caller — `OptimisticLockError` from a version conflict, `EventStoreError` from the backend, `ValidationError` from pydantic. There is no wrapping or swallowing, so `try`/`except` in sync code looks exactly like it would in async code.
 - **Execution strategy.** No running loop in the calling thread is the only supported case (`asyncio.run` per call); a running loop raises `RuntimeError`. See [How the adapter picks an execution strategy](#how-the-adapter-picks-an-execution-strategy).
 
-`read_stream`, `read_all`, and `read_category` wrap async iterators, so the sync adapter drains each into a plain `list[EventEnvelope]` before returning — nothing is converted to dicts or simplified on the way out:
+`read_stream`, `read_all`, and `read_category` wrap async iterators, so the sync adapter drains each into a plain `list[EventEnvelope]` before returning (`read_events` goes one step further and unwraps each envelope's `.event` into a `list[DomainEvent]`):
 
 ```python
 from uuid import UUID
@@ -126,16 +128,16 @@ from eventsource.ports import ExpectedVersion
 
 stream = StreamId(aggregate_id=UUID(order_id), category="Order")
 envelopes = sync_store.read_stream(stream)
-[e.event for e in envelopes]          # list[DomainEvent], chronological
-[e.stream_version for e in envelopes] # per-envelope version
+events = sync_store.read_events(stream)   # list[DomainEvent], chronological
+[e.stream_version for e in envelopes]    # per-envelope version
 
 result = sync_store.append(
     stream,
-    [OrderShipped(...)],
+    OrderShipped(...),                   # single DomainEvent or Sequence[DomainEvent]
     ExpectedVersion.exact(len(envelopes)),
 )
 result.new_version   # int
-result.position       # Position | None
+result.position      # Position | None
 ```
 
 ### What is not on the sync surface
@@ -146,18 +148,18 @@ If you need the async surface directly — to build a coroutine that batches sev
 
 ### `append` (optimistic locking with `ExpectedVersion`)
 
-`append` writes events to one stream and enforces optimistic concurrency using an `ExpectedVersion`:
+`append` writes one or more events to one stream and enforces optimistic concurrency using an `ExpectedVersion` (which defaults to `ExpectedVersion.any()` when omitted):
 
 ```python
 result = sync_store.append(
     stream,                         # StreamId
-    [OrderShipped(...)],            # Sequence[DomainEvent]
-    ExpectedVersion.exact(current_version),
+    [OrderShipped(...)],            # DomainEvent | Sequence[DomainEvent]
+    ExpectedVersion.exact(current_version),  # defaults to ExpectedVersion.any()
     timeout=None,                   # keyword-only override
 )
 ```
 
-The return value is an `AppendResult` with `stream` (the `StreamId` written to), `new_version`, and `position` (`None` for feedless stores).
+`events` accepts either a single `DomainEvent` instance (automatically wrapped into a one-element sequence) or any `Sequence[DomainEvent]`. The return value is an `AppendResult` with `stream` (the `StreamId` written to), `new_version`, and `position` (`None` for feedless stores).
 
 #### Read the version, then write it back
 
@@ -168,15 +170,13 @@ version = sync_store.get_stream_version(stream)
 
 result = sync_store.append(
     stream,
-    [OrderShipped(aggregate_id=order_id, ...)],
+    OrderShipped(aggregate_id=order_id, ...),
     ExpectedVersion.exact(version),
 )
 # result.new_version == version + 1
 ```
 
-If you do not need the events themselves — you are appending a fact that does not depend on prior state — use `get_stream_version(stream)` instead and skip materializing the stream.
-
-For a brand-new aggregate the current version is `0`, so a first append passes `ExpectedVersion.exact(0)` (equivalently `ExpectedVersion.no_stream()`) and comes back with `new_version == 1` (or `new_version == len(events)` when you append several at once).
+If you do not need the events themselves — you are appending a fact that does not depend on prior state — use `get_stream_version(stream)` instead and skip materializing the stream. For a brand-new aggregate the current version is `0`, so a first append passes `ExpectedVersion.exact(0)` (equivalently `ExpectedVersion.no_stream()`) and comes back with `new_version == 1` (or `new_version == len(events)` when you append several at once).
 
 #### The `ExpectedVersion` sentinels
 
@@ -184,7 +184,7 @@ For a brand-new aggregate the current version is `0`, so a first append passes `
 
 | Constructor | Meaning |
 | --- | --- |
-| `ExpectedVersion.any_()` | Skip the version check entirely — no optimistic locking. |
+| `ExpectedVersion.any()` / `ExpectedVersion.any_()` | Skip the version check entirely — no optimistic locking (the default in `SyncEventStoreAdapter.append`). |
 | `ExpectedVersion.no_stream()` | The stream must not exist yet (zero events). |
 | `ExpectedVersion.stream_exists()` | The stream must already have at least one event; any version is accepted. |
 | `ExpectedVersion.exact(n)` | The stream must currently have exactly `n` events. |
@@ -192,10 +192,10 @@ For a brand-new aggregate the current version is `0`, so a first append passes `
 ```python
 from eventsource.ports import ExpectedVersion
 
-sync_store.append(stream, [OrderCreated(...)], ExpectedVersion.no_stream())
+sync_store.append(stream, OrderCreated(...), ExpectedVersion.no_stream())
 ```
 
-Reserve `ExpectedVersion.any_()` for append-only streams where concurrent writers genuinely cannot conflict; it disables the protection this parameter exists to provide.
+Reserve `ExpectedVersion.any()` / `ExpectedVersion.any_()` for append-only streams or quick scripts where concurrent writers genuinely cannot conflict; in contended production workflows, pass an explicit `ExpectedVersion`.
 
 #### Handling `OptimisticLockError`
 
@@ -220,14 +220,14 @@ from eventsource.domain.exceptions import OptimisticLockError
 def ship_order(order_id, max_attempts: int = 3):
     stream_id = StreamId(aggregate_id=order_id, category="Order")
     for attempt in range(max_attempts):
-        envelopes = sync_store.read_stream(stream_id)
-        order = Order.from_events([e.event for e in envelopes])  # your own rehydration
+        events = sync_store.read_events(stream_id)
+        order = Order.from_events(events)                         # your own rehydration
         if order.shipped:
             return                                                # someone else got there first
         event = OrderShipped(aggregate_id=order_id, ...)
         try:
             return sync_store.append(
-                stream_id, [event], ExpectedVersion.exact(len(envelopes))
+                stream_id, event, ExpectedVersion.exact(len(events))
             )
         except OptimisticLockError:
             if attempt == max_attempts - 1:
@@ -242,9 +242,9 @@ Concurrency here is real, not theoretical: the adapter is safe to call from many
 
 Everything else propagates unchanged too: `EventStoreError` (and its backend-specific subclasses) if the write fails, pydantic's `ValidationError` if an event is malformed, and `TimeoutError` if the operation exceeds the effective timeout — the per-call `timeout=` if given, otherwise the adapter's default. A `TimeoutError` on an append is ambiguous: the write may or may not have committed. Re-read the stream version before retrying rather than assuming it failed.
 
-### `read_stream` / `get_stream_version`
+### `read_stream` / `read_events` / `get_stream_version` / `stream_exists`
 
-These are the two read paths for a single stream. Use `read_stream` when you need the events themselves; use `get_stream_version` when all you need is the number to pass to `ExpectedVersion.exact()`.
+These are the read paths for a single stream. Use `read_stream` when you need full `EventEnvelope` metadata, `read_events` when you only want unwrapped `DomainEvent` instances, `get_stream_version` when you need the version integer for `ExpectedVersion.exact()`, and `stream_exists` for a boolean stream existence check.
 
 ```python
 from uuid import UUID
@@ -253,10 +253,12 @@ from eventsource.domain import StreamId
 
 stream = StreamId(aggregate_id=UUID(order_id), category="Order")
 envelopes = sync_store.read_stream(stream)
+events = sync_store.read_events(stream)
 version = sync_store.get_stream_version(stream)
+exists = sync_store.stream_exists(stream)
 ```
 
-#### `read_stream`
+#### `read_stream` and `read_events`
 
 ```python
 envelopes = sync_store.read_stream(
@@ -264,14 +266,15 @@ envelopes = sync_store.read_stream(
     options=None,          # StreamReadOptions | None — direction, version range, limit
     timeout=None,          # keyword-only override
 )
+events = sync_store.read_events(stream, options=None, timeout=None)
 ```
 
-It returns a `list[EventEnvelope]`, each carrying `event`, `stream_id`, `stream_version`, `position`, and `stored_at`:
+`read_stream` returns a `list[EventEnvelope]`, each carrying `event`, `stream_id`, `stream_version`, `position`, and `stored_at`, while `read_events` returns `[envelope.event for envelope in envelopes]` (`list[DomainEvent]`):
 
 ```python
 envelopes[0].event             # DomainEvent
 envelopes[0].stream_version    # int
-envelopes[-1].event            # latest event, if any
+events[-1]                     # latest DomainEvent, if any
 ```
 
 A stream that has never been written is not an error — you get an empty list. Rehydration code can therefore treat "no events" as "aggregate does not exist yet" without a separate existence check.
@@ -279,13 +282,13 @@ A stream that has never been written is not an error — you get an empty list. 
 The typical sync worker shape is read, rebuild, decide, append:
 
 ```python
-envelopes = sync_store.read_stream(stream)
-if not envelopes:
+events = sync_store.read_events(stream)
+if not events:
     raise LookupError(f"no such order: {order_id}")
 
-order = Order.from_events([e.event for e in envelopes])   # your own rehydration
+order = Order.from_events(events)   # your own rehydration
 ...
-sync_store.append(stream, [new_event], ExpectedVersion.exact(len(envelopes)))
+sync_store.append(stream, new_event, ExpectedVersion.exact(len(events)))
 ```
 
 **Bound the read with `StreamReadOptions` when you already have part of the history.** `StreamReadOptions(from_version=n)` returns only events after version `n`, which is how you top up an aggregate you rehydrated from a snapshot or a cached read model:
@@ -294,42 +297,43 @@ sync_store.append(stream, [new_event], ExpectedVersion.exact(len(envelopes)))
 from eventsource.ports import StreamReadOptions
 
 snapshot = load_snapshot(order_id)              # your own snapshot cache
-tail = sync_store.read_stream(
+tail = sync_store.read_events(
     stream, StreamReadOptions(from_version=snapshot.version)
 )
 order = Order.from_snapshot(snapshot)
-order.load_from_history([e.event for e in tail])
+order.load_from_history(tail)
 ```
 
 `StreamReadOptions` also accepts `direction` (`ReadDirection.FORWARD`/`BACKWARD`), `to_version`, and `limit` for narrower reads.
 
 > **Do not reuse a filtered read's length as the next expected version.** When you pass `from_version`, `to_version`, or `limit`, the number of envelopes returned describes the filtered result, not the stream's true current version. For a write after a partial read, call `get_stream_version` and use that.
 
-#### `get_stream_version`
+#### `get_stream_version` and `stream_exists`
 
 ```python
-version = sync_store.get_stream_version(stream, timeout=None)
+version = sync_store.get_stream_version(stream, timeout=None)  # int (0 if empty)
+exists = sync_store.stream_exists(stream, timeout=None)        # bool (version > 0)
 ```
 
-The argument is a single `StreamId`, and the return is a plain `int` — the current version of the stream, or `0` if no events exist for it. After appending three events to a fresh stream, it returns `3`.
+`get_stream_version` takes a `StreamId` and returns a plain `int` — the current version of the stream, or `0` if no events exist for it. `stream_exists` returns `True` when the stream has at least one event (`get_stream_version(stream) > 0` or the wrapped store's native `stream_exists` coroutine) and `False` otherwise.
 
-Prefer it over `len(sync_store.read_stream(stream))` whenever you do not need the event payloads — the SQL backends resolve it with a direct `MAX(version)`-style query rather than deserializing every event.
+Prefer them over `len(sync_store.read_stream(stream))` whenever you do not need the event payloads — the SQL backends resolve the version with a direct `MAX(version)`-style query rather than deserializing every event.
 
 Good uses:
 
 - Appending a fact that does not depend on current state: read the version, append with `ExpectedVersion.exact(version)`.
-- Cheap existence checks: `get_stream_version(stream) == 0` means the stream is empty. (For a *specific event*, use `event_exists` instead.)
+- Cheap stream existence checks: `sync_store.stream_exists(stream)`. (For a *specific event ID*, use `event_exists` instead.)
 - Progress and monitoring: reporting how far a long-lived aggregate has advanced without pulling its history.
 
 It is not a substitute for reading when your next write depends on prior state. If a decision needs the aggregate's state — has this order already shipped? — read the events, rehydrate, and decide; a version number alone cannot tell you.
 
 #### Shared behaviour
 
-Both methods go through `_run_sync` like every other adapter method: the effective timeout is the per-call `timeout=` if given and the adapter default otherwise, exceeding it raises `TimeoutError`, and any store exception (`EventStoreError` and its subclasses, deserialization failures) propagates unchanged. Neither raises for a missing stream.
+All four methods go through `_run_sync` like every other adapter method: the effective timeout is the per-call `timeout=` if given and the adapter default otherwise, exceeding it raises `TimeoutError`, and any store exception (`EventStoreError` and its subclasses, deserialization failures) propagates unchanged. None of them raises for a missing stream.
 
-Both are safe to call concurrently from many threads against the same adapter — reads issued while another thread is appending see a consistent stream, not a partial one.
+All are safe to call concurrently from many threads against the same adapter — reads issued while another thread is appending see a consistent stream, not a partial one.
 
-Unbounded reads are the thing to watch. `read_stream` without a `limit` materializes the entire filtered history into memory, so for streams with very long histories either snapshot and use `from_version`, or bound the read with `StreamReadOptions.limit`. If you need to page across *all* streams rather than one, that is `read_all` with `FeedReadOptions.limit`.
+Unbounded reads are the thing to watch. `read_stream` and `read_events` without a `limit` materialize the entire filtered history into memory, so for streams with very long histories either snapshot and use `from_version`, or bound the read with `StreamReadOptions.limit`. If you need to page across *all* streams rather than one, that is `read_all` with `FeedReadOptions.limit`.
 
 ### `read_all` / `current_position`
 
@@ -362,7 +366,7 @@ Like `read_all`, it drains the async iterator into a list, so bound it with `Cat
 sync_store.event_exists(event_id)   # bool
 ```
 
-Cheap existence check for one specific event id, distinct from `get_stream_version(stream) == 0` which answers "does this stream have any events at all."
+Cheap existence check for one specific event id, distinct from `stream_exists(stream)` which answers "does this stream have any events at all."
 
 ## How the adapter picks an execution strategy
 

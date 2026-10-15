@@ -66,7 +66,10 @@ These modules have three layers that build on one another.
    validates their signatures (raising `HandlerSignatureError` for a bad
    parameter count), and routes an event to the matching method via
    `await registry.dispatch(event, context)`. Events with no registered handler
-   follow the registry's `unregistered_event_handling` policy.
+   follow the registry's `unregistered_event_handling` policy. Lookups via
+   `has_handler(target)` and `get_handler(target)` accept either an event class
+   (`type[DomainEvent]`) or a `DomainEvent` instance, and the registry supports
+   standard Python container operations (`len`, `bool`, `in`, and iteration).
 
 `HandlerAdapter` sits apart from that pipeline. It is not concerned with
 `@handles` at all: it wraps a handler supplied from the outside — an object with
@@ -314,3 +317,32 @@ class OrderProjection(DeclarativeProjection):
 Handler method names are conventional, not meaningful: `_on_*` for aggregates
 and `_handle_*` for projections are house style. Discovery looks at the marker,
 not the name, and finds `_`-prefixed and public methods alike.
+
+## `HandlerRegistry`
+
+`HandlerRegistry(owner, *, require_async=True, unregistered_event_handling="ignore", validate_on_init=True)`
+discovers `@handles`-decorated methods on `owner`, validates their parameter
+counts and async nature, and routes events via `await registry.dispatch(event, context)`.
+
+### Handler lookup and container ergonomics
+
+Both `has_handler(target)` and `get_handler(target)` accept either a
+`type[DomainEvent]` subclass or a `DomainEvent` instance (resolving instances via
+`type(target)`):
+
+```python
+registry.has_handler(OrderCreated)         # True (by event class)
+registry.has_handler(order_created_event)  # True (by event instance)
+
+info = registry.get_handler(OrderCreated)         # HandlerInfo | None
+info = registry.get_handler(order_created_event)  # HandlerInfo | None
+```
+
+`HandlerRegistry` also implements Python container dunders:
+
+| Operation | Behavior |
+| --- | --- |
+| `len(registry)` | Number of registered handlers (same as `registry.handler_count`) |
+| `bool(registry)` | Always `True`, even when empty (service-object truthiness) |
+| `EventClass in registry` / `event_instance in registry` | `True` if a handler is registered for that event class or instance; non-event objects return `False` |
+| `list(registry)` / `for event_type in registry:` | Iterates over registered `type[DomainEvent]` keys in registration order |

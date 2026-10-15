@@ -34,12 +34,16 @@ this page documents only how the sync wrapper changes their shape.
 (`FullEventStore`) and, for each call, drives that store's coroutine to
 completion on an event loop it manages itself. Every method mirrors one of the
 store's port methods **under the same name** (there is no `_sync` suffix — the
-adapter's methods are named `append`, `read_stream`, `get_stream_version`,
-`event_exists`, `read_all`, `read_category`, and `current_position`), taking
-the same positional arguments plus one extra keyword-only `timeout` parameter.
+adapter's methods are named `append`, `read_stream`, `read_events`,
+`get_stream_version`, `stream_exists`, `event_exists`, `read_all`,
+`read_category`, and `current_position`), taking the same positional arguments
+plus one extra keyword-only `timeout` parameter.
 Methods that return an async iterator on the underlying port (`read_stream`,
-`read_all`, `read_category`) return a plain `list[EventEnvelope]` here — the
-adapter collects the iterator before returning. There is no sync bus, sync
+`read_all`, `read_category`) return a plain `list[EventEnvelope]` here (`read_events`
+returns unwrapped `list[DomainEvent]`) — the adapter collects the iterator before
+returning. `append(stream, events, expected=ExpectedVersion.any(), *, timeout=None)`
+additionally accepts either a single `DomainEvent` or a `Sequence[DomainEvent]`
+and defaults `expected` to `ExpectedVersion.any()`. There is no sync bus, sync
 repository, or sync projection runner — the adapter covers the event store
 surface only.
 
@@ -168,7 +172,7 @@ sync_store = SyncEventStoreAdapter(InMemoryEventStore())
 
 ### Event loop handling
 
-Every `*_sync` method builds a coroutine from the wrapped store and hands it to
+Every sync method builds a coroutine from the wrapped store and hands it to
 the private `_run_sync` helper, which resolves the default-vs-override timeout
 and then picks one of two execution paths based on `asyncio.get_running_loop()`.
 
@@ -249,6 +253,58 @@ backend's documentation. Second, a single adapter instance may safely be shared
 as a module-level singleton across Celery worker threads — this is the intended
 usage — but forked worker processes should construct their own store rather than
 inheriting one across the fork.
+
+### Stream and feed methods
+
+```python
+def append(
+    self,
+    stream: StreamId,
+    events: DomainEvent | Sequence[DomainEvent],
+    expected: ExpectedVersion = ExpectedVersion.any(),
+    *,
+    timeout: float | None = None,
+) -> AppendResult: ...
+
+def read_stream(
+    self,
+    stream: StreamId,
+    options: StreamReadOptions | None = None,
+    *,
+    timeout: float | None = None,
+) -> list[EventEnvelope]: ...
+
+def read_events(
+    self,
+    stream: StreamId,
+    options: StreamReadOptions | None = None,
+    *,
+    timeout: float | None = None,
+) -> list[DomainEvent]: ...
+
+def get_stream_version(self, stream: StreamId, *, timeout: float | None = None) -> int: ...
+def stream_exists(self, stream: StreamId, *, timeout: float | None = None) -> bool: ...
+def event_exists(self, event_id: UUID, *, timeout: float | None = None) -> bool: ...
+def read_all(
+    self,
+    from_position: Position | None = None,
+    options: FeedReadOptions | None = None,
+    *,
+    timeout: float | None = None,
+) -> list[EventEnvelope]: ...
+def read_category(
+    self,
+    category: str,
+    options: CategoryReadOptions | None = None,
+    *,
+    timeout: float | None = None,
+) -> list[EventEnvelope]: ...
+def current_position(self, *, timeout: float | None = None) -> Position | None: ...
+```
+
+- `append(stream, events, expected=ExpectedVersion.any(), *, timeout=None)` accepts either a single `DomainEvent` (normalized to `[events]`) or a `Sequence[DomainEvent]`, and defaults `expected` to `ExpectedVersion.any()` (also accessible as `ExpectedVersion.ANY`).
+- `read_events(stream, options=None, *, timeout=None) -> list[DomainEvent]` reads the stream via `read_stream(stream, options, timeout=timeout)` and unwraps `.event` from each `EventEnvelope`.
+- `stream_exists(stream, *, timeout=None) -> bool` returns `True` if the stream has at least one event (`get_stream_version(stream, timeout=timeout) > 0`), or `False` when empty.
 
 ### Releasing the wrapped store: `close()`
 
