@@ -1,7 +1,7 @@
 ---
 id: TASK-0339
 title: "Compact 10 src modules at 232-234 lines below 215 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

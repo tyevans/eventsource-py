@@ -1,7 +1,7 @@
 ---
 id: TASK-0342
 title: "Compact 10 test modules at 265-266 lines below 240 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

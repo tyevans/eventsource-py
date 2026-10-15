@@ -1,7 +1,7 @@
 ---
 id: TASK-0347
 title: "Sync Diataxis testing guide for InMemoryTestHarness.outbox_repo, publish_events(), and len()"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
