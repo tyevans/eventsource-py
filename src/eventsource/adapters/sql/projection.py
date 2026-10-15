@@ -36,50 +36,9 @@ class DatabaseProjection(DeclarativeProjection):
     """
     Projection with database connection support for handlers.
 
-    Extends DeclarativeProjection to provide a real database connection to
-    handlers with 2-parameter signatures (conn, event). This enables handlers
-    to execute SQL operations within the projection's transaction context.
-
-    Inherits tenant_filter support from DeclarativeProjection.
-
-    The database session wraps all handler operations, ensuring that:
-    - Handler SQL operations are transactional
-    - Checkpoint updates share the same transaction (when using compatible repos)
-    - Errors cause automatic rollback
-
-    Handler Signatures:
-        - (event): Single parameter handler, no database access
-        - (conn, event): Two parameter handler, receives AsyncConnection
-
-    Example:
-        >>> from sqlalchemy.ext.asyncio import async_sessionmaker
-        >>>
-        >>> class OrderProjection(DatabaseProjection):
-        ...     @handles(OrderCreated)
-        ...     async def _handle_order_created(self, conn, event: OrderCreated) -> None:
-        ...         await conn.execute(text(
-        ...             "INSERT INTO orders (id, number) VALUES (:id, :num)"
-        ...         ), {"id": str(event.aggregate_id), "num": event.order_number})
-        ...
-        ...     @handles(OrderShipped)
-        ...     async def _handle_order_shipped(self, event: OrderShipped) -> None:
-        ...         # Single param handler also works
-        ...         print(f"Order shipped: {event.tracking_number}")
-        >>>
-        >>> # Usage
-        >>> projection = OrderProjection(session_factory=async_session_factory)
-        >>> await projection.handle(event)
-
-    Example with tenant filter:
-        >>> from eventsource import get_current_tenant
-        >>> projection = OrderProjection(
-        ...     session_factory=async_session_factory,
-        ...     tenant_filter=get_current_tenant,
-        ... )
-
-    Attributes:
-        _session_factory: SQLAlchemy async session factory for database connections
-        _current_connection: Current database connection within handle() context
+    Extends DeclarativeProjection to provide a database connection to handlers
+    with 2-parameter signatures (conn, event) inside a transaction context,
+    while 1-parameter handlers receive (event) without database access.
     """
 
     def __init__(
@@ -97,23 +56,13 @@ class DatabaseProjection(DeclarativeProjection):
         Initialize the database projection.
 
         Args:
-            session_factory: SQLAlchemy async session factory for creating
-                           database sessions. Required for database operations.
-            checkpoint_repo: Repository for checkpoint storage (ProjectionCheckpoints).
-                           If None, checkpoints are not persisted.
-            dlq_repo: Repository for dead letter queue (DLQRepository).
-                     If None, permanently failed events are not persisted.
-            enable_tracing: If True and OpenTelemetry is available, emit traces.
-                          Default is False (tracing off for high-frequency projections).
-                          Ignored if tracer is explicitly provided.
-            retry_policy: Policy for retry behavior.
-                         If None, uses ExponentialBackoffRetryPolicy with defaults.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            tenant_filter: Optional tenant filter. Can be:
-                - UUID: Static filter, only process events with this tenant_id
-                - Callable[[], UUID | None]: Dynamic filter, called per event
-                - None: No filtering, process all events (default)
+            session_factory: SQLAlchemy async session factory for database sessions.
+            checkpoint_repo: Repository for checkpoint storage (None disables persistence).
+            dlq_repo: Repository for dead letter queue (None disables persistence).
+            enable_tracing: Emit traces if True and OpenTelemetry is available.
+            retry_policy: Policy for retry behavior (defaults to ExponentialBackoffRetryPolicy).
+            tracer: Optional custom Tracer instance.
+            tenant_filter: Optional UUID or callable returning UUID | None for tenant filtering.
         """
         super().__init__(
             checkpoint_repo=checkpoint_repo,
@@ -136,24 +85,11 @@ class DatabaseProjection(DeclarativeProjection):
         )
 
     async def _handle_with_retry(self, event: DomainEvent, span: "Span | None") -> None:
-        """
-        Internal method that implements retry logic with fresh transactions.
-
-        Overrides parent to ensure each retry attempt gets a fresh database
-        transaction. This is necessary because PostgreSQL marks transactions
-        as "aborted" after any error, and further SQL commands will fail with
-        "current transaction is aborted, commands ignored until end of
-        transaction block".
-
-        Args:
-            event: The domain event to process
-            span: Optional OpenTelemetry span for adding attributes
-        """
-        max_attempts = self._retry_policy.max_retries + 1  # Include initial attempt
+        """Execute retry logic with a fresh database transaction per attempt."""
+        max_attempts = self._retry_policy.max_retries + 1
 
         for attempt in range(max_attempts):
             try:
-                # Each attempt gets a fresh session/transaction
                 await self._execute_in_transaction(event)
 
                 # Update checkpoint after successful processing
