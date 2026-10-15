@@ -25,9 +25,7 @@ def _lag(events: int, src: int, tgt: int) -> SyncLag:
 class TestCutoverManagerInit:
     def test_init_with_defaults(self, mock_lock_manager, mock_router, mock_routing_repo):
         manager = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
+            lock_manager=mock_lock_manager, router=mock_router, routing_repo=mock_routing_repo
         )
         assert manager._lock_manager is mock_lock_manager
         assert manager._router is mock_router
@@ -76,29 +74,19 @@ class TestSuccessfulCutover:
         assert result.duration_ms > 0
         assert result.rolled_back is False
         assert result.error_message is None
-
         mock_router.pause_writes.assert_called_once_with(tenant_id)
         mock_router.resume_writes.assert_called_once_with(tenant_id)
         mock_routing_repo.set_migration_state.assert_any_call(
-            tenant_id,
-            TenantMigrationState.CUTOVER_PAUSED,
-            migration_id=migration_id,
+            tenant_id, TenantMigrationState.CUTOVER_PAUSED, migration_id=migration_id
         )
         mock_routing_repo.set_migration_state.assert_any_call(
-            tenant_id,
-            TenantMigrationState.MIGRATED,
-            migration_id=migration_id,
+            tenant_id, TenantMigrationState.MIGRATED, migration_id=migration_id
         )
         mock_router.clear_dual_write_interceptor.assert_called_once_with(tenant_id)
 
     @pytest.mark.asyncio
     async def test_successful_cutover_records_duration_metric(
-        self,
-        cutover_manager,
-        tenant_id,
-        migration_id,
-        target_store_id,
-        mock_lag_tracker,
+        self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
         from eventsource.application.migration.metrics import (
             clear_metrics_registry,
@@ -119,13 +107,7 @@ class TestSuccessfulCutover:
 
     @pytest.mark.asyncio
     async def test_successful_cutover_with_small_lag(
-        self,
-        cutover_manager,
-        tenant_id,
-        migration_id,
-        target_store_id,
-        mock_lag_tracker,
-        config,
+        self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker, config
     ):
         mock_lag_tracker.current_lag = _lag(50, 100, 50)
         result = await cutover_manager.execute_cutover(
@@ -139,12 +121,7 @@ class TestSuccessfulCutover:
 
     @pytest.mark.asyncio
     async def test_successful_cutover_with_custom_timeout(
-        self,
-        cutover_manager,
-        tenant_id,
-        migration_id,
-        target_store_id,
-        mock_lag_tracker,
+        self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
@@ -157,16 +134,9 @@ class TestSuccessfulCutover:
 
     @pytest.mark.asyncio
     async def test_cutover_tracks_events_synced(
-        self,
-        cutover_manager,
-        tenant_id,
-        migration_id,
-        target_store_id,
-        mock_lag_tracker,
-        config,
+        self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker, config
     ):
-        initial_lag = _lag(10, 100, 90)
-        final_lag = _lag(2, 100, 98)
+        initial_lag, final_lag = _lag(10, 100, 90), _lag(2, 100, 98)
         call_count = 0
 
         async def update_lag(*, since=None):
@@ -176,7 +146,6 @@ class TestSuccessfulCutover:
 
         mock_lag_tracker.calculate_lag.side_effect = update_lag
         mock_lag_tracker.current_lag = initial_lag
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -250,13 +219,7 @@ class TestStrictZeroLagDefault:
 
     @pytest.mark.asyncio
     async def test_an_explicit_threshold_still_tolerates_lag(
-        self,
-        cutover_manager,
-        tenant_id,
-        migration_id,
-        target_store_id,
-        mock_lag_tracker,
-        config,
+        self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker, config
     ):
         mock_lag_tracker.current_lag = _lag(1, 101, 100)
         result = await cutover_manager.execute_cutover(
