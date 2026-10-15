@@ -20,28 +20,8 @@ if TYPE_CHECKING:
 
 
 class MigrationError(EventSourceError):
-    """
-    Base exception for all migration-related errors.
+    """Base exception for all migration-related errors with severity and recoverability metadata."""
 
-    All exceptions raised by the migration system inherit from this class,
-    allowing callers to catch all migration errors with a single handler.
-
-    The error classification system (P4-004) extends MigrationError with:
-    - Severity levels (CRITICAL, ERROR, WARNING, INFO)
-    - Recoverability (RECOVERABLE, TRANSIENT, FATAL)
-    - Suggested actions for operators
-    - Retry configuration for transient errors
-
-    Attributes:
-        message: Human-readable error description.
-        migration_id: The ID of the migration that caused the error, if applicable.
-        tenant_id: The tenant ID involved, if applicable.
-        recoverable: Whether the operation can be automatically recovered or retried.
-        suggested_action: Suggested action for recovery.
-        classification: Rich error classification metadata (P4-004).
-    """
-
-    # Default classification for the base MigrationError
     _default_classification: ErrorClassification = ErrorClassification(
         severity=ErrorSeverity.ERROR,
         recoverability=ErrorRecoverability.FATAL,
@@ -84,72 +64,31 @@ class MigrationError(EventSourceError):
 
     @property
     def classification(self) -> ErrorClassification:
-        """
-        Get the error classification for this exception.
-
-        Subclasses override _default_classification to provide
-        specific classification metadata for their error type.
-
-        Returns:
-            ErrorClassification with severity, recoverability, and guidance.
-        """
+        """Get the error classification for this exception."""
         return self._default_classification
 
     @property
     def severity(self) -> ErrorSeverity:
-        """
-        Get the severity level of this error.
-
-        Returns:
-            ErrorSeverity enum value.
-        """
+        """Get the severity level of this error."""
         return self.classification.severity
 
     @property
     def recoverability_type(self) -> ErrorRecoverability:
-        """
-        Get the recoverability classification of this error.
-
-        Distinguishes between RECOVERABLE (operator action), TRANSIENT
-        (automatic retry), and FATAL (must abort) recoverability categories.
-
-        Returns:
-            ErrorRecoverability enum value.
-        """
+        """Get the recoverability classification (RECOVERABLE, TRANSIENT, or FATAL)."""
         return self.classification.recoverability
 
     @property
     def error_code(self) -> str:
-        """
-        Get the unique error code for this exception.
-
-        Error codes are useful for programmatic error handling
-        and internationalization of error messages.
-
-        Returns:
-            String error code (e.g., "CUTOVER_TIMEOUT").
-        """
+        """Get the unique error code for this exception."""
         return self.classification.error_code
 
     @property
     def retry_config(self) -> RetryConfig | None:
-        """
-        Get the retry configuration for this error, if applicable.
-
-        Returns:
-            RetryConfig for transient errors, None otherwise.
-        """
+        """Get the retry configuration for this error, if applicable."""
         return self.classification.retry_config
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert the exception to a dictionary for serialization.
-
-        Useful for API responses and logging.
-
-        Returns:
-            Dictionary representation of the error.
-        """
+        """Convert the exception to a dictionary for serialization."""
         return {
             "message": self.message,
             "migration_id": str(self.migration_id) if self.migration_id else None,
@@ -160,17 +99,7 @@ class MigrationError(EventSourceError):
 
 
 class MigrationNotFoundError(MigrationError):
-    """
-    Raised when a requested migration does not exist.
-
-    This typically occurs when:
-    - Attempting to get status of a non-existent migration
-    - Attempting to resume a migration that was never started
-    - Using an incorrect migration ID
-
-    Attributes:
-        migration_id: The ID that was not found.
-    """
+    """Raised when a requested migration does not exist."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.ERROR,
@@ -189,16 +118,7 @@ class MigrationNotFoundError(MigrationError):
 
 
 class MigrationAlreadyExistsError(MigrationError):
-    """
-    Raised when attempting to create a migration that already exists.
-
-    This prevents duplicate migrations for the same tenant and ensures
-    only one migration per tenant can be active at a time.
-
-    Attributes:
-        tenant_id: The tenant ID for which a migration already exists.
-        existing_migration_id: The ID of the existing migration.
-    """
+    """Raised when attempting to create a migration for a tenant with an active migration."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.WARNING,
@@ -226,17 +146,7 @@ class MigrationAlreadyExistsError(MigrationError):
 
 
 class MigrationStateError(MigrationError):
-    """
-    Raised when a migration operation is invalid for the current state.
-
-    This enforces the migration state machine, ensuring operations only
-    occur in valid states (e.g., cannot start cutover before bulk copy).
-
-    Attributes:
-        current_phase: The current phase of the migration.
-        expected_phases: The phases that would have been valid.
-        operation: The operation that was attempted.
-    """
+    """Raised when a migration operation is invalid for the current state."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.ERROR,
@@ -265,17 +175,7 @@ class MigrationStateError(MigrationError):
 
 
 class InvalidPhaseTransitionError(MigrationStateError):
-    """
-    Raised when attempting an invalid phase transition.
-
-    The migration system enforces a strict state machine. This error
-    indicates an attempt to transition to a phase that is not allowed
-    from the current phase.
-
-    Attributes:
-        current_phase: The current phase of the migration.
-        target_phase: The phase that was attempted.
-    """
+    """Raised when attempting an invalid phase transition in the migration state machine."""
 
     _default_classification = ErrorClassification(
         severity=ErrorSeverity.ERROR,

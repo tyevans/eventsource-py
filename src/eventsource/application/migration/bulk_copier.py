@@ -1,34 +1,7 @@
-"""
-BulkCopier - Streams historical events from source to target store.
+"""BulkCopier - Streams historical events from source to target store.
 
-The BulkCopier handles the bulk copy phase of migration, efficiently
-streaming historical events from the source store to the target store.
-It supports resumable operations and progress tracking.
-
-Responsibilities:
-    - Stream events from source to target in batches
-    - Track copy progress for resumption
-    - Record position mappings for subscription continuity
-    - Handle backpressure and rate limiting
-    - Report progress for monitoring
-
-Performance Characteristics:
-    - Batch size configurable (default 1000 events)
-    - Supports pause/resume for operational flexibility
-    - Minimal impact on source store (read-only operations)
-
-Usage:
-    >>> from eventsource.application.migration import BulkCopier
-    >>>
-    >>> copier = BulkCopier(source_store, target_store, migration_repo)
-    >>>
-    >>> # Copy all events for a migration
-    >>> async for progress in copier.run(migration):
-    ...     print(f"Copied {progress.events_copied} events")
-
-See Also:
-    - Task: P1-006-bulk-copier.md
-    - FRD: docs/tasks/multi-tenant-live-migration/multi-tenant-live-migration.md
+Handles the bulk copy phase of migration, streaming historical events in batches
+with resumable progress checkpoints, position mapping, rate limiting, and pause/resume.
 """
 
 from __future__ import annotations
@@ -60,37 +33,10 @@ logger = logging.getLogger(__name__)
 
 
 class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
-    """
-    Streams historical events from source to target store.
+    """Streams historical events from source to target store in batches.
 
-    The BulkCopier is responsible for the bulk copy phase of tenant migration.
-    It reads events from the source store filtered by tenant ID and writes
-    them to the target store in batches. It supports:
-
-    - Batched processing for efficiency
-    - Checkpoint persistence for crash recovery
-    - Rate limiting to prevent overwhelming stores
-    - Progress callbacks for monitoring
-    - Pause/resume for operational control
-
-    Example:
-        >>> copier = BulkCopier(
-        ...     source_store=source,
-        ...     target_store=target,
-        ...     migration_repo=repo,
-        ... )
-        >>>
-        >>> async for progress in copier.run(migration):
-        ...     print(f"Progress: {progress.progress_percent:.1f}%")
-
-    Attributes:
-        _source: Source event store to read from.
-        _target: Target event store to write to.
-        _migration_repo: Repository for progress persistence.
-        _position_mapper: Optional mapper for position translation.
-        _is_cancelled: Flag indicating cancellation requested.
-        _is_paused: Flag indicating operation is paused.
-        _pause_event: Event for pause/resume synchronization.
+    Supports checkpoint persistence for crash recovery, rate limiting, progress
+    callbacks, position mapping, and pause/resume control.
     """
 
     def __init__(
@@ -103,22 +49,7 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the bulk copier.
-
-        Args:
-            source_store: FullEventStore to read from.
-            target_store: FullEventStore to write to.
-            migration_repo: Repository for progress persistence.
-            position_mapper: Optional mapper for tracking position translations.
-                When configured, events are appended one at a time so each
-                event's exact target position can be recorded.
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: Whether to enable OpenTelemetry tracing.
-                          Ignored if tracer is explicitly provided.
-        """
-        # Composition-based tracing (replaces TracingMixin)
+        """Initialize the bulk copier with source/target stores and migration repository."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._source = source_store
@@ -126,33 +57,17 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
         self._migration_repo = migration_repo
         self._position_mapper = position_mapper
 
-        # State
         self._is_cancelled = False
         self._is_paused = False
         self._pause_event = asyncio.Event()
-        self._pause_event.set()  # Not paused initially
+        self._pause_event.set()
 
     async def run(
         self,
         migration: Migration,
         progress_callback: Callable[[BulkCopyProgress], None] | None = None,
     ) -> AsyncIterator[BulkCopyProgress]:
-        """
-        Run the bulk copy operation.
-
-        Streams events from source to target, yielding progress updates.
-        Can be resumed from last checkpoint if interrupted.
-
-        Args:
-            migration: Migration instance with configuration.
-            progress_callback: Optional callback for progress updates.
-
-        Yields:
-            BulkCopyProgress instances with copy status.
-
-        Raises:
-            BulkCopyError: If copy fails with unrecoverable error.
-        """
+        """Run the bulk copy operation, yielding BulkCopyProgress updates."""
         config = migration.config
         tenant_id = migration.tenant_id
 
