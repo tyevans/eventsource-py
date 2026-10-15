@@ -98,8 +98,21 @@ class TestSubscriberRegistry:
         registry.register(_SimpleSubscriber([OrderCreated], sink=events))
         event1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001")
         event2 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-002")
-        await registry.dispatch_many([event1, event2])
+        await registry.dispatch_many((event1, event2))
         assert events == [event1, event2]
+
+    def test_container_dunders_and_clear(self, registry: SubscriberRegistry) -> None:
+        assert bool(registry) is True
+        assert len(registry) == 0
+        sub1, sub2 = _SimpleSubscriber([OrderCreated]), _SimpleSubscriber([OrderShipped])
+        registry.register(sub1)
+        assert len(registry) == 1
+        assert sub1 in registry and sub2 not in registry
+        assert list(registry) == [sub1]
+        registry.clear()
+        assert len(registry) == 0
+        assert sub1 not in registry
+        assert registry.get_subscribers_for(OrderCreated) == []
 
 
 class TestConcurrentExecution:

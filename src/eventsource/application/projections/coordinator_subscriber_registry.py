@@ -1,12 +1,10 @@
-"""
-Subscriber registry for EventSubscriber instances.
-"""
+"""Subscriber registry for EventSubscriber instances."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any, Self
 
 from eventsource.domain.event import DomainEvent
@@ -46,12 +44,7 @@ class SubscriberRegistry:
             self.register(*subscribers)
 
     def register(self, *subscribers: EventSubscriber) -> Self:
-        """
-        Register one or more event subscribers and return ``self`` for chaining.
-
-        Args:
-            *subscribers: Subscribers to register.
-        """
+        """Register one or more event subscribers and return ``self`` for chaining."""
         for subscriber in subscribers:
             self._subscribers.append(subscriber)
             event_types = subscriber.subscribed_to()
@@ -70,12 +63,7 @@ class SubscriberRegistry:
         return self
 
     def unregister(self, subscriber: EventSubscriber) -> bool:
-        """
-        Unregister a subscriber.
-
-        Returns:
-            True if subscriber was found and removed, False otherwise.
-        """
+        """Unregister a subscriber. Returns True if found and removed, False otherwise."""
         try:
             self._subscribers.remove(subscriber)
         except ValueError:
@@ -84,6 +72,11 @@ class SubscriberRegistry:
             if subscriber in subs:
                 subs.remove(subscriber)
         return True
+
+    def clear(self) -> None:
+        """Remove all registered subscribers and clear the event-type index."""
+        self._subscribers.clear()
+        self._by_event_type.clear()
 
     def get_subscribers_for(self, event_type: type[DomainEvent]) -> list[EventSubscriber]:
         """Get all subscribers interested in ``event_type`` via O(1) index lookup."""
@@ -97,14 +90,7 @@ class SubscriberRegistry:
             return await coro
 
     async def dispatch(self, event: DomainEvent) -> None:
-        """
-        Dispatch an event to all interested subscribers.
-
-        Only dispatches to subscribers that have subscribed to this event type.
-
-        Args:
-            event: The event to dispatch
-        """
+        """Dispatch an event to all interested subscribers."""
         event_type = type(event)
         subscribers = self.get_subscribers_for(event_type)
 
@@ -135,13 +121,8 @@ class SubscriberRegistry:
                     },
                 )
 
-    async def dispatch_many(self, events: list[DomainEvent]) -> None:
-        """
-        Dispatch multiple events in order.
-
-        Args:
-            events: Events to dispatch
-        """
+    async def dispatch_many(self, events: Sequence[DomainEvent]) -> None:
+        """Dispatch multiple events in order."""
         for event in events:
             await self.dispatch(event)
 
@@ -153,6 +134,22 @@ class SubscriberRegistry:
     def get_subscriber_count(self) -> int:
         """Get number of registered subscribers."""
         return len(self._subscribers)
+
+    def __len__(self) -> int:
+        """Return number of registered subscribers."""
+        return len(self._subscribers)
+
+    def __bool__(self) -> bool:
+        """Empty registries remain truthy."""
+        return True
+
+    def __contains__(self, subscriber: EventSubscriber) -> bool:
+        """Return True if subscriber is registered."""
+        return subscriber in self._subscribers
+
+    def __iter__(self) -> Iterator[EventSubscriber]:
+        """Iterate over a snapshot of registered subscribers."""
+        return iter(list(self._subscribers))
 
 
 __all__ = ["SubscriberRegistry"]
