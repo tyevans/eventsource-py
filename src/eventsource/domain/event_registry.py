@@ -1,37 +1,9 @@
 """
 Event type registry for serialization and deserialization.
 
-This module provides mechanisms to register and look up event types by name,
-enabling proper deserialization of events from storage or message queues.
-
-The registry is thread-safe and supports multiple registration patterns:
-- Decorator-based registration
-- Explicit programmatic registration
-- Multiple independent registries for testing isolation
-
-Usage:
-    # Option 1: Decorator-based registration (event_type is auto-derived
-    # from the class name -- never declare it by hand)
-    @register_event
-    class OrderCreated(DomainEvent):
-        ...
-
-    # Option 2: Decorator with an explicit wire name, e.g. to register a
-    # versioned event class under a stable name distinct from its class name
-    @register_event(event_type="order.created")
-    class OrderCreatedV2(DomainEvent):
-        ...
-
-    # Option 3: Explicit registration
-    registry = EventRegistry()
-    registry.register(OrderCreated)
-
-    # Option 4: Registration with custom type name
-    registry.register(OrderCreated, "order.created")
-
-    # Lookup
-    event_class = registry.get("OrderCreated")
-    event_class = get_event_class("OrderCreated")  # Using default registry
+Provides thread-safe mechanisms to register and look up event types by name,
+supporting decorator-based registration, explicit programmatic registration,
+and isolated registries for testing.
 """
 
 from __future__ import annotations
@@ -51,26 +23,11 @@ logger = logging.getLogger(__name__)
 
 class EventRegistry:
     """
-    Registry for mapping event type names to event classes.
+    Thread-safe registry for mapping event type names to event classes.
 
-    Enables deserialization of events from storage by looking up
-    the appropriate class based on the event_type string.
-
-    This registry can be used as a singleton (via the module-level
-    `default_registry`) or instantiated for isolated testing.
-
-    Thread-Safety:
-        All operations are thread-safe and use internal locking.
-
-    Attributes:
-        _registry: Internal mapping of event type names to classes
-        _lock: Threading lock for thread-safe operations
-
-    Example:
-        >>> registry = EventRegistry()
-        >>> registry.register(OrderCreated)
-        >>> event_class = registry.get("OrderCreated")
-        >>> event = event_class.model_validate(event_data)
+    Enables deserialization of events from storage by looking up the
+    appropriate class based on the event_type string. Can be used via the
+    module-level `default_registry` or instantiated for isolated testing.
     """
 
     def __init__(self) -> None:
@@ -88,29 +45,21 @@ class EventRegistry:
 
         Args:
             event_class: The event class to register
-            event_type: Optional type name override. If not provided,
-                       uses the class's event_type field default or class name.
+            event_type: Optional type name override. Defaults to class event_type_name().
 
         Returns:
             The registered event class (enables use as decorator)
 
         Raises:
             DuplicateEventTypeError: If event_type is already registered to a different class
-
-        Example:
-            >>> registry.register(OrderCreated)
-            >>> registry.register(OrderShipped, "order.shipped")
         """
-        # Determine event type name
         resolved_type = self._resolve_event_type(event_class, event_type)
 
         with self._lock:
-            # Check for duplicates
             if resolved_type in self._registry:
                 existing = self._registry[resolved_type]
                 if existing is not event_class:
                     raise DuplicateEventTypeError(resolved_type, existing, event_class)
-                # Same class, already registered - no-op
                 return event_class
 
             self._registry[resolved_type] = event_class
@@ -130,13 +79,7 @@ class EventRegistry:
         event_class: type[TEvent],
         event_type: str | None,
     ) -> str:
-        """
-        Resolve the event type name for a class.
-
-        Resolution order:
-        1. Explicit parameter
-        2. DomainEvent.event_type_name() (canonical source of truth)
-        """
+        """Resolve the event type name from explicit parameter or event_type_name()."""
         if event_type is not None:
             return event_type
         return event_class.event_type_name()
@@ -145,18 +88,8 @@ class EventRegistry:
         """
         Get event class by type name.
 
-        Args:
-            event_type: The event type name to look up
-
-        Returns:
-            The registered event class
-
         Raises:
             EventTypeNotFoundError: If event type is not registered
-
-        Example:
-            >>> event_class = registry.get("OrderCreated")
-            >>> event = event_class.model_validate(data)
         """
         with self._lock:
             if event_type not in self._registry:
@@ -164,71 +97,33 @@ class EventRegistry:
             return self._registry[event_type]
 
     def get_or_none(self, event_type: str) -> type[DomainEvent] | None:
-        """
-        Get event class by type name, returning None if not found.
-
-        Args:
-            event_type: The event type name to look up
-
-        Returns:
-            The registered event class, or None if not found
-        """
+        """Get event class by type name, returning None if not found."""
         with self._lock:
             return self._registry.get(event_type)
 
     def contains(self, event_type: str) -> bool:
-        """
-        Check if an event type is registered.
-
-        Args:
-            event_type: The event type name to check
-
-        Returns:
-            True if registered, False otherwise
-        """
+        """Check if an event type is registered."""
         with self._lock:
             return event_type in self._registry
 
     def list_types(self) -> list[str]:
-        """
-        List all registered event type names.
-
-        Returns:
-            Sorted list of registered event type names
-        """
+        """Return sorted list of all registered event type names."""
         with self._lock:
             return sorted(self._registry.keys())
 
     def list_classes(self) -> list[type[DomainEvent]]:
-        """
-        List all registered event classes.
-
-        Returns:
-            List of registered event classes (in sorted order by type name)
-        """
+        """Return registered event classes in sorted order by type name."""
         with self._lock:
             return [self._registry[t] for t in sorted(self._registry.keys())]
 
     def clear(self) -> None:
-        """
-        Clear all registered event types.
-
-        Primarily useful for testing to reset state between tests.
-        """
+        """Clear all registered event types (primarily useful for testing)."""
         with self._lock:
             self._registry.clear()
             logger.debug("Event registry cleared")
 
     def unregister(self, event_type: str) -> bool:
-        """
-        Unregister an event type.
-
-        Args:
-            event_type: The event type name to unregister
-
-        Returns:
-            True if the type was registered and removed, False if not found
-        """
+        """Unregister an event type, returning True if removed or False if not found."""
         with self._lock:
             if event_type in self._registry:
                 del self._registry[event_type]
@@ -254,9 +149,8 @@ class EventRegistry:
         return self.contains(event_type)
 
     def __iter__(self) -> Iterator[str]:
-        """Iterate over registered event type names."""
+        """Iterate over a snapshot of registered event type names."""
         with self._lock:
-            # Return a copy to avoid issues with concurrent modification
             return iter(list(self._registry.keys()))
 
 
@@ -264,7 +158,6 @@ class EventRegistry:
 default_registry = EventRegistry()
 
 
-# Overloads for type checking - decorator with and without parentheses
 @overload
 def register_event[TEvent: "DomainEvent"](event_class: type[TEvent]) -> type[TEvent]: ...
 
@@ -287,102 +180,33 @@ def register_event[TEvent: "DomainEvent"](
     """
     Decorator to register an event class in the registry.
 
-    Can be used with or without parentheses:
-
-        @register_event
-        class OrderCreated(DomainEvent):
-            ...
-
-        @register_event(event_type="order.created")
-        class OrderCreated(DomainEvent):
-            ...
-
-        @register_event(registry=custom_registry)
-        class OrderCreated(DomainEvent):
-            ...
-
-    Args:
-        event_class: The event class (when used without parentheses)
-        event_type: Optional type name override
-        registry: Optional registry to use (defaults to module-level registry)
-
-    Returns:
-        The registered event class, or a decorator function
-
-    Example:
-        >>> @register_event
-        ... class OrderCreated(DomainEvent):
-        ...     aggregate_type: str = "Order"
-        ...     order_id: UUID
-        ...
-        >>> # Explicit wire name: registers this class under a stable name
-        >>> # distinct from the class name, e.g. for a versioned event schema
-        >>> @register_event(event_type="order.shipped")
-        ... class OrderShippedV2(DomainEvent):
-        ...     aggregate_type: str = "Order"
+    Can be used as `@register_event` or `@register_event(event_type=..., registry=...)`.
     """
     target_registry = registry or default_registry
 
     def decorator(cls: type[TEvent]) -> type[TEvent]:
         return target_registry.register(cls, event_type)
 
-    # Handle both @register_event and @register_event()
     if event_class is not None:
         return decorator(event_class)
     return decorator
 
 
 def get_event_class(event_type: str) -> type[DomainEvent]:
-    """
-    Get event class from the default registry.
-
-    Convenience function for the common case of using the module-level registry.
-
-    Args:
-        event_type: The event type name to look up
-
-    Returns:
-        The registered event class
-
-    Raises:
-        EventTypeNotFoundError: If event type is not registered
-    """
+    """Get event class from the default registry, raising EventTypeNotFoundError if missing."""
     return default_registry.get(event_type)
 
 
 def get_event_class_or_none(event_type: str) -> type[DomainEvent] | None:
-    """
-    Get event class from the default registry, returning None if not found.
-
-    Convenience function for the common case of using the module-level registry.
-
-    Args:
-        event_type: The event type name to look up
-
-    Returns:
-        The registered event class, or None if not found
-    """
+    """Get event class from the default registry, returning None if not found."""
     return default_registry.get_or_none(event_type)
 
 
 def is_event_registered(event_type: str) -> bool:
-    """
-    Check if an event type is registered in the default registry.
-
-    Args:
-        event_type: The event type name to check
-
-    Returns:
-        True if registered, False otherwise
-    """
+    """Check if an event type is registered in the default registry."""
     return default_registry.contains(event_type)
 
 
 def list_registered_events() -> list[str]:
-    """
-    List all event types registered in the default registry.
-
-    Returns:
-        Sorted list of registered event type names
-    """
+    """Return sorted list of all event types registered in the default registry."""
     return default_registry.list_types()
