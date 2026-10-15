@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
-# Optional OpenTelemetry import - single source of truth
 try:
     from opentelemetry import metrics
 
@@ -17,7 +16,6 @@ except ImportError:
     metrics = None  # type: ignore[assignment]
 
 
-# State values for numeric gauge
 class StateValue(IntEnum):
     """Numeric values for subscription states as gauge values."""
 
@@ -30,7 +28,6 @@ class StateValue(IntEnum):
     ERROR = 6
 
 
-# Mapping from string state to numeric value
 STATE_MAPPING: dict[str, int] = {
     "starting": StateValue.STARTING,
     "catching_up": StateValue.CATCHING_UP,
@@ -40,21 +37,11 @@ STATE_MAPPING: dict[str, int] = {
     "error": StateValue.ERROR,
 }
 
-
-# Module-level meter instance
 _meter: Any = None
 
 
 def _get_meter() -> Any:
-    """
-    Get or create the meter instance.
-
-    Returns the OpenTelemetry meter for the subscriptions namespace,
-    or None if OpenTelemetry is not available.
-
-    Returns:
-        OpenTelemetry Meter or None
-    """
+    """Get or create the OpenTelemetry meter instance, or None if unavailable."""
     global _meter
     if _meter is None and OTEL_METRICS_AVAILABLE and metrics is not None:
         _meter = metrics.get_meter("eventsource.application.subscriptions", version="1.0.0")
@@ -62,77 +49,35 @@ def _get_meter() -> Any:
 
 
 def reset_meter() -> None:
-    """
-    Reset the global meter instance.
-
-    Useful for testing to ensure fresh meter state between tests.
-    """
+    """Reset the global meter instance for testing."""
     global _meter
     _meter = None
 
 
 class NoOpCounter:
-    """
-    No-op counter when OpenTelemetry is not available.
+    """No-op counter when OpenTelemetry is not available."""
 
-    Provides the same interface as an OpenTelemetry Counter
-    but does nothing, allowing code to work without OTel.
-    """
-
-    def add(
-        self,
-        amount: int | float,
-        attributes: dict[str, Any] | None = None,
-    ) -> None:
+    def add(self, amount: int | float, attributes: dict[str, Any] | None = None) -> None:
         """No-op add operation."""
-        pass
 
 
 class NoOpHistogram:
-    """
-    No-op histogram when OpenTelemetry is not available.
+    """No-op histogram when OpenTelemetry is not available."""
 
-    Provides the same interface as an OpenTelemetry Histogram
-    but does nothing, allowing code to work without OTel.
-    """
-
-    def record(
-        self,
-        value: float,
-        attributes: dict[str, Any] | None = None,
-    ) -> None:
+    def record(self, value: float, attributes: dict[str, Any] | None = None) -> None:
         """No-op record operation."""
-        pass
 
 
 class NoOpGauge:
-    """
-    No-op gauge when OpenTelemetry is not available.
-
-    For observable gauges, we store the callback but don't invoke it.
-    """
+    """No-op gauge when OpenTelemetry is not available."""
 
     def __init__(self) -> None:
         """Initialize no-op gauge."""
-        pass
 
 
 @dataclass
 class MetricSnapshot:
-    """
-    Snapshot of current metric values for a subscription.
-
-    Useful for testing and debugging to see what values
-    would be reported to OpenTelemetry.
-
-    Attributes:
-        events_processed: Total events processed
-        events_failed: Total events failed
-        total_processing_time_ms: Sum of all processing times
-        current_lag: Current event lag
-        current_state: Current state value
-        current_state_name: Current state name
-    """
+    """Snapshot of current metric values for a subscription."""
 
     events_processed: int = 0
     events_failed: int = 0
@@ -154,11 +99,7 @@ class MetricSnapshot:
 
 
 class _Timer:
-    """
-    Internal timer for measuring processing duration.
-
-    Used by the time_processing context manager.
-    """
+    """Internal timer for measuring processing duration."""
 
     def __init__(self) -> None:
         """Initialize timer."""
@@ -179,12 +120,7 @@ class _Timer:
 
     @property
     def duration_ms(self) -> float:
-        """
-        Get duration in milliseconds.
-
-        Returns:
-            Duration in milliseconds, or 0 if not started
-        """
+        """Get duration in milliseconds, or 0 if not started."""
         if self._start == 0:
             return 0.0
         end = self._end if self._stopped else time.perf_counter()

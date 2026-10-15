@@ -30,28 +30,9 @@ async def retry_async[T](
     operation_name: str = "operation",
 ) -> T:
     """
-    Retry an async operation with exponential backoff.
+    Retry an async operation with exponential backoff and jitter on transient failures.
 
-    Executes the operation and retries on transient failures using
-    exponential backoff with jitter.
-
-    Args:
-        operation: Async function to retry
-        config: Retry configuration (uses defaults if None)
-        retryable_exceptions: Exception types to retry on
-        operation_name: Name for logging purposes
-
-    Returns:
-        Result of successful operation
-
-    Raises:
-        RetryError: If all retries exhausted
-        Exception: Non-retryable exceptions are raised immediately
-
-    Example:
-        >>> async def fetch_data():
-        ...     return await http_client.get("/data")
-        >>> data = await retry_async(fetch_data, operation_name="fetch_data")
+    Raises RetryError if all retries are exhausted, or re-raises non-retryable exceptions.
     """
     config = config or RetryConfig()
     stats = RetryStats()
@@ -59,11 +40,9 @@ async def retry_async[T](
 
     for attempt in range(config.max_retries + 1):
         stats.attempts += 1
-
         try:
             result = await operation()
             stats.successes += 1
-
             if attempt > 0:
                 logger.info(
                     f"Operation {operation_name} succeeded after retry",
@@ -73,18 +52,14 @@ async def retry_async[T](
                         "total_attempts": stats.attempts,
                     },
                 )
-
             return result
-
         except retryable_exceptions as e:
             last_error = e
             stats.failures += 1
             stats.last_error = str(e)
-
             if attempt < config.max_retries:
                 delay = calculate_backoff(attempt, config)
                 stats.total_delay_seconds += delay
-
                 logger.warning(
                     f"Retrying {operation_name} after failure",
                     extra={
@@ -96,7 +71,6 @@ async def retry_async[T](
                         "error_type": type(e).__name__,
                     },
                 )
-
                 await asyncio.sleep(delay)
             else:
                 logger.error(
@@ -109,20 +83,14 @@ async def retry_async[T](
                         "error_type": type(e).__name__,
                     },
                 )
-
         except Exception:
-            # Non-retryable exception, raise immediately
             logger.error(
                 f"Non-retryable error in {operation_name}",
-                extra={
-                    "operation": operation_name,
-                    "attempt": attempt + 1,
-                },
+                extra={"operation": operation_name, "attempt": attempt + 1},
                 exc_info=True,
             )
             raise
 
-    # last_error is guaranteed to be set if we reach here (loop only exits after failure)
     assert last_error is not None
     raise RetryError(
         f"Failed after {stats.attempts} attempts: {last_error}",
@@ -133,22 +101,7 @@ async def retry_async[T](
 
 @dataclass
 class RetryableOperation:
-    """
-    Context for operations that should be retried on failure.
-
-    Combines retry logic with optional circuit breaker protection.
-
-    Attributes:
-        config: Retry configuration
-        circuit_breaker: Optional circuit breaker for protection
-
-    Example:
-        >>> retry = RetryableOperation(RetryConfig(max_retries=3))
-        >>> result = await retry.execute(
-        ...     lambda: event_store.read_all(),
-        ...     name="read_events",
-        ... )
-    """
+    """Context for operations that should be retried on failure with optional circuit breaker."""
 
     config: RetryConfig = field(default_factory=RetryConfig)
     circuit_breaker: CircuitBreaker | None = None
@@ -160,24 +113,9 @@ class RetryableOperation:
         name: str = "operation",
         retryable_exceptions: tuple[type[Exception], ...] = TRANSIENT_EXCEPTIONS,
     ) -> T:
-        """
-        Execute an operation with retry logic.
-
-        Args:
-            operation: Async function to execute
-            name: Operation name for logging
-            retryable_exceptions: Exception types to retry
-
-        Returns:
-            Result of successful operation
-
-        Raises:
-            RetryError: If all retries exhausted
-            CircuitBreakerOpenError: If circuit breaker is open
-        """
+        """Execute an operation with retry logic and optional circuit breaker protection."""
         if self.circuit_breaker:
-            # Wrap operation with circuit breaker
-            cb = self.circuit_breaker  # Local ref for closure
+            cb = self.circuit_breaker
 
             async def protected_operation() -> T:
                 return await cb.execute(operation, name)
@@ -188,13 +126,12 @@ class RetryableOperation:
                 retryable_exceptions=retryable_exceptions + (CircuitBreakerOpenError,),
                 operation_name=name,
             )
-        else:
-            return await retry_async(
-                operation=operation,
-                config=self.config,
-                retryable_exceptions=retryable_exceptions,
-                operation_name=name,
-            )
+        return await retry_async(
+            operation=operation,
+            config=self.config,
+            retryable_exceptions=retryable_exceptions,
+            operation_name=name,
+        )
 
     @property
     def stats(self) -> RetryStats:
@@ -202,7 +139,4 @@ class RetryableOperation:
         return self._stats
 
 
-__all__ = [
-    "RetryableOperation",
-    "retry_async",
-]
+__all__ = ["RetryableOperation", "retry_async"]

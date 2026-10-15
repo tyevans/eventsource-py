@@ -1,6 +1,4 @@
-"""
-Work redistribution coordinator for multi-instance deployments.
-"""
+"""Work redistribution coordinator for multi-instance deployments."""
 
 from __future__ import annotations
 
@@ -41,13 +39,7 @@ class WorkRedistributionCoordinator(
     WorkRedistributionLeadershipMixin,
     WorkRedistributionPeerTrackerMixin,
 ):
-    """
-    Coordinates work redistribution during instance shutdown.
-
-    Tracks known peers and their status, creates shutdown notifications and
-    heartbeats, invokes callbacks when peers shutdown or timeout, and optionally
-    integrates with LeaderElector for leadership handoff.
-    """
+    """Coordinates work redistribution, peer heartbeats, and shutdown handoff."""
 
     instance_id: str
     leader_elector: LeaderElector | None = None
@@ -66,12 +58,10 @@ class WorkRedistributionCoordinator(
 
     @property
     def is_shutting_down(self) -> bool:
-        """Check if this instance is shutting down."""
         return self._is_shutting_down
 
     @property
     def shutdown_notification(self) -> ShutdownNotification | None:
-        """Get the shutdown notification for this instance."""
         return self._shutdown_notification
 
     def create_shutdown_notification(
@@ -93,20 +83,16 @@ class WorkRedistributionCoordinator(
             in_flight_count=in_flight_count,
             metadata=metadata or {},
         )
-
         self._is_shutting_down = True
         self._shutdown_notification = notification
-
-        logger.info(
-            "Created shutdown notification",
-            extra={
-                "instance_id": self.instance_id,
-                "intent": intent.value,
-                "subscriptions": list(subscriptions),
-                "in_flight_count": in_flight_count,
-                "drain_timeout_seconds": drain_timeout_seconds,
-            },
-        )
+        extra = {
+            "instance_id": self.instance_id,
+            "intent": intent.value,
+            "subscriptions": list(subscriptions),
+            "in_flight_count": in_flight_count,
+            "drain_timeout_seconds": drain_timeout_seconds,
+        }
+        logger.info("Created shutdown notification", extra=extra)
         return notification
 
     def create_heartbeat(
@@ -130,81 +116,57 @@ class WorkRedistributionCoordinator(
         """Handle a shutdown notification from a peer."""
         if notification.instance_id == self.instance_id:
             return
-
         async with self._lock:
             peer = self._peers.setdefault(
                 notification.instance_id, PeerInfo(instance_id=notification.instance_id)
             )
             peer.shutdown_notification = notification
-
-        logger.info(
-            "Received peer shutdown notification",
-            extra={
-                "peer_id": notification.instance_id,
-                "intent": notification.intent.value,
-                "subscriptions": list(notification.subscriptions),
-                "time_remaining": notification.time_remaining_seconds,
-            },
-        )
-
+        extra = {
+            "peer_id": notification.instance_id,
+            "intent": notification.intent.value,
+            "subscriptions": list(notification.subscriptions),
+            "time_remaining": notification.time_remaining_seconds,
+        }
+        logger.info("Received peer shutdown notification", extra=extra)
         for callback in self._peer_shutdown_callbacks:
             try:
                 await callback(notification)
             except Exception as e:
-                logger.error(
-                    "Peer shutdown callback failed",
-                    extra={"peer_id": notification.instance_id, "error": str(e)},
-                    exc_info=True,
-                )
+                err_extra = {"peer_id": notification.instance_id, "error": str(e)}
+                logger.error("Peer shutdown callback failed", extra=err_extra, exc_info=True)
 
     async def handle_heartbeat(self, heartbeat: HeartbeatMessage) -> None:
         """Handle a heartbeat from a peer."""
         if heartbeat.instance_id == self.instance_id:
             return
-
         async with self._lock:
             peer = self._peers.setdefault(
                 heartbeat.instance_id, PeerInfo(instance_id=heartbeat.instance_id)
             )
             peer.last_heartbeat = heartbeat
-
         for callback in self._heartbeat_callbacks:
             try:
                 await callback(heartbeat)
             except Exception as e:
-                logger.error(
-                    "Heartbeat callback failed",
-                    extra={"peer_id": heartbeat.instance_id, "error": str(e)},
-                    exc_info=True,
-                )
+                err_extra = {"peer_id": heartbeat.instance_id, "error": str(e)}
+                logger.error("Heartbeat callback failed", extra=err_extra, exc_info=True)
 
     async def handle_work_assignment(self, assignment: WorkAssignment) -> None:
         """Handle a work assignment from the leader."""
         if assignment.target_instance_id != self.instance_id:
             return
-
-        logger.info(
-            "Received work assignment",
-            extra={
-                "source_instance_id": assignment.source_instance_id,
-                "subscriptions": list(assignment.subscriptions),
-                "priority": assignment.priority,
-            },
-        )
-
+        extra = {
+            "source_instance_id": assignment.source_instance_id,
+            "subscriptions": list(assignment.subscriptions),
+            "priority": assignment.priority,
+        }
+        logger.info("Received work assignment", extra=extra)
         for callback in self._work_assignment_callbacks:
             try:
                 await callback(assignment)
             except Exception as e:
-                logger.error(
-                    "Work assignment callback failed",
-                    extra={"source_instance_id": assignment.source_instance_id, "error": str(e)},
-                    exc_info=True,
-                )
+                err_extra = {"source_instance_id": assignment.source_instance_id, "error": str(e)}
+                logger.error("Work assignment callback failed", extra=err_extra, exc_info=True)
 
 
-__all__ = [
-    "WorkAssignment",
-    "WorkAssignmentCallback",
-    "WorkRedistributionCoordinator",
-]
+__all__ = ["WorkAssignment", "WorkAssignmentCallback", "WorkRedistributionCoordinator"]
