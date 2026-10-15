@@ -74,8 +74,6 @@ async def _exec_cutover(
 
 
 class TestLockContentionScenarios:
-    """Tests for lock contention during migration operations."""
-
     @pytest.mark.asyncio
     async def test_cutover_fails_when_lock_acquisition_fails(
         self,
@@ -85,17 +83,12 @@ class TestLockContentionScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
+        lock_mgr = MockLockManager(should_fail=True)
         migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
-            source_store,
-            target_store,
-            routing_repo,
-            router,
-            tenant_id,
-            MockLockManager(should_fail=True),
+            source_store, target_store, routing_repo, router, tenant_id, lock_mgr
         )
         result = await _exec_cutover(cutover_manager, migration_id, tenant_id, lag_tracker, 100.0)
-        assert result.success is False
-        assert "lock" in result.error_message.lower()
+        assert result.success is False and "lock" in result.error_message.lower()
 
     @pytest.mark.asyncio
     async def test_concurrent_cutover_attempts_serialized(
@@ -106,16 +99,12 @@ class TestLockContentionScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
+        lock_mgr = MockLockManager(contention_delay=0.1)
         migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
-            source_store,
-            target_store,
-            routing_repo,
-            router,
-            tenant_id,
-            MockLockManager(contention_delay=0.1),
+            source_store, target_store, routing_repo, router, tenant_id, lock_mgr
         )
 
-        async def attempt_cutover(attempt_id: int):
+        async def attempt_cutover():
             try:
                 return await _exec_cutover(
                     cutover_manager, migration_id, tenant_id, lag_tracker, 500.0
@@ -124,7 +113,7 @@ class TestLockContentionScenarios:
                 return e
 
         results = await asyncio.gather(
-            attempt_cutover(1), attempt_cutover(2), attempt_cutover(3), return_exceptions=True
+            attempt_cutover(), attempt_cutover(), attempt_cutover(), return_exceptions=True
         )
         assert sum(1 for r in results if hasattr(r, "success") and r.success) <= 1
 
@@ -151,8 +140,6 @@ class TestLockContentionScenarios:
 
 
 class TestTimeoutScenarios:
-    """Tests for timeout scenarios during migration operations."""
-
     @pytest.mark.asyncio
     async def test_cutover_timeout_causes_rollback(
         self,
@@ -162,13 +149,9 @@ class TestTimeoutScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
+        lock_mgr = MockLockManager(contention_delay=1.0)
         migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
-            source_store,
-            target_store,
-            routing_repo,
-            router,
-            tenant_id,
-            MockLockManager(contention_delay=1.0),
+            source_store, target_store, routing_repo, router, tenant_id, lock_mgr
         )
         result = await _exec_cutover(cutover_manager, migration_id, tenant_id, lag_tracker, 100.0)
         if not result.success:
@@ -182,8 +165,7 @@ class TestTimeoutScenarios:
         await write_pause_manager.pause_writes(tenant_id)
         with pytest.raises(WritePausedError) as exc_info:
             await write_pause_manager.wait_if_paused(tenant_id, timeout=0.05)
-        assert exc_info.value.tenant_id == tenant_id
-        assert exc_info.value.timeout == 0.05
+        assert exc_info.value.tenant_id == tenant_id and exc_info.value.timeout == 0.05
 
     @pytest.mark.asyncio
     async def test_slow_target_causes_lag_accumulation(self, tenant_id: UUID) -> None:
@@ -199,13 +181,9 @@ class TestTimeoutScenarios:
         for i in range(10):
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
-            await interceptor.append(
-                StreamId(aggregate_id=aggregate_id, category="ChaosAggregate"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
+            stream = StreamId(aggregate_id=aggregate_id, category="ChaosAggregate")
+            await interceptor.append(stream, [event], ExpectedVersion.no_stream())
         source_count = sum(
             [1 async for env in source_store.read_all() if env.event.tenant_id == tenant_id]
         )
-        assert source_count == 10
-        assert await count_tenant_events(target_store, tenant_id) == 10
+        assert source_count == 10 and await count_tenant_events(target_store, tenant_id) == 10

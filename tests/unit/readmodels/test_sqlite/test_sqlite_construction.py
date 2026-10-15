@@ -63,10 +63,7 @@ class TestFilterToSQL:
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
         assert repo._filter_to_sql(Filter.eq("status", "active")) == ("status = ?", ["active"])
-        assert repo._filter_to_sql(Filter.gte("total_amount", 100)) == (
-            "total_amount >= ?",
-            [100],
-        )
+        assert repo._filter_to_sql(Filter.gte("total_amount", 100)) == ("total_amount >= ?", [100])
 
     def test_null_tolerant_operators_say_so_explicitly(
         self, repo: SQLiteReadModelRepository[OrderSummary]
@@ -111,16 +108,8 @@ class TestRowToModel:
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
         model_id, now = uuid4(), datetime.now(UTC)
-        row = (
-            str(model_id),
-            now.isoformat(),
-            now.isoformat(),
-            1,
-            None,
-            "ORD-001",
-            "pending",
-            Decimal("99.99"),
-        )
+        iso = now.isoformat()
+        row = (str(model_id), iso, iso, 1, None, "ORD-001", "pending", Decimal("99.99"))
         model = repo._row_to_model(row)
         assert model.id == model_id and model.version == 1 and model.deleted_at is None
         assert model.created_at.replace(microsecond=0) == now.replace(microsecond=0)
@@ -131,33 +120,16 @@ class TestRowToModel:
     def test_row_to_model_with_deleted_at(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        model_id, now, deleted = uuid4(), datetime.now(UTC), datetime.now(UTC)
-        row = (
-            str(model_id),
-            now.isoformat(),
-            now.isoformat(),
-            1,
-            deleted.isoformat(),
-            "ORD-001",
-            "cancelled",
-            Decimal("99.99"),
-        )
+        iso, del_iso = datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()
+        row = (str(uuid4()), iso, iso, 1, del_iso, "ORD-001", "cancelled", Decimal("99.99"))
         model = repo._row_to_model(row)
         assert model.deleted_at is not None and model.is_deleted()
 
     def test_row_to_model_with_z_suffix(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        row = (
-            str(uuid4()),
-            "2024-01-15T10:30:00Z",
-            "2024-01-15T10:30:00Z",
-            1,
-            None,
-            "ORD-001",
-            "pending",
-            Decimal("50.00"),
-        )
+        ts = "2024-01-15T10:30:00Z"
+        row = (str(uuid4()), ts, ts, 1, None, "ORD-001", "pending", Decimal("50.00"))
         model = repo._row_to_model(row)
         assert model.created_at is not None and model.updated_at is not None
 
@@ -170,11 +142,10 @@ class TestModelToValues:
         return SQLiteReadModelRepository(MagicMock(), OrderSummary, enable_tracing=False)
 
     def test_model_to_values(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        model_id = uuid4()
+        model_id, now = uuid4(), datetime.now(UTC)
         model = OrderSummary(
             id=model_id, order_number="ORD-001", status="pending", total_amount=Decimal("99.99")
         )
-        now = datetime.now(UTC)
         values = repo._model_to_values(model, now)
         assert isinstance(values, tuple) and len(values) == len(repo._field_names)
         assert values[0] == str(model_id) and values[2] == now.isoformat()
