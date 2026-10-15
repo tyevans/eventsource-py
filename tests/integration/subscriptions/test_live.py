@@ -32,56 +32,39 @@ class TestLiveEventDelivery:
     """Tests for live event delivery after transition."""
 
     async def test_receives_live_events_after_catchup(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         await populate_event_store(in_memory_event_store, 20)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await projection.wait_for_events(20)
         for i in range(5):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"LIVE-{i:03d}")
-        success = await projection.wait_for_events(25)
-        assert success
+        assert await projection.wait_for_events(25)
         assert projection.event_count == 25
 
     async def test_live_only_subscription(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         await populate_event_store(in_memory_event_store, 50)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="end")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="end"))
         await subscription_manager.start()
         await asyncio.sleep(0.1)
         assert projection.event_count == 0
         for i in range(10):
             await publish_live_event(in_memory_event_store, in_memory_event_bus, f"LIVE-{i:03d}")
-        success = await projection.wait_for_events(10)
-        assert success
+        assert await projection.wait_for_events(10)
         assert projection.event_count == 10
         for event in projection.events:
             assert event.order_number.startswith("LIVE-")
 
     async def test_live_events_with_different_types(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         order_id = uuid4()
         stream_id = StreamId(aggregate_id=order_id, category="SubTestOrder")
@@ -91,8 +74,7 @@ class TestLiveEventDelivery:
         shipped = SubTestOrderShipped(aggregate_id=order_id, tracking_number="TRK-001")
         await in_memory_event_store.append(stream_id, [shipped], ExpectedVersion.exact(1))
         await in_memory_event_bus.publish([shipped])
-        success = await projection.wait_for_events(2)
-        assert success
+        assert await projection.wait_for_events(2)
         assert projection.event_count == 2
         assert isinstance(projection.events[0], SubTestOrderCreated)
         assert isinstance(projection.events[1], SubTestOrderShipped)
@@ -102,44 +84,33 @@ class TestLiveEventOrdering:
     """Tests for event ordering in live mode."""
 
     async def test_live_events_maintain_order(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         for i in range(20):
             await publish_live_event(
                 in_memory_event_store, in_memory_event_bus, f"ORD-{i:03d}", amount=100.0 + i
             )
-        success = await projection.wait_for_events(20)
-        assert success
+        assert await projection.wait_for_events(20)
         for i, event in enumerate(projection.events):
             assert event.order_number == f"ORD-{i:03d}"
 
     async def test_rapid_live_events(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
-        events_published = []
-        for i in range(100):
-            event = await publish_live_event(
+        events_published = [
+            await publish_live_event(
                 in_memory_event_store, in_memory_event_bus, f"ORD-{i:03d}", amount=100.0 + i
             )
-            events_published.append(event)
-        success = await projection.wait_for_events(100, timeout=10.0)
-        assert success
+            for i in range(100)
+        ]
+        assert len(events_published) == 100
+        assert await projection.wait_for_events(100, timeout=10.0)
         assert projection.event_count == 100
         assert not projection.has_duplicates()
 
@@ -147,33 +118,19 @@ class TestLiveEventOrdering:
 class TestLiveSubscriptionHealth:
     """Tests for live subscription health and state."""
 
-    async def test_live_subscription_state(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_live_subscription_state(self, subscription_manager):
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await asyncio.sleep(0.1)
         subscription = subscription_manager.get_subscription("CollectingProjection")
         assert subscription is not None
         assert subscription.state.value == "live"
 
-    async def test_live_subscription_stats(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
-    ):
+    async def test_live_subscription_stats(self, in_memory_event_store, subscription_manager):
         await populate_event_store(in_memory_event_store, 30)
         projection = CollectingProjection()
-        config = SubscriptionConfig(start_from="beginning")
-        await subscription_manager.subscribe(projection, config)
+        await subscription_manager.subscribe(projection, SubscriptionConfig(start_from="beginning"))
         await subscription_manager.start()
         await projection.wait_for_events(30)
         subscription = subscription_manager.get_subscription("CollectingProjection")
@@ -185,11 +142,7 @@ class TestLiveSubscriptionRecovery:
     """Tests for live subscription handling edge cases."""
 
     async def test_multiple_live_subscriptions(
-        self,
-        in_memory_event_store,
-        in_memory_event_bus,
-        in_memory_checkpoint_repo,
-        subscription_manager,
+        self, in_memory_event_store, in_memory_event_bus, subscription_manager
     ):
         projection1 = CollectingProjection(name="Projection1")
         projection2 = CollectingProjection(name="Projection2")
@@ -211,11 +164,8 @@ class TestLiveSubscriptionRecovery:
             event = SubTestOrderCreated(
                 aggregate_id=uuid4(), order_number=f"ORD-{i:03d}", amount=100.0 + i
             )
-            await in_memory_event_store.append(
-                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
+            stream_id = StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder")
+            await in_memory_event_store.append(stream_id, [event], ExpectedVersion.no_stream())
         projection1 = CollectingProjection()
         manager1 = SubscriptionManager(
             event_store=in_memory_event_store,
@@ -235,11 +185,8 @@ class TestLiveSubscriptionRecovery:
             event = SubTestOrderCreated(
                 aggregate_id=uuid4(), order_number=f"ORD-{i:03d}", amount=100.0 + i
             )
-            await in_memory_event_store.append(
-                StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder"),
-                [event],
-                ExpectedVersion.no_stream(),
-            )
+            stream_id = StreamId(aggregate_id=event.aggregate_id, category="SubTestOrder")
+            await in_memory_event_store.append(stream_id, [event], ExpectedVersion.no_stream())
         projection2 = CollectingProjection()
         manager2 = SubscriptionManager(
             event_store=in_memory_event_store,
