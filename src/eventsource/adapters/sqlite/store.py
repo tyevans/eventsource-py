@@ -1,18 +1,8 @@
-"""SQLite adapter implementing the five store ports.
+"""SQLite adapter implementing the five store ports (`FullEventStore`).
 
-Targets the `eventsource.ports.store` protocols: rows map to
-`EventEnvelope` / `AppendResult` / `Position` value objects, and append
-dispatches on `ExpectedVersion.kind` rather than integer sentinels.
-
-Positions are minted from the `events.global_position` autoincrement
-column via `IntPositionCodec`.
-
-No safe-horizon handling: SQLite writers are serialized (a single
-connection, one implicit write transaction at a time -- WAL mode still
-allows only one writer), so a reader can never observe a lower
-global_position commit after a higher one. The exclusive
-`global_position > :from` predicate `read_all` already uses is
-sufficient; there is no gap to skip.
+Positions are minted from `events.global_position` via `IntPositionCodec`.
+SQLite writers are serialized on a single shared connection under `_lock`,
+so no safe-horizon gap handling is required.
 """
 
 from __future__ import annotations
@@ -156,6 +146,16 @@ class SQLiteEventStore:
                 source=self,
             )
 
+    async def _max_version(
+        self, conn: aiosqlite.Connection, aggregate_id: str, category: str
+    ) -> int:
+        cursor = await conn.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM events WHERE aggregate_id = ? AND aggregate_type = ?",
+            (aggregate_id, category),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
     async def append(
         self,
         stream: StreamId,
@@ -171,13 +171,7 @@ class SQLiteEventStore:
 
         async with self._lock:
             try:
-                cursor = await conn.execute(
-                    "SELECT COALESCE(MAX(version), 0) FROM events WHERE aggregate_id = ? AND aggregate_type = ?",
-                    (aggregate_id_str, category),
-                )
-                row = await cursor.fetchone()
-                current_version = row[0] if row else 0
-
+                current_version = await self._max_version(conn, aggregate_id_str, category)
                 check_expected(current_version, expected, stream)
 
                 seen_in_batch: set[UUID] = set()
@@ -195,13 +189,9 @@ class SQLiteEventStore:
                 for event in events:
                     version += 1
                     cursor = await conn.execute(
-                        """
-                        INSERT INTO events (
-                            event_id, event_type, aggregate_type, aggregate_id,
-                            tenant_id, actor_id, version, timestamp, payload, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
+                        "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, "
+                        "tenant_id, actor_id, version, timestamp, payload, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             str(event.event_id),
                             event.event_type,
@@ -235,16 +225,7 @@ class SQLiteEventStore:
                 if "unique" in error_str and (
                     "aggregate_id" in error_str or "version" in error_str
                 ):
-                    cursor = await conn.execute(
-                        """
-                        SELECT COALESCE(MAX(version), 0)
-                        FROM events
-                        WHERE aggregate_id = ? AND aggregate_type = ?
-                        """,
-                        (aggregate_id_str, category),
-                    )
-                    row = await cursor.fetchone()
-                    actual_version = row[0] if row else 0
+                    actual_version = await self._max_version(conn, aggregate_id_str, category)
                     raise OptimisticLockError(
                         stream.aggregate_id, describe_expected(expected), actual_version
                     ) from e
@@ -261,95 +242,62 @@ class SQLiteEventStore:
         now: str,
     ) -> None:
         """Write one outbox row for `event` on `conn` inside the append transaction."""
-        outbox_id = uuid4()
-        event_data = outbox_event_data(event)
         await conn.execute(
-            """
-            INSERT INTO event_outbox (
-                id, event_id, event_type, aggregate_id, aggregate_type,
-                tenant_id, event_data, created_at, status
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-            """,
+            "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
+            "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
             (
-                str(outbox_id),
+                str(uuid4()),
                 str(event.event_id),
                 event.event_type,
                 str(event.aggregate_id),
                 category,
                 str(event.tenant_id) if event.tenant_id else None,
-                json_dumps(event_data),
+                json_dumps(outbox_event_data(event)),
                 now,
             ),
         )
 
-    def read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions | None = None,
-    ) -> AsyncIterator[EventEnvelope]:
-        opts = options or StreamReadOptions()
-        return self._do_read_stream(stream, opts)
-
-    async def _do_read_stream(
-        self,
-        stream: StreamId,
-        options: StreamReadOptions,
+    async def _fetch_envelopes(
+        self, sql: str, params: Sequence[Any]
     ) -> AsyncIterator[EventEnvelope]:
         conn = await self._conn()
-        sql, params = build_read_stream_query(stream, options)
         async with self._lock:
             cursor = await conn.execute(sql, params)
             rows = await cursor.fetchall()
-
         for row in rows:
             yield self._row_to_envelope(row)
+
+    def read_stream(
+        self, stream: StreamId, options: StreamReadOptions | None = None
+    ) -> AsyncIterator[EventEnvelope]:
+        sql, params = build_read_stream_query(stream, options or StreamReadOptions())
+        return self._fetch_envelopes(sql, params)
 
     async def get_stream_version(self, stream: StreamId) -> int:
         conn = await self._conn()
         async with self._lock:
-            cursor = await conn.execute(
-                """
-                SELECT COALESCE(MAX(version), 0)
-                FROM events
-                WHERE aggregate_id = ? AND aggregate_type = ?
-                """,
-                (str(stream.aggregate_id), stream.category),
-            )
-            row = await cursor.fetchone()
-        return row[0] if row else 0
+            return await self._max_version(conn, str(stream.aggregate_id), stream.category)
 
     async def event_exists(self, event_id: UUID) -> bool:
         conn = await self._conn()
         async with self._lock:
             cursor = await conn.execute(
-                "SELECT 1 FROM events WHERE event_id = ? LIMIT 1",
-                (str(event_id),),
+                "SELECT 1 FROM events WHERE event_id = ? LIMIT 1", (str(event_id),)
             )
             return await cursor.fetchone() is not None
 
     def read_all(
-        self,
-        from_position: Position | None = None,
-        options: FeedReadOptions | None = None,
+        self, from_position: Position | None = None, options: FeedReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or FeedReadOptions()
-        return self._do_read_all(from_position, opts)
+        return self._do_read_all(from_position, options or FeedReadOptions())
 
     async def _do_read_all(
-        self,
-        from_position: Position | None,
-        options: FeedReadOptions,
+        self, from_position: Position | None, options: FeedReadOptions
     ) -> AsyncIterator[EventEnvelope]:
-        conn = await self._conn()
         pos_val = self._codec.value_of(from_position) if from_position is not None else None
         sql, params = build_read_all_query(pos_val, options)
-        async with self._lock:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
-
-        for row in rows:
-            yield self._row_to_envelope(row)
+        async for env in self._fetch_envelopes(sql, params):
+            yield env
 
     async def current_position(self) -> Position | None:
         conn = await self._conn()
@@ -361,26 +309,10 @@ class SQLiteEventStore:
         return self._codec.encode(row[0])
 
     def read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions | None = None,
+        self, category: str, options: CategoryReadOptions | None = None
     ) -> AsyncIterator[EventEnvelope]:
-        opts = options or CategoryReadOptions()
-        return self._do_read_category(category, opts)
-
-    async def _do_read_category(
-        self,
-        category: str,
-        options: CategoryReadOptions,
-    ) -> AsyncIterator[EventEnvelope]:
-        conn = await self._conn()
-        sql, params = build_read_category_query(category, options)
-        async with self._lock:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
-
-        for row in rows:
-            yield self._row_to_envelope(row)
+        sql, params = build_read_category_query(category, options or CategoryReadOptions())
+        return self._fetch_envelopes(sql, params)
 
     def _row_to_envelope(self, row: Any) -> EventEnvelope:
         return row_to_envelope(row, self._codec, self._event_registry)
