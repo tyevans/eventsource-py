@@ -32,44 +32,28 @@ __all__ = [
     "skip_if_no_otel_metrics",
 ]
 
-# --- Test Events ---
-# Prefixed with Sample to avoid pytest collection warnings
-
 
 class SampleOrderCreated(DomainEvent):
-    """Test event for order creation."""
-
     aggregate_type: str = "Order"
     order_number: str
     customer_id: UUID
 
 
 class SampleOrderShipped(DomainEvent):
-    """Test event for order shipping."""
-
     aggregate_type: str = "Order"
     tracking_number: str
 
 
 class SamplePaymentReceived(DomainEvent):
-    """Test event for payment."""
-
     aggregate_type: str = "Payment"
     amount: float
 
 
 class SampleKafkaEvent(DomainEvent):
-    """Minimal test event used for publish-ordering tests."""
-
     aggregate_type: str = "SampleAggregate"
 
 
-# --- Test Handlers ---
-
-
 class OrderHandler:
-    """Test handler for order events."""
-
     def __init__(self) -> None:
         self.handled_events: list[DomainEvent] = []
 
@@ -78,8 +62,6 @@ class OrderHandler:
 
 
 class SyncHandler:
-    """Synchronous handler for testing."""
-
     def __init__(self) -> None:
         self.handled_events: list[DomainEvent] = []
 
@@ -88,8 +70,6 @@ class SyncHandler:
 
 
 class SampleSubscriber:
-    """Test subscriber that subscribes to multiple event types."""
-
     def __init__(self) -> None:
         self.handled_events: list[DomainEvent] = []
 
@@ -100,12 +80,8 @@ class SampleSubscriber:
         self.handled_events.append(event)
 
 
-# --- Fixtures ---
-
-
 @pytest.fixture
 def event_registry() -> EventRegistry:
-    """Create an event registry with test events."""
     registry = EventRegistry()
     registry.register(SampleOrderCreated)
     registry.register(SampleOrderShipped)
@@ -115,7 +91,6 @@ def event_registry() -> EventRegistry:
 
 @pytest.fixture
 def sample_event() -> SampleOrderCreated:
-    """Create a sample event for testing."""
     return SampleOrderCreated(
         aggregate_id=uuid4(),
         aggregate_version=1,
@@ -126,7 +101,6 @@ def sample_event() -> SampleOrderCreated:
 
 @pytest.fixture
 def mock_producer() -> AsyncMock:
-    """Create a mock aiokafka producer."""
     producer = AsyncMock()
 
     async def default_send(*args: Any, **kwargs: Any) -> Any:
@@ -136,10 +110,6 @@ def mock_producer() -> AsyncMock:
     producer.send = default_send
     return producer
 
-
-# =============================================================================
-# OpenTelemetry SDK Check & Helpers
-# =============================================================================
 
 try:
     from opentelemetry import metrics as otel_metrics
@@ -159,18 +129,9 @@ skip_if_no_otel_metrics = pytest.mark.skipif(
 
 
 def _get_metric_value(metrics_data: Any, metric_name: str) -> int:
-    """Get the sum of a counter metric.
-
-    Args:
-        metrics_data: MetricsData from InMemoryMetricReader.get_metrics_data()
-        metric_name: Name of the metric to find
-
-    Returns:
-        Sum of all data point values for the metric, or 0 if not found.
-    """
+    """Get the sum of a counter metric."""
     if not metrics_data or not metrics_data.resource_metrics:
         return 0
-
     for resource_metric in metrics_data.resource_metrics:
         for scope_metric in resource_metric.scope_metrics:
             for metric in scope_metric.metrics:
@@ -184,18 +145,9 @@ def _get_metric_value(metrics_data: Any, metric_name: str) -> int:
 
 
 def _get_metric_attributes(metrics_data: Any, metric_name: str) -> dict[str, Any]:
-    """Get attributes from the first data point of a metric.
-
-    Args:
-        metrics_data: MetricsData from InMemoryMetricReader.get_metrics_data()
-        metric_name: Name of the metric to find
-
-    Returns:
-        Dictionary of attributes from the first data point, or empty dict.
-    """
+    """Get attributes from the first data point of a metric."""
     if not metrics_data or not metrics_data.resource_metrics:
         return {}
-
     for resource_metric in metrics_data.resource_metrics:
         for scope_metric in resource_metric.scope_metrics:
             for metric in scope_metric.metrics:
@@ -210,18 +162,9 @@ def _get_metric_attributes(metrics_data: Any, metric_name: str) -> dict[str, Any
 
 
 def _has_histogram_data(metrics_data: Any, metric_name: str) -> bool:
-    """Check if a histogram has recorded data.
-
-    Args:
-        metrics_data: MetricsData from InMemoryMetricReader.get_metrics_data()
-        metric_name: Name of the metric to find
-
-    Returns:
-        True if the histogram has at least one data point.
-    """
+    """Check if a histogram has recorded data."""
     if not metrics_data or not metrics_data.resource_metrics:
         return False
-
     for resource_metric in metrics_data.resource_metrics:
         for scope_metric in resource_metric.scope_metrics:
             for metric in scope_metric.metrics:
@@ -235,18 +178,9 @@ def _has_histogram_data(metrics_data: Any, metric_name: str) -> bool:
 
 
 def _get_histogram_sum(metrics_data: Any, metric_name: str) -> float:
-    """Get the sum value from a histogram metric.
-
-    Args:
-        metrics_data: MetricsData from InMemoryMetricReader.get_metrics_data()
-        metric_name: Name of the metric to find
-
-    Returns:
-        Sum value from the histogram, or 0.0 if not found.
-    """
+    """Get the sum value from a histogram metric."""
     if not metrics_data or not metrics_data.resource_metrics:
         return 0.0
-
     for resource_metric in metrics_data.resource_metrics:
         for scope_metric in resource_metric.scope_metrics:
             for metric in scope_metric.metrics:
@@ -261,18 +195,9 @@ def _get_histogram_sum(metrics_data: Any, metric_name: str) -> float:
 
 
 def _get_gauge_value(metrics_data: Any, metric_name: str) -> float | None:
-    """Get the value from a gauge metric.
-
-    Args:
-        metrics_data: MetricsData from InMemoryMetricReader.get_metrics_data()
-        metric_name: Name of the metric to find
-
-    Returns:
-        Value from the gauge, or None if not found.
-    """
+    """Get the value from a gauge metric."""
     if not metrics_data or not metrics_data.resource_metrics:
         return None
-
     for resource_metric in metrics_data.resource_metrics:
         for scope_metric in resource_metric.scope_metrics:
             for metric in scope_metric.metrics:

@@ -1,7 +1,4 @@
-"""Aggregate Example: DeclarativeAggregate with @handles decorators and state management.
-
-Run with: python -m eventsource.examples.aggregate_example
-"""
+"""Aggregate Example: DeclarativeAggregate with @handles decorators and state management."""
 
 import asyncio
 from datetime import datetime
@@ -77,7 +74,7 @@ class ShoppingCartState(BaseModel):
     cart_id: UUID
     customer_id: UUID | None = None
     items: dict[str, CartItem] = Field(default_factory=dict)
-    status: str = "empty"  # empty, active, checked_out, abandoned
+    status: str = "empty"
     checked_out_at: datetime | None = None
     order_id: UUID | None = None
 
@@ -91,8 +88,6 @@ class ShoppingCartState(BaseModel):
 
 
 class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
-    """Event-sourced shopping cart using declarative @handles event handlers."""
-
     aggregate_type = "ShoppingCart"
 
     def _get_initial_state(self) -> ShoppingCartState:
@@ -122,8 +117,9 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
         if self._state:
             items = dict(self._state.items)
             items.pop(str(event.product_id), None)
-            status = "active" if items else "empty"
-            self._state = self._state.model_copy(update={"items": items, "status": status})
+            self._state = self._state.model_copy(
+                update={"items": items, "status": "active" if items else "empty"}
+            )
 
     @handles(ItemQuantityChanged)
     def _on_quantity_changed(self, event: ItemQuantityChanged) -> None:
@@ -197,10 +193,11 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
             raise ValueError("Item not in cart")
         if new_quantity <= 0:
             raise ValueError("Quantity must be positive (use remove_item to delete)")
+        old_qty = state.items[key].quantity
         self._emit(
             ItemQuantityChanged,
             product_id=product_id,
-            old_quantity=state.items[key].quantity,
+            old_quantity=old_qty,
             new_quantity=new_quantity,
         )
 
@@ -224,18 +221,13 @@ class ShoppingCartAggregate(DeclarativeAggregate[ShoppingCartState]):
 
 
 async def main() -> None:
-    print("=" * 60 + "\nShopping Cart Aggregate Example\n" + "=" * 60)
     event_store = InMemoryEventStore()
     repo = AggregateRepository(event_store=event_store, aggregate_factory=ShoppingCartAggregate)
     cart_id, customer_id = uuid4(), uuid4()
-
-    print(f"\n1. Creating cart for customer {customer_id}")
     cart = repo.create_new(cart_id)
     cart.create(customer_id)
     await repo.save(cart)
-    print(f"   Cart ID: {cart_id} (Status: {cart.state.status})")
 
-    print("\n2. Adding items to cart")
     products = [
         (uuid4(), "Wireless Mouse", 2, 29.99),
         (uuid4(), "USB-C Hub", 1, 49.99),
@@ -244,43 +236,21 @@ async def main() -> None:
     cart = await repo.load(cart_id)
     for product_id, name, qty, price in products:
         cart.add_item(product_id, name, qty, price)
-        print(f"   Added: {qty}x {name} @ ${price:.2f}")
-    await repo.save(cart)
-    print(f"   Cart total: ${cart.state.total_amount:.2f} ({cart.state.item_count} items)")
-
-    print("\n3. Changing quantity & 4. Removing item")
-    cart = await repo.load(cart_id)
     cart.change_quantity(products[0][0], 3)
     cart.remove_item(products[1][0])
-    await repo.save(cart)
-    print(f"   Updated mouse to 3 & removed USB-C Hub -> Total: ${cart.state.total_amount:.2f}")
-
-    print("\n5. Checking out")
-    cart = await repo.load(cart_id)
     order_id = cart.checkout()
     await repo.save(cart)
-    print(f"   Order {order_id} created (${cart.state.total_amount:.2f}, {cart.state.status})")
+    print(f"Order {order_id} created (${cart.state.total_amount:.2f}, {cart.state.status})")
 
-    print("\n6. Event history:")
     stream_id = StreamId(aggregate_id=cart_id, category="ShoppingCart")
-    envelopes = [envelope async for envelope in event_store.read_stream(stream_id)]
-    for i, envelope in enumerate(envelopes, 1):
-        print(f"   [{i}] {envelope.event.event_type}")
+    async for envelope in event_store.read_stream(stream_id):
+        print(f"Event: {envelope.event.event_type}")
 
-    print("\n7. Business rule validation & 8. Cart abandonment:")
-    cart = await repo.load(cart_id)
-    try:
-        cart.add_item(uuid4(), "New Item", 1, 9.99)
-    except ValueError as e:
-        print(f"   Add item blocked: {e}")
-
-    abandoned_cart = repo.create_new(uuid4())
-    abandoned_cart.create(customer_id)
-    abandoned_cart.add_item(uuid4(), "Some Product", 1, 19.99)
-    abandoned_cart.abandon("Session timeout")
-    await repo.save(abandoned_cart)
-    print(f"   Cart abandoned -> Status: {abandoned_cart.state.status}")
-    print("\n" + "=" * 60 + "\nExample completed successfully!\n" + "=" * 60)
+    abandoned = repo.create_new(uuid4())
+    abandoned.create(customer_id)
+    abandoned.add_item(uuid4(), "Some Product", 1, 19.99)
+    abandoned.abandon("Session timeout")
+    await repo.save(abandoned)
 
 
 if __name__ == "__main__":
