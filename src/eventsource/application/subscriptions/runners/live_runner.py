@@ -11,10 +11,7 @@ from typing import TYPE_CHECKING
 from eventsource.application.subscriptions.filtering import EventFilter, FilterStats
 from eventsource.application.subscriptions.flow_control import FlowController, FlowControlStats
 from eventsource.application.subscriptions.metrics import SubscriptionMetrics
-from eventsource.application.subscriptions.retry import (
-    CircuitBreaker,
-    RetryableOperation,
-)
+from eventsource.application.subscriptions.retry import CircuitBreaker, RetryableOperation
 from eventsource.application.subscriptions.runners.live_checkpoint import LiveCheckpointMixin
 from eventsource.application.subscriptions.runners.live_delivery import LiveDeliveryMixin
 from eventsource.application.subscriptions.runners.live_drain import LiveDrainMixin
@@ -22,10 +19,7 @@ from eventsource.application.subscriptions.runners.live_models import (
     LiveRunnerStats,
     _LiveEventHandler,
 )
-from eventsource.application.subscriptions.subscription import (
-    Subscription,
-    SubscriptionState,
-)
+from eventsource.application.subscriptions.subscription import Subscription, SubscriptionState
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_SUBSCRIPTION_NAME
@@ -41,15 +35,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
-    """
-    Wakes on bus notifications and delivers events read from the global feed.
-
-    The store owns ordering; the bus is a wake-up signal only. A `DomainEvent`
-    arriving from the bus carries no position and is never delivered directly
-    -- it only tells the runner that new work may exist. On each wake, the
-    runner reads `event_feed.read_all(from_position=...)` forward from the
-    subscription's last checkpoint and processes every envelope it gets back.
-    """
+    """Wakes on bus notifications and delivers events read from the global feed."""
 
     event_bus: SubscribableEventBus
     checkpoint_repo: SubscriptionPositions
@@ -83,7 +69,6 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
         """Initialize config reference, flow controller, filter, retry mechanism, metrics and tracing."""
         self._tracer = self.tracer or create_tracer(__name__, self.enable_tracing)
         self._enable_tracing = self._tracer.enabled
-
         self.config = self.subscription.config
         self._flow_controller = FlowController()
 
@@ -103,7 +88,6 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
             self.config,
             self.subscription.subscriber,
         )
-
         if self.config.circuit_breaker_enabled:
             self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
             self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
@@ -112,32 +96,23 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
             config=self.config.get_retry_config(),
             circuit_breaker=self._infra_circuit_breaker,
         )
-
         self._metrics = SubscriptionMetrics(
             subscription_name=self.subscription.name,
             enable_metrics=self.enable_metrics,
         )
 
     async def start(self, buffer_events: bool = False) -> None:
-        """
-        Start receiving live events.
-
-        Args:
-            buffer_events: If True, buffer events instead of processing immediately.
-                          Used during catch-up to live transition.
-        """
+        """Start receiving live events (optionally buffering during catch-up)."""
         with self._tracer.span(
             "eventsource.live_runner.start",
             {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
         ):
             if self._running:
                 return
-
             self._running = True
             self._stop_event.clear()
             self._buffer_enabled = buffer_events
             self._last_checkpoint_time = time.monotonic()
-
             self._subscribe_to_bus()
 
             if not buffer_events:
@@ -154,18 +129,13 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
             logger.info("Live runner started", extra=log_extra)
 
     async def stop(self) -> None:
-        """
-        Stop the live runner.
-
-        Unsubscribes from the event bus and stops processing.
-        """
+        """Unsubscribe from the event bus and stop processing."""
         with self._tracer.span(
             "eventsource.live_runner.stop",
             {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
         ):
             if not self._running:
                 return
-
             self._running = False
             self._stop_event.set()
 
@@ -176,7 +146,6 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
                 self._subscribed = False
 
             await self.clear_buffer()
-
             logger.info(
                 "Live runner stopped",
                 extra={

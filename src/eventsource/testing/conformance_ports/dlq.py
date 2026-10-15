@@ -1,11 +1,4 @@
-"""Conformance suite for the `DLQRepository` port.
-
-Subclass and provide a `store` fixture yielding a fresh adapter instance.
-Cleanup retention is pinned here rather than per backend: the cutoff is
-exactly `datetime.now(UTC) - timedelta(days=older_than_days)`, so
-`older_than_days=0` deletes every already-resolved entry on every
-backend.
-"""
+"""Conformance suite for the `DLQRepository` port."""
 
 from abc import ABC, abstractmethod
 from uuid import uuid4
@@ -33,9 +26,7 @@ class DLQRepositoryConformance(ABC):
             event_data={"x": 1},
             error=RuntimeError("boom"),
         )
-
         (entry,) = await store.get_failed_events()
-
         assert entry.event_id == event_id
         assert entry.projection_name == "P"
         assert entry.event_type == "Created"
@@ -55,7 +46,6 @@ class DLQRepositoryConformance(ABC):
         )
         first_entries = await store.get_failed_events()
         first_failed_at = first_entries[0].first_failed_at
-
         await store.add_failed_event(
             event_id=event_id,
             projection_name="P",
@@ -64,7 +54,6 @@ class DLQRepositoryConformance(ABC):
             error=RuntimeError("second"),
             retry_count=1,
         )
-
         entries = await store.get_failed_events()
         assert len(entries) == 1
         assert entries[0].retry_count == 1
@@ -88,7 +77,6 @@ class DLQRepositoryConformance(ABC):
             event_data={},
             error=RuntimeError("boom"),
         )
-
         entries = await store.get_failed_events()
         assert len(entries) == 2
 
@@ -103,7 +91,6 @@ class DLQRepositoryConformance(ABC):
         )
         (entry,) = await store.get_failed_events()
         await store.mark_retrying(entry.id)
-
         assert await store.get_failed_events(status="failed") == []
         retrying = await store.get_failed_events(status="retrying")
         assert len(retrying) == 1
@@ -124,7 +111,6 @@ class DLQRepositoryConformance(ABC):
             event_data={},
             error=RuntimeError("boom"),
         )
-
         entries = await store.get_failed_events(projection_name="A")
         assert len(entries) == 1
         assert entries[0].projection_name == "A"
@@ -138,7 +124,6 @@ class DLQRepositoryConformance(ABC):
                 event_data={},
                 error=RuntimeError("boom"),
             )
-
         entries = await store.get_failed_events(limit=2)
         assert len(entries) == 2
 
@@ -153,9 +138,7 @@ class DLQRepositoryConformance(ABC):
             error=RuntimeError("boom"),
         )
         (entry,) = await store.get_failed_events()
-
         await store.mark_retrying(entry.id)
-
         assert await store.get_failed_events(status="failed") == []
         (retrying,) = await store.get_failed_events(status="retrying")
         assert retrying.status == "retrying"
@@ -169,9 +152,7 @@ class DLQRepositoryConformance(ABC):
             error=RuntimeError("boom"),
         )
         (entry,) = await store.get_failed_events()
-
         await store.mark_resolved(entry.id, "alice")
-
         resolved = await store.get_failed_event_by_id(entry.id)
         assert resolved is not None
         assert resolved.status == "resolved"
@@ -194,11 +175,9 @@ class DLQRepositoryConformance(ABC):
             event_data={},
             error=RuntimeError("boom"),
         )
-        (retrying_entry,) = [e for e in await store.get_failed_events() if e.projection_name == "B"]
+        (retrying_entry,) = (e for e in await store.get_failed_events() if e.projection_name == "B")
         await store.mark_retrying(retrying_entry.id)
-
         stats = await store.get_failure_stats()
-
         assert stats.total_failed == 1
         assert stats.total_retrying == 1
         assert stats.affected_projections == 2
@@ -221,9 +200,7 @@ class DLQRepositoryConformance(ABC):
             event_data={},
             error=RuntimeError("boom"),
         )
-
         counts = await store.get_projection_failure_counts()
-
         assert [c.projection_name for c in counts] == ["Busy", "Quiet"]
         assert counts[0].failure_count == 2
         assert counts[1].failure_count == 1
@@ -238,21 +215,14 @@ class DLQRepositoryConformance(ABC):
             event_data={},
             error=RuntimeError("boom"),
         )
-
         deleted = await store.delete_resolved_events(older_than_days=0)
-
         assert deleted == 0
         assert len(await store.get_failed_events()) == 1
 
     async def test_delete_resolved_events_day_zero_deletes_resolved_entries(
         self, store: DLQRepository
     ) -> None:
-        """`older_than_days=0` means "resolved before now", not "before midnight".
-
-        The cutoff is exactly `datetime.now(UTC) - timedelta(days=N)`, so a
-        moments-ago resolution is already past a day-zero cutoff by the time
-        the delete runs.
-        """
+        """`older_than_days=0` deletes any entry resolved before `datetime.now(UTC)`."""
         await store.add_failed_event(
             event_id=uuid4(),
             projection_name="P",
@@ -262,8 +232,6 @@ class DLQRepositoryConformance(ABC):
         )
         (entry,) = await store.get_failed_events()
         await store.mark_resolved(entry.id, "alice")
-
         deleted = await store.delete_resolved_events(older_than_days=0)
-
         assert deleted == 1
         assert await store.get_failed_event_by_id(entry.id) is None

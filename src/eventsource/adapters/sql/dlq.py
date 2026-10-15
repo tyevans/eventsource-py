@@ -33,13 +33,7 @@ from eventsource.ports.dlq import DLQEntry, DLQStats, ProjectionFailureCount
 
 
 class SQLDLQRepository:
-    """
-    SQLAlchemy-backed DLQ repository, serving both PostgreSQL and SQLite.
-
-    Stores failed events in the `dead_letter_queue` table. Dialect
-    differences (UUID/timestamp/JSON representation) are resolved per call
-    via `eventsource.adapters._sql.dialect`.
-    """
+    """SQLAlchemy-backed DLQ repository (`dead_letter_queue`) for PostgreSQL and SQLite."""
 
     def __init__(
         self,
@@ -90,7 +84,6 @@ class SQLDLQRepository:
                     error_stacktrace = EXCLUDED.error_stacktrace,
                     status = 'failed'
             """)
-
             async with sql_connection(self.conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 params = {
@@ -119,7 +112,6 @@ class SQLDLQRepository:
         with self._tracer.span("eventsource.dlq.get", span_attributes):
             where_clauses = ["status = :status"]
             params: dict[str, Any] = {"status": status, "limit": limit}
-
             if projection_name:
                 where_clauses.append("projection_name = :projection_name")
                 params["projection_name"] = projection_name
@@ -134,12 +126,10 @@ class SQLDLQRepository:
                 ORDER BY first_failed_at DESC
                 LIMIT :limit
             """)  # nosec B608
-
             async with sql_connection(self.conn, write=False) as conn:
                 dialect = dialect_of(conn)
                 result = await conn.execute(query, params)
                 rows = result.fetchall()
-
             return [self._row_to_entry(row, dialect) for row in rows]
 
     async def get_failed_event_by_id(self, dlq_id: int | str) -> DLQEntry | None:
@@ -153,15 +143,12 @@ class SQLDLQRepository:
                 FROM dead_letter_queue
                 WHERE id = :dlq_id
             """)
-
             async with sql_connection(self.conn, write=False) as conn:
                 dialect = dialect_of(conn)
                 result = await conn.execute(query, {"dlq_id": dlq_id})
                 row = result.fetchone()
-
             if not row:
                 return None
-
             entry = self._row_to_entry(row, dialect)
             entry.resolved_at = ts_result(row[11])
             entry.resolved_by = row[12]
@@ -177,12 +164,9 @@ class SQLDLQRepository:
             now = datetime.now(UTC)
             query = text("""
                 UPDATE dead_letter_queue
-                SET status = 'resolved',
-                    resolved_at = :now,
-                    resolved_by = :resolved_by
+                SET status = 'resolved', resolved_at = :now, resolved_by = :resolved_by
                 WHERE id = :dlq_id
             """)
-
             async with sql_connection(self.conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 await conn.execute(
@@ -213,48 +197,39 @@ class SQLDLQRepository:
                 FROM dead_letter_queue
                 WHERE status IN ('failed', 'retrying')
             """)
-
             async with sql_connection(self.conn, write=False) as conn:
                 result = await conn.execute(query)
                 row = result.fetchone()
-
             return row_to_dlq_stats(row)
 
     async def get_projection_failure_counts(self) -> list[ProjectionFailureCount]:
         """Get failure counts grouped by projection."""
         with self._tracer.span("eventsource.dlq.get_projection_counts", {}):
             query = text("""
-                SELECT
-                    projection_name,
-                    COUNT(*) as failure_count,
-                    MIN(first_failed_at) as oldest_failure,
-                    MAX(last_failed_at) as most_recent_failure
+                SELECT projection_name, COUNT(*) as failure_count,
+                       MIN(first_failed_at) as oldest_failure,
+                       MAX(last_failed_at) as most_recent_failure
                 FROM dead_letter_queue
                 WHERE status IN ('failed', 'retrying')
                 GROUP BY projection_name
                 ORDER BY failure_count DESC
             """)
-
             async with sql_connection(self.conn, write=False) as conn:
                 result = await conn.execute(query)
                 rows = result.fetchall()
-
             return rows_to_projection_failure_counts(list(rows))
 
     async def delete_resolved_events(self, older_than_days: int = 30) -> int:
         """Delete resolved events older than specified days and return deleted count."""
         with self._tracer.span(
-            "eventsource.dlq.delete_resolved",
-            {"older_than_days": older_than_days},
+            "eventsource.dlq.delete_resolved", {"older_than_days": older_than_days}
         ):
             cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
             query = text("""
                 DELETE FROM dead_letter_queue
-                WHERE status = 'resolved'
-                AND resolved_at < :cutoff
+                WHERE status = 'resolved' AND resolved_at < :cutoff
                 RETURNING id
             """)
-
             async with sql_connection(self.conn, write=True) as conn:
                 dialect = dialect_of(conn)
                 result = await conn.execute(query, {"cutoff": ts_param(cutoff, dialect)})

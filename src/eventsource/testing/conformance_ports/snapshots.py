@@ -1,19 +1,4 @@
-"""Conformance suites for the `SnapshotStore` port.
-
-`SnapshotStore` (save/get/delete/exists) is a core capability every
-snapshot adapter implements. `SnapshotTypeInvalidation` (bulk delete by
-aggregate type) is optional -- a store either implements the Protocol or
-it doesn't, with no default body or `NotImplementedError` fallback. As
-with `ProjectionCheckpointsConformance`/`SubscriptionPositionsConformance`/
-`CheckpointRepositoryConformance` in `checkpoints.py`, each capability gets
-its own ABC mixin; `SnapshotStoreConformance` combines both for adapters
-(all three ship with the library today) that implement both Protocols.
-
-Subclass `SnapshotConformance` alone for a store that only implements the
-core Protocol, or `SnapshotStoreConformance` for one that also implements
-`SnapshotTypeInvalidation`, and provide a `store` fixture yielding a fresh
-adapter instance.
-"""
+"""Conformance suites for the `SnapshotStore` and `SnapshotTypeInvalidation` ports."""
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
@@ -28,13 +13,7 @@ from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInv
 
 @runtime_checkable
 class _InvalidatableSnapshotStore(SnapshotStore, SnapshotTypeInvalidation, Protocol):
-    """Test-only intersection: a store satisfying both Protocols.
-
-    Lets the bulk-invalidation tests below call both `save_snapshot`/
-    `get_snapshot` (core) and `delete_snapshots_by_type` (optional
-    capability) on the same `store` parameter without `type: ignore`
-    scattered through the test bodies.
-    """
+    """Test-only intersection of `SnapshotStore` and `SnapshotTypeInvalidation`."""
 
 
 def make_snapshot(
@@ -188,38 +167,11 @@ class SnapshotTypeInvalidationConformance(ABC):
 
 
 class SnapshotStoreConformance(SnapshotConformance, SnapshotTypeInvalidationConformance):
-    """Both capabilities: core `SnapshotStore` plus `SnapshotTypeInvalidation`.
-
-    All three snapshot adapters shipped with the library (in-memory,
-    SQLite, PostgreSQL) implement both Protocols today.
-    """
+    """Combined conformance suite for `SnapshotStore` and `SnapshotTypeInvalidation`."""
 
 
 class SnapshotDeserializationConformance(ABC):
-    """Conformance suite for the `SnapshotDeserializationError` contract.
-
-    Optional, like `SnapshotTypeInvalidationConformance`: a store that
-    cannot exhibit a deserialization failure at all does not implement this
-    -- it is not required to prove a negative. Bind this only for a backend
-    where malformed on-disk state is a real, reachable condition, which
-    requires the ability to write a raw, possibly-invalid state value
-    directly into storage (bypassing the adapter's own serialization, which
-    only ever writes valid JSON). Two of the three shipped adapters do NOT
-    bind this:
-
-    - `InMemorySnapshotStore` never deserializes -- it holds the actual
-      `Snapshot` object in memory -- so it has no equivalent failure mode.
-    - `PostgreSQLSnapshotStore`'s `state` column is `JSONB`, so PostgreSQL
-      itself rejects malformed JSON at write time; there is no INSERT that
-      reaches `get_snapshot()`'s deserialization step with invalid JSON to
-      parse. (The adapter still raises `SnapshotDeserializationError`
-      defensively -- see its docstring -- this suite just can't exercise
-      that path portably the way it can for a free-text column.)
-
-    `SQLiteSnapshotStore` binds this today: its `state` column is `TEXT`
-    with no server-side JSON validation, so on-disk corruption is a real
-    condition its `get_snapshot()` must handle.
-    """
+    """Conformance suite for the `SnapshotDeserializationError` contract on corrupted raw state."""
 
     @abstractmethod
     @pytest.fixture
@@ -236,14 +188,7 @@ class SnapshotDeserializationConformance(ABC):
         aggregate_type: str,
         raw_state: str,
     ) -> None:
-        """Insert a snapshot row with `raw_state` as the literal stored
-        value for the state column, bypassing the adapter's own JSON
-        encoding -- so `raw_state` need not be valid JSON. Each binding
-        implements this with its own raw connection/session, matching how
-        its `save_snapshot()` writes a row (same columns, same table),
-        except the state value is written verbatim instead of
-        `json.dumps()`-encoded.
-        """
+        """Insert a snapshot row with literal `raw_state` bypassing JSON encoding."""
         raise NotImplementedError
 
     async def test_get_snapshot_raises_deserialization_error_on_malformed_state(

@@ -1,9 +1,4 @@
-"""Read and query operations for PostgreSQL position mapping repository.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Read and query operations for PostgreSQL position mapping repository."""
 
 from __future__ import annotations
 
@@ -21,6 +16,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
     from eventsource.observability import Tracer
+
+_SELECT_COLUMNS = (
+    "id, migration_id, source_position_token, target_position_token, event_id, mapped_at"
+)
 
 
 def _get_sql_connection() -> Any:
@@ -46,16 +45,10 @@ class PostgreSQLPositionMappingQueryMixin:
             self, migration_id: UUID, ordinal: int
         ) -> PositionMapping | None: ...
         async def _find_first_ordinal_gte(
-            self,
-            migration_id: UUID,
-            source_position: Position,
-            total: int,
+            self, migration_id: UUID, source_position: Position, total: int
         ) -> int | None: ...
         async def _find_last_ordinal_lte(
-            self,
-            migration_id: UUID,
-            source_position: Position,
-            total: int,
+            self, migration_id: UUID, source_position: Position, total: int
         ) -> int | None: ...
 
     async def _fetch_one_mapping(
@@ -73,13 +66,7 @@ class PostgreSQLPositionMappingQueryMixin:
             {"mapping.id": mapping_id, ATTR_DB_SYSTEM: "postgresql"},
         ):
             return await self._fetch_one_mapping(
-                """
-                SELECT
-                    id, migration_id, source_position_token, target_position_token,
-                    event_id, mapped_at
-                FROM migration_position_mappings
-                WHERE id = :id
-                """,
+                f"SELECT {_SELECT_COLUMNS} FROM migration_position_mappings WHERE id = :id",  # nosec B608
                 {"id": mapping_id},
             )
 
@@ -98,14 +85,12 @@ class PostgreSQLPositionMappingQueryMixin:
             },
         ):
             return await self._fetch_one_mapping(
-                """
-                SELECT
-                    id, migration_id, source_position_token, target_position_token,
-                    event_id, mapped_at
+                f"""
+                SELECT {_SELECT_COLUMNS}
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                   AND source_position_token = :source_position_token
-                """,
+                """,  # nosec B608
                 {
                     "migration_id": migration_id,
                     "source_position_token": source_position.to_str(),
@@ -127,15 +112,13 @@ class PostgreSQLPositionMappingQueryMixin:
             },
         ):
             return await self._fetch_one_mapping(
-                """
-                SELECT
-                    id, migration_id, source_position_token, target_position_token,
-                    event_id, mapped_at
+                f"""
+                SELECT {_SELECT_COLUMNS}
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                   AND target_position_token = :target_position_token
                 LIMIT 1
-                """,
+                """,  # nosec B608
                 {
                     "migration_id": migration_id,
                     "target_position_token": target_position.to_str(),
@@ -157,14 +140,12 @@ class PostgreSQLPositionMappingQueryMixin:
             },
         ):
             return await self._fetch_one_mapping(
-                """
-                SELECT
-                    id, migration_id, source_position_token, target_position_token,
-                    event_id, mapped_at
+                f"""
+                SELECT {_SELECT_COLUMNS}
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                   AND event_id = :event_id
-                """,
+                """,  # nosec B608
                 {"migration_id": migration_id, "event_id": event_id},
             )
 
@@ -184,15 +165,13 @@ class PostgreSQLPositionMappingQueryMixin:
                 ATTR_DB_SYSTEM: "postgresql",
             },
         ):
-            query = text("""
-                SELECT
-                    id, migration_id, source_position_token, target_position_token,
-                    event_id, mapped_at
+            query = text(f"""
+                SELECT {_SELECT_COLUMNS}
                 FROM migration_position_mappings
                 WHERE migration_id = :migration_id
                 ORDER BY id ASC
                 LIMIT :limit OFFSET :offset
-            """)
+            """)  # nosec B608
             async with _get_sql_connection()(self._conn, write=False) as conn:
                 result = await conn.execute(
                     query, {"migration_id": migration_id, "limit": limit, "offset": offset}
@@ -233,11 +212,9 @@ class PostgreSQLPositionMappingQueryMixin:
             "eventsource.position_mapping_repo.count_by_migration",
             {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"},
         ):
-            query = text("""
-                SELECT COUNT(*)
-                FROM migration_position_mappings
-                WHERE migration_id = :migration_id
-            """)
+            query = text(
+                "SELECT COUNT(*) FROM migration_position_mappings WHERE migration_id = :migration_id"
+            )
             async with _get_sql_connection()(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"migration_id": migration_id})
                 row = result.fetchone()
