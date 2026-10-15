@@ -10,17 +10,12 @@ from typing import TYPE_CHECKING
 from eventsource.application.subscriptions.filtering import EventFilter, FilterStats
 from eventsource.application.subscriptions.flow_control import FlowController, FlowControlStats
 from eventsource.application.subscriptions.metrics import SubscriptionMetrics
-from eventsource.application.subscriptions.retry import (
-    CircuitBreaker,
-    RetryableOperation,
-)
+from eventsource.application.subscriptions.retry import CircuitBreaker, RetryableOperation
 from eventsource.application.subscriptions.runners.catchup_batch import CatchUpBatchMixin
 from eventsource.application.subscriptions.runners.catchup_checkpoint import (
     CatchUpCheckpointMixin,
 )
-from eventsource.application.subscriptions.runners.catchup_delivery import (
-    CatchUpDeliveryMixin,
-)
+from eventsource.application.subscriptions.runners.catchup_delivery import CatchUpDeliveryMixin
 from eventsource.application.subscriptions.runners.catchup_result import CatchUpResult
 from eventsource.application.subscriptions.subscription import (
     Subscription,
@@ -47,12 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMixin):
-    """
-    Reads historical events from the event store and delivers to subscriber.
-
-    Processes events in batches from the current subscription position up to
-    a target position, handling delivery, checkpointing, and progress tracking.
-    """
+    """Reads historical events from the event store and delivers to subscriber in batches."""
 
     def __init__(
         self,
@@ -67,47 +57,36 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
         """Initialize the catch-up runner."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
-
         self.event_store = event_store
         self.checkpoint_repo = checkpoint_repo
         self.subscription = subscription
         self.config = subscription.config
-
         self._running = False
         self._stop_event = asyncio.Event()
         self._last_checkpoint_time: float = 0.0
         self._reached_target = False
-
         self._filter = event_filter or EventFilter.from_config_and_subscriber(
             self.config, subscription.subscriber
         )
-
         self._batch_capable = supports_batch_handling(subscription.subscriber)
         self._flow_controller = FlowController()
-
         self._infra_circuit_breaker: CircuitBreaker | None = None
         self._handler_circuit_breaker: CircuitBreaker | None = None
         if self.config.circuit_breaker_enabled:
             self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
             self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
-
         self._retry = RetryableOperation(
             config=self.config.get_retry_config(),
             circuit_breaker=self._infra_circuit_breaker,
         )
-
         self._metrics = SubscriptionMetrics(
             subscription_name=subscription.name,
             enable_metrics=enable_metrics,
         )
 
-    async def run_until_position(
-        self,
-        target_position: Position,
-    ) -> CatchUpResult:
+    async def run_until_position(self, target_position: Position) -> CatchUpResult:
         """Run catch-up in batches until reaching the target position, stop request, or error."""
         start_position = self.subscription.last_processed_position
-
         with self._tracer.span(
             "eventsource.catchup_runner.run_until_position",
             {
@@ -122,7 +101,6 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
             self._reached_target = False
             self._last_checkpoint_time = time.monotonic()
             total_processed = 0
-
             log_extra: dict[str, object] = {
                 "subscription": self.subscription.name,
                 "from_position": render_position(start_position),
@@ -148,18 +126,15 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
                             "Catch-up resumed after pause",
                             extra={"subscription": self.subscription.name},
                         )
-
                     outcome = await self._process_batch(target_position)
                     total_processed += outcome.events_delivered
 
                 completed = self._reached_target
                 final_position = self.subscription.last_processed_position
-
                 if span:
                     span.set_attribute(ATTR_EVENTS_PROCESSED, total_processed)
                     if (token := render_position(final_position)) is not None:
                         span.set_attribute(ATTR_POSITION, token)
-
                 logger.info(
                     "Catch-up completed",
                     extra={
@@ -169,13 +144,11 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
                         "completed": completed,
                     },
                 )
-
                 return CatchUpResult(
                     events_processed=total_processed,
                     final_position=final_position,
                     completed=completed,
                 )
-
             except Exception as e:
                 logger.error(
                     "Catch-up failed",
@@ -199,10 +172,7 @@ class CatchUpRunner(CatchUpBatchMixin, CatchUpDeliveryMixin, CatchUpCheckpointMi
     async def stop(self) -> None:
         """Request the runner to stop gracefully."""
         self._stop_event.set()
-        logger.info(
-            "Catch-up stop requested",
-            extra={"subscription": self.subscription.name},
-        )
+        logger.info("Catch-up stop requested", extra={"subscription": self.subscription.name})
 
     @property
     def is_running(self) -> bool:

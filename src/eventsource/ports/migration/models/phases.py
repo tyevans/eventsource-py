@@ -1,9 +1,4 @@
-"""
-Migration lifecycle and tenant routing phase state machines.
-
-This module defines the phase enums and state machines governing
-tenant migrations and tenant store routing.
-"""
+"""Migration lifecycle and tenant routing phase state machines."""
 
 from __future__ import annotations
 
@@ -16,26 +11,7 @@ class MigrationPhase(Enum):
 
     State machine transitions:
         PENDING -> BULK_COPY -> DUAL_WRITE -> CUTOVER -> COMPLETED
-                                    |
-        Any phase ----------------> ABORTED (operator-initiated)
-        Any phase ----------------> FAILED (unrecoverable error)
-
-    Valid transitions:
-        - PENDING -> BULK_COPY: Migration starts
-        - BULK_COPY -> DUAL_WRITE: Historical copy complete
-        - DUAL_WRITE -> CUTOVER: Sync lag below threshold
-        - CUTOVER -> COMPLETED: Cutover successful
-        - Any -> ABORTED: Operator cancels
-        - Any -> FAILED: Unrecoverable error
-
-    Attributes:
-        PENDING: Migration created but not started.
-        BULK_COPY: Copying historical events from source to target.
-        DUAL_WRITE: Real-time sync: new events written to both stores.
-        CUTOVER: Brief pause while routing switches to target.
-        COMPLETED: Migration finished successfully.
-        ABORTED: Migration cancelled by operator.
-        FAILED: Migration failed due to unrecoverable error.
+        Any non-terminal phase -> ABORTED (operator-initiated) or FAILED (unrecoverable error)
     """
 
     PENDING = "pending"
@@ -61,16 +37,7 @@ class MigrationPhase(Enum):
 
     @property
     def is_terminal(self) -> bool:
-        """
-        Check if this is a terminal (final) phase.
-
-        Terminal phases are COMPLETED, ABORTED, and FAILED.
-        Once a migration reaches a terminal phase, it cannot
-        transition to any other phase.
-
-        Returns:
-            True if this is a terminal phase.
-        """
+        """Check if this is a terminal (final) phase (COMPLETED, ABORTED, or FAILED)."""
         return self in (
             MigrationPhase.COMPLETED,
             MigrationPhase.ABORTED,
@@ -79,16 +46,7 @@ class MigrationPhase(Enum):
 
     @property
     def is_active(self) -> bool:
-        """
-        Check if migration is actively processing.
-
-        Active phases are BULK_COPY, DUAL_WRITE, and CUTOVER.
-        During these phases, the migration system is actively
-        working on the migration.
-
-        Returns:
-            True if migration is actively processing.
-        """
+        """Check if migration is actively processing (BULK_COPY, DUAL_WRITE, or CUTOVER)."""
         return self in (
             MigrationPhase.BULK_COPY,
             MigrationPhase.DUAL_WRITE,
@@ -97,45 +55,21 @@ class MigrationPhase(Enum):
 
     @property
     def allows_writes_to_source(self) -> bool:
-        """
-        Check if writes to source store are allowed in this phase.
-
-        During CUTOVER phase, writes are temporarily blocked.
-
-        Returns:
-            True if writes to source are allowed.
-        """
+        """Check if writes to source store are allowed in this phase (blocked in CUTOVER)."""
         return self != MigrationPhase.CUTOVER
 
     @property
     def requires_dual_write(self) -> bool:
-        """
-        Check if this phase requires dual-write to both stores.
-
-        Returns:
-            True if dual-write is required.
-        """
+        """Check if this phase requires dual-write to both stores."""
         return self == MigrationPhase.DUAL_WRITE
 
     def can_transition_to(self, target: MigrationPhase) -> bool:
-        """
-        Check if transition to target phase is valid.
-
-        Args:
-            target: The target phase to transition to.
-
-        Returns:
-            True if the transition is valid.
-        """
-        # Terminal phases cannot transition
+        """Check if transition to target phase is valid."""
         if self.is_terminal:
             return False
-
-        # Any phase can go to ABORTED or FAILED
         if target in (MigrationPhase.ABORTED, MigrationPhase.FAILED):
             return True
 
-        # Valid forward transitions
         valid_transitions: dict[MigrationPhase, list[MigrationPhase]] = {
             MigrationPhase.PENDING: [MigrationPhase.BULK_COPY],
             MigrationPhase.BULK_COPY: [MigrationPhase.DUAL_WRITE],
@@ -145,7 +79,6 @@ class MigrationPhase(Enum):
                 MigrationPhase.DUAL_WRITE,  # Rollback if cutover fails
             ],
         }
-
         return target in valid_transitions.get(self, [])
 
 
@@ -153,23 +86,10 @@ class TenantMigrationState(Enum):
     """
     Tenant routing states during migration.
 
-    These states determine how the TenantStoreRouter handles
-    operations for a specific tenant.
-
     State transitions:
-        NORMAL -> BULK_COPY: Migration starts
-        BULK_COPY -> DUAL_WRITE: Bulk copy phase begins dual-write
-        DUAL_WRITE -> CUTOVER_PAUSED: Cutover initiated
-        CUTOVER_PAUSED -> MIGRATED: Cutover successful
-        CUTOVER_PAUSED -> DUAL_WRITE: Cutover rollback
-        Any -> NORMAL: Migration aborted/failed
-
-    Attributes:
-        NORMAL: Route to configured store (no migration active).
-        BULK_COPY: Route reads to source; writes to source only.
-        DUAL_WRITE: Route writes through DualWriteInterceptor.
-        CUTOVER_PAUSED: Block writes, await cutover completion.
-        MIGRATED: Route all operations to target store.
+        NORMAL -> BULK_COPY -> DUAL_WRITE -> CUTOVER_PAUSED -> MIGRATED
+        CUTOVER_PAUSED -> DUAL_WRITE (rollback)
+        Any -> NORMAL (aborted/failed cleanup)
     """
 
     NORMAL = "normal"
@@ -189,12 +109,7 @@ class TenantMigrationState(Enum):
 
     @property
     def is_migrating(self) -> bool:
-        """
-        Check if tenant is currently in a migration process.
-
-        Returns:
-            True if migration is in progress.
-        """
+        """Check if tenant is currently in a migration process."""
         return self in (
             TenantMigrationState.BULK_COPY,
             TenantMigrationState.DUAL_WRITE,
@@ -203,41 +118,16 @@ class TenantMigrationState(Enum):
 
     @property
     def allows_writes(self) -> bool:
-        """
-        Check if writes are allowed in this state.
-
-        Writes are blocked during CUTOVER_PAUSED to ensure
-        consistency during the cutover operation.
-
-        Returns:
-            True if writes are allowed.
-        """
+        """Check if writes are allowed in this state (blocked during CUTOVER_PAUSED)."""
         return self != TenantMigrationState.CUTOVER_PAUSED
 
     @property
     def reads_from_target(self) -> bool:
-        """
-        Check if reads should come from target store.
-
-        After migration completes (MIGRATED state), all reads
-        should come from the target store.
-
-        Returns:
-            True if reads should come from target.
-        """
+        """Check if reads should come from target store (True when MIGRATED)."""
         return self == TenantMigrationState.MIGRATED
 
     def can_transition_to(self, target: TenantMigrationState) -> bool:
-        """
-        Check if transition to target state is valid.
-
-        Args:
-            target: The target state to transition to.
-
-        Returns:
-            True if the transition is valid.
-        """
-        # Any state can go back to NORMAL (migration cleanup)
+        """Check if transition to target state is valid."""
         if target == TenantMigrationState.NORMAL:
             return True
 
@@ -251,7 +141,6 @@ class TenantMigrationState(Enum):
             ],
             TenantMigrationState.MIGRATED: [],  # Terminal state
         }
-
         return target in valid_transitions.get(self, [])
 
 
