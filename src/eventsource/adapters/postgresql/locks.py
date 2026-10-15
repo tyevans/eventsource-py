@@ -1,8 +1,4 @@
-"""PostgreSQL advisory lock utilities for distributed coordination (ADR 0029).
-
-Implements `eventsource.ports.locks.LockManager` with session-level advisory locks
-providing cross-process exclusion, non-blocking attempts, and release on disconnect.
-"""
+"""PostgreSQL advisory lock utilities for distributed coordination (ADR 0029)."""
 
 from __future__ import annotations
 
@@ -79,13 +75,7 @@ class PostgreSQLLockManager:
 
             if span is not None:
                 span.set_attribute(ATTR_LOCK_ACQUIRED, True)
-
-            lock_info = LockInfo(
-                key=key,
-                lock_id=lock_id,
-                acquired_at=datetime.now(UTC),
-                holder_id=self._holder_id,
-            )
+            lock_info = LockInfo(key, lock_id, datetime.now(UTC), self._holder_id)
             try:
                 async with self._lock:
                     self._held_locks[key] = (session, lock_id)
@@ -95,11 +85,7 @@ class PostgreSQLLockManager:
                 await self._release_lock(key, session, lock_id)
 
     async def _acquire_lock(
-        self,
-        key: str,
-        lock_id: int,
-        timeout: float | None,
-        retry_interval: float,
+        self, key: str, lock_id: int, timeout: float | None, retry_interval: float
     ) -> AsyncSession:
         """Internal method to acquire the lock."""
         return await acquire_advisory_lock_session(
@@ -108,8 +94,9 @@ class PostgreSQLLockManager:
 
     async def _release_lock(self, key: str, session: AsyncSession, lock_id: int) -> None:
         """Internal method to release the lock."""
-        attrs = {ATTR_LOCK_KEY: key, ATTR_LOCK_ID: lock_id}
-        with self._tracer.span("eventsource.lock.release", attrs):
+        with self._tracer.span(
+            "eventsource.lock.release", {ATTR_LOCK_KEY: key, ATTR_LOCK_ID: lock_id}
+        ):
             try:
                 await release_advisory_lock_session(key, session, lock_id)
             finally:
@@ -122,22 +109,17 @@ class PostgreSQLLockManager:
         lock_id = self._key_to_lock_id(key)
         session = self._session_factory()
         try:
-            stmt = text("SELECT pg_try_advisory_lock(:lock_id)")
-            result = await session.execute(stmt, {"lock_id": lock_id})
+            result = await session.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+            )
             if not result.scalar():
                 await session.close()
                 return None
 
             async with self._lock:
                 self._held_locks[key] = (session, lock_id)
-
             logger.debug("Acquired advisory lock (try): key=%s, lock_id=%d", key, lock_id)
-            return LockInfo(
-                key=key,
-                lock_id=lock_id,
-                acquired_at=datetime.now(UTC),
-                holder_id=self._holder_id,
-            )
+            return LockInfo(key, lock_id, datetime.now(UTC), self._holder_id)
         except Exception as e:
             await session.close()
             logger.error("Error attempting to acquire lock: key=%s, error=%s", key, e)
@@ -160,7 +142,6 @@ class PostgreSQLLockManager:
         """Release all locks held by this manager and return the released count."""
         async with self._lock:
             keys = list(self._held_locks.keys())
-
         released = 0
         for key in keys:
             try:
