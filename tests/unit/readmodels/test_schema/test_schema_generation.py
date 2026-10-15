@@ -11,29 +11,16 @@ from eventsource.ports.readmodels.model import ReadModel
 from tests.unit.readmodels.test_schema import _fixtures as fx
 
 
-def _check(sql: str, clauses: list[str]) -> None:
-    for clause in clauses:
-        assert clause in sql
-
-
 class TestGenerateSchema:
-    """Tests for generate_schema function."""
-
     def test_simple_model_postgresql(self) -> None:
         sql = generate_schema(fx.SimpleModel, dialect="postgresql")
-        _check(
-            sql,
-            [
-                "CREATE TABLE IF NOT EXISTS simple_models",
-                "id UUID PRIMARY KEY",
-                "name VARCHAR(255) NOT NULL",
-                "count INTEGER NOT NULL DEFAULT 0",
-                "created_at TIMESTAMP WITH TIME ZONE NOT NULL",
-                "updated_at TIMESTAMP WITH TIME ZONE NOT NULL",
-                "version INTEGER NOT NULL DEFAULT 1",
-                "deleted_at TIMESTAMP WITH TIME ZONE",
-            ],
-        )
+        assert "CREATE TABLE IF NOT EXISTS simple_models" in sql
+        assert "id UUID PRIMARY KEY" in sql and "name VARCHAR(255) NOT NULL" in sql
+        assert "count INTEGER NOT NULL DEFAULT 0" in sql
+        assert "created_at TIMESTAMP WITH TIME ZONE NOT NULL" in sql
+        assert "updated_at TIMESTAMP WITH TIME ZONE NOT NULL" in sql
+        assert "version INTEGER NOT NULL DEFAULT 1" in sql
+        assert "deleted_at TIMESTAMP WITH TIME ZONE" in sql
         assert "deleted_at TIMESTAMP WITH TIME ZONE NOT NULL" not in sql
 
     def test_simple_model_sqlite(self) -> None:
@@ -53,21 +40,18 @@ class TestGenerateSchema:
     def test_complex_model_sqlite(self) -> None:
         sql = generate_schema(fx.ComplexModel, dialect="sqlite")
         assert "order_number TEXT NOT NULL" in sql and "status TEXT NOT NULL" in sql
-        assert "total_amount REAL NOT NULL" in sql
+        assert "total_amount REAL NOT NULL" in sql and "tags TEXT" in sql and "metadata TEXT" in sql
         assert "is_priority INTEGER NOT NULL DEFAULT 0" in sql
-        assert "tags TEXT" in sql and "metadata TEXT" in sql
 
     def test_all_types_postgresql(self) -> None:
         sql = generate_schema(fx.AllTypesModel, dialect="postgresql")
         assert "string_field VARCHAR(255) NOT NULL" in sql and "int_field INTEGER NOT NULL" in sql
         assert "float_field DOUBLE PRECISION NOT NULL" in sql
-        assert (
-            "decimal_field DECIMAL(18, 6) NOT NULL" in sql and "bool_field BOOLEAN NOT NULL" in sql
-        )
+        assert "decimal_field DECIMAL(18, 6) NOT NULL" in sql
+        assert "bool_field BOOLEAN NOT NULL" in sql and "dict_field JSONB NOT NULL" in sql
         assert "datetime_field TIMESTAMP WITH TIME ZONE NOT NULL" in sql
         assert "date_field DATE NOT NULL" in sql and "uuid_field UUID NOT NULL" in sql
         assert "bytes_field BYTEA NOT NULL" in sql and "list_field JSONB NOT NULL" in sql
-        assert "dict_field JSONB NOT NULL" in sql
 
     def test_all_types_sqlite(self) -> None:
         sql = generate_schema(fx.AllTypesModel, dialect="sqlite")
@@ -114,16 +98,12 @@ class TestGenerateSchema:
         assert "decimal_default REAL NOT NULL DEFAULT 99.99" in sql
 
     def test_custom_sql_type_dialect_specific(self) -> None:
-        for dialect in ("postgresql", "sqlite"):
-            assert "description TEXT NOT NULL" in generate_schema(
-                fx.ModelWithCustomSqlType, dialect=dialect
-            )
+        for d in ("postgresql", "sqlite"):
+            assert "description TEXT NOT NULL" in generate_schema(fx.ModelWithCustomSqlType, d)
 
     def test_custom_sql_type_single(self) -> None:
-        for dialect in ("postgresql", "sqlite"):
-            assert "short_code CHAR(10) NOT NULL" in generate_schema(
-                fx.ModelWithCustomSqlType, dialect=dialect
-            )
+        for d in ("postgresql", "sqlite"):
+            assert "short_code CHAR(10) NOT NULL" in generate_schema(fx.ModelWithCustomSqlType, d)
 
     def test_primary_key_on_id(self) -> None:
         assert "id UUID PRIMARY KEY" in generate_schema(fx.SimpleModel, dialect="postgresql")
@@ -133,20 +113,14 @@ class TestGenerateSchema:
 
 
 class TestGenerateIndexes:
-    """Tests for generate_indexes function."""
-
     def test_generates_soft_delete_index_postgresql(self) -> None:
-        indexes = generate_indexes(fx.SimpleModel, dialect="postgresql")
-        soft_delete_idx = [i for i in indexes if "deleted" in i]
-        assert len(soft_delete_idx) == 1
-        assert "WHERE deleted_at IS NOT NULL" in soft_delete_idx[0]
-        assert "IF NOT EXISTS" in soft_delete_idx[0]
+        idx = [i for i in generate_indexes(fx.SimpleModel, dialect="postgresql") if "deleted" in i]
+        assert len(idx) == 1 and "WHERE deleted_at IS NOT NULL" in idx[0]
+        assert "IF NOT EXISTS" in idx[0]
 
     def test_generates_soft_delete_index_sqlite(self) -> None:
-        indexes = generate_indexes(fx.SimpleModel, dialect="sqlite")
-        soft_delete_idx = [i for i in indexes if "deleted" in i]
-        assert len(soft_delete_idx) == 1
-        assert "WHERE" not in soft_delete_idx[0] and "IF NOT EXISTS" in soft_delete_idx[0]
+        idx = [i for i in generate_indexes(fx.SimpleModel, dialect="sqlite") if "deleted" in i]
+        assert len(idx) == 1 and "WHERE" not in idx[0] and "IF NOT EXISTS" in idx[0]
 
     def test_custom_indexes_postgresql(self) -> None:
         indexes = generate_indexes(fx.IndexedModel, dialect="postgresql")
@@ -182,8 +156,6 @@ class TestGenerateIndexes:
 
 
 class TestGenerateFullSchema:
-    """Tests for generate_full_schema function."""
-
     def test_includes_table_and_indexes(self) -> None:
         sql = generate_full_schema(fx.SimpleModel, dialect="postgresql")
         assert "CREATE TABLE" in sql and "CREATE INDEX" in sql

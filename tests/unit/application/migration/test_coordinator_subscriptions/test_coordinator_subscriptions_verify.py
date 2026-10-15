@@ -20,13 +20,7 @@ _VERIFIER_PATH = "eventsource.application.migration.coordinator.ConsistencyVerif
 
 
 def _mig(migration_id=None, tenant_id=None, phase=MigrationPhase.DUAL_WRITE) -> Migration:
-    return Migration(
-        id=migration_id or uuid4(),
-        tenant_id=tenant_id or uuid4(),
-        source_store_id="default",
-        target_store_id="dedicated",
-        phase=phase,
-    )
+    return Migration(migration_id or uuid4(), tenant_id or uuid4(), "default", "dedicated", phase)
 
 
 def _setup_coord(deps: dict, migration_id=None, tenant_id=None) -> MigrationCoordinator:
@@ -61,10 +55,8 @@ class TestVerifyConsistency:
             report = await coordinator.verify_consistency(
                 migration_id, level=VerificationLevel.HASH, sample_percentage=100.0
             )
-
         assert report.is_consistent is True
-        assert report.source_event_count == 1000
-        assert report.target_event_count == 1000
+        assert report.source_event_count == 1000 and report.target_event_count == 1000
         assert coordinator.get_consistency_report(migration_id) is report
 
     @pytest.mark.asyncio
@@ -86,9 +78,7 @@ class TestVerifyConsistency:
                 verify_tenant_consistency=AsyncMock(return_value=expected_report)
             )
             report = await coordinator.verify_consistency(migration_id)
-
-        assert report.is_consistent is False
-        assert len(report.violations) == 1
+        assert report.is_consistent is False and len(report.violations) == 1
         assert report.violations[0].violation_type == "count_mismatch"
 
     async def test_verify_consistency_with_violations_records_metric(
@@ -115,7 +105,6 @@ class TestVerifyConsistency:
                 verify_tenant_consistency=AsyncMock(return_value=expected_report)
             )
             await coordinator.verify_consistency(migration_id)
-
         snapshot = get_migration_metrics(str(migration_id), str(tenant_id)).get_snapshot()
         assert snapshot.verification_failures == 2
         clear_metrics_registry()
@@ -134,9 +123,8 @@ class TestVerifyConsistency:
             return_value=_mig(migration_id, phase=MigrationPhase.BULK_COPY)
         )
         coordinator = MigrationCoordinator(**coordinator_deps, enable_tracing=False)
-        with pytest.raises(MigrationError) as exc_info:
+        with pytest.raises(MigrationError, match="Target store not found"):
             await coordinator.verify_consistency(migration_id)
-        assert "Target store not found" in str(exc_info.value)
 
 
 class TestGetConsistencyReport:
@@ -154,8 +142,7 @@ class TestGetConsistencyReport:
         assert coordinator.get_consistency_report(migration_id) is report
 
     def test_get_consistency_report_returns_none_if_not_found(self) -> None:
-        coordinator = create_coordinator()
-        assert coordinator.get_consistency_report(uuid4()) is None
+        assert create_coordinator().get_consistency_report(uuid4()) is None
 
 
 class TestVerificationLevel:
@@ -166,11 +153,7 @@ class TestVerificationLevel:
         coordinator._migration_repo.get = AsyncMock(return_value=_mig(migration_id, tenant_id))
         coordinator._target_stores[migration_id] = AsyncMock()
         report = make_verification_report(
-            tenant_id=tenant_id,
-            level=VerificationLevel.COUNT,
-            source_event_count=100,
-            target_event_count=100,
-            streams_verified=5,
+            tenant_id=tenant_id, level=VerificationLevel.COUNT, streams_verified=5
         )
         with patch(_VERIFIER_PATH) as mock_verifier_cls:
             mock_verifier = MagicMock(verify_tenant_consistency=AsyncMock(return_value=report))
@@ -189,11 +172,7 @@ class TestVerificationLevel:
         coordinator._migration_repo.get = AsyncMock(return_value=_mig(migration_id, tenant_id))
         coordinator._target_stores[migration_id] = AsyncMock()
         report = make_verification_report(
-            tenant_id=tenant_id,
-            level=VerificationLevel.FULL,
-            source_event_count=100,
-            target_event_count=100,
-            streams_verified=5,
+            tenant_id=tenant_id, level=VerificationLevel.FULL, streams_verified=5
         )
         with patch(_VERIFIER_PATH) as mock_verifier_cls:
             mock_verifier = MagicMock(verify_tenant_consistency=AsyncMock(return_value=report))
