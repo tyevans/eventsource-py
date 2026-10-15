@@ -1,45 +1,9 @@
 """
-ConsistencyVerifier - Verifies data integrity between stores.
+ConsistencyVerifier - Verifies data integrity between stores (P3-003).
 
-The ConsistencyVerifier ensures data integrity during migration by
-comparing events between source and target stores. It performs both
-count-based and hash-based verification to detect any inconsistencies.
-
-This module is implemented as part of task P3-003.
-
-Responsibilities:
-    - Verify event counts match between stores
-    - Verify event content matches (optional hash verification)
-    - Identify specific streams with inconsistencies
-    - Report detailed verification results
-    - Support incremental verification for large datasets
-    - Support sampling for performance with large datasets
-
-Verification Levels:
-    - COUNT: Verify event counts per stream (fast)
-    - HASH: Verify event content hashes (thorough)
-    - FULL: Verify complete event data (slowest, most thorough)
-
-Usage:
-    >>> from eventsource.application.migration import ConsistencyVerifier
-    >>>
-    >>> verifier = ConsistencyVerifier(source_store, target_store)
-    >>>
-    >>> # Verify consistency for tenant
-    >>> result = await verifier.verify_tenant_consistency(
-    ...     tenant_id=tenant_id,
-    ...     level=VerificationLevel.HASH,
-    ... )
-    >>>
-    >>> if result.is_consistent:
-    ...     print("Verification passed")
-    ... else:
-    ...     for violation in result.violations:
-    ...         print(f"Mismatch: {violation}")
-
-See Also:
-    - Task: P3-003-consistency-verifier.md
-    - FRD: docs/tasks/multi-tenant-live-migration/multi-tenant-live-migration.md
+Compares events between source and target stores using count-based (COUNT),
+hash-based (HASH), and full-content (FULL) verification levels, with optional
+sampling for large datasets.
 """
 
 from __future__ import annotations
@@ -69,40 +33,8 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
     """
     Verifies data consistency between source and target stores.
 
-    Ensures data integrity during migration through count and hash
-    verification, preventing cutover with inconsistent data.
-
-    The verifier supports three levels of verification:
-    - COUNT: Fast count-based verification
-    - HASH: SHA-256 hash verification of event content
-    - FULL: Complete event data comparison
-
-    For large datasets, sampling can be used to verify a percentage
-    of events while maintaining statistical confidence.
-
-    Example:
-        >>> verifier = ConsistencyVerifier(source_store, target_store)
-        >>>
-        >>> # Full verification
-        >>> report = await verifier.verify_tenant_consistency(
-        ...     tenant_id=tenant_id,
-        ...     level=VerificationLevel.HASH,
-        ... )
-        >>>
-        >>> # Sampled verification for large tenants
-        >>> report = await verifier.verify_tenant_consistency(
-        ...     tenant_id=tenant_id,
-        ...     level=VerificationLevel.HASH,
-        ...     sample_percentage=10.0,  # Verify 10% of events
-        ... )
-        >>>
-        >>> if not report.is_consistent:
-        ...     for violation in report.violations:
-        ...         logger.error("Consistency violation: %s", violation)
-
-    Attributes:
-        _source: Source event store to verify from.
-        _target: Target event store to verify against.
+    Supports COUNT, HASH (SHA-256), and FULL verification levels, plus
+    percentage-based sampling for large datasets.
     """
 
     def __init__(
@@ -113,18 +45,7 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """
-        Initialize the consistency verifier.
-
-        Args:
-            source_store: FullEventStore to verify from (source of truth).
-            target_store: FullEventStore to verify against (migration target).
-            tracer: Optional custom Tracer instance. If not provided, one is
-                   created based on enable_tracing setting.
-            enable_tracing: Whether to enable OpenTelemetry tracing.
-                          Ignored if tracer is explicitly provided.
-        """
-        # Composition-based tracing (replaces TracingMixin)
+        """Initialize the consistency verifier with source and target event stores."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._source = source_store
@@ -137,23 +58,10 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
         sample_percentage: float = 100.0,
     ) -> VerificationReport:
         """
-        Verify consistency of all data for a tenant.
-
-        Compares events between source and target stores to ensure
-        all data has been correctly migrated.
-
-        Args:
-            tenant_id: The tenant UUID to verify.
-            level: Verification thoroughness level.
-            sample_percentage: Percentage of events to sample (1-100).
-                Use 100 for complete verification, lower values for
-                faster verification of large datasets.
-
-        Returns:
-            VerificationReport with detailed results.
+        Verify consistency of all data for a tenant between source and target stores.
 
         Raises:
-            ValueError: If sample_percentage is invalid.
+            ValueError: If sample_percentage is not in (0, 100].
             ConsistencyError: If verification fails due to store errors.
         """
         if not 0 < sample_percentage <= 100:

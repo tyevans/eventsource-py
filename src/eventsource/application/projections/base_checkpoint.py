@@ -1,6 +1,4 @@
-"""
-Checkpoint tracking projection base implementation with retry and DLQ support.
-"""
+"""Checkpoint tracking projection base implementation with retry and DLQ support."""
 
 from __future__ import annotations
 
@@ -42,10 +40,8 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
     """
     Base class for projections with automatic checkpoint tracking, retry, and DLQ.
 
-    Subclasses must implement:
-    - subscribed_to(): List of event types to handle
-    - _process_event(): Actual projection logic
-    - _truncate_read_models(): Optional table truncation for reset
+    Subclasses must implement ``subscribed_to()`` and ``_process_event()``,
+    and may override ``_truncate_read_models()`` for reset.
     """
 
     def __init__(
@@ -56,16 +52,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
     ) -> None:
-        """
-        Initialize the checkpoint-tracking projection.
-
-        Args:
-            checkpoint_repo: Repository for checkpoint storage (None disables tracking).
-            dlq_repo: Repository for dead letter queue (None disables DLQ capture).
-            retry_policy: Policy for retry behavior (defaults to ExponentialBackoffRetryPolicy).
-            tracer: Optional custom Tracer instance.
-            enable_tracing: Emit traces if True and OpenTelemetry is available.
-        """
+        """Initialize the checkpoint-tracking projection."""
         self._projection_name = self.__class__.__name__
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
@@ -128,13 +115,10 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                     },
                 )
 
-                # Check if we should retry
                 if not self._retry_policy.should_retry(attempt, e):
-                    # Add retry count to span before final failure
                     if span is not None:
                         span.set_attribute(ATTR_RETRY_COUNT, attempt + 1)
 
-                    # Send to DLQ
                     sent_to_dlq = False
                     if self._dlq_repo is not None:
                         sent_to_dlq = await send_to_dlq(
@@ -166,10 +150,8 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                             attempt + 1,
                             extra=log_extra,
                         )
-                    # Re-raise the exception after exhausting all retries
                     raise
                 else:
-                    # Get backoff from policy
                     backoff = self._retry_policy.get_backoff(attempt)
                     logger.info(
                         "Retrying in %.1f seconds...",
@@ -183,15 +165,9 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                     await asyncio.sleep(backoff)
                     continue
 
-            # The event applied cleanly. Checkpointing happens here, outside
-            # the retry loop, because a checkpoint-store failure is a liveness
-            # problem, not a poison event: retrying it would re-run
-            # `_process_event` (re-applying the read-model mutation), and
-            # exhausting the retries would DLQ an event the projection has
-            # already applied successfully -- so an operator replaying the DLQ
-            # would apply it yet again. `docs/architecture.md` has always
-            # described the intended ordering; the code had it in the wrong
-            # block.
+            # Checkpointing happens outside the retry loop because a checkpoint-store
+            # failure is a liveness problem, not a poison event: retrying it would
+            # re-run _process_event and exhausting retries would DLQ an already-applied event.
             await self._record_checkpoint_after_success(event, span)
             logger.debug(
                 "Projection %s processed event %s (type: %s)",
@@ -207,12 +183,7 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
             return
 
     async def _record_checkpoint_after_success(self, event: DomainEvent, span: Span | None) -> None:
-        """Record the checkpoint for an event the projection already applied.
-
-        Failure is re-raised so the caller (a subscription runner) sees a
-        stalled projection rather than silent progress loss, but it is never
-        routed to the DLQ and never re-runs the handler.
-        """
+        """Record the checkpoint for an event the projection already applied."""
         checkpoint_repo = self._checkpoint_repo
         if checkpoint_repo is None:
             if span is not None:
@@ -247,37 +218,17 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
 
     @abstractmethod
     async def _process_event(self, event: DomainEvent) -> None:
-        """
-        Process event in projection-specific way.
-
-        This method must be implemented by subclasses to define how
-        the projection updates its read models based on events.
-
-        Args:
-            event: The domain event to process
-        """
+        """Process event in projection-specific way (implemented by subclasses)."""
         pass
 
     async def get_checkpoint(self) -> str | None:
-        """
-        Get last processed event ID.
-
-        Returns:
-            Last processed event ID as string, or None if no checkpoint exists
-            (including when checkpoint tracking is disabled)
-        """
+        """Get last processed event ID, or None if no checkpoint exists or tracking disabled."""
         if self._checkpoint_repo is None:
             return None
         return await read_checkpoint(self._checkpoint_repo, self._projection_name, self._tracer)
 
     async def get_lag_metrics(self) -> dict[str, Any] | None:
-        """
-        Get projection lag metrics.
-
-        Returns:
-            Dictionary with lag information, or None if no checkpoint exists
-            (including when checkpoint tracking is disabled)
-        """
+        """Get projection lag metrics, or None if no checkpoint exists or tracking disabled."""
         if self._checkpoint_repo is None:
             return None
         return await lag_metrics_dict(
@@ -288,31 +239,18 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         )
 
     async def reset(self) -> None:
-        """
-        Reset the projection by clearing checkpoint and read model data.
-
-        Calls _truncate_read_models() which subclasses may override.
-        """
+        """Reset the projection by clearing checkpoint and read model data."""
         logger.warning(
             "Resetting projection %s",
             self._projection_name,
             extra={"projection": self._projection_name},
         )
-
-        # Reset checkpoint
         if self._checkpoint_repo is not None:
             await reset_checkpoint(self._checkpoint_repo, self._projection_name, self._tracer)
-
-        # Subclass truncates its read model tables
         await self._truncate_read_models()
 
     async def _truncate_read_models(self) -> None:
-        """
-        Truncate read model tables for this projection.
-
-        Override in subclasses to specify which tables to clear.
-        Default implementation does nothing.
-        """
+        """Truncate read model tables for this projection (default no-op)."""
         pass
 
     @property

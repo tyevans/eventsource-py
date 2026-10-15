@@ -1,12 +1,4 @@
-"""Kafka event bus implementation using aiokafka.
-
-This module provides a distributed event bus implementation using Apache Kafka
-for high-throughput event distribution across multiple processes and servers.
-
-Governed by:
-- ADR-0002 (<500 lines per module)
-- ADR-0007 (Hexagonal Architecture)
-"""
+"""Kafka event bus implementation using aiokafka (ADR-0002, ADR-0007)."""
 
 from __future__ import annotations
 
@@ -44,7 +36,6 @@ from eventsource.ports.exceptions import EventBusConnectionError
 if TYPE_CHECKING:
     from eventsource.domain.event_registry import EventRegistry
 
-# Optional aiokafka import - fail gracefully if not installed
 try:
     from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
     from aiokafka.errors import KafkaError
@@ -67,11 +58,7 @@ _meter: Any = None
 
 
 def _get_meter() -> Any:
-    """Get or create the OpenTelemetry meter.
-
-    Returns a meter instance for creating metric instruments. The meter is
-    lazily initialized on first use and cached for subsequent calls.
-    """
+    """Get or create the cached OpenTelemetry meter for Kafka event bus metrics."""
     global _meter
     if not OTEL_AVAILABLE:
         return None
@@ -87,12 +74,7 @@ class KafkaEventBus(
     KafkaBusMetricsMixin,
     BaseEventBus,
 ):
-    """Kafka implementation of the EventBus interface.
-
-    Provides a distributed event bus using Apache Kafka for high-throughput
-    event distribution. Supports consumer groups, dead letter queues, and
-    optional OpenTelemetry tracing.
-    """
+    """Kafka implementation of the EventBus interface with consumer groups, DLQ, and tracing."""
 
     def __init__(
         self,
@@ -103,11 +85,7 @@ class KafkaEventBus(
         tracer: Tracer | None = None,
         max_background_tasks: int | None = DEFAULT_MAX_BACKGROUND_TASKS,
     ) -> None:
-        """Initialize the Kafka event bus.
-
-        Raises:
-            KafkaNotAvailableError: If aiokafka is not installed.
-        """
+        """Initialize the Kafka event bus (raises KafkaNotAvailableError if aiokafka missing)."""
         if not KAFKA_AVAILABLE:
             raise KafkaNotAvailableError()
 
@@ -118,40 +96,30 @@ class KafkaEventBus(
 
         self._config = config or KafkaEventBusConfig()
         self._serializer = serializer or EventSerializer()
-
-        # Initialize tracing via composition (replaces TracingMixin)
         self._tracer = tracer or create_tracer(__name__, self._config.enable_tracing)
         self._enable_tracing = self._tracer.enabled
 
-        # Shared retry policy (keeps Kafka and RabbitMQ backoff/jitter in sync)
         self._retry_policy = RetryPolicy(
             base_delay=self._config.retry_base_delay,
             max_delay=self._config.retry_max_delay,
             jitter=self._config.retry_jitter,
             max_retries=self._config.max_retries,
         )
-
-        # Statistics
         self._stats = KafkaEventBusStats()
 
-        # Initialize metrics (lazy initialization like tracing)
         metrics: KafkaEventBusMetrics | None = None
         self._meter: Any = None
         if self._config.enable_metrics:
             self._meter = _get_meter()
             if self._meter:
                 metrics = KafkaEventBusMetrics(self._meter)
-
         self._metrics_instance = metrics
 
-        # Connection lifecycle
         self._connection_manager = KafkaConnectionManager(
             config=self._config,
             stats=self._stats,
             metrics=metrics,
         )
-
-        # Split-phase send/ack publish mechanics
         self._publisher = KafkaPublisher(
             config=self._config,
             connection=self._connection_manager,
@@ -162,14 +130,10 @@ class KafkaEventBus(
             enable_tracing=self._enable_tracing,
         )
 
-        # Track if gauges are registered
         self._connection_gauge_registered = False
         self._lag_gauge_registered = False
-
-        # Shutdown coordination
         self._shutdown_event = asyncio.Event()
 
-        # Consumer loop
         self._consumer_loop = KafkaConsumerLoop(
             config=self._config,
             connection=self._connection_manager,
@@ -184,8 +148,6 @@ class KafkaEventBus(
             shutdown_event=self._shutdown_event,
             on_start=self._register_consumer_lag_gauge,
         )
-
-        # DLQ administration
         self._dlq_admin = KafkaDLQAdmin(
             config=self._config,
             connection=self._connection_manager,
@@ -193,14 +155,7 @@ class KafkaEventBus(
             stats=self._stats,
         )
 
-        logger.debug(
-            "KafkaEventBus initialized",
-            extra=self._config.get_sanitized_config(),
-        )
-
-    # =========================================================================
-    # Properties
-    # =========================================================================
+        logger.debug("KafkaEventBus initialized", extra=self._config.get_sanitized_config())
 
     @property
     def is_connected(self) -> bool:
@@ -222,14 +177,9 @@ class KafkaEventBus(
         """Get current statistics."""
         return self._stats
 
-    # =========================================================================
-    # Connection Lifecycle Methods
-    # =========================================================================
-
     async def connect(self) -> None:
         """Connect to Kafka cluster."""
         await self._connection_manager.connect()
-
         if self._connection_manager.is_connected:
             self._wire_metrics()
 
@@ -238,10 +188,8 @@ class KafkaEventBus(
         if not self._connection_manager.is_connected:
             logger.debug("KafkaEventBus not connected, nothing to disconnect")
             return
-
         if self._consumer_loop.is_consuming:
             await self.stop_consuming()
-
         await self._connection_manager.disconnect()
 
     async def __aenter__(self) -> KafkaEventBus:
@@ -261,9 +209,7 @@ class KafkaEventBus(
     async def shutdown(self, timeout: float | None = None) -> None:
         """Gracefully shutdown the event bus."""
         timeout = timeout or self._config.shutdown_timeout
-
         logger.info("Shutting down KafkaEventBus", extra={"timeout": timeout})
-
         self._shutdown_event.set()
 
         consume_task = self._consumer_loop._consume_task
@@ -278,16 +224,11 @@ class KafkaEventBus(
 
         await self._drain_background(timeout or self._config.shutdown_timeout)
         await self.disconnect()
-
         logger.info("KafkaEventBus shutdown complete")
 
     def _get_security_config(self) -> dict[str, Any]:
         """Get security configuration for additional consumers."""
         return self._connection_manager.get_security_config()
-
-    # =========================================================================
-    # Helper Methods
-    # =========================================================================
 
     def get_stats_dict(self) -> dict[str, Any]:
         """Get statistics as a dictionary."""
