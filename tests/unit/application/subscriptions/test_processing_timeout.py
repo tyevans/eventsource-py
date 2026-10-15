@@ -1,8 +1,4 @@
-"""Unit tests for `SubscriptionConfig.processing_timeout` enforcement.
-
-Verifies `processing_timeout` bounds all three handler dispatch sites:
-`CatchUpRunner`'s `handle_batch()` and `handle()`, and `LiveRunner`'s `handle()`.
-"""
+"""Unit tests for `SubscriptionConfig.processing_timeout` enforcement."""
 
 import asyncio
 from uuid import uuid4
@@ -30,15 +26,11 @@ SHORT_TIMEOUT = 0.05
 
 @register_event(registry=_REGISTRY)
 class TimeoutTestEvent(DomainEvent):
-    """Simple test event for processing-timeout tests."""
-
     aggregate_type: str = "TimeoutAggregate"
     data: str = "test"
 
 
 class HangingSubscriber:
-    """Hangs in `handle()` far longer than any configured timeout."""
-
     def __init__(self) -> None:
         self.handle_started = asyncio.Event()
         self.completed_normally = False
@@ -53,8 +45,6 @@ class HangingSubscriber:
 
 
 class HangingBatchSubscriber:
-    """Hangs in `handle_batch()`, the other catch-up dispatch site."""
-
     def __init__(self) -> None:
         self.batch_started = asyncio.Event()
         self.completed_normally = False
@@ -73,8 +63,6 @@ class HangingBatchSubscriber:
 
 
 class SlowButFineSubscriber:
-    """Takes real time, but finishes inside the configured budget."""
-
     def __init__(self, delay: float) -> None:
         self.delay = delay
         self.handled: list[DomainEvent] = []
@@ -117,7 +105,6 @@ async def add_events(store: InMemoryEventStore, count: int) -> list[DomainEvent]
 
 
 async def wake(bus: InMemoryEventBus) -> None:
-    """Publish a bus notification to wake a live runner into draining the feed."""
     await bus.publish([TimeoutTestEvent(aggregate_id=uuid4(), data="__wake__")])
 
 
@@ -127,21 +114,30 @@ async def current(store: InMemoryEventStore) -> Position:
     return position
 
 
+def _make_catchup_sub(
+    name: str,
+    subscriber: object,
+    *,
+    timeout: float = SHORT_TIMEOUT,
+    continue_on_error: bool = True,
+) -> Subscription:
+    config = SubscriptionConfig(
+        batch_size=10,
+        processing_timeout=timeout,
+        continue_on_error=continue_on_error,
+        checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
+    )
+    return Subscription(name=name, config=config, subscriber=subscriber)  # type: ignore[arg-type]
+
+
 class TestCatchUpRunnerTimeout:
     """Both catch-up dispatch sites are bounded."""
 
     async def test_hanging_handle_batch_times_out(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """A `handle_batch()` that hangs is abandoned at processing_timeout."""
         subscriber = HangingBatchSubscriber()
-        config = SubscriptionConfig(
-            batch_size=10,
-            processing_timeout=SHORT_TIMEOUT,
-            continue_on_error=True,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-        )
-        subscription = Subscription(name="timeout-sub", config=config, subscriber=subscriber)
+        subscription = _make_catchup_sub("timeout-sub", subscriber)
         await add_events(event_store, 3)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
@@ -154,15 +150,8 @@ class TestCatchUpRunnerTimeout:
     async def test_hanging_handle_times_out(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """The per-event `handle()` path is bounded too."""
         subscriber = HangingSubscriber()
-        config = SubscriptionConfig(
-            batch_size=10,
-            processing_timeout=SHORT_TIMEOUT,
-            continue_on_error=True,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-        )
-        subscription = Subscription(name="timeout-sub", config=config, subscriber=subscriber)
+        subscription = _make_catchup_sub("timeout-sub", subscriber)
         await add_events(event_store, 2)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
@@ -175,34 +164,20 @@ class TestCatchUpRunnerTimeout:
     async def test_handler_inside_budget_is_untouched(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """A handler faster than the budget still runs to completion."""
         subscriber = SlowButFineSubscriber(delay=0.01)
-        config = SubscriptionConfig(
-            batch_size=10,
-            processing_timeout=5.0,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-        )
-        subscription = Subscription(name="ok-sub", config=config, subscriber=subscriber)
+        subscription = _make_catchup_sub("ok-sub", subscriber, timeout=5.0)
         await add_events(event_store, 3)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
         result = await runner.run_until_position(await current(event_store))
-
         assert result.completed
         assert len(subscriber.handled) == 3
 
     async def test_timeout_is_a_handler_failure_and_stops_when_told(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """With continue_on_error=False a timed-out handler stops the subscription."""
         subscriber = HangingSubscriber()
-        config = SubscriptionConfig(
-            batch_size=10,
-            processing_timeout=SHORT_TIMEOUT,
-            continue_on_error=False,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-        )
-        subscription = Subscription(name="strict-sub", config=config, subscriber=subscriber)
+        subscription = _make_catchup_sub("strict-sub", subscriber, continue_on_error=False)
         await add_events(event_store, 2)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
@@ -215,15 +190,8 @@ class TestCatchUpRunnerTimeout:
     async def test_timeout_does_not_checkpoint_past_the_hung_event(
         self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        """continue_on_error=False must not advance the checkpoint past a hung event."""
         subscriber = HangingSubscriber()
-        config = SubscriptionConfig(
-            batch_size=10,
-            processing_timeout=SHORT_TIMEOUT,
-            continue_on_error=False,
-            checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
-        )
-        subscription = Subscription(name="nocheckpoint-sub", config=config, subscriber=subscriber)
+        subscription = _make_catchup_sub("nocheckpoint-sub", subscriber, continue_on_error=False)
         await add_events(event_store, 2)
         runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
 
@@ -243,7 +211,6 @@ class TestLiveRunnerTimeout:
         event_store: InMemoryEventStore,
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
-        """A hung live handler is abandoned at processing_timeout and `stop()` completes."""
         subscriber = HangingSubscriber()
         config = SubscriptionConfig(
             processing_timeout=SHORT_TIMEOUT,

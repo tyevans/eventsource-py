@@ -30,6 +30,34 @@ from ._fixtures import (
 )
 
 
+async def _prepare_cutover(
+    source_store: FailureInjectableStore,
+    target_store: FailureInjectableStore,
+    routing_repo: InMemoryRoutingRepository,
+    router: TenantStoreRouter,
+    tenant_id: UUID,
+    lock_manager: MockLockManager,
+    config: MigrationConfig | None = None,
+) -> tuple[UUID, SyncLagTracker, CutoverManager]:
+    migration_id = uuid4()
+    await routing_repo.set_migration_state(tenant_id, TenantMigrationState.DUAL_WRITE, migration_id)
+    router.register_store("dedicated", target_store)
+    lag_tracker = SyncLagTracker(
+        source_store=source_store,
+        target_store=target_store,
+        tenant_id=tenant_id,
+        config=config,
+        enable_tracing=False,
+    )
+    cutover_manager = CutoverManager(
+        lock_manager=lock_manager,
+        router=router,
+        routing_repo=routing_repo,
+        enable_tracing=False,
+    )
+    return migration_id, lag_tracker, cutover_manager
+
+
 class TestLockContentionScenarios:
     """Tests for lock contention during migration operations."""
 
@@ -42,28 +70,14 @@ class TestLockContentionScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
-        """Test cutover fails when lock cannot be acquired."""
-        migration_id = uuid4()
-        lock_manager = MockLockManager(should_fail=True)
-
-        await routing_repo.set_migration_state(
-            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
+            source_store,
+            target_store,
+            routing_repo,
+            router,
+            tenant_id,
+            MockLockManager(should_fail=True),
         )
-        router.register_store("dedicated", target_store)
-
-        lag_tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
-        )
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
-        )
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -71,7 +85,6 @@ class TestLockContentionScenarios:
             target_store_id="dedicated",
             timeout_ms=100.0,
         )
-
         assert result.success is False
         assert "lock" in result.error_message.lower()
 
@@ -84,26 +97,13 @@ class TestLockContentionScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
-        """Test that concurrent cutover attempts are properly serialized."""
-        migration_id = uuid4()
-        lock_manager = MockLockManager(contention_delay=0.1)
-
-        await routing_repo.set_migration_state(
-            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
-        )
-        router.register_store("dedicated", target_store)
-
-        lag_tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
-        )
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
+        migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
+            source_store,
+            target_store,
+            routing_repo,
+            router,
+            tenant_id,
+            MockLockManager(contention_delay=0.1),
         )
 
         async def attempt_cutover(attempt_id: int):
@@ -124,7 +124,6 @@ class TestLockContentionScenarios:
             attempt_cutover(3),
             return_exceptions=True,
         )
-
         success_count = sum(1 for r in results if hasattr(r, "success") and r.success)
         assert success_count <= 1
 
@@ -137,39 +136,27 @@ class TestLockContentionScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
-        """Test that lock is released even when cutover fails."""
-        migration_id = uuid4()
         lock_manager = MockLockManager()
-
-        await routing_repo.set_migration_state(
-            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        config = MigrationConfig(cutover_max_lag_events=10)
+        migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
+            source_store,
+            target_store,
+            routing_repo,
+            router,
+            tenant_id,
+            lock_manager,
+            config=config,
         )
-        router.register_store("dedicated", target_store)
         await create_test_events(source_store, tenant_id, count=200)
-
-        lag_tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            config=MigrationConfig(cutover_max_lag_events=10),
-            enable_tracing=False,
-        )
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
-        )
 
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
             lag_tracker=lag_tracker,
             target_store_id="dedicated",
-            config=MigrationConfig(cutover_max_lag_events=10),
+            config=config,
             timeout_ms=500.0,
         )
-
         assert result.success is False
         assert not lock_manager.is_locked(f"migration:cutover:{tenant_id}")
 
@@ -186,28 +173,14 @@ class TestTimeoutScenarios:
         router: TenantStoreRouter,
         tenant_id: UUID,
     ) -> None:
-        """Test that cutover timeout triggers automatic rollback."""
-        migration_id = uuid4()
-        lock_manager = MockLockManager(contention_delay=1.0)
-
-        await routing_repo.set_migration_state(
-            tenant_id, TenantMigrationState.DUAL_WRITE, migration_id
+        migration_id, lag_tracker, cutover_manager = await _prepare_cutover(
+            source_store,
+            target_store,
+            routing_repo,
+            router,
+            tenant_id,
+            MockLockManager(contention_delay=1.0),
         )
-        router.register_store("dedicated", target_store)
-
-        lag_tracker = SyncLagTracker(
-            source_store=source_store,
-            target_store=target_store,
-            tenant_id=tenant_id,
-            enable_tracing=False,
-        )
-        cutover_manager = CutoverManager(
-            lock_manager=lock_manager,
-            router=router,
-            routing_repo=routing_repo,
-            enable_tracing=False,
-        )
-
         result = await cutover_manager.execute_cutover(
             migration_id=migration_id,
             tenant_id=tenant_id,
@@ -215,7 +188,6 @@ class TestTimeoutScenarios:
             target_store_id="dedicated",
             timeout_ms=100.0,
         )
-
         if not result.success:
             assert (
                 result.rolled_back
@@ -229,29 +201,23 @@ class TestTimeoutScenarios:
         write_pause_manager: WritePauseManager,
         tenant_id: UUID,
     ) -> None:
-        """Test that write pause timeout raises appropriate error."""
         await write_pause_manager.pause_writes(tenant_id)
-
         with pytest.raises(WritePausedError) as exc_info:
             await write_pause_manager.wait_if_paused(tenant_id, timeout=0.05)
-
         assert exc_info.value.tenant_id == tenant_id
         assert exc_info.value.timeout == 0.05
 
     @pytest.mark.asyncio
     async def test_slow_target_causes_lag_accumulation(self, tenant_id: UUID) -> None:
-        """Test that slow target causes sync lag to accumulate."""
         source_store = InMemoryEventStore(event_registry=_REGISTRY)
         target_store = FailureInjectableStore()
         target_store.set_failure(FailureConfig(mode=FailureMode.DELAY_APPEND, delay_seconds=0.05))
-
         interceptor = DualWriteInterceptor(
             source_store=source_store,
             target_store=target_store,
             tenant_id=tenant_id,
             enable_tracing=False,
         )
-
         for i in range(10):
             aggregate_id = uuid4()
             event = ChaosTestEvent(aggregate_id=aggregate_id, tenant_id=tenant_id, sequence=i)
@@ -265,6 +231,5 @@ class TestTimeoutScenarios:
             [1 async for env in source_store.read_all() if env.event.tenant_id == tenant_id]
         )
         target_count = await count_tenant_events(target_store, tenant_id)
-
         assert source_count == 10
         assert target_count == 10
