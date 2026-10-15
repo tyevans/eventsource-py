@@ -7,6 +7,8 @@ Provides filtering, sorting, and pagination logic for in-memory read models.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from typing import Any
 from uuid import UUID
 
 from eventsource.adapters._common import check_filters, matches_filter
@@ -18,6 +20,16 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
+
+
+def _resolve_query(query: Query | None, eq_filters: dict[str, Any]) -> Query:
+    base = query if query is not None else Query()
+    if not eq_filters:
+        return base
+    return replace(
+        base,
+        filters=[*base.filters, *(Filter.eq(k, v) for k, v in eq_filters.items())],
+    )
 
 
 class InMemoryReadModelQueryMixin[TModel: ReadModel]:
@@ -34,37 +46,12 @@ class InMemoryReadModelQueryMixin[TModel: ReadModel]:
         return model.model_copy(deep=True)
 
     def _apply_filter(self, model: TModel, filter_: Filter) -> bool:
-        """
-        Apply a single filter to a model.
-
-        Delegates to the shared dispatch in `adapters/_common` so this
-        adapter cannot drift from the SQL ones -- see
-        `ReadModelRepository.find` for the semantics.
-
-        Args:
-            model: The model to check
-            filter_: The filter condition
-
-        Returns:
-            True if the model matches the filter
-
-        Raises:
-            ValueError: On an unknown field name or an unknown operator.
-        """
+        """Apply a single filter to a model via shared dispatch in `adapters/_common`."""
         return matches_filter(model, filter_)
 
-    async def find(self, query: Query | None = None) -> list[TModel]:
-        """
-        Find read models matching a query.
-
-        Args:
-            query: Query with filters, ordering, pagination
-
-        Returns:
-            List of matching read models
-        """
-        if query is None:
-            query = Query()
+    async def find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]:
+        """Find read models matching a query and optional equality keyword filters."""
+        query = _resolve_query(query, eq_filters)
 
         with self._tracer.span(
             "eventsource.readmodel.find",
@@ -75,20 +62,14 @@ class InMemoryReadModelQueryMixin[TModel: ReadModel]:
             },
         ):
             async with self._lock:
-                # Start with all models
                 results = list(self._models.values())
-
-                # Filter out soft-deleted unless requested
                 if not query.include_deleted:
                     results = [m for m in results if not m.is_deleted()]
 
-                # Apply filters. Validated first: an empty candidate set
-                # must not hide a typo'd field or a bad operator.
                 check_filters(self._model_class, query.filters)
                 for filter_ in query.filters:
                     results = [m for m in results if self._apply_filter(m, filter_)]
 
-                # Apply ordering
                 if query.order_by:
                     reverse = query.order_direction == "desc"
                     results.sort(
@@ -96,7 +77,6 @@ class InMemoryReadModelQueryMixin[TModel: ReadModel]:
                         reverse=reverse,
                     )
 
-                # Apply pagination
                 if query.offset:
                     results = results[query.offset :]
                 if query.limit is not None:
@@ -104,18 +84,15 @@ class InMemoryReadModelQueryMixin[TModel: ReadModel]:
 
                 return [self._detach(m) for m in results]
 
-    async def count(self, query: Query | None = None) -> int:
-        """
-        Count read models matching a query.
+    async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None:
+        """Find the first read model matching `query` and `**eq_filters`, or None."""
+        effective = replace(_resolve_query(query, eq_filters), limit=1)
+        results = await self.find(effective)
+        return results[0] if results else None
 
-        Args:
-            query: Query with filters
-
-        Returns:
-            Number of matching read models
-        """
-        if query is None:
-            query = Query()
+    async def count(self, query: Query | None = None, **eq_filters: Any) -> int:
+        """Count read models matching a query and optional equality keyword filters."""
+        query = _resolve_query(query, eq_filters)
 
         with self._tracer.span(
             "eventsource.readmodel.count",
@@ -126,13 +103,9 @@ class InMemoryReadModelQueryMixin[TModel: ReadModel]:
         ):
             async with self._lock:
                 results = list(self._models.values())
-
-                # Filter out soft-deleted unless requested
                 if not query.include_deleted:
                     results = [m for m in results if not m.is_deleted()]
 
-                # Apply filters. Validated first: an empty candidate set
-                # must not hide a typo'd field or a bad operator.
                 check_filters(self._model_class, query.filters)
                 for filter_ in query.filters:
                     results = [m for m in results if self._apply_filter(m, filter_)]

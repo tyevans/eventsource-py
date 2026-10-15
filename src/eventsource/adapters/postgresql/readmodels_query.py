@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import text
@@ -19,6 +20,13 @@ from eventsource.observability.attributes import (
 )
 from eventsource.ports.readmodels.model import ReadModel
 from eventsource.ports.readmodels.query import Filter, Query
+
+
+def _resolve_query(query: Query | None, eq_filters: dict[str, Any]) -> Query:
+    base = query if query is not None else Query()
+    if not eq_filters:
+        return base
+    return replace(base, filters=[*base.filters, *(Filter.eq(k, v) for k, v in eq_filters.items())])
 
 
 class PostgreSQLReadModelQueryMixin[TModel: ReadModel]:
@@ -44,117 +52,88 @@ class PostgreSQLReadModelQueryMixin[TModel: ReadModel]:
             params[name] = value
             return f":{name}"
 
-        clause = filter_to_sql(self._model_class, filter_, POSTGRESQL, bind)
-        return clause, params
+        return filter_to_sql(self._model_class, filter_, POSTGRESQL, bind), params
 
-    def _build_select_query(self, query: Query) -> tuple[str, dict[str, Any]]:
-        """Build SELECT SQL and parameter dict from Query."""
-        parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
+    def _build_where_clause(
+        self, query: Query, *, base_clauses: list[str]
+    ) -> tuple[str, dict[str, Any]]:
+        where_clauses = list(base_clauses)
         params: dict[str, Any] = {}
-
-        where_clauses = []
-        if not query.include_deleted:
-            where_clauses.append("deleted_at IS NULL")
-
         for i, filter_ in enumerate(query.filters):
             clause, filter_params = self._filter_to_sql(filter_, i)
             where_clauses.append(clause)
             params.update(filter_params)
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        return where_sql, params
 
-        if where_clauses:
-            parts.append("WHERE " + " AND ".join(where_clauses))
-
+    def _append_order_limit_offset(self, parts: list[str], query: Query) -> None:
         if query.order_by:
-            direction = query.order_direction.upper()
-            parts.append(f"ORDER BY {query.order_by} {direction}")
-
+            parts.append(f"ORDER BY {query.order_by} {query.order_direction.upper()}")
         if query.limit is not None:
             parts.append(f"LIMIT {query.limit}")
         if query.offset:
             parts.append(f"OFFSET {query.offset}")
 
+    def _build_select_query(self, query: Query) -> tuple[str, dict[str, Any]]:
+        """Build SELECT SQL and parameter dict from Query."""
+        parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
+        base = [] if query.include_deleted else ["deleted_at IS NULL"]
+        where_sql, params = self._build_where_clause(query, base_clauses=base)
+        if where_sql:
+            parts.append(where_sql)
+        self._append_order_limit_offset(parts, query)
         return " ".join(parts), params
 
     def _build_count_query(self, query: Query) -> tuple[str, dict[str, Any]]:
         """Build COUNT SQL and parameter dict from Query."""
         parts = [f"SELECT COUNT(*) FROM {self._table_name}"]  # nosec B608
-        params: dict[str, Any] = {}
-
-        where_clauses = []
-        if not query.include_deleted:
-            where_clauses.append("deleted_at IS NULL")
-
-        for i, filter_ in enumerate(query.filters):
-            clause, filter_params = self._filter_to_sql(filter_, i)
-            where_clauses.append(clause)
-            params.update(filter_params)
-
-        if where_clauses:
-            parts.append("WHERE " + " AND ".join(where_clauses))
-
+        base = [] if query.include_deleted else ["deleted_at IS NULL"]
+        where_sql, params = self._build_where_clause(query, base_clauses=base)
+        if where_sql:
+            parts.append(where_sql)
         return " ".join(parts), params
 
     def _build_select_deleted_query(self, query: Query) -> tuple[str, dict[str, Any]]:
         """Build SELECT SQL from Query for soft-deleted records only."""
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
-        params: dict[str, Any] = {}
-
-        where_clauses = ["deleted_at IS NOT NULL"]
-        for i, filter_ in enumerate(query.filters):
-            clause, filter_params = self._filter_to_sql(filter_, i)
-            where_clauses.append(clause)
-            params.update(filter_params)
-
-        parts.append("WHERE " + " AND ".join(where_clauses))
-
-        if query.order_by:
-            direction = query.order_direction.upper()
-            parts.append(f"ORDER BY {query.order_by} {direction}")
-
-        if query.limit is not None:
-            parts.append(f"LIMIT {query.limit}")
-        if query.offset:
-            parts.append(f"OFFSET {query.offset}")
-
+        where_sql, params = self._build_where_clause(query, base_clauses=["deleted_at IS NOT NULL"])
+        parts.append(where_sql)
+        self._append_order_limit_offset(parts, query)
         return " ".join(parts), params
 
-    async def find(self, query: Query | None = None) -> list[TModel]:
-        """Find read models matching a query (excludes soft-deleted unless include_deleted=True)."""
-        if query is None:
-            query = Query()
-
-        with self._tracer.span(
-            "eventsource.readmodel.find",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_QUERY_FILTER_COUNT: len(query.filters),
-                ATTR_QUERY_LIMIT: query.limit if query.limit is not None else -1,
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "SELECT",
-            },
-        ):
+    async def find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]:
+        """Find read models matching a query and optional equality keyword filters."""
+        query = _resolve_query(query, eq_filters)
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_QUERY_FILTER_COUNT: len(query.filters),
+            ATTR_QUERY_LIMIT: query.limit if query.limit is not None else -1,
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "SELECT",
+        }
+        with self._tracer.span("eventsource.readmodel.find", attrs):
             sql, params = self._build_select_query(query)
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(text(sql), params)
-                rows = result.fetchall()
+                rows = (await conn.execute(text(sql), params)).fetchall()
             return [self._row_to_model(row) for row in rows]
 
-    async def count(self, query: Query | None = None) -> int:
-        """Count read models matching a query."""
-        if query is None:
-            query = Query()
+    async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None:
+        """Find the first read model matching `query` and `**eq_filters`, or None."""
+        effective = replace(_resolve_query(query, eq_filters), limit=1)
+        results = await self.find(effective)
+        return results[0] if results else None
 
-        with self._tracer.span(
-            "eventsource.readmodel.count",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_QUERY_FILTER_COUNT: len(query.filters),
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "SELECT",
-            },
-        ):
+    async def count(self, query: Query | None = None, **eq_filters: Any) -> int:
+        """Count read models matching a query and optional equality keyword filters."""
+        query = _resolve_query(query, eq_filters)
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_QUERY_FILTER_COUNT: len(query.filters),
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "SELECT",
+        }
+        with self._tracer.span("eventsource.readmodel.count", attrs):
             sql, params = self._build_count_query(query)
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(text(sql), params)
-                row = result.fetchone()
+                row = (await conn.execute(text(sql), params)).fetchone()
             return row[0] if row else 0

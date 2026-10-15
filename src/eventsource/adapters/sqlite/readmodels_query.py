@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -23,6 +24,13 @@ from eventsource.ports.readmodels.query import Filter, Query
 
 if TYPE_CHECKING:
     import aiosqlite
+
+
+def _resolve_query(query: Query | None, eq_filters: dict[str, Any]) -> Query:
+    base = query if query is not None else Query()
+    if not eq_filters:
+        return base
+    return replace(base, filters=[*base.filters, *(Filter.eq(k, v) for k, v in eq_filters.items())])
 
 
 class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
@@ -46,35 +54,32 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             data[field_name] = value
         return self._model_class.model_validate(data)
 
-    async def get_many(self, ids: list[UUID]) -> list[TModel]:
-        """Get multiple read models by their IDs (missing IDs are ignored)."""
-        if not ids:
-            return []
-        attrs = {
+    def _span_attrs(self, **extra: Any) -> dict[str, Any]:
+        return {
             ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_BATCH_SIZE: len(ids),
             ATTR_DB_SYSTEM: "sqlite",
             ATTR_DB_OPERATION: "SELECT",
+            **extra,
         }
+
+    async def get_many(self, ids: Iterable[UUID]) -> list[TModel]:
+        """Get multiple read models by their IDs (missing IDs are ignored)."""
+        id_list = list(ids)
+        if not id_list:
+            return []
+        attrs = self._span_attrs(**{ATTR_BATCH_SIZE: len(id_list)})
         with self._tracer.span("eventsource.readmodel.get_many", attrs):
-            placeholders = ",".join("?" * len(ids))
-            fields = ", ".join(self._field_names)
+            placeholders, fields = ",".join("?" * len(id_list)), ", ".join(self._field_names)
             query = (
                 f"SELECT {fields} FROM {self._table_name} "  # nosec B608 - trusted table_name
                 f"WHERE id IN ({placeholders}) AND deleted_at IS NULL"
             )
-            cursor = await self._connection.execute(query, tuple(str(id_) for id_ in ids))
-            rows = await cursor.fetchall()
-            return [self._row_to_model(row) for row in rows]
+            cursor = await self._connection.execute(query, tuple(str(id_) for id_ in id_list))
+            return [self._row_to_model(row) for row in await cursor.fetchall()]
 
     async def exists(self, id: UUID) -> bool:
         """Check if a read model exists and is not soft-deleted."""
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_READMODEL_ID: str(id),
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "SELECT",
-        }
+        attrs = self._span_attrs(**{ATTR_READMODEL_ID: str(id)})
         with self._tracer.span("eventsource.readmodel.exists", attrs):
             query = (
                 f"SELECT 1 FROM {self._table_name} "  # nosec B608 - trusted table_name
@@ -83,35 +88,30 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             cursor = await self._connection.execute(query, (str(id),))
             return (await cursor.fetchone()) is not None
 
-    async def find(self, query: Query | None = None) -> list[TModel]:
-        """Find read models matching a query (filtering, ordering, pagination)."""
-        query = query or Query()
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_QUERY_FILTER_COUNT: len(query.filters),
-            ATTR_QUERY_LIMIT: query.limit if query.limit is not None else -1,
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "SELECT",
-        }
+    async def find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]:
+        """Find read models matching a query and optional equality keyword filters."""
+        query = _resolve_query(query, eq_filters)
+        limit_val = query.limit if query.limit is not None else -1
+        attrs = self._span_attrs(
+            **{ATTR_QUERY_FILTER_COUNT: len(query.filters), ATTR_QUERY_LIMIT: limit_val}
+        )
         with self._tracer.span("eventsource.readmodel.find", attrs):
             sql, params = self._build_select_query(query)
             cursor = await self._connection.execute(sql, params)
-            rows = await cursor.fetchall()
-            return [self._row_to_model(row) for row in rows]
+            return [self._row_to_model(row) for row in await cursor.fetchall()]
 
-    async def count(self, query: Query | None = None) -> int:
-        """Count read models matching a query."""
-        query = query or Query()
-        attrs = {
-            ATTR_READMODEL_TYPE: self._model_class.__name__,
-            ATTR_QUERY_FILTER_COUNT: len(query.filters),
-            ATTR_DB_SYSTEM: "sqlite",
-            ATTR_DB_OPERATION: "SELECT",
-        }
+    async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None:
+        """Find the first read model matching `query` and `**eq_filters`, or None."""
+        results = await self.find(replace(_resolve_query(query, eq_filters), limit=1))
+        return results[0] if results else None
+
+    async def count(self, query: Query | None = None, **eq_filters: Any) -> int:
+        """Count read models matching a query and optional equality keyword filters."""
+        query = _resolve_query(query, eq_filters)
+        attrs = self._span_attrs(**{ATTR_QUERY_FILTER_COUNT: len(query.filters)})
         with self._tracer.span("eventsource.readmodel.count", attrs):
             sql, params = self._build_count_query(query)
-            cursor = await self._connection.execute(sql, params)
-            row = await cursor.fetchone()
+            row = await (await self._connection.execute(sql, params)).fetchone()
             return int(row[0]) if row else 0
 
     def _build_where_clause(self, query: Query) -> tuple[str, list[Any]]:

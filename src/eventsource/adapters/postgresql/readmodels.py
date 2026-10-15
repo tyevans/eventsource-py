@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import text
@@ -53,111 +53,84 @@ class PostgreSQLReadModelRepository[TModel: ReadModel](
 
     async def get(self, id: UUID) -> TModel | None:
         """Get a read model by ID if found and not soft-deleted."""
-        with self._tracer.span(
-            "eventsource.readmodel.get",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_READMODEL_ID: str(id),
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "SELECT",
-            },
-        ):
-            query = text(f"""
-                SELECT {", ".join(self._field_names)}
-                FROM {self._table_name}
-                WHERE id = :id AND deleted_at IS NULL
-            """)  # nosec B608 - table_name from trusted class
-
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_READMODEL_ID: str(id),
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "SELECT",
+        }
+        with self._tracer.span("eventsource.readmodel.get", attrs):
+            query = text(
+                f"SELECT {', '.join(self._field_names)} FROM {self._table_name} "  # nosec B608
+                "WHERE id = :id AND deleted_at IS NULL"
+            )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, {"id": id})
-                row = result.fetchone()
-
+                row = (await conn.execute(query, {"id": id})).fetchone()
             return None if row is None else self._row_to_model(row)
 
-    async def get_many(self, ids: list[UUID]) -> list[TModel]:
+    async def get_many(self, ids: Iterable[UUID]) -> list[TModel]:
         """Get multiple non-deleted read models by their IDs in a single query."""
-        if not ids:
+        id_list = list(ids)
+        if not id_list:
             return []
-
-        with self._tracer.span(
-            "eventsource.readmodel.get_many",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_BATCH_SIZE: len(ids),
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "SELECT",
-            },
-        ):
-            query = text(f"""
-                SELECT {", ".join(self._field_names)}
-                FROM {self._table_name}
-                WHERE id = ANY(:ids) AND deleted_at IS NULL
-            """)  # nosec B608
-
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_BATCH_SIZE: len(id_list),
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "SELECT",
+        }
+        with self._tracer.span("eventsource.readmodel.get_many", attrs):
+            query = text(
+                f"SELECT {', '.join(self._field_names)} FROM {self._table_name} "  # nosec B608
+                "WHERE id = ANY(:ids) AND deleted_at IS NULL"
+            )
             async with sql_connection(self._conn, write=False) as conn:
-                result = await conn.execute(query, {"ids": ids})
-                rows = result.fetchall()
-
+                rows = (await conn.execute(query, {"ids": id_list})).fetchall()
             return [self._row_to_model(row) for row in rows]
 
     async def delete(self, id: UUID) -> bool:
         """Hard-delete a read model by ID; returns True if a record was deleted."""
-        with self._tracer.span(
-            "eventsource.readmodel.delete",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_READMODEL_ID: str(id),
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "DELETE",
-            },
-        ):
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_READMODEL_ID: str(id),
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "DELETE",
+        }
+        with self._tracer.span("eventsource.readmodel.delete", attrs):
             query = text(f"DELETE FROM {self._table_name} WHERE id = :id")  # nosec B608
-
             async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query, {"id": id})
                 return result.rowcount > 0
 
     async def exists(self, id: UUID) -> bool:
         """Check if a read model exists and is not soft-deleted."""
-        with self._tracer.span(
-            "eventsource.readmodel.exists",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_READMODEL_ID: str(id),
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "SELECT",
-            },
-        ):
-            query = text(f"""
-                SELECT 1 FROM {self._table_name}
-                WHERE id = :id AND deleted_at IS NULL
-                LIMIT 1
-            """)  # nosec B608
-
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_READMODEL_ID: str(id),
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "SELECT",
+        }
+        with self._tracer.span("eventsource.readmodel.exists", attrs):
+            query = text(
+                f"SELECT 1 FROM {self._table_name} "  # nosec B608
+                "WHERE id = :id AND deleted_at IS NULL LIMIT 1"
+            )
             async with sql_connection(self._conn, write=False) as conn:
                 result = await conn.execute(query, {"id": id})
                 return result.fetchone() is not None
 
     async def truncate(self) -> int:
         """Delete all read models (including soft-deleted) and return count deleted."""
-        with self._tracer.span(
-            "eventsource.readmodel.truncate",
-            {
-                ATTR_READMODEL_TYPE: self._model_class.__name__,
-                ATTR_DB_SYSTEM: "postgresql",
-                ATTR_DB_OPERATION: "DELETE",
-            },
-        ):
+        attrs = {
+            ATTR_READMODEL_TYPE: self._model_class.__name__,
+            ATTR_DB_SYSTEM: "postgresql",
+            ATTR_DB_OPERATION: "DELETE",
+        }
+        with self._tracer.span("eventsource.readmodel.truncate", attrs):
             query = text(f"DELETE FROM {self._table_name}")  # nosec B608
-
             async with sql_connection(self._conn, write=True) as conn:
                 result = await conn.execute(query)
                 return result.rowcount
-
-    def _row_to_model(self, row: Any) -> TModel:
-        """Convert a database row to a validated model instance."""
-        data = dict(zip(self._field_names, row, strict=True))
-        return self._model_class.model_validate(data)
 
     @property
     def model_class(self) -> type[TModel]:

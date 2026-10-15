@@ -12,9 +12,7 @@ SQLite-specific adaptations:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.adapters.sqlite.readmodels_mutation import (
@@ -47,29 +45,8 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel](
     """SQLite implementation of ReadModelRepository.
 
     Stores read models in a SQLite table with type conversions for
-    SQLite's limited type system.
-
-    Type Conversions:
-        - UUID -> TEXT (36-char hyphenated format)
-        - datetime -> TEXT (ISO 8601 format)
-        - Decimal -> REAL (may lose precision for large values)
-        - dict/list -> TEXT (JSON serialized)
-
-    Requirements:
-        - SQLite 3.24+ (for UPSERT support)
-        - Table must exist with matching schema
-        - Primary key on id column
-
-    Example:
-        >>> import aiosqlite
-        >>> async with aiosqlite.connect("readmodels.db") as db:
-        ...     repo = SQLiteReadModelRepository(db, OrderSummary)
-        ...     await repo.save(OrderSummary(id=uuid4(), ...))
-
-    Note:
-        - All datetime values are stored in ISO 8601 format (UTC)
-        - Query performance is suitable for small to medium datasets
-        - Consider PostgreSQL for production workloads
+    SQLite's limited type system (UUID -> TEXT, datetime -> ISO 8601 TEXT,
+    Decimal -> REAL, dict/list -> JSON TEXT). Requires SQLite 3.24+ for UPSERT.
     """
 
     def __init__(
@@ -79,14 +56,7 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel](
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
     ) -> None:
-        """Initialize the SQLite repository.
-
-        Args:
-            connection: aiosqlite database connection
-            model_class: The ReadModel subclass this repository will manage
-            tracer: Optional tracer for tracing (if not provided, one will be created)
-            enable_tracing: Whether to enable OpenTelemetry tracing (default True)
-        """
+        """Initialize the SQLite repository for ``model_class``."""
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._connection = connection
@@ -95,14 +65,7 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel](
         self._field_names = model_class.field_names()
 
     async def get(self, id: UUID) -> TModel | None:
-        """Get a read model by ID.
-
-        Args:
-            id: Unique identifier of the read model
-
-        Returns:
-            The read model if found and not soft-deleted, None otherwise
-        """
+        """Get a read model by ID if found and not soft-deleted, else None."""
         with self._tracer.span(
             "eventsource.readmodel.get",
             {
@@ -120,52 +83,11 @@ class SQLiteReadModelRepository[TModel: _BaseReadModel](
 
             cursor = await self._connection.execute(query, (str(id),))
             row = await cursor.fetchone()
-
-            if row is None:
-                return None
-
-            return self._row_to_model(row)
-
-    def _row_to_model(self, row: Sequence[Any]) -> TModel:
-        """Convert a database row to a model instance.
-
-        Handles SQLite type conversions:
-        - TEXT -> UUID for id field
-        - TEXT -> datetime for timestamp fields
-
-        Args:
-            row: Database row with values in field_names order (tuple or aiosqlite.Row)
-
-        Returns:
-            Validated model instance
-        """
-        data: dict[str, Any] = {}
-        for i, field_name in enumerate(self._field_names):
-            value = row[i]
-
-            # Convert TEXT to UUID for id field
-            if field_name == "id" and value is not None:
-                value = UUID(value)
-
-            # Convert TEXT to datetime for timestamp fields
-            if (
-                field_name in ("created_at", "updated_at", "deleted_at")
-                and value is not None
-                and isinstance(value, str)
-            ):
-                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-            data[field_name] = value
-
-        return self._model_class.model_validate(data)
+            return None if row is None else self._row_to_model(row)
 
     @property
     def model_class(self) -> type[TModel]:
-        """Get the model class this repository manages.
-
-        Returns:
-            The ReadModel subclass
-        """
+        """Get the model class this repository manages."""
         return self._model_class
 
     def __repr__(self) -> str:

@@ -7,7 +7,8 @@ read models from projection handlers, abstracting away database-specific details
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 from uuid import UUID
 
 from .model import ReadModel
@@ -33,20 +34,11 @@ class ReadModelRepository(Protocol[TModel]):
     """
 
     async def get(self, id: UUID) -> TModel | None:
-        """
-        Get a read model by ID.
-
-        Returns:
-            The read model if found, None otherwise (including soft-deleted records).
-        """
+        """Get a read model by ID if found and not soft-deleted, else None."""
         ...
 
-    async def get_many(self, ids: list[UUID]) -> list[TModel]:
-        """
-        Get multiple read models by their IDs.
-
-        Missing IDs and soft-deleted records are excluded from results.
-        """
+    async def get_many(self, ids: Iterable[UUID]) -> list[TModel]:
+        """Get multiple read models by their IDs (missing and soft-deleted excluded)."""
         ...
 
     async def save(self, model: TModel) -> None:
@@ -60,43 +52,24 @@ class ReadModelRepository(Protocol[TModel]):
         """
         ...
 
-    async def save_many(self, models: list[TModel]) -> None:
+    async def save_many(self, models: Iterable[TModel]) -> None:
         """Save multiple read models in a batch."""
         ...
 
     async def delete(self, id: UUID) -> bool:
-        """
-        Delete a read model by ID (hard delete).
-
-        Returns:
-            True if a record was deleted, False if the ID was not found
-        """
+        """Delete a read model by ID (hard delete). Returns True if deleted."""
         ...
 
     async def soft_delete(self, id: UUID) -> bool:
-        """
-        Soft delete a read model by setting deleted_at timestamp.
-
-        Returns:
-            True if a record was soft-deleted, False if not found or already soft-deleted
-        """
+        """Soft delete a read model by setting deleted_at. Returns True if soft-deleted."""
         ...
 
     async def restore(self, id: UUID) -> bool:
-        """
-        Restore a soft-deleted read model by clearing `deleted_at`.
-
-        Returns:
-            True if a record was restored, False if not found or was not soft-deleted
-        """
+        """Restore a soft-deleted read model by clearing `deleted_at`. Returns True if restored."""
         ...
 
     async def get_deleted(self, id: UUID) -> TModel | None:
-        """
-        Get a soft-deleted read model by ID.
-
-        Returns None for non-deleted models or if the ID doesn't exist.
-        """
+        """Get a soft-deleted read model by ID, or None if not deleted or not found."""
         ...
 
     async def find_deleted(self, query: Query | None = None) -> list[TModel]:
@@ -104,19 +77,18 @@ class ReadModelRepository(Protocol[TModel]):
         ...
 
     async def exists(self, id: UUID) -> bool:
-        """
-        Check if a read model exists and is not soft-deleted.
-        """
+        """Check if a read model exists and is not soft-deleted."""
         ...
 
-    async def find(self, query: Query | None = None) -> list[TModel]:
+    async def find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]:
         """
-        Find read models matching a query.
+        Find read models matching a query and optional equality keyword filters.
 
         Supports filtering, ordering, and pagination. Soft-deleted records
         are excluded unless `include_deleted=True` is set in the query.
-        Filters combine with AND. `offset` skips from the start of the
-        ordered result, and applies with or without a `limit`.
+        Filters combine with AND; any `**eq_filters` are appended as `Filter.eq`
+        conditions. `offset` skips from the start of the ordered result, and
+        applies with or without a `limit`.
 
         Filter semantics (identical on every backend):
 
@@ -141,9 +113,18 @@ class ReadModelRepository(Protocol[TModel]):
         """
         ...
 
-    async def count(self, query: Query | None = None) -> int:
+    async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None:
         """
-        Count read models matching a query.
+        Find the first read model matching `query` and `**eq_filters`, or None.
+
+        Preserves `query.order_by`, `query.offset`, and `query.include_deleted`
+        while forcing `limit=1`.
+        """
+        ...
+
+    async def count(self, query: Query | None = None, **eq_filters: Any) -> int:
+        """
+        Count read models matching a query and optional equality keyword filters.
 
         Filters, NULL handling, and the unknown-field/unknown-operator
         errors are exactly `find()`'s -- `count(q)` is always
@@ -155,24 +136,15 @@ class ReadModelRepository(Protocol[TModel]):
         ...
 
     async def truncate(self) -> int:
-        """
-        Delete all read models (for projection reset), including soft-deleted ones.
-
-        Returns:
-            Number of records deleted
-        """
+        """Delete all read models (including soft-deleted) and return count deleted."""
         ...
 
     async def save_with_version_check(self, model: TModel) -> None:
         """
         Save a read model with optimistic locking version check.
 
-        Verifies that the current database version matches the model's
-        version before updating. On successful save, the version is incremented.
-
         Raises:
-            ReadModelVersionConflictError: If the version in database doesn't match
-                the model's version (concurrent modification detected)
+            ReadModelVersionConflictError: If database version doesn't match model version
             ReadModelNotFoundError: If the model doesn't exist in the database
         """
         ...
