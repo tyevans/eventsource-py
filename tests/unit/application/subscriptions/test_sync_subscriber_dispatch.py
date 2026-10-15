@@ -77,10 +77,11 @@ def event_bus() -> InMemoryEventBus:
 
 async def add_events(store: InMemoryEventStore, count: int) -> None:
     for i in range(count):
-        aggregate_id = uuid4()
+        aid = uuid4()
+        stream = StreamId(aggregate_id=aid, category="SyncAggregate")
         await store.append(
-            StreamId(aggregate_id=aggregate_id, category="SyncAggregate"),
-            [SyncTestEvent(aggregate_id=aggregate_id, data=f"event_{i}")],
+            stream,
+            [SyncTestEvent(aggregate_id=aid, data=f"event_{i}")],
             ExpectedVersion.no_stream(),
         )
 
@@ -92,11 +93,7 @@ async def current(store: InMemoryEventStore) -> Position:
 
 
 def make_config(**kwargs: object) -> SubscriptionConfig:
-    base: dict[str, object] = {
-        "batch_size": 10,
-        "checkpoint_strategy": CheckpointStrategy.EVERY_BATCH,
-    }
-    base.update(kwargs)
+    base = {"batch_size": 10, "checkpoint_strategy": CheckpointStrategy.EVERY_BATCH, **kwargs}
     return SubscriptionConfig(**base)  # type: ignore[arg-type]
 
 
@@ -107,80 +104,59 @@ class TestProtocolShape:
 
 class TestCatchUpSyncDispatch:
     async def test_sync_subscriber_receives_events(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         subscriber = PlainSyncSubscriber()
-        subscription = Subscription(
-            name="sync-catchup", config=make_config(), subscriber=subscriber
-        )
+        sub = Subscription(name="sync-catchup", config=make_config(), subscriber=subscriber)
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        runner = CatchUpRunner(event_store, checkpoint_repo, sub)
         result = await runner.run_until_position(await current(event_store))
-        assert result.completed
-        assert len(subscriber.handled) == 3
+        assert result.completed and len(subscriber.handled) == 3
 
     async def test_sync_subscriber_is_not_recorded_as_a_failure(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         subscriber = PlainSyncSubscriber()
-        subscription = Subscription(name="sync-nofail", config=make_config(), subscriber=subscriber)
+        sub = Subscription(name="sync-nofail", config=make_config(), subscriber=subscriber)
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        runner = CatchUpRunner(event_store, checkpoint_repo, sub)
         result = await runner.run_until_position(await current(event_store))
-        assert result.events_processed == 3
-        assert subscription.events_failed == 0
+        assert result.events_processed == 3 and sub.events_failed == 0
 
     async def test_sync_subscriber_stops_subscription_when_strict(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         subscriber = PlainSyncSubscriber()
-        subscription = Subscription(
-            name="sync-strict",
-            config=make_config(continue_on_error=False),
-            subscriber=subscriber,
+        sub = Subscription(
+            name="sync-strict", config=make_config(continue_on_error=False), subscriber=subscriber
         )
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        runner = CatchUpRunner(event_store, checkpoint_repo, sub)
         result = await runner.run_until_position(await current(event_store))
-        assert result.completed
-        assert result.error is None
-        assert len(subscriber.handled) == 3
+        assert result.completed and result.error is None and len(subscriber.handled) == 3
 
     async def test_genuine_sync_failure_is_still_reported(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
-        subscription = Subscription(
+        sub = Subscription(
             name="sync-raises",
             config=make_config(continue_on_error=True),
             subscriber=RaisingSyncSubscriber(),
         )
         await add_events(event_store, 2)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        runner = CatchUpRunner(event_store, checkpoint_repo, sub)
         await runner.run_until_position(await current(event_store))
-        assert subscription.events_failed == 2
+        assert sub.events_failed == 2
 
     async def test_async_subscriber_unaffected(
-        self,
-        event_store: InMemoryEventStore,
-        checkpoint_repo: InMemoryCheckpointRepository,
+        self, event_store: InMemoryEventStore, checkpoint_repo: InMemoryCheckpointRepository
     ) -> None:
         subscriber = AsyncSubscriber()
-        subscription = Subscription(
-            name="async-control", config=make_config(), subscriber=subscriber
-        )
+        sub = Subscription(name="async-control", config=make_config(), subscriber=subscriber)
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, subscription)
+        runner = CatchUpRunner(event_store, checkpoint_repo, sub)
         result = await runner.run_until_position(await current(event_store))
-        assert result.completed
-        assert len(subscriber.handled) == 3
+        assert result.completed and len(subscriber.handled) == 3
 
 
 class TestLiveSyncDispatch:
@@ -191,16 +167,13 @@ class TestLiveSyncDispatch:
         checkpoint_repo: InMemoryCheckpointRepository,
     ) -> None:
         subscriber = PlainSyncSubscriber()
-        subscription = Subscription(
-            name="sync-live",
-            config=make_config(checkpoint_strategy=CheckpointStrategy.EVERY_EVENT),
-            subscriber=subscriber,
-        )
+        cfg = make_config(checkpoint_strategy=CheckpointStrategy.EVERY_EVENT)
+        sub = Subscription(name="sync-live", config=cfg, subscriber=subscriber)
         runner = LiveRunner(
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
             event_feed=event_store,
-            subscription=subscription,
+            subscription=sub,
         )
         await runner.start()
         try:
@@ -210,5 +183,4 @@ class TestLiveSyncDispatch:
         finally:
             await runner.stop()
 
-        assert len(subscriber.handled) == 1
-        assert runner.stats.events_failed == 0
+        assert len(subscriber.handled) == 1 and runner.stats.events_failed == 0

@@ -35,24 +35,34 @@ class CounterAggregate(AggregateRoot[CounterState]):
 
     def _apply(self, event: DomainEvent) -> None:
         if isinstance(event, CounterIncremented):
-            if self._state is None:
-                self._state = self._get_initial_state()
-            self._state = self._state.model_copy(
-                update={"value": self._state.value + event.increment}
-            )
+            state = self._state or self._get_initial_state()
+            self._state = state.model_copy(update={"value": state.value + event.increment})
 
     def increment(self, amount: int = 1) -> None:
-        event = CounterIncremented(
-            aggregate_id=self.aggregate_id,
-            aggregate_type=self.aggregate_type,
-            aggregate_version=self.get_next_version(),
-            increment=amount,
+        v = self.get_next_version()
+        self.apply_event(
+            CounterIncremented(
+                aggregate_id=self.aggregate_id, aggregate_version=v, increment=amount
+            )
         )
-        self.apply_event(event)
 
 
 def _stream(aggregate_id: UUID) -> StreamId:
     return StreamId(aggregate_id=aggregate_id, category="Counter")
+
+
+def _make_repo(
+    store: InMemoryEventStore | None = None,
+    snapshot_store: InMemorySnapshotStore | None = None,
+) -> tuple[InMemoryEventStore, AggregateRepository[CounterAggregate]]:
+    s = store or InMemoryEventStore()
+    repo = AggregateRepository(
+        event_store=s,
+        aggregate_factory=CounterAggregate,
+        snapshot_store=snapshot_store,
+        snapshot_mode="manual" if snapshot_store else "sync",
+    )
+    return s, repo
 
 
 @pytest.mark.asyncio
@@ -63,34 +73,28 @@ async def test_memory_store_satisfies_aggregate_store_port() -> None:
 
 @pytest.mark.asyncio
 async def test_save_writes_stream_version_equal_to_event_count() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
-    aggregate_id = uuid4()
-    aggregate = repo.create_new(aggregate_id)
-    aggregate.increment()
-    aggregate.increment()
-    aggregate.increment()
+    store, repo = _make_repo()
+    aggregate = repo.create_new(uuid4())
+    for _ in range(3):
+        aggregate.increment()
     await repo.save(aggregate)
-    assert await store.get_stream_version(_stream(aggregate_id)) == 3
+    assert await store.get_stream_version(_stream(aggregate.aggregate_id)) == 3
 
 
 @pytest.mark.asyncio
 async def test_save_twice_uses_correct_expected_version() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
-    aggregate_id = uuid4()
-    aggregate = repo.create_new(aggregate_id)
+    store, repo = _make_repo()
+    aggregate = repo.create_new(uuid4())
     aggregate.increment()
     await repo.save(aggregate)
     aggregate.increment()
     await repo.save(aggregate)
-    assert await store.get_stream_version(_stream(aggregate_id)) == 2
+    assert await store.get_stream_version(_stream(aggregate.aggregate_id)) == 2
 
 
 @pytest.mark.asyncio
 async def test_save_stale_aggregate_raises_optimistic_lock_error() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
+    _, repo = _make_repo()
     aggregate_id = uuid4()
     aggregate = repo.create_new(aggregate_id)
     aggregate.increment()
@@ -104,30 +108,20 @@ async def test_save_stale_aggregate_raises_optimistic_lock_error() -> None:
 
 @pytest.mark.asyncio
 async def test_save_with_no_uncommitted_events_is_a_noop() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
-    aggregate = repo.create_new(uuid4())
-    await repo.save(aggregate)
+    _, repo = _make_repo()
+    await repo.save(repo.create_new(uuid4()))
 
 
 @pytest.mark.asyncio
 async def test_load_with_no_events_and_no_snapshot_raises_not_found() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
+    _, repo = _make_repo()
     with pytest.raises(AggregateNotFoundError):
         await repo.load(uuid4())
 
 
 @pytest.mark.asyncio
 async def test_load_after_snapshot_replays_only_events_after_snapshot_version() -> None:
-    store = InMemoryEventStore()
-    snapshot_store = InMemorySnapshotStore()
-    repo = AggregateRepository(
-        event_store=store,
-        aggregate_factory=CounterAggregate,
-        snapshot_store=snapshot_store,
-        snapshot_mode="manual",
-    )
+    store, repo = _make_repo(snapshot_store=InMemorySnapshotStore())
     aggregate_id = uuid4()
     aggregate = repo.create_new(aggregate_id)
     for _ in range(5):
@@ -140,15 +134,12 @@ async def test_load_after_snapshot_replays_only_events_after_snapshot_version() 
     partial = repo.create_new(aggregate_id)
     partial.load_from_history([e.event for e in events[:2]])
     await repo.create_snapshot(partial)
-
-    reloaded = await repo.load(aggregate_id)
-    assert reloaded.version == 5
+    assert (await repo.load(aggregate_id)).version == 5
 
 
 @pytest.mark.asyncio
 async def test_exists_false_before_save_true_after() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
+    _, repo = _make_repo()
     aggregate_id = uuid4()
     assert await repo.exists(aggregate_id) is False
     aggregate = repo.create_new(aggregate_id)
@@ -159,8 +150,7 @@ async def test_exists_false_before_save_true_after() -> None:
 
 @pytest.mark.asyncio
 async def test_get_version_zero_for_unknown_and_true_version_after_save() -> None:
-    store = InMemoryEventStore()
-    repo = AggregateRepository(event_store=store, aggregate_factory=CounterAggregate)
+    _, repo = _make_repo()
     aggregate_id = uuid4()
     assert await repo.get_version(aggregate_id) == 0
     aggregate = repo.create_new(aggregate_id)
@@ -180,14 +170,8 @@ async def test_load_reconstructs_version_regardless_of_snapshot_point(
     batches: list[int], snapshot_after: int
 ) -> None:
     """Loading yields the same version whether or not a snapshot truncates the replay."""
-    store = InMemoryEventStore()
     snapshot_store = InMemorySnapshotStore()
-    repo = AggregateRepository(
-        event_store=store,
-        aggregate_factory=CounterAggregate,
-        snapshot_store=snapshot_store,
-        snapshot_mode="manual",
-    )
+    store, repo = _make_repo(snapshot_store=snapshot_store)
     aggregate_id = uuid4()
     aggregate = repo.create_new(aggregate_id)
     total = 0
@@ -204,12 +188,6 @@ async def test_load_reconstructs_version_regardless_of_snapshot_point(
         partial.load_from_history([e.event for e in events[:snap_point]])
         await repo.create_snapshot(partial)
 
-    repo2 = AggregateRepository(
-        event_store=store,
-        aggregate_factory=CounterAggregate,
-        snapshot_store=snapshot_store,
-        snapshot_mode="manual",
-    )
+    _, repo2 = _make_repo(store=store, snapshot_store=snapshot_store)
     loaded = await repo2.load(aggregate_id)
-    assert loaded.version == total
-    assert loaded.state.value == total
+    assert loaded.version == total and loaded.state.value == total

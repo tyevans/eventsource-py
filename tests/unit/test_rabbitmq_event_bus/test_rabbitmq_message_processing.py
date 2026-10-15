@@ -15,17 +15,13 @@ from ._fixtures import ConsumerTestEvent
 
 
 class TestRabbitMQProcessMessage:
-    """Tests for _process_message() method."""
-
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
         return RabbitMQEventBusConfig(rabbitmq_url="amqp://test:test@localhost/")
 
     @pytest.fixture
     def registry(self) -> EventRegistry:
-        registry = EventRegistry()
-        registry.register(ConsumerTestEvent)
-        return registry
+        return EventRegistry([ConsumerTestEvent])
 
     @pytest.fixture
     def bus(self, config: RabbitMQEventBusConfig, registry: EventRegistry) -> RabbitMQEventBus:
@@ -42,19 +38,17 @@ class TestRabbitMQProcessMessage:
             message_id="test-msg-id",
             routing_key="ConsumerTest.ConsumerTestEvent",
         )
-        received_events = []
+        received_events: list[DomainEvent] = []
 
         async def test_handler(e: DomainEvent) -> None:
             received_events.append(e)
 
         bus.subscribe(ConsumerTestEvent, test_handler)
         await bus._process_message(mock_message)
-
         mock_message.ack.assert_called_once()
         mock_message.reject.assert_not_called()
         assert len(received_events) == 1
-        assert bus.stats.events_consumed == 1
-        assert bus.stats.events_processed_success == 1
+        assert bus.stats.events_consumed == 1 and bus.stats.events_processed_success == 1
 
     @pytest.mark.asyncio
     async def test_process_message_acks_unknown_event_type(self, bus: RabbitMQEventBus) -> None:
@@ -88,12 +82,10 @@ class TestRabbitMQProcessMessage:
         bus.subscribe(ConsumerTestEvent, failing_handler)
         await bus._process_message(mock_message)
         await bus._consumer.drain_retries()
-
         mock_message.ack.assert_called_once()
         mock_exchange.publish.assert_called_once()
         assert bus.stats.events_processed_failed == 1
-        new_message = mock_exchange.publish.call_args[0][0]
-        assert new_message.headers["x-retry-count"] == 1
+        assert mock_exchange.publish.call_args[0][0].headers["x-retry-count"] == 1
 
     @pytest.mark.asyncio
     async def test_process_message_extracts_event_type_from_headers(
@@ -106,32 +98,25 @@ class TestRabbitMQProcessMessage:
             message_id="test-msg-id",
             routing_key="test",
         )
-        received_events = []
+        received_events: list[DomainEvent] = []
 
         async def test_handler(e: DomainEvent) -> None:
             received_events.append(e)
 
         bus.subscribe(ConsumerTestEvent, test_handler)
         await bus._process_message(mock_message)
-
-        assert len(received_events) == 1
-        assert received_events[0].event_type == "ConsumerTestEvent"
+        assert len(received_events) == 1 and received_events[0].event_type == "ConsumerTestEvent"
 
     @pytest.mark.asyncio
     async def test_process_message_handles_missing_headers(self, bus: RabbitMQEventBus) -> None:
         mock_message = AsyncMock(
-            headers=None,
-            body=b'{"aggregate_id": "test-id"}',
-            message_id="test-msg-id",
-            routing_key="test",
+            headers=None, body=b'{"aggregate_id": "test-id"}', message_id="id", routing_key="test"
         )
         await bus._process_message(mock_message)
         mock_message.ack.assert_called_once()
 
 
 class TestRabbitMQProcessMessageWithDLQTracking:
-    """Tests for _process_message with DLQ tracking (P2-001)."""
-
     @pytest.fixture
     def config(self) -> RabbitMQEventBusConfig:
         return RabbitMQEventBusConfig(enable_dlq=True)
@@ -151,19 +136,18 @@ class TestRabbitMQProcessMessageWithDLQTracking:
 
     @pytest.fixture
     def mock_dlq_message(self) -> MagicMock:
+        death = {
+            "count": 1,
+            "reason": "rejected",
+            "queue": "events.default",
+            "exchange": "events",
+            "routing-keys": ["TestAggregate.TestEvent"],
+        }
         return AsyncMock(
             headers={
                 "event_type": "TestEvent",
                 "aggregate_type": "TestAggregate",
-                "x-death": [
-                    {
-                        "count": 1,
-                        "reason": "rejected",
-                        "queue": "events.default",
-                        "exchange": "events",
-                        "routing-keys": ["TestAggregate.TestEvent"],
-                    }
-                ],
+                "x-death": [death],
                 "x-first-death-queue": "events.default",
                 "x-first-death-reason": "rejected",
                 "x-first-death-exchange": "events",
@@ -187,10 +171,8 @@ class TestRabbitMQProcessMessageWithDLQTracking:
         mock_dlq_exchange = AsyncMock()
         bus._topology._dlq_exchange = mock_dlq_exchange
         initial_dlq_count = bus.stats.messages_sent_to_dlq
-
         with patch.object(bus._consumer, "_deserialize_event", return_value=mock_event):
             await bus._process_message(mock_normal_message)
-
         assert bus.stats.messages_sent_to_dlq == initial_dlq_count + 1
         mock_dlq_exchange.publish.assert_called_once()
         mock_normal_message.ack.assert_called_once()
@@ -207,8 +189,6 @@ class TestRabbitMQProcessMessageWithDLQTracking:
         bus.subscribe_to_all_events(failing_handler)
         mock_event = MagicMock(spec=DomainEvent, event_id=uuid4(), event_type="TestEvent")
         initial_dlq_count = bus.stats.messages_sent_to_dlq
-
         with patch.object(bus._consumer, "_deserialize_event", return_value=mock_event):
             await bus._process_message(mock_normal_message)
-
         assert bus.stats.messages_sent_to_dlq == initial_dlq_count
