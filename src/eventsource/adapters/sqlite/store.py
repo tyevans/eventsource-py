@@ -94,11 +94,9 @@ class SQLiteEventStore:
         """Return the live connection, opening and initializing it on first use."""
         if self._connection is not None:
             return self._connection
-
         async with self._init_lock:
             if self._connection is not None:
                 return self._connection
-
             try:
                 conn = await aiosqlite.connect(self._database)
             except (aiosqlite.Error, OSError) as e:
@@ -106,18 +104,14 @@ class SQLiteEventStore:
                     f"could not open the SQLite database at {self._database!r}: {e}",
                     store=type(self).__name__,
                 ) from e
-
             await conn.execute("PRAGMA foreign_keys = ON")
             await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
             if self._wal_mode:
                 await conn.execute("PRAGMA journal_mode = WAL")
             conn.row_factory = aiosqlite.Row
-
-            schema = get_schema("all", backend="sqlite", additive=False)
-            await conn.executescript(schema)
+            await conn.executescript(get_schema("all", backend="sqlite", additive=False))
             await apply_additive_updates(conn)
             await conn.commit()
-
             self._connection = conn
             return conn
 
@@ -138,13 +132,8 @@ class SQLiteEventStore:
             import warnings
 
             db = getattr(self, "_database", "<unknown>")
-            warnings.warn(
-                f"Unclosed {type(self).__name__} ({db!r}) {self!r}; "
-                "call 'await store.close()' or use 'async with'",
-                ResourceWarning,
-                stacklevel=2,
-                source=self,
-            )
+            msg = f"Unclosed {type(self).__name__} ({db!r}) {self!r}; call 'await store.close()' or use 'async with'"
+            warnings.warn(msg, ResourceWarning, stacklevel=2, source=self)
 
     async def _max_version(
         self, conn: aiosqlite.Connection, aggregate_id: str, category: str
@@ -157,23 +146,17 @@ class SQLiteEventStore:
         return row[0] if row else 0
 
     async def append(
-        self,
-        stream: StreamId,
-        events: Sequence[DomainEvent],
-        expected: ExpectedVersion,
+        self, stream: StreamId, events: Sequence[DomainEvent], expected: ExpectedVersion
     ) -> AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
-
         conn = await self._conn()
-        aggregate_id_str = str(stream.aggregate_id)
-        category = stream.category
+        aid, category = str(stream.aggregate_id), stream.category
 
         async with self._lock:
             try:
-                current_version = await self._max_version(conn, aggregate_id_str, category)
+                current_version = await self._max_version(conn, aid, category)
                 check_expected(current_version, expected, stream)
-
                 seen_in_batch: set[UUID] = set()
                 for event in events:
                     if event.event_id in seen_in_batch:
@@ -185,36 +168,26 @@ class SQLiteEventStore:
                 version = current_version
                 first_position: Position | None = None
                 now = datetime.now(UTC).isoformat()
-
                 for event in events:
                     version += 1
+                    eid, etype, actor = str(event.event_id), event.event_type, event.actor_id
+                    tid = str(event.tenant_id) if event.tenant_id else None
+                    occ = event.occurred_at.isoformat()
+                    payload = json_dumps(event.model_dump(mode="json"))
+                    vals = (eid, etype, category, aid, tid, actor, version, occ, payload, now)
                     cursor = await conn.execute(
                         "INSERT INTO events (event_id, event_type, aggregate_type, aggregate_id, "
                         "tenant_id, actor_id, version, timestamp, payload, created_at) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            str(event.event_id),
-                            event.event_type,
-                            category,
-                            aggregate_id_str,
-                            str(event.tenant_id) if event.tenant_id else None,
-                            event.actor_id,
-                            version,
-                            event.occurred_at.isoformat(),
-                            json_dumps(event.model_dump(mode="json")),
-                            now,
-                        ),
+                        vals,
                     )
-                    global_position = cursor.lastrowid or 0
                     if first_position is None:
-                        first_position = self._codec.encode(global_position)
-
+                        first_position = self._codec.encode(cursor.lastrowid or 0)
                     if self._outbox_enabled:
                         await self._write_to_outbox(conn, event, category, now)
 
                 await conn.commit()
                 return AppendResult(stream=stream, new_version=version, position=first_position)
-
             except aiosqlite.IntegrityError as e:
                 await conn.rollback()
                 error_str = str(e).lower()
@@ -225,7 +198,7 @@ class SQLiteEventStore:
                 if "unique" in error_str and (
                     "aggregate_id" in error_str or "version" in error_str
                 ):
-                    actual_version = await self._max_version(conn, aggregate_id_str, category)
+                    actual_version = await self._max_version(conn, aid, category)
                     raise OptimisticLockError(
                         stream.aggregate_id, describe_expected(expected), actual_version
                     ) from e
@@ -235,26 +208,16 @@ class SQLiteEventStore:
                 raise
 
     async def _write_to_outbox(
-        self,
-        conn: aiosqlite.Connection,
-        event: DomainEvent,
-        category: str,
-        now: str,
+        self, conn: aiosqlite.Connection, event: DomainEvent, category: str, now: str
     ) -> None:
         """Write one outbox row for `event` on `conn` inside the append transaction."""
+        eid, aid = str(event.event_id), str(event.aggregate_id)
+        tid = str(event.tenant_id) if event.tenant_id else None
+        data = json_dumps(outbox_event_data(event))
         await conn.execute(
             "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
             "tenant_id, event_data, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
-            (
-                str(uuid4()),
-                str(event.event_id),
-                event.event_type,
-                str(event.aggregate_id),
-                category,
-                str(event.tenant_id) if event.tenant_id else None,
-                json_dumps(outbox_event_data(event)),
-                now,
-            ),
+            (str(uuid4()), eid, event.event_type, aid, category, tid, data, now),
         )
 
     async def _fetch_envelopes(
@@ -304,9 +267,7 @@ class SQLiteEventStore:
         async with self._lock:
             cursor = await conn.execute("SELECT MAX(global_position) FROM events")
             row = await cursor.fetchone()
-        if row is None or row[0] is None:
-            return None
-        return self._codec.encode(row[0])
+        return None if (row is None or row[0] is None) else self._codec.encode(row[0])
 
     def read_category(
         self, category: str, options: CategoryReadOptions | None = None
