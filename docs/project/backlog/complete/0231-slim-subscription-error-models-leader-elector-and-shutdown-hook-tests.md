@@ -1,7 +1,7 @@
 ---
 id: TASK-0231
 title: "Slim subscription error models, in-memory leader elector, and post-shutdown hook tests below 320 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

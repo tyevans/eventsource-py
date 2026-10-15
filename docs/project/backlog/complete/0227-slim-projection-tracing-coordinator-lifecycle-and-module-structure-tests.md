@@ -1,7 +1,7 @@
 ---
 id: TASK-0227
 title: "Slim projection tracing order, coordinator lifecycle, and testing module structure tests below 320 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: observability
