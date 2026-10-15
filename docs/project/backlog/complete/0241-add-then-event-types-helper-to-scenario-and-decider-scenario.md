@@ -1,7 +1,7 @@
 ---
 id: TASK-0241
 title: "Add ergonomic then_event_types(*event_classes) assertion helper to Scenario and DeciderScenario"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing

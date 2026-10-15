@@ -1,7 +1,7 @@
 ---
 id: TASK-0237
 title: "Slim broker metrics, reconnection, shutdown metrics, load benchmark, and reliability tests below 310 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: adapters

@@ -1,7 +1,7 @@
 ---
 id: TASK-0244
 title: "Synchronize Diataxis guides for repo.get_or_none, repo.exists, and Scenario.then_event_types"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: domain

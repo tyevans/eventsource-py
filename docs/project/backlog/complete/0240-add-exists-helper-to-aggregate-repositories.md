@@ -1,7 +1,7 @@
 ---
 id: TASK-0240
 title: "Add ergonomic exists(aggregate_id) helper to AggregateRepository and TenantAwareRepository"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application

@@ -1,7 +1,7 @@
 ---
 id: TASK-0242
 title: "Slim migration/consistency.py, ports/bus.py, kafka/bus.py, base_checkpoint.py, and manager_lifecycle.py below 305 lines"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
