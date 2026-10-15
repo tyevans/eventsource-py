@@ -1,17 +1,4 @@
-"""
-Event builder for creating test events with minimal boilerplate.
-
-Provides a fluent builder pattern for constructing domain events in tests
-without having to manually specify all required fields.
-
-Example:
-    >>> from eventsource.testing import EventBuilder
-    >>> event = (
-    ...     EventBuilder(OrderCreated, customer_id=customer_id)
-    ...     .with_aggregate_id(order_id)
-    ...     .build()
-    ... )
-"""
+"""Fluent builder for creating test domain events with minimal boilerplate."""
 
 from datetime import datetime
 from typing import Any
@@ -21,31 +8,10 @@ from eventsource.domain.event import DomainEvent
 
 
 class EventBuilder[TEvent: DomainEvent]:
-    """
-    Fluent builder for creating test events with minimal boilerplate.
-
-    Automatically generates default values for common fields like
-    aggregate_id, event_id, aggregate_version, and occurred_at, allowing tests
-    to focus only on the fields relevant to the test scenario.
-
-    Auto-generated defaults:
-        - aggregate_id: Random UUID
-        - event_id: Random UUID
-        - aggregate_version: 1
-        - occurred_at: Current UTC time
-    """
+    """Fluent builder for creating test events with minimal boilerplate."""
 
     def __init__(self, event_class: type[TEvent], **initial_fields: Any) -> None:
-        """
-        Initialize builder for the given event class.
-
-        Args:
-            event_class: The DomainEvent subclass to build
-            **initial_fields: Optional initial field values
-
-        Raises:
-            TypeError: If event_class is not a DomainEvent subclass
-        """
+        """Initialize builder for the given DomainEvent subclass."""
         if not (isinstance(event_class, type) and issubclass(event_class, DomainEvent)):
             raise TypeError(f"event_class must be a DomainEvent subclass, got {event_class}")
 
@@ -115,14 +81,13 @@ class EventBuilder[TEvent: DomainEvent]:
         """Return a new EventBuilder copying existing fields with optional overrides."""
         return EventBuilder(self._event_class, **{**self._fields, **overrides})
 
-    def build(self) -> TEvent:
-        """
-        Build and return a validated event instance.
+    def build(self, **overrides: Any) -> TEvent:
+        """Build and return a validated event instance with optional field overrides."""
+        return self._event_class(**{**self._fields, **overrides})
 
-        Raises:
-            pydantic.ValidationError: If required fields are missing or invalid
-        """
-        return self._event_class(**self._fields)
+    def __call__(self, **overrides: Any) -> TEvent:
+        """Build and return a validated event instance with optional field overrides."""
+        return self.build(**overrides)
 
     def build_many(
         self,
@@ -130,20 +95,7 @@ class EventBuilder[TEvent: DomainEvent]:
         *,
         start_version: int | None = None,
     ) -> list[TEvent]:
-        """
-        Build and return a list of events with sequential aggregate versions.
-
-        Args:
-            count: Number of events to build (must be >= 0)
-            start_version: Starting aggregate_version (defaults to builder version)
-
-        Returns:
-            List of validated event instances with sequential versions
-
-        Raises:
-            ValueError: If count < 0
-            pydantic.ValidationError: If required fields are missing or invalid
-        """
+        """Build and return a list of events with sequential aggregate versions."""
         if count < 0:
             raise ValueError("count must be >= 0")
         if count == 0:
