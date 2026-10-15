@@ -85,27 +85,24 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
             )
 
         self._filter = EventFilter.from_config_and_subscriber(
-            self.config,
-            self.subscription.subscriber,
+            self.config, self.subscription.subscriber
         )
         if self.config.circuit_breaker_enabled:
-            self._infra_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
-            self._handler_circuit_breaker = CircuitBreaker(self.config.get_circuit_breaker_config())
+            cb_cfg = self.config.get_circuit_breaker_config()
+            self._infra_circuit_breaker = CircuitBreaker(cb_cfg)
+            self._handler_circuit_breaker = CircuitBreaker(cb_cfg)
 
         self._retry = RetryableOperation(
-            config=self.config.get_retry_config(),
-            circuit_breaker=self._infra_circuit_breaker,
+            config=self.config.get_retry_config(), circuit_breaker=self._infra_circuit_breaker
         )
         self._metrics = SubscriptionMetrics(
-            subscription_name=self.subscription.name,
-            enable_metrics=self.enable_metrics,
+            subscription_name=self.subscription.name, enable_metrics=self.enable_metrics
         )
 
     async def start(self, buffer_events: bool = False) -> None:
         """Start receiving live events (optionally buffering during catch-up)."""
         with self._tracer.span(
-            "eventsource.live_runner.start",
-            {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
+            "eventsource.live_runner.start", {ATTR_SUBSCRIPTION_NAME: self.subscription.name}
         ):
             if self._running:
                 return
@@ -131,8 +128,7 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
     async def stop(self) -> None:
         """Unsubscribe from the event bus and stop processing."""
         with self._tracer.span(
-            "eventsource.live_runner.stop",
-            {ATTR_SUBSCRIPTION_NAME: self.subscription.name},
+            "eventsource.live_runner.stop", {ATTR_SUBSCRIPTION_NAME: self.subscription.name}
         ):
             if not self._running:
                 return
@@ -146,91 +142,75 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
                 self._subscribed = False
 
             await self.clear_buffer()
+            stats_summary = {
+                "received": self._stats.events_received,
+                "processed": self._stats.events_processed,
+                "skipped_filtered": self._stats.events_skipped_filtered,
+                "failed": self._stats.events_failed,
+            }
             logger.info(
                 "Live runner stopped",
-                extra={
-                    "subscription": self.subscription.name,
-                    "stats": {
-                        "received": self._stats.events_received,
-                        "processed": self._stats.events_processed,
-                        "skipped_filtered": self._stats.events_skipped_filtered,
-                        "failed": self._stats.events_failed,
-                    },
-                },
+                extra={"subscription": self.subscription.name, "stats": stats_summary},
             )
 
     @property
     def is_running(self) -> bool:
-        """Check if the runner is active."""
         return self._running
 
     @property
     def _stop_requested(self) -> bool:
-        """Whether `stop()` has been called, derived from `_stop_event`."""
         return self._stop_event.is_set()
 
     @property
     def buffer_size(self) -> int:
-        """Get current buffer size."""
         return self._buffered_wakes
 
     @property
     def pause_buffer_size(self) -> int:
-        """Get current pause buffer size (events queued during pause)."""
         return self._paused_wakes
 
     @property
     def events_buffered_during_pause(self) -> int:
-        """Get total count of events buffered during current/last pause."""
         return self._events_buffered_during_pause
 
     @property
     def stats(self) -> LiveRunnerStats:
-        """Get processing statistics."""
         return self._stats
 
     @property
     def flow_controller(self) -> FlowController:
-        """Get the flow controller for this runner."""
         assert self._flow_controller is not None
         return self._flow_controller
 
     @property
     def flow_control_stats(self) -> FlowControlStats:
-        """Get flow control statistics."""
         assert self._flow_controller is not None
         return self._flow_controller.stats
 
     @property
     def handler_circuit_breaker(self) -> CircuitBreaker | None:
-        """Get the circuit breaker guarding the subscriber's `handle()` calls."""
         return self._handler_circuit_breaker
 
     @property
     def infra_circuit_breaker(self) -> CircuitBreaker | None:
-        """Get the circuit breaker guarding checkpoint-save via `self._retry`."""
         return self._infra_circuit_breaker
 
     @property
     def retry_operation(self) -> RetryableOperation | None:
-        """Get the retryable operation handler for this runner."""
         return self._retry
 
     @property
     def event_filter(self) -> EventFilter:
-        """Get the event filter for this runner."""
         assert self._filter is not None
         return self._filter
 
     @property
     def filter_stats(self) -> FilterStats:
-        """Get filter statistics."""
         assert self._filter is not None
         return self._filter.stats
 
     @property
     def metrics(self) -> SubscriptionMetrics:
-        """Get the metrics instance for this runner."""
         assert self._metrics is not None
         return self._metrics
 

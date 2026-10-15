@@ -1,9 +1,4 @@
-"""
-Base classes for domain events.
-
-Events are immutable records of things that have happened in the system.
-They are the source of truth in event sourcing architecture.
-"""
+"""Base classes for immutable domain events in event sourcing architecture."""
 
 from __future__ import annotations
 
@@ -25,105 +20,52 @@ from eventsource.domain.types import (
 
 logger = logging.getLogger(__name__)
 
-# CATEGORY_PATTERN is already a compiled regex (stream_id.py) -- reuse it
-# directly so aggregate_type validation accepts exactly what StreamId does.
 _CATEGORY_REGEX = CATEGORY_PATTERN
 
 
 class DomainEvent(BaseModel):
     """
-    Base class for all domain events with automatic event_type derivation.
+    Base class for all domain events with automatic ``event_type`` derivation.
 
     Events are immutable and capture everything needed to reconstruct state.
-    All fields except event-specific payload are included in this base class.
-
-    The ``event_type`` field is automatically set to the class name if not
-    explicitly provided. Declare it explicitly only when the wire name must
-    differ from the class name (e.g., pinned by stored events or an external
-    contract), and set ``suppress_event_type_warning = True`` to silence the
-    mismatch warning.
-
-    Attributes:
-        event_id: Unique identifier for this event instance
-        event_type: Type name of the event (auto-derived from class name if not set)
-        event_version: Schema version for this event type (for migrations)
-        occurred_at: When the event occurred (UTC timestamp)
-        aggregate_id: ID of the aggregate this event belongs to
-        aggregate_type: Type of aggregate (e.g., 'Order')
-        aggregate_version: Version of aggregate after this event
-        tenant_id: Optional tenant ID for multi-tenancy support
-        actor_id: User/system that triggered this event
-        correlation_id: ID linking related events across aggregates
-        causation_id: ID of the event that caused this event
-        metadata: Additional event metadata dictionary
-        suppress_event_type_warning: Class variable to suppress mismatch warning
+    Declare ``event_type`` explicitly only when the wire name must differ from
+    the class name, and set ``suppress_event_type_warning = True`` to silence
+    the mismatch warning.
     """
 
     model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
 
-    # Class variable to suppress mismatch warning when event_type differs from class name
     suppress_event_type_warning: ClassVar[bool] = False
 
-    # Event metadata
     event_id: EventId = Field(default_factory=uuid4, description="Unique event identifier")
     event_type: str = Field(
-        default="",
-        description="Type of event (auto-derived from class name if not set)",
+        default="", description="Type of event (auto-derived from class name if not set)"
     )
-    event_version: int = Field(
-        default=1,
-        ge=1,
-        description="Event schema version for migrations",
-    )
+    event_version: int = Field(default=1, ge=1, description="Event schema version for migrations")
     occurred_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC),
-        description="When event occurred (UTC)",
+        default_factory=lambda: datetime.now(UTC), description="When event occurred (UTC)"
     )
 
-    # Aggregate information
-    aggregate_id: AggregateId = Field(
-        ...,
-        description="ID of the aggregate this event belongs to",
-    )
-    aggregate_type: str = Field(
-        ...,
-        description="Type of aggregate (e.g., 'BadgeIssuance')",
-    )
+    aggregate_id: AggregateId = Field(..., description="ID of the aggregate this event belongs to")
+    aggregate_type: str = Field(..., description="Type of aggregate (e.g., 'BadgeIssuance')")
     aggregate_version: int = Field(
-        default=1,
-        ge=1,
-        description="Version of aggregate after this event",
+        default=1, ge=1, description="Version of aggregate after this event"
     )
 
-    # Multi-tenancy, actor, correlation/causation, and metadata
     tenant_id: TenantId | None = Field(
-        default=None,
-        description="Tenant this event belongs to (optional)",
+        default=None, description="Tenant this event belongs to (optional)"
     )
-    actor_id: str | None = Field(
-        default=None,
-        description="User/system that triggered this event",
-    )
+    actor_id: str | None = Field(default=None, description="User/system that triggered this event")
     correlation_id: CorrelationId = Field(
-        default_factory=uuid4,
-        description="ID linking related events across aggregates",
+        default_factory=uuid4, description="ID linking related events across aggregates"
     )
     causation_id: CausationId | None = Field(
-        default=None,
-        description="ID of the event that caused this event",
+        default=None, description="ID of the event that caused this event"
     )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional event metadata",
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional event metadata")
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """
-        Hook called when DomainEvent is subclassed.
-
-        Logs warning if explicit ``event_type`` differs from class name
-        (unless ``suppress_event_type_warning = True``).
-        """
+        """Warn if explicit ``event_type`` differs from class name."""
         super().__init_subclass__(**kwargs)
 
         explicit_type: str | None = None
