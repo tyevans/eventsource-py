@@ -1,7 +1,7 @@
 ---
-id: TASK-0200
-title: "Slim Migration Coordinator Cutover and Subscription Migrator Execution Modules"
-status: Refined
+id: TASK-0201
+title: "Slim Subscription Lifecycle Module and Clean Up Re-Export Facades"
+status: Complete
 priority: High
 slice_type: domain
 target_bc: application
@@ -13,10 +13,10 @@ governing_adrs:
 dependencies: []
 ---
 
-# TASK-0200: Slim Migration Coordinator Cutover and Subscription Migrator Execution Modules
+# TASK-0201: Slim Subscription Lifecycle Module and Clean Up Re-Export Facades
 
 ## Summary
-Slim coordinator_cutover.py and subscription_migrator_execution.py below 350 lines for additional headroom below the 400-line warning threshold.
+Slim src/eventsource/application/subscriptions/lifecycle.py below 350 lines and clean up legacy facade docstrings in subscription.py, transition.py, and runners/live.py.
 
 ## Acceptance Criteria
 1. All modified `.py` files remain strictly `< 400` lines (`uv run spec-ops health` reports 0 warnings and 0 violations).

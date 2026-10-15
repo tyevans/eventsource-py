@@ -1,7 +1,7 @@
 ---
 id: TASK-0198
 title: "Add Typed published_of_type Helper to InMemoryEventBus and RecordingEventBus"
-status: Refined
+status: Complete
 priority: High
 slice_type: domain
 target_bc: testing
