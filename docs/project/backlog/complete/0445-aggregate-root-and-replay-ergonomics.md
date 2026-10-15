@@ -1,7 +1,7 @@
 ---
 id: TASK-0445
 title: "Add AggregateRoot.apply_events/Iterable history and replay event_types/Iterable projections"
-status: Refined
+status: Complete
 target_bc: application
 prd: docs/project/product/accepted/PRD-0001-core-event-sourcing-engine.md
 persona: docs/project/user_stories/PERSONAS.md
