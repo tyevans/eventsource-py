@@ -495,11 +495,34 @@ await manager.subscribe(
     name="audit-log",
 )
 
+# Or register multiple subscribers at once with shared configuration:
+order_projection = OrderProjection()
+inventory_projection = InventoryProjection()
+await manager.subscribe_many(
+    order_projection,
+    inventory_projection,
+    config=SubscriptionConfig(start_from="checkpoint", batch_size=200),
+)
+
 # Start all subscriptions concurrently
 results = await manager.start(concurrent=True)
 for name, exc in results.items():
     if exc:
         logger.error("Failed to start %s: %s", name, exc)
+```
+
+`SubscriptionManager` also supports target-flexible lookup and removal (accepting a subscription name `str`, `Subscription` instance, or `EventSubscriber` instance) alongside standard Python container dunders (`len(manager)`, `bool(manager)` always `True`, `in`, and iteration):
+
+```python
+assert bool(manager) is True
+assert len(manager) >= 2
+assert order_projection in manager
+
+sub = manager.get_subscription(order_projection)
+for sub in manager:
+    logger.info("Registered subscription: %s", sub.name)
+
+await manager.unsubscribe(order_projection)
 ```
 
 Individual subscriptions are fully isolated: if one projection fails or encounters an open circuit breaker, the remaining subscriptions continue processing normally.

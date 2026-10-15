@@ -576,12 +576,28 @@ returning `False`.
 For the distributed buses this means unsubscribing stops *dispatch*, not
 *consumption*: the bus keeps reading and acknowledging messages.
 
-#### Bulk removal
+#### Bulk removal and `BaseEventBus` / `SubscriptionRegistry` helpers
 
-To drop everything rather than one registration, each implementation offers
-`clear_subscribers()`, which empties both the per-type registry and the
-wildcard list. It is not part of the `EventBus` ABC — code typed against the
-base class cannot call it.
+All bundled implementations inherit from `BaseEventBus` (backed by
+`SubscriptionRegistry` in `eventsource.adapters._bus`):
+
+- **`bus.unsubscribe_all(subscriber) -> int`** on `BaseEventBus` unregisters a
+  `FlexibleEventSubscriber` from each event type returned by its
+  `subscribed_to()` method (removing one registration per declared event type)
+  and returns the total number of registrations removed.
+- **`registry.remove_subscriber(subscriber) -> int`** on `SubscriptionRegistry`
+  performs the underlying per-type removal and returns the number of removed
+  registrations.
+- **`len(registry)` (`__len__`) and `bool(registry)` (`__bool__`)** on
+  `SubscriptionRegistry`: `len(registry)` returns the total number of
+  registrations (type-specific plus wildcard), while `bool(registry)` always
+  returns `True` even when empty so `registry or default` idioms remain safe.
+
+To drop everything rather than one subscriber or registration, each
+implementation offers `clear_subscribers()`, which empties both the per-type
+registry and the wildcard list. Neither `unsubscribe_all()` nor
+`clear_subscribers()` is an abstract method on the `EventBus` ABC, though all
+bundled `BaseEventBus` subclasses provide both.
 
 #### Related
 
