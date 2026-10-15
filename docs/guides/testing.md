@@ -336,8 +336,13 @@ published domain events:
   `harness.published_events` supporting `len(harness.assertions)` and expressive
   helpers (`assert_event_published`, `assert_no_event_published`,
   `assert_event_count`, `assert_event_type_count`, `assert_event_sequence`,
-  `assert_event_with_fields`, `assert_event_for_aggregate`, and
-  `assert_no_events_published`).
+  `assert_event_with_fields`, `assert_event_for_aggregate`,
+  `assert_events_for_aggregate`, `for_aggregate`, and
+  `assert_no_events_published`). Use `harness.assertions.for_aggregate(aggregate_id)`
+  to obtain a scoped `EventAssertions` view filtered to a single aggregate ID
+  (supporting `.assert_event_sequence([...])`, `.assert_event_count(...)`,
+  `len(...)`, etc.), or `harness.assertions.assert_events_for_aggregate(aggregate_id, expected_count=...)`
+  to assert and return the list of events published for that aggregate.
 
 ```python
 from uuid import uuid4
@@ -375,6 +380,18 @@ async def test_harness_repository_snapshots_and_assertions() -> None:
         tracking_number="TRACK-123",
     )
     assert shipped.aggregate_id == order_id
+
+    # Scoped aggregate assertions via for_aggregate() and assert_events_for_aggregate()
+    order_assertions = harness.assertions.for_aggregate(order_id)
+    assert len(order_assertions) == 2
+    order_assertions.assert_event_count(2)
+    order_assertions.assert_event_sequence([OrderCreated, OrderShipped])
+
+    order_events = harness.assertions.assert_events_for_aggregate(
+        order_id,
+        expected_count=2,
+    )
+    assert [type(e) for e in order_events] == [OrderCreated, OrderShipped]
 
     # InMemoryReadModelRepository helpers: len(), get_or_raise(), and clear()
     await read_repo.save(OrderSummary(id=order_id, status="shipped"))
