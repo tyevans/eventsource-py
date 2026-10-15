@@ -23,10 +23,7 @@ from tests.unit.test_event_bus._fixtures import (
 class TestInMemoryEventBusWildcardSubscriptions:
     @pytest.mark.asyncio
     async def test_wildcard_subscription_receives_all_events(
-        self,
-        event_bus: InMemoryEventBus,
-        sample_order_created: OrderCreated,
-        sample_order_shipped: OrderShipped,
+        self, event_bus, sample_order_created, sample_order_shipped
     ) -> None:
         handler = RecordingHandler()
         event_bus.subscribe_to_all_events(handler)
@@ -35,18 +32,16 @@ class TestInMemoryEventBusWildcardSubscriptions:
 
     @pytest.mark.asyncio
     async def test_wildcard_and_specific_subscription(
-        self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
+        self, event_bus, sample_order_created
     ) -> None:
-        wildcard_handler, specific_handler = RecordingHandler(), RecordingHandler()
-        event_bus.subscribe_to_all_events(wildcard_handler)
-        event_bus.subscribe(OrderCreated, specific_handler)
+        w_handler, s_handler = RecordingHandler(), RecordingHandler()
+        event_bus.subscribe_to_all_events(w_handler)
+        event_bus.subscribe(OrderCreated, s_handler)
         await event_bus.publish([sample_order_created])
-        assert (wildcard_handler.handle_count, specific_handler.handle_count) == (1, 1)
+        assert (w_handler.handle_count, s_handler.handle_count) == (1, 1)
 
     @pytest.mark.asyncio
-    async def test_unsubscribe_from_all_events(
-        self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
-    ) -> None:
+    async def test_unsubscribe_from_all_events(self, event_bus, sample_order_created) -> None:
         handler = RecordingHandler()
         event_bus.subscribe_to_all_events(handler)
         assert event_bus.unsubscribe_from_all_events(handler) is True
@@ -67,10 +62,7 @@ class TestInMemoryEventBusWildcardSubscriptions:
 class TestInMemoryEventBusSubscribeAll:
     @pytest.mark.asyncio
     async def test_subscribe_all_with_subscriber(
-        self,
-        event_bus: InMemoryEventBus,
-        sample_order_created: OrderCreated,
-        sample_order_shipped: OrderShipped,
+        self, event_bus, sample_order_created, sample_order_shipped
     ) -> None:
         subscriber = SelectiveSubscriber([OrderCreated, OrderShipped])
         event_bus.subscribe_all(subscriber)
@@ -81,10 +73,7 @@ class TestInMemoryEventBusSubscribeAll:
 
     @pytest.mark.asyncio
     async def test_subscribe_all_ignores_undeclared_events(
-        self,
-        event_bus: InMemoryEventBus,
-        sample_order_created: OrderCreated,
-        sample_order_cancelled: OrderCancelled,
+        self, event_bus, sample_order_created, sample_order_cancelled
     ) -> None:
         subscriber = SelectiveSubscriber([OrderCreated])
         event_bus.subscribe_all(subscriber)
@@ -95,14 +84,11 @@ class TestInMemoryEventBusSubscribeAll:
 
 class TestInMemoryEventBusUnsubscribe:
     @pytest.mark.asyncio
-    async def test_unsubscribe_handler(
-        self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
-    ) -> None:
+    async def test_unsubscribe_handler(self, event_bus, sample_order_created) -> None:
         handler = RecordingHandler()
         event_bus.subscribe(OrderCreated, handler)
         await event_bus.publish([sample_order_created])
-        assert handler.handle_count == 1
-        assert event_bus.unsubscribe(OrderCreated, handler) is True
+        assert handler.handle_count == 1 and event_bus.unsubscribe(OrderCreated, handler) is True
         await event_bus.publish([sample_order_created])
         assert handler.handle_count == 1
 
@@ -127,17 +113,15 @@ class TestInMemoryEventBusSubscriberManagement:
         assert event_bus.get_wildcard_subscriber_count() == 0
 
     def test_get_subscriber_count_specific_type(self, event_bus: InMemoryEventBus) -> None:
-        handler1, handler2 = RecordingHandler(), RecordingHandler()
+        h1, h2 = RecordingHandler(), RecordingHandler()
         assert event_bus.get_subscriber_count(OrderCreated) == 0
-        event_bus.subscribe(OrderCreated, handler1)
+        event_bus.subscribe(OrderCreated, h1)
         assert event_bus.get_subscriber_count(OrderCreated) == 1
-        event_bus.subscribe(OrderCreated, handler2)
+        event_bus.subscribe(OrderCreated, h2)
         assert event_bus.get_subscriber_count(OrderCreated) == 2
-        event_bus.subscribe(OrderShipped, handler1)
-        assert (
-            event_bus.get_subscriber_count(OrderCreated),
-            event_bus.get_subscriber_count(OrderShipped),
-        ) == (2, 1)
+        event_bus.subscribe(OrderShipped, h1)
+        assert event_bus.get_subscriber_count(OrderCreated) == 2
+        assert event_bus.get_subscriber_count(OrderShipped) == 1
 
     def test_get_subscriber_count_total(self, event_bus: InMemoryEventBus) -> None:
         handler = RecordingHandler()
@@ -150,24 +134,21 @@ class TestInMemoryEventBusSubscriberManagement:
 class TestInMemoryEventBusShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_waits_for_background_tasks(
-        self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
+        self, event_bus, sample_order_created
     ) -> None:
         slow_handler = SlowHandler(delay=0.2)
         event_bus.subscribe(OrderCreated, slow_handler)
         await event_bus.publish([sample_order_created], background=True)
         assert event_bus.get_background_task_count() == 1
         await event_bus.shutdown(timeout=1.0)
-        assert len(slow_handler.handled_events) == 1
-        assert event_bus.get_background_task_count() == 0
+        assert (len(slow_handler.handled_events), event_bus.get_background_task_count()) == (1, 0)
 
     @pytest.mark.asyncio
     async def test_shutdown_with_no_tasks(self, event_bus: InMemoryEventBus) -> None:
         await event_bus.shutdown(timeout=1.0)
 
     @pytest.mark.asyncio
-    async def test_shutdown_timeout(
-        self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
-    ) -> None:
+    async def test_shutdown_timeout(self, event_bus, sample_order_created) -> None:
         event_bus.subscribe(OrderCreated, SlowHandler(delay=5.0))
         await event_bus.publish([sample_order_created], background=True)
         start = time.time()
@@ -178,10 +159,7 @@ class TestInMemoryEventBusShutdown:
 class TestInMemoryEventBusStatistics:
     @pytest.mark.asyncio
     async def test_events_published_counter(
-        self,
-        event_bus: InMemoryEventBus,
-        sample_order_created: OrderCreated,
-        sample_order_shipped: OrderShipped,
+        self, event_bus, sample_order_created, sample_order_shipped
     ) -> None:
         event_bus.subscribe_to_all_events(RecordingHandler())
         await event_bus.publish([sample_order_created])
@@ -189,9 +167,7 @@ class TestInMemoryEventBusStatistics:
         assert event_bus.get_stats()["events_published"] == 2
 
     @pytest.mark.asyncio
-    async def test_get_stats_returns_copy(
-        self, event_bus: InMemoryEventBus, sample_order_created: OrderCreated
-    ) -> None:
+    async def test_get_stats_returns_copy(self, event_bus, sample_order_created) -> None:
         event_bus.subscribe(OrderCreated, RecordingHandler())
         await event_bus.publish([sample_order_created])
         stats1 = event_bus.get_stats()
@@ -201,14 +177,8 @@ class TestInMemoryEventBusStatistics:
 
 class TestInMemoryEventBusThreadSafety:
     def test_subscribe_from_multiple_threads(self, event_bus: InMemoryEventBus) -> None:
-        handlers: list[RecordingHandler] = []
-
-        def subscribe_handler() -> None:
-            handler = RecordingHandler()
-            handlers.append(handler)
-            event_bus.subscribe(OrderCreated, handler)
-
-        threads = [threading.Thread(target=subscribe_handler) for _ in range(10)]
+        fn = lambda: event_bus.subscribe(OrderCreated, RecordingHandler())  # noqa: E731
+        threads = [threading.Thread(target=fn) for _ in range(10)]
         for t in threads:
             t.start()
         for t in threads:
@@ -217,16 +187,11 @@ class TestInMemoryEventBusThreadSafety:
 
     def test_unsubscribe_from_multiple_threads(self, event_bus: InMemoryEventBus) -> None:
         handlers = [RecordingHandler() for _ in range(10)]
-        for handler in handlers:
-            event_bus.subscribe(OrderCreated, handler)
+        for h in handlers:
+            event_bus.subscribe(OrderCreated, h)
         results: list[bool] = []
-        threads = [
-            threading.Thread(
-                target=lambda h: results.append(event_bus.unsubscribe(OrderCreated, h)),
-                args=(h,),
-            )
-            for h in handlers
-        ]
+        fn = lambda h: results.append(event_bus.unsubscribe(OrderCreated, h))  # noqa: E731
+        threads = [threading.Thread(target=fn, args=(h,)) for h in handlers]
         for t in threads:
             t.start()
         for t in threads:
@@ -244,11 +209,8 @@ class TestEventOrdering:
                 order.append(event.event_type)
 
         event_bus.subscribe_to_all_events(OrderTrackingHandler())
-        await event_bus.publish(
-            [
-                OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id="cust-1"),
-                OrderShipped(aggregate_id=uuid4(), order_number="ORD-001", tracking_number="TRK-1"),
-                OrderCancelled(aggregate_id=uuid4(), order_number="ORD-001", reason="Test"),
-            ]
-        )
+        e1 = OrderCreated(aggregate_id=uuid4(), order_number="ORD-001", customer_id="cust-1")
+        e2 = OrderShipped(aggregate_id=uuid4(), order_number="ORD-001", tracking_number="TRK-1")
+        e3 = OrderCancelled(aggregate_id=uuid4(), order_number="ORD-001", reason="Test")
+        await event_bus.publish([e1, e2, e3])
         assert order == ["OrderCreated", "OrderShipped", "OrderCancelled"]
