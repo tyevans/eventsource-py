@@ -1,21 +1,8 @@
 """
 Event-specific test assertions for event sourcing tests.
 
-This module provides domain-specific assertion helpers that make test
-assertions more readable and provide better error messages.
-
-Example:
-    >>> from eventsource.testing import EventAssertions
-    >>> from my_app.events import OrderCreated, OrderShipped
-    >>>
-    >>> assertions = EventAssertions(published_events)
-    >>> assertions.assert_event_published(OrderCreated)
-    >>> assertions.assert_event_count(2)
-    >>> assertions.assert_event_sequence([OrderCreated, OrderShipped])
-
-Note:
-    These assertions are designed to provide clear, actionable error messages
-    that help quickly identify what went wrong in a failing test.
+Provides domain-specific assertion helpers that make test assertions more
+readable and produce clear, actionable error messages.
 """
 
 from __future__ import annotations
@@ -26,7 +13,6 @@ from uuid import UUID
 
 from eventsource.domain.event import DomainEvent
 
-# Type variable for generic event assertions
 TEvent = TypeVar("TEvent", bound=DomainEvent)
 
 
@@ -36,7 +22,6 @@ class _Missing:
     __slots__ = ()
 
     def __repr__(self) -> str:
-        """Return a string representation."""
         return "<MISSING>"
 
 
@@ -47,30 +32,11 @@ class EventAssertions:
     """
     Domain-specific assertions for event sourcing tests.
 
-    EventAssertions provides readable, intention-revealing assertion methods
-    with clear error messages for common event sourcing test scenarios.
-
-    Example:
-        >>> assertions = EventAssertions(harness.published_events)
-        >>>
-        >>> # Assert a specific event type was published
-        >>> assertions.assert_event_published(OrderCreated)
-        >>>
-        >>> # Assert exact event count
-        >>> assertions.assert_event_count(2)
-        >>>
-        >>> # Assert event sequence
-        >>> assertions.assert_event_sequence([OrderCreated, OrderShipped])
-        >>>
-        >>> # Assert event field values
-        >>> assertions.assert_event_with_fields(
-        ...     OrderCreated,
-        ...     customer_id=expected_customer_id,
-        ...     order_total=Decimal("99.99")
-        ... )
+    Provides readable, intention-revealing assertion methods with clear error
+    messages for common event sourcing test scenarios.
 
     Attributes:
-        events: The list of events to assert against (read-only)
+        events: The list of events to assert against (read-only copy)
     """
 
     def __init__(self, events: Sequence[DomainEvent]) -> None:
@@ -78,19 +44,14 @@ class EventAssertions:
         Initialize assertions with a sequence of events.
 
         Args:
-            events: The events to make assertions about. This is typically
-                   harness.published_events or aggregate.uncommitted_events.
+            events: The events to make assertions about (e.g. harness.published_events
+                or aggregate.uncommitted_events).
         """
         self._events = list(events)
 
     @property
     def events(self) -> list[DomainEvent]:
-        """
-        Get the events being asserted against.
-
-        Returns:
-            Copy of the events list to prevent external modification.
-        """
+        """Get a copy of the events being asserted against."""
         return self._events.copy()
 
     def assert_event_published(self, event_type: type[TEvent]) -> TEvent:
@@ -105,20 +66,14 @@ class EventAssertions:
 
         Raises:
             AssertionError: If no event of the type was published
-
-        Example:
-            >>> event = assertions.assert_event_published(OrderCreated)
-            >>> assert event.customer_id == expected_customer_id
         """
         matching = [e for e in self._events if isinstance(e, event_type)]
-
         if not matching:
             found_types = [type(e).__name__ for e in self._events]
             raise AssertionError(
                 f"Expected {event_type.__name__} to be published, but no events "
                 f"of that type were found. Published event types: {found_types or 'none'}"
             )
-
         return matching[0]
 
     def assert_no_event_published(self, event_type: type[DomainEvent]) -> None:
@@ -130,13 +85,8 @@ class EventAssertions:
 
         Raises:
             AssertionError: If an event of the type was published
-
-        Example:
-            >>> # Ensure no cancellation event was published
-            >>> assertions.assert_no_event_published(OrderCancelled)
         """
         matching = [e for e in self._events if isinstance(e, event_type)]
-
         if matching:
             raise AssertionError(
                 f"Expected no {event_type.__name__} events to be published, "
@@ -152,9 +102,6 @@ class EventAssertions:
 
         Raises:
             AssertionError: If the count doesn't match
-
-        Example:
-            >>> assertions.assert_event_count(3)
         """
         actual_count = len(self._events)
         if actual_count != count:
@@ -173,19 +120,10 @@ class EventAssertions:
             event_types: The expected sequence of event types
 
         Raises:
-            AssertionError: If the sequence doesn't match (wrong count,
-                           wrong types, or wrong order)
-
-        Example:
-            >>> assertions.assert_event_sequence([
-            ...     OrderCreated,
-            ...     PaymentReceived,
-            ...     OrderShipped,
-            ... ])
+            AssertionError: If the sequence doesn't match (wrong count, types, or order)
         """
         actual_types = [type(e) for e in self._events]
 
-        # Check count first for clearer error message
         if len(actual_types) != len(event_types):
             raise AssertionError(
                 f"Event count mismatch: expected {len(event_types)} events, "
@@ -194,7 +132,6 @@ class EventAssertions:
                 f"Actual:   {[t.__name__ for t in actual_types]}"
             )
 
-        # Check each event type in sequence
         for i, (actual, expected) in enumerate(zip(actual_types, event_types, strict=True)):
             if actual != expected:
                 raise AssertionError(
@@ -218,16 +155,8 @@ class EventAssertions:
 
         Raises:
             AssertionError: If no event matches the criteria
-
-        Example:
-            >>> event = assertions.assert_event_with_fields(
-            ...     OrderCreated,
-            ...     customer_id=expected_customer_id,
-            ...     order_total=Decimal("99.99"),
-            ... )
         """
         matching_events = [e for e in self._events if isinstance(e, event_type)]
-
         if not matching_events:
             found_types = [type(e).__name__ for e in self._events]
             raise AssertionError(
@@ -235,30 +164,22 @@ class EventAssertions:
                 f"of that type were found. Published event types: {found_types or 'none'}"
             )
 
-        # If no field constraints, return first match
         if not expected_fields:
             return matching_events[0]
 
-        # Check attribute matches
         for event in matching_events:
-            match = True
-            for attr, expected_value in expected_fields.items():
-                actual_value = getattr(event, attr, _MISSING)
-                if actual_value is _MISSING:
-                    match = False
-                    break
-                if actual_value != expected_value:
-                    match = False
-                    break
-            if match:
+            if all(
+                (actual := getattr(event, attr, _MISSING)) is not _MISSING
+                and actual == expected_value
+                for attr, expected_value in expected_fields.items()
+            ):
                 return event
 
-        # Build detailed error message
         attr_desc = ", ".join(f"{k}={v!r}" for k, v in expected_fields.items())
-        found_desc = []
-        for event in matching_events:
-            event_attrs = {k: getattr(event, k, None) for k in expected_fields}
-            found_desc.append(f"{type(event).__name__}({event_attrs})")
+        found_desc = [
+            f"{type(e).__name__}({ {k: getattr(e, k, None) for k in expected_fields} })"
+            for e in matching_events
+        ]
 
         raise AssertionError(
             f"Expected {event_type.__name__}({attr_desc}) to be published.\n"
@@ -273,10 +194,6 @@ class EventAssertions:
 
         Raises:
             AssertionError: If any events were published
-
-        Example:
-            >>> # After a no-op command
-            >>> assertions.assert_no_events_published()
         """
         if self._events:
             found_types = [type(e).__name__ for e in self._events]
@@ -301,18 +218,11 @@ class EventAssertions:
 
         Raises:
             AssertionError: If no matching event found
-
-        Example:
-            >>> event = assertions.assert_event_for_aggregate(
-            ...     OrderShipped, order_id
-            ... )
         """
         matching = [
             e for e in self._events if isinstance(e, event_type) and e.aggregate_id == aggregate_id
         ]
-
         if not matching:
-            # Check if any events of the type exist
             type_matching = [e for e in self._events if isinstance(e, event_type)]
             if type_matching:
                 found_agg_ids = [str(e.aggregate_id) for e in type_matching]
@@ -320,30 +230,16 @@ class EventAssertions:
                     f"Expected {event_type.__name__} for aggregate {aggregate_id}, "
                     f"but found {event_type.__name__} only for aggregates: {found_agg_ids}"
                 )
-            else:
-                found_types = [type(e).__name__ for e in self._events]
-                raise AssertionError(
-                    f"Expected {event_type.__name__} for aggregate {aggregate_id}, "
-                    f"but no events of that type were found. "
-                    f"Published event types: {found_types or 'none'}"
-                )
-
+            found_types = [type(e).__name__ for e in self._events]
+            raise AssertionError(
+                f"Expected {event_type.__name__} for aggregate {aggregate_id}, "
+                f"but no events of that type were found. "
+                f"Published event types: {found_types or 'none'}"
+            )
         return matching[0]
 
     def get_events_of_type(self, event_type: type[TEvent]) -> list[TEvent]:
-        """
-        Get all events of a specific type.
-
-        Args:
-            event_type: The event class to filter by
-
-        Returns:
-            List of events matching the type
-
-        Example:
-            >>> item_events = assertions.get_events_of_type(ItemAdded)
-            >>> assert len(item_events) == 3
-        """
+        """Get all events of a specific type."""
         return [e for e in self._events if isinstance(e, event_type)]
 
     def __repr__(self) -> str:
