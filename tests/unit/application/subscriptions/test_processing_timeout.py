@@ -90,10 +90,9 @@ async def add_events(store: InMemoryEventStore, count: int) -> list[DomainEvent]
     events = []
     for i in range(count):
         aid = uuid4()
-        event = TimeoutTestEvent(aggregate_id=aid, data=f"event_{i}")
-        stream = StreamId(aggregate_id=aid, category="TimeoutAggregate")
-        await store.append(stream, [event], ExpectedVersion.no_stream())
-        events.append(event)
+        ev = TimeoutTestEvent(aggregate_id=aid, data=f"event_{i}")
+        await store.append(StreamId(aid, "TimeoutAggregate"), [ev], ExpectedVersion.no_stream())
+        events.append(ev)
     return events
 
 
@@ -108,19 +107,22 @@ async def current(store: InMemoryEventStore) -> Position:
 
 
 def _make_catchup_sub(
-    name: str,
-    subscriber: object,
-    *,
-    timeout: float = SHORT_TIMEOUT,
-    continue_on_error: bool = True,
+    name: str, sub: object, *, timeout: float = SHORT_TIMEOUT, continue_on_error: bool = True
 ) -> Subscription:
-    config = SubscriptionConfig(
+    cfg = SubscriptionConfig(
         batch_size=10,
         processing_timeout=timeout,
         continue_on_error=continue_on_error,
         checkpoint_strategy=CheckpointStrategy.EVERY_BATCH,
     )
-    return Subscription(name=name, config=config, subscriber=subscriber)  # type: ignore[arg-type]
+    return Subscription(name=name, config=cfg, subscriber=sub)  # type: ignore[arg-type]
+
+
+async def _run_catchup(
+    store: InMemoryEventStore, repo: InMemoryCheckpointRepository, sub: Subscription
+):
+    async with asyncio.timeout(10.0):
+        return await CatchUpRunner(store, repo, sub).run_until_position(await current(store))
 
 
 class TestCatchUpRunnerTimeout:
@@ -129,9 +131,7 @@ class TestCatchUpRunnerTimeout:
     ) -> None:
         sub = HangingBatchSubscriber()
         await add_events(event_store, 3)
-        runner = CatchUpRunner(event_store, checkpoint_repo, _make_catchup_sub("timeout-sub", sub))
-        async with asyncio.timeout(10.0):
-            await runner.run_until_position(await current(event_store))
+        await _run_catchup(event_store, checkpoint_repo, _make_catchup_sub("timeout-sub", sub))
         assert sub.batch_started.is_set() and not sub.completed_normally
 
     async def test_hanging_handle_times_out(
@@ -139,9 +139,7 @@ class TestCatchUpRunnerTimeout:
     ) -> None:
         sub = HangingSubscriber()
         await add_events(event_store, 2)
-        runner = CatchUpRunner(event_store, checkpoint_repo, _make_catchup_sub("timeout-sub", sub))
-        async with asyncio.timeout(10.0):
-            await runner.run_until_position(await current(event_store))
+        await _run_catchup(event_store, checkpoint_repo, _make_catchup_sub("timeout-sub", sub))
         assert sub.handle_started.is_set() and not sub.completed_normally
 
     async def test_handler_inside_budget_is_untouched(
@@ -150,9 +148,7 @@ class TestCatchUpRunnerTimeout:
         sub = SlowButFineSubscriber(delay=0.01)
         await add_events(event_store, 3)
         sub_obj = _make_catchup_sub("ok-sub", sub, timeout=5.0)
-        result = await CatchUpRunner(event_store, checkpoint_repo, sub_obj).run_until_position(
-            await current(event_store)
-        )
+        result = await _run_catchup(event_store, checkpoint_repo, sub_obj)
         assert result.completed and len(sub.handled) == 3
 
     async def test_timeout_is_a_handler_failure_and_stops_when_told(
@@ -161,10 +157,7 @@ class TestCatchUpRunnerTimeout:
         sub = HangingSubscriber()
         await add_events(event_store, 2)
         sub_obj = _make_catchup_sub("strict-sub", sub, continue_on_error=False)
-        async with asyncio.timeout(10.0):
-            result = await CatchUpRunner(event_store, checkpoint_repo, sub_obj).run_until_position(
-                await current(event_store)
-            )
+        result = await _run_catchup(event_store, checkpoint_repo, sub_obj)
         assert not result.completed and not sub.completed_normally
 
     async def test_timeout_does_not_checkpoint_past_the_hung_event(
@@ -173,10 +166,7 @@ class TestCatchUpRunnerTimeout:
         sub = HangingSubscriber()
         await add_events(event_store, 2)
         sub_obj = _make_catchup_sub("nocheckpoint-sub", sub, continue_on_error=False)
-        async with asyncio.timeout(10.0):
-            await CatchUpRunner(event_store, checkpoint_repo, sub_obj).run_until_position(
-                await current(event_store)
-            )
+        await _run_catchup(event_store, checkpoint_repo, sub_obj)
         assert await checkpoint_repo.get_position(subscription_id="nocheckpoint-sub") is None
 
 
@@ -193,13 +183,8 @@ class TestLiveRunnerTimeout:
             continue_on_error=True,
             checkpoint_strategy=CheckpointStrategy.EVERY_EVENT,
         )
-        subscription = Subscription(name="live-timeout", config=config, subscriber=subscriber)
-        runner = LiveRunner(
-            event_bus=event_bus,
-            checkpoint_repo=checkpoint_repo,
-            event_feed=event_store,
-            subscription=subscription,
-        )
+        sub = Subscription(name="live-timeout", config=config, subscriber=subscriber)
+        runner = LiveRunner(event_bus, checkpoint_repo, event_store, sub)
         await runner.start()
         try:
             await add_events(event_store, 1)

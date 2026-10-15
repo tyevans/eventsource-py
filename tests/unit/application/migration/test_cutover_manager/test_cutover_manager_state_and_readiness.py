@@ -93,12 +93,8 @@ class TestCutoverReadinessValidation:
     async def test_validate_readiness_fails_on_high_lag(
         self, cutover_manager, tenant_id, mock_lag_tracker, strict_config
     ):
-        mock_lag_tracker.current_lag = SyncLag(
-            events=100,
-            source_position=Position(store_id="source", key=(200,)),
-            target_position=Position(store_id="target", key=(100,)),
-            timestamp=datetime.now(UTC),
-        )
+        src_pos, tgt_pos = Position("source", (200,)), Position("target", (100,))
+        mock_lag_tracker.current_lag = SyncLag(100, src_pos, tgt_pos, datetime.now(UTC))
         ready, err = await cutover_manager.validate_cutover_readiness(
             tenant_id=tenant_id, lag_tracker=mock_lag_tracker, config=strict_config
         )
@@ -111,9 +107,7 @@ class TestCutoverReadinessValidation:
         mock_routing_repo.get_routing.return_value = TenantRouting(
             tenant_id=tenant_id, store_id="source", migration_state=State.BULK_COPY
         )
-        ready, err = await cutover_manager.validate_cutover_readiness(
-            tenant_id=tenant_id, lag_tracker=mock_lag_tracker
-        )
+        ready, err = await cutover_manager.validate_cutover_readiness(tenant_id, mock_lag_tracker)
         assert ready is False and "DUAL_WRITE" in err
 
     @pytest.mark.asyncio
@@ -121,9 +115,7 @@ class TestCutoverReadinessValidation:
         self, cutover_manager, tenant_id, mock_lag_tracker, mock_routing_repo
     ):
         mock_routing_repo.get_routing.return_value = None
-        ready, err = await cutover_manager.validate_cutover_readiness(
-            tenant_id=tenant_id, lag_tracker=mock_lag_tracker
-        )
+        ready, err = await cutover_manager.validate_cutover_readiness(tenant_id, mock_lag_tracker)
         assert ready is False and "routing" in err.lower()
 
     @pytest.mark.asyncio
@@ -134,22 +126,15 @@ class TestCutoverReadinessValidation:
             tenant_id=tenant_id, store_id="source", migration_state=State.DUAL_WRITE
         )
         mock_lock_manager.try_acquire.return_value = None
-        ready, err = await cutover_manager.validate_cutover_readiness(
-            tenant_id=tenant_id, lag_tracker=mock_lag_tracker
-        )
+        ready, err = await cutover_manager.validate_cutover_readiness(tenant_id, mock_lag_tracker)
         assert ready is False and "lock" in err.lower()
 
 
 class TestCutoverResult:
     def test_cutover_result_creation(self):
         r = CutoverResult(success=True, duration_ms=50.5, events_synced=10)
-        assert (r.success, r.duration_ms, r.events_synced, r.error_message, r.rolled_back) == (
-            True,
-            50.5,
-            10,
-            None,
-            False,
-        )
+        assert (r.success, r.duration_ms, r.events_synced) == (True, 50.5, 10)
+        assert (r.error_message, r.rolled_back) == (None, False)
 
     def test_cutover_result_within_timeout(self):
         assert CutoverResult(success=True, duration_ms=50.0).within_timeout is True
@@ -176,10 +161,7 @@ class TestEdgeCases:
     ):
         create_lock_context_manager(mock_lock_manager)
         mgr = CutoverManager(
-            lock_manager=mock_lock_manager,
-            router=mock_router,
-            routing_repo=mock_routing_repo,
-            enable_tracing=False,
+            mock_lock_manager, mock_router, mock_routing_repo, enable_tracing=False
         )
         res = await _run_cutover(
             mgr, migration_id, tenant_id, mock_lag_tracker, target_store_id, timeout_ms=0.0
@@ -204,10 +186,6 @@ class TestEdgeCases:
     async def test_multiple_cutover_attempts(
         self, cutover_manager, tenant_id, migration_id, target_store_id, mock_lag_tracker
     ):
-        r1 = await _run_cutover(
-            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
-        )
-        r2 = await _run_cutover(
-            cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id
-        )
+        args = (cutover_manager, migration_id, tenant_id, mock_lag_tracker, target_store_id)
+        r1, r2 = await _run_cutover(*args), await _run_cutover(*args)
         assert r1.success is True and r2.success is True

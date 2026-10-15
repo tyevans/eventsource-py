@@ -48,9 +48,8 @@ class TestTenantAwareRepositoryLoad(_ClearTenantMixin):
         self, mock_repo: MagicMock
     ) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=False)
-        result = await tenant_repo.load(uuid4())
+        assert await tenant_repo.load(uuid4()) is not None
         mock_repo.load.assert_called_once()
-        assert result is not None
 
     async def test_load_with_requirement_requires_context(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
@@ -59,8 +58,8 @@ class TestTenantAwareRepositoryLoad(_ClearTenantMixin):
 
     async def test_load_with_requirement_and_context_succeeds(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
-        aggregate_id, tenant_id = uuid4(), uuid4()
-        async with tenant_scope(tenant_id):
+        aggregate_id = uuid4()
+        async with tenant_scope(uuid4()):
             result = await tenant_repo.load(aggregate_id)
         mock_repo.load.assert_called_once_with(aggregate_id)
         assert result is not None
@@ -74,17 +73,15 @@ class TestTenantAwareRepositoryExists(_ClearTenantMixin):
     async def test_exists_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
         aggregate_id = uuid4()
-        result = await tenant_repo.exists(aggregate_id)
+        assert await tenant_repo.exists(aggregate_id) is True
         mock_repo.exists.assert_called_once_with(aggregate_id)
-        assert result is True
 
     async def test_exists_without_requirement_does_not_require_context(
         self, mock_repo: MagicMock
     ) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=False)
-        result = await tenant_repo.exists(uuid4())
+        assert await tenant_repo.exists(uuid4()) is True
         mock_repo.exists.assert_called_once()
-        assert result is True
 
     async def test_exists_with_requirement_requires_context(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
@@ -93,11 +90,9 @@ class TestTenantAwareRepositoryExists(_ClearTenantMixin):
 
     async def test_exists_with_requirement_and_context_succeeds(self, mock_repo: MagicMock) -> None:
         tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
-        aggregate_id, tenant_id = uuid4(), uuid4()
-        async with tenant_scope(tenant_id):
-            result = await tenant_repo.exists(aggregate_id)
+        async with tenant_scope(uuid4()):
+            assert await tenant_repo.exists(uuid4()) is True
         mock_repo.exists.assert_called_once()
-        assert result is True
 
 
 class TestTenantAwareRepositoryLoadOrCreate(_ClearTenantMixin):
@@ -108,9 +103,8 @@ class TestTenantAwareRepositoryLoadOrCreate(_ClearTenantMixin):
     async def test_load_or_create_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
         aggregate_id = uuid4()
-        result = await tenant_repo.load_or_create(aggregate_id)
+        assert await tenant_repo.load_or_create(aggregate_id) is not None
         mock_repo.load_or_create.assert_called_once_with(aggregate_id)
-        assert result is not None
 
     async def test_load_or_create_with_requirement_requires_context(
         self, mock_repo: MagicMock
@@ -128,9 +122,8 @@ class TestTenantAwareRepositoryCreateNew:
     def test_create_new_delegates_to_repository(self, mock_repo: MagicMock) -> None:
         tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
         aggregate_id = uuid4()
-        result = tenant_repo.create_new(aggregate_id)
+        assert tenant_repo.create_new(aggregate_id) is not None
         mock_repo.create_new.assert_called_once_with(aggregate_id)
-        assert result is not None
 
 
 class TestTenantAwareRepositoryProperties:
@@ -139,36 +132,26 @@ class TestTenantAwareRepositoryProperties:
         return _build_mock_repo()
 
     def test_repository_property(self, mock_repo: MagicMock) -> None:
-        tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
-        assert tenant_repo.repository is mock_repo
+        assert TenantAwareRepository(mock_repo).repository is mock_repo
 
     def test_aggregate_type_property(self, mock_repo: MagicMock) -> None:
-        tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
-        assert tenant_repo.aggregate_type == "Order"
+        assert TenantAwareRepository(mock_repo).aggregate_type == "Order"
 
     def test_repr(self, mock_repo: MagicMock) -> None:
-        tenant_repo = TenantAwareRepository(
-            mock_repo, require_tenant_context=True, validate_on_save=False
-        )
-        repr_str = repr(tenant_repo)
-        assert "TenantAwareRepository" in repr_str
-        assert "MagicMock" in repr_str
-        assert "require_tenant_context=True" in repr_str
-        assert "validate_on_save=False" in repr_str
+        repo = TenantAwareRepository(mock_repo, require_tenant_context=True, validate_on_save=False)
+        repr_str = repr(repo)
+        assert "TenantAwareRepository" in repr_str and "MagicMock" in repr_str
+        assert "require_tenant_context=True" in repr_str and "validate_on_save=False" in repr_str
 
     def test_default_configuration(self, mock_repo: MagicMock) -> None:
-        tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
-        repr_str = repr(tenant_repo)
-        assert "require_tenant_context=False" in repr_str
-        assert "validate_on_save=True" in repr_str
+        repr_str = repr(TenantAwareRepository(mock_repo))
+        assert "require_tenant_context=False" in repr_str and "validate_on_save=True" in repr_str
 
 
 class TestReadsAreNotTenantIsolated(_ClearTenantMixin):
     @pytest.fixture
     def tenant_repo(self) -> TenantAwareRepository[TenantOrderAggregate]:
-        base: AggregateRepository[TenantOrderAggregate] = AggregateRepository(
-            event_store=InMemoryEventStore(), aggregate_factory=TenantOrderAggregate
-        )
+        base = AggregateRepository(InMemoryEventStore(), TenantOrderAggregate)
         return TenantAwareRepository(base, require_tenant_context=True)
 
     async def test_load_returns_another_tenants_aggregate(
@@ -181,8 +164,7 @@ class TestReadsAreNotTenantIsolated(_ClearTenantMixin):
             await tenant_repo.save(order)
         async with tenant_scope(tenant_a):
             leaked = await tenant_repo.load(aggregate_id)
-        assert leaked.version == 1
-        assert leaked.state is not None
+        assert leaked.version == 1 and leaked.state is not None
         assert leaked.state.customer_id == customer_id
 
     async def test_exists_reports_another_tenants_aggregate(
@@ -199,8 +181,7 @@ class TestReadsAreNotTenantIsolated(_ClearTenantMixin):
     def test_create_new_is_unguarded_even_when_context_is_required(
         self, tenant_repo: TenantAwareRepository[TenantOrderAggregate]
     ) -> None:
-        aggregate = tenant_repo.create_new(uuid4())
-        assert aggregate.version == 0
+        assert tenant_repo.create_new(uuid4()).version == 0
 
 
 __all__ = [

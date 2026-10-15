@@ -26,9 +26,8 @@ class TestMetricsCollectionDuringMigration:
     @pytest.mark.asyncio
     async def test_metrics_track_events_copied(self, migration_id: UUID, tenant_id: UUID) -> None:
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
-        metrics.record_events_copied(100, rate_events_per_sec=1000.0)
-        metrics.record_events_copied(150, rate_events_per_sec=1500.0)
-        metrics.record_events_copied(50, rate_events_per_sec=500.0)
+        for count, rate in ((100, 1000.0), (150, 1500.0), (50, 500.0)):
+            metrics.record_events_copied(count, rate_events_per_sec=rate)
         snapshot = metrics.get_snapshot()
         assert (snapshot.events_copied, snapshot.events_copied_rate) == (300, 500.0)
 
@@ -42,14 +41,10 @@ class TestMetricsCollectionDuringMigration:
     @pytest.mark.asyncio
     async def test_metrics_track_phase_durations(self, migration_id: UUID, tenant_id: UUID) -> None:
         metrics = get_migration_metrics(migration_id=str(migration_id), tenant_id=str(tenant_id))
-        metrics.record_phase_duration("bulk_copy", 300.0)
-        metrics.record_phase_duration("dual_write", 600.0)
-        metrics.record_phase_duration("cutover", 0.05)
-        assert metrics.get_snapshot().phase_durations == {
-            "bulk_copy": 300.0,
-            "dual_write": 600.0,
-            "cutover": 0.05,
-        }
+        expected = {"bulk_copy": 300.0, "dual_write": 600.0, "cutover": 0.05}
+        for phase, dur in expected.items():
+            metrics.record_phase_duration(phase, dur)
+        assert metrics.get_snapshot().phase_durations == expected
 
     @pytest.mark.asyncio
     async def test_metrics_track_cutover_duration(
@@ -131,9 +126,7 @@ class TestStatusStreamingDuringMigration:
             lock_manager,
             tenant_id,
         )
-        streamer = StatusStreamer(
-            coordinator=coordinator, migration_id=migration.id, enable_tracing=False
-        )
+        streamer = StatusStreamer(coordinator, migration.id, enable_tracing=False)
         statuses = []
         async for status in streamer.stream_status(update_interval=0.1, include_initial=True):
             statuses.append(status)
@@ -163,12 +156,9 @@ class TestStatusStreamingDuringMigration:
             tenant_id,
         )
         manager = StatusStreamManager(coordinator=coordinator, enable_tracing=False)
-        streamer1 = await manager.get_streamer(migration.id)
-        assert streamer1 is not None and manager.active_streamers == 1
-
-        streamer2 = await manager.get_streamer(migration.id)
-        assert streamer2 is streamer1 and manager.active_streamers == 1
-
+        s1 = await manager.get_streamer(migration.id)
+        assert s1 is not None and manager.active_streamers == 1
+        assert await manager.get_streamer(migration.id) is s1 and manager.active_streamers == 1
         await manager.close_all()
         assert manager.active_streamers == 0
 
@@ -192,9 +182,7 @@ class TestStatusStreamingDuringMigration:
             lock_manager,
             tenant_id,
         )
-        streamer = StatusStreamer(
-            coordinator=coordinator, migration_id=migration.id, enable_tracing=False
-        )
+        streamer = StatusStreamer(coordinator, migration.id, enable_tracing=False)
         assert streamer.subscriber_count == 0
 
         async def stream_and_count():
@@ -207,7 +195,4 @@ class TestStatusStreamingDuringMigration:
         await streamer.close()
 
 
-__all__ = [  # pragma: allowlist secret
-    "TestMetricsCollectionDuringMigration",
-    "TestStatusStreamingDuringMigration",
-]
+__all__ = ["TestMetricsCollectionDuringMigration", "TestStatusStreamingDuringMigration"]
