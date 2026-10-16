@@ -170,3 +170,24 @@ async def test_outbox_payload_shape(
     assert event_data["tenant_id"] == (str(event.tenant_id) if event.tenant_id else None)
     assert event_data["occurred_at"] == event.occurred_at.isoformat()
     assert event_data["payload"] == event.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_postgresql_outbox_repository_get_pending_events_maps_retry_count() -> None:
+    from datetime import UTC, datetime
+
+    from eventsource.adapters.postgresql.outbox import PostgreSQLOutboxRepository
+
+    now = datetime.now(UTC)
+    row = (uuid4(), uuid4(), "SampleOutboxEvent", uuid4(), "TestAggregate", None, {}, now, 3)
+    conn = AsyncMock(spec=AsyncSession)
+    result = MagicMock()
+    result.fetchall.return_value = [row]
+    conn.execute = AsyncMock(return_value=result)
+
+    repo = PostgreSQLOutboxRepository(conn, enable_tracing=False)
+    entries = await repo.get_pending_events(limit=10)
+    assert len(entries) == 1
+    assert entries[0].status == "pending"
+    assert entries[0].published_at is None
+    assert entries[0].retry_count == 3

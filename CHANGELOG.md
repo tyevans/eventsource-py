@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-15
+
+### Fixed
+
+- **Fix `PostgreSQLOutboxRepository.get_pending_events()` `retry_count` mapping (`TASK-0460`).** Pass `retry_count=r[8] or 0` by keyword when constructing `OutboxEntry` rows so the `retry_count` column is not bound positionally to `published_at`.
+
 ## [0.15.0] - 2026-10-15
 
 An ergonomics, resilience, and modularity release. Every aggregate, repository,
@@ -1066,7 +1072,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/tyevans/eventsource-py/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/tyevans/eventsource-py/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/tyevans/eventsource-py/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/tyevans/eventsource-py/compare/v0.12.0...v0.13.0
