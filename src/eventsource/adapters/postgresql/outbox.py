@@ -77,7 +77,9 @@ class PostgreSQLOutboxRepository:
             async with sql_connection(self.conn, write=False) as conn:
                 rows = (await conn.execute(query, {"limit": limit})).fetchall()
             entries = [
-                OutboxEntry(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], "pending", r[8])
+                OutboxEntry(
+                    r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], "pending", retry_count=r[8] or 0
+                )  # fmt: skip
                 for r in rows
             ]
             if span:
