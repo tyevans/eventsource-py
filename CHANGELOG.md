@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-15
+
+An ergonomics, resilience, and modularity release. Every aggregate, repository,
+event store, event bus, read-model repository, projection coordinator,
+subscription manager, and testing utility gains uniform Pythonic container
+protocols (`len()`, `in`, iteration, indexing, truthiness) and single-call
+convenience helpers (`execute()` with variadic commands, `save_all()`,
+`load_many()`, `get_or_none()`, `get_or_raise()`, `exists()`, `find_one()`,
+`Query.where()`, single-event `append()`, `stream_exists()`, `replay()`
+filtering, and multi-aggregate `Scenario` testing). Alongside those surface
+improvements, `SQLiteEventStore` gains transactional outbox support, stored
+event payloads support delta compression, leadership leases are verified before
+cluster operations, subscription transitions reconcile dropped live events,
+migration cutovers switch routing atomically, and the entire codebase has been
+decomposed into focused single-responsibility modules strictly under 160 lines
+across `src/eventsource/` and under 203 lines across `tests/` and `examples/`.
+
+### Added
+
+- **Transactional outbox support for `SQLiteEventStore` (`SQLiteOutboxRepository`).** Enables atomic event append and outbox enqueue within the same SQLite transaction for lightweight and embedded deployments (`TASK-0010`).
+- **Delta compression for stored event payloads.** Reduces storage footprint across sequential versions of an aggregate stream (`TASK-0002`).
+- **Aggregate and repository ergonomics (`AggregateRoot`, `AggregateRepository`, `TenantAwareRepository`).**
+  - `AggregateRoot.apply_events(*events, is_new=True)` for applying batches of domain events in one call, and `Iterable` tolerance in `load_from_history(events)` (`TASK-0445`).
+  - `AggregateRepository.execute(aggregate_id, command, *more_commands, create_if_missing=True)` and `TenantAwareRepository.execute(...)` accepting variadic commands (dataclass instances or callables) and persisting all resulting events in a single atomic `save()` (`TASK-0190`, `TASK-0256`, `TASK-0455`).
+  - `save_all()`, `load_many()`, `get_or_none()`, `get_or_raise()`, `exists()`, and `get_version()` across both `AggregateRepository` and `TenantAwareRepository` (`TASK-0230`, `TASK-0244`, `TASK-0277`, `TASK-0455`).
+- **Event store and sync adapter ergonomics (`InMemoryEventStore`, `SyncEventStoreAdapter`).**
+  - `InMemoryEventStore` now supports `len(store)`, `bool(store)` (always `True`), `event_or_id in store` ($O(1)$ membership check for `UUID` or `DomainEvent`), `get_event_count()`, `clear()`, `stream_exists()`, and single-event or `Iterable` `append()` with `expected_version` defaulting to `ExpectedVersion.ANY` (`TASK-0357`, `TASK-0369`, `TASK-0456`).
+  - `SyncEventStoreAdapter` adds `stream_exists()`, `read_events()` (returning unwrapped `list[DomainEvent]`), and single-event / default-`ExpectedVersion.ANY` `append()` (`TASK-0434`).
+- **Read-model query and repository ergonomics (`Query`, `Filter`, `ReadModelRepository`).**
+  - `Query.where(**eq_filters)` shorthand for equality filters, variadic and keyword `Query.with_filter(*filters, **eq_filters)`, and `Iterable` tolerance on `Filter.in_()` / `Filter.not_in()` (`TASK-0422`).
+  - `find_one(query=None, **eq_filters)` and `**eq_filters` keyword shorthand on `find()` and `count()` across all read-model repositories (`InMemoryReadModelRepository`, `PostgreSQLReadModelRepository`, `SQLiteReadModelRepository`), plus `Iterable` acceptance in `get_many()` / `save_many()`, `get_or_raise()`, `clear()`, `len()`, and `in` (`TASK-0356`, `TASK-0423`).
+- **Projection, subscription, and event bus ergonomics.**
+  - `replay()` accepts a single projection or any `Iterable` of projections, supports `event_types` filtering, and returns a `ReplayReport` with `succeeded`, `total_processed`, `bool(report)`, and `raise_for_failures()` (`TASK-0267`, `TASK-0317`, `TASK-0445`).
+  - `ProjectionRegistry`, `ProjectionCoordinator`, `HandlerRegistry`, `SubscriberRegistry`, and `SubscriptionRegistry` implement container dunders (`__len__`, `__bool__`, `__contains__`, `__iter__`), `unregister()`, `clear()`, and event-instance lookup (`TASK-0326`, `TASK-0400`, `TASK-0401`, `TASK-0433`).
+  - `EventFilter` is directly callable (`event_filter(event)`), provides `filter(items)` for batch filtering envelopes or events, and accepts any `Iterable[str]` for `event_types` and `aggregate_types` (`TASK-0433`).
+  - `SubscriptionManager` adds `subscribe_many()`, target-flexible `unsubscribe()` / `get_subscription()` (accepting either a subscription name or a `Subscriber` instance), and container dunders (`__len__`, `__bool__`, `__contains__`, `__iter__`) (`TASK-0412`).
+  - `BaseEventBus.unsubscribe_all()`, `published_of_type(event_cls)` on `InMemoryEventBus` and `RecordingEventBus`, and `__len__` / `__bool__` / `clear()` on `InMemoryEventBus` (`TASK-0198`, `TASK-0378`, `TASK-0411`).
+  - `EventRegistry` container dunders (`__len__`, `__bool__`, `__contains__`, `__iter__`), `get_or_none()`, `unregister()`, and `clear()` (`TASK-0371`).
+  - `async with` context manager lifecycle support and unclosed `ResourceWarning` diagnostics across event stores, buses, and snapshot stores (`TASK-0189`).
+- **Testing toolkit enhancements (`Scenario`, `DeciderScenario`, `InMemoryTestHarness`, `EventBuilder`, `EventAssertions`, `RecordingEventBus`).**
+  - Multi-aggregate scenario support in `Scenario` (`TASK-0005`), variadic `given_events(*events)`, `given_commands(*commands)`, `then_event_sequence(*types)`, `then_event_types(*types)`, `then_event()`, `then_no_events()`, and `assertions` / `__iter__` / `__contains__` on `DeciderScenario` (`TASK-0199`, `TASK-0245`, `TASK-0268`, `TASK-0378`, `TASK-0389`, `TASK-0444`).
+  - `InMemoryTestHarness` adds `snapshot_store`, `outbox_repo`, `assertions`, `create_repository()`, `create_read_model_repository()`, `append_events()`, `publish_events()`, `replay()`, `__len__`, `__bool__`, `__iter__`, and `__contains__` (`TASK-0258`, `TASK-0299`, `TASK-0312`, `TASK-0319`, `TASK-0347`, `TASK-0444`).
+  - `EventBuilder` supports `initial_fields`, `build_many()`, `clone(**overrides)`, non-mutating `build(**overrides)`, and direct call syntax `builder(**overrides)` (`TASK-0297`, `TASK-0390`, `TASK-0444`).
+  - `EventAssertions` adds `for_aggregate()`, `assert_events_for_aggregate()`, `assert_first_event()`, `assert_last_event()`, `assert_event_type_count()`, and full sequence dunders (`__len__`, `__bool__`, `__iter__`, `__getitem__`, `__contains__`) (`TASK-0310`, `TASK-0368`, `TASK-0370`, `TASK-0444`).
+  - `RecordingEventBus` defaults its wrapped bus to `InMemoryEventBus()` when omitted and exposes `.assertions` and `len()` (`TASK-0279`, `TASK-0336`).
+
+### Fixed
+
+- **Verify leadership lease renewal before acting in cluster operations** so a node whose lease expired mid-cycle does not issue split-brain coordination actions (`TASK-0003`).
+- **Reconcile dropped live events on subscription catch-up-to-live transition** so events arriving at the boundary window are never skipped (`TASK-0006`).
+- **Atomic routing switch in migration cutover** preventing torn reads/writes during store cutover (`TASK-0007`).
+- **Non-blocking exponential backoff for Kafka and RabbitMQ retries** (`TASK-0009`).
+- **Ensure `__bool__` always returns `True` on `__len__`-bearing adapters and registries** (`InMemoryEventStore`, `InMemoryEventBus`, `InMemoryReadModelRepository`, `InMemoryTestHarness`, `RecordingEventBus`, `EventRegistry`, `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry`, `SubscriptionRegistry`, `SubscriptionManager`, `HandlerRegistry`) so empty instances evaluate truthy in `store or default_store` expressions (`TASK-0369`).
+
+### Changed
+
+- **Modular decomposition and strict architectural file-length ceilings.** Every Python file in `src/eventsource/` is now strictly under 160 lines (`MAX_SRC_LINES = 160`), and every file in `tests/` and `examples/` is strictly under 203 lines (`MAX_TEST_EXAMPLE_LINES = 203`), enforced by `tests/unit/architecture/test_source_file_ceiling.py` (`ADR-0002`).
+
 ## [0.14.0] - 2026-08-12
 
 A backpressure release, in the sense that it establishes there is no
@@ -1008,7 +1066,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/tyevans/eventsource-py/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/tyevans/eventsource-py/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/tyevans/eventsource-py/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/tyevans/eventsource-py/compare/v0.11.0...v0.12.0

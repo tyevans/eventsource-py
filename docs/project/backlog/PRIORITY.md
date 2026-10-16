@@ -470,3 +470,4 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0456 (Complete)**: [`0456-in-memory-event-store-ergonomics`](complete/0456-in-memory-event-store-ergonomics.md)
 - **TASK-0457 (Complete)**: [`0457-docs-sync-wave-29`](complete/0457-docs-sync-wave-29.md)
 - **TASK-0458 (Complete)**: [`0458-sync-wave-29-and-enforce-160-203-ceiling`](complete/0458-sync-wave-29-and-enforce-160-203-ceiling.md)
+- **TASK-0459 (Complete)**: [`0459-cut-release-0-15-0`](complete/0459-cut-release-0-15-0.md)
