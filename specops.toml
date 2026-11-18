@@ -59,7 +59,7 @@ lockfile_immutability = true
 enforce_lockfile = true
 sandbox_enabled = true
 allowed_commands = ["pytest", "git", "uv", "make", "ruff", "mypy"]
-reporting_contact = "security@example.com"
+reporting_contact = "tyevans@gmail.com"
 
 [security.licenses]
 profile = "permissive"

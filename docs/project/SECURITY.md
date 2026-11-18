@@ -10,8 +10,8 @@ We take the security of this system seriously. If you identify a security vulner
 ## 2. Reporting Contacts & Incident Management
 
 To report a vulnerability or security incident, contact the security team:
-- **Primary Security Contact**: security@example.com
-- **Incident Escalation**: security-incidents@example.com
+- **Primary Security Contact**: tyevans@gmail.com
+- **Incident Escalation**: tyevans@gmail.com
 
 ## 3. PGP Key Fingerprint
 
