@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from eventsource.adapters.redis.config import DecodedEntry, DecodedPending
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -97,13 +98,15 @@ class RedisBusDLQMixin:
                             new_ret = retry_cnt + 1
                             await redis.setex(retry_key, cfg.retry_key_expiry_seconds, new_ret)
                             stats["failed"] += 1
-                            logger.error(f"Failed to reprocess message {msg_id}: {e}", exc_info=True, extra={**ex_info, "retry_count": new_ret})  # fmt: skip
+                            # No exc_info: the message is reprocessed, so the traceback can echo payload.
+                            logger.error(f"Failed to reprocess message {msg_id}: {error_summary(e)}", extra={**ex_info, "retry_count": new_ret})  # fmt: skip
                 except Exception as e:
                     stats["failed"] += 1
-                    logger.error(f"Error recovering message {msg_id}: {e}", exc_info=True, extra={"message_id": msg_id})  # fmt: skip
+                    # No exc_info: the message is recovered from the pending list (payload path).
+                    logger.error(f"Error recovering message {msg_id}: {error_summary(e)}", extra={"message_id": msg_id})  # fmt: skip
             logger.info(f"Pending message recovery completed: {stats['reprocessed']} reprocessed, {stats['dlq']} sent to DLQ, {stats['failed']} failed", extra=stats)  # fmt: skip
         except Exception as e:
-            logger.error(f"Pending message recovery failed: {e}", exc_info=True)
+            logger.error(f"Pending message recovery failed: {error_summary(e)}", exc_info=True)
             stats["failed"] += 1
         return stats
 
@@ -128,7 +131,7 @@ class RedisBusDLQMixin:
             raw = await self._redis.xrange(name=dlq_stream, min=start, max=end, count=count)
             return [{"message_id": mid, "data": data} for mid, data in cast(list[DecodedEntry], raw)]  # fmt: skip
         except Exception as e:
-            logger.error(f"Failed to get DLQ messages: {e}", exc_info=True)
+            logger.error(f"Failed to get DLQ messages: {error_summary(e)}", exc_info=True)
             return []
 
     async def replay_dlq_message(self, message_id: str) -> bool:
@@ -148,7 +151,8 @@ class RedisBusDLQMixin:
             logger.info(f"Replayed DLQ message {message_id} as {new_id}", extra={"original_message_id": message_id, "new_message_id": new_id})  # fmt: skip
             return True
         except Exception as e:
-            logger.error(f"Failed to replay DLQ message {message_id}: {e}", exc_info=True)
+            # No exc_info: the failure can come from re-adding the stored payload (replay path).
+            logger.error(f"Failed to replay DLQ message {message_id}: {error_summary(e)}")
             return False
 
 

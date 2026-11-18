@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from eventsource.adapters.rabbitmq.models import BatchPublishError, RabbitMQEventBusStats
 from eventsource.domain.event import DomainEvent
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
@@ -111,12 +112,13 @@ class RabbitMQPublisherBatchMixin:
                 published_count += 1
             except Exception as e:
                 errors.append(e)
+                summary = error_summary(e)
                 self._logger.warning(
-                    f"Failed to publish event in ordered batch: {e}",
+                    f"Failed to publish event in ordered batch: {summary}",
                     extra={
                         "event_id": str(event.event_id),
                         "event_type": event.event_type,
-                        "error": str(e),
+                        "error": summary,
                     },
                 )
 

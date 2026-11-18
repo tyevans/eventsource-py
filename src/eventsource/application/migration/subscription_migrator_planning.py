@@ -12,6 +12,7 @@ from eventsource.application.migration.subscription_migrator_types import (
     PlannedMigration,
 )
 from eventsource.application.subscriptions.subscription import render_position
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.migration.position_mapper import PositionMapper
@@ -123,13 +124,13 @@ class SubscriptionMigratorPlanningMixin:
                     "subscription": subscription_name,
                     "migration_id": str(migration_id),
                     "position": current_position.to_str(),
-                    "error": str(e),
+                    "error": error_summary(e),
                 },
             )
             return PlannedMigration(
                 subscription_name=subscription_name,
                 current_position=current_position,
-                warning=f"Cannot translate position: {e}",
+                warning=f"Cannot translate position: {error_summary(e)}",
             )
 
 

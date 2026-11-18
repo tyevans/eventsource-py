@@ -158,7 +158,7 @@ class TestGetQueueInfo:
         info = await bus.get_queue_info()
 
         assert info.state == "error"
-        assert info.error == "Queue not found"
+        assert info.error == "Exception: Queue not found"
         assert info.message_count == 0
         assert info.consumer_count == 0
 

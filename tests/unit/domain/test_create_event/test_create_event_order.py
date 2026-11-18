@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from eventsource.domain.exceptions import AggregateIdMismatchError
+from eventsource.domain.exceptions import AggregateIdMismatchError, TenantMismatchError
 from tests.unit.domain.test_create_event._fixtures import (
     DeclarativeOrderAggregate,
     OrderAggregate,
@@ -142,11 +142,18 @@ class TestCreateEventTenantContext:
             event = order.create(customer_id=uuid4())
             assert event.tenant_id == tenant_id
 
-    def test_explicit_tenant_overrides_context(self, order: OrderAggregate) -> None:
+    def test_explicit_tenant_contradicting_context_raises(self, order: OrderAggregate) -> None:
         context_tenant, explicit_tenant = uuid4(), uuid4()
         with patch.object(OrderAggregate, "_get_tenant_from_context", return_value=context_tenant):
-            event = order.create_event(OrderCreated, tenant_id=explicit_tenant, customer_id=uuid4())
-            assert event.tenant_id == explicit_tenant
+            with pytest.raises(TenantMismatchError):
+                order.create_event(OrderCreated, tenant_id=explicit_tenant, customer_id=uuid4())
+            assert order.uncommitted_events == []
+
+    def test_explicit_tenant_matching_context_is_kept(self, order: OrderAggregate) -> None:
+        tenant = uuid4()
+        with patch.object(OrderAggregate, "_get_tenant_from_context", return_value=tenant):
+            event = order.create_event(OrderCreated, tenant_id=tenant, customer_id=uuid4())
+            assert event.tenant_id == tenant
 
     def test_get_tenant_from_context_reads_current_tenant(self, order: OrderAggregate) -> None:
         assert order._get_tenant_from_context() is None

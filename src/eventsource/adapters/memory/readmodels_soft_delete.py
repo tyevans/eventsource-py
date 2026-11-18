@@ -6,7 +6,8 @@ import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
-from eventsource.adapters._common import check_filters, matches_filter
+from eventsource.adapters._common import check_query
+from eventsource.adapters.memory.readmodels_query import shape_results
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_QUERY_FILTER_COUNT,
@@ -15,7 +16,7 @@ from eventsource.observability.attributes import (
     ATTR_READMODEL_TYPE,
 )
 from eventsource.ports.readmodels.model import ReadModel
-from eventsource.ports.readmodels.query import Filter, Query
+from eventsource.ports.readmodels.query import Query
 
 
 class InMemoryReadModelSoftDeleteMixin[TModel: ReadModel]:
@@ -30,10 +31,6 @@ class InMemoryReadModelSoftDeleteMixin[TModel: ReadModel]:
     def _detach(model: TModel) -> TModel:
         """Return an independent copy, so no reference crosses the boundary."""
         return model.model_copy(deep=True)
-
-    def _apply_filter(self, model: TModel, filter_: Filter) -> bool:
-        """Apply a single filter to a model."""
-        return matches_filter(model, filter_)
 
     async def soft_delete(self, id: UUID) -> bool:
         """Soft delete a read model by setting deleted_at."""
@@ -72,6 +69,7 @@ class InMemoryReadModelSoftDeleteMixin[TModel: ReadModel]:
     async def find_deleted(self, query: Query | None = None) -> list[TModel]:
         """Find only soft-deleted read models matching a query."""
         query = query or Query()
+        check_query(self._model_class, query)
         attrs = {
             ATTR_READMODEL_TYPE: self._model_class.__name__,
             ATTR_QUERY_FILTER_COUNT: len(query.filters),
@@ -79,17 +77,6 @@ class InMemoryReadModelSoftDeleteMixin[TModel: ReadModel]:
         }
         with self._tracer.span("eventsource.readmodel.find_deleted", attrs):
             async with self._lock:
-                results = [m for m in self._models.values() if m.is_deleted()]
-                check_filters(self._model_class, query.filters)
-                for filter_ in query.filters:
-                    results = [m for m in results if self._apply_filter(m, filter_)]
-                if query.order_by:
-                    results.sort(
-                        key=lambda m: getattr(m, query.order_by),  # type: ignore[arg-type]
-                        reverse=query.order_direction == "desc",
-                    )
-                if query.offset:
-                    results = results[query.offset :]
-                if query.limit is not None:
-                    results = results[: query.limit]
+                deleted = [m for m in self._models.values() if m.is_deleted()]
+                results = shape_results(deleted, query)
                 return [self._detach(m) for m in results]

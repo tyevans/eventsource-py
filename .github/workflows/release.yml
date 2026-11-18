@@ -5,6 +5,18 @@
 # - Stable versions (v1.0.0) -> PyPI
 # - Pre-releases (v1.0.0a1, v1.0.0b1) -> TestPyPI
 # - Release candidates (v1.0.0rc1) -> PyPI (marked as pre-release)
+#
+# Gates (see RELEASING.md, "Release gate"):
+# - The first step rejects any tag that is not MAJOR.MINOR.PATCH with an
+#   optional aN, bN, or rcN suffix.
+# - The tagged commit must be an ancestor of origin/main.
+# - publish-pypi and publish-testpypi run in GitHub environments. Those
+#   environments need required reviewers and a deployment tag policy
+#   (maintainer-only settings, listed in RELEASING.md).
+#
+# Permissions: the workflow grants nothing by default (permissions: {}).
+# Each job declares only what it needs. id-token: write appears only on the
+# publish jobs, and contents: write only on github-release.
 
 name: Release
 
@@ -13,54 +25,83 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write      # For GitHub Release creation
-  id-token: write      # For Trusted Publishing (OIDC)
+permissions: {}
 
 jobs:
   # Validate release tag and extract version info
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
       publish_target: ${{ steps.version.outputs.publish_target }}
     steps:
+      # First step: reject a malformed tag before anything else runs.
+      - name: Validate tag format
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$'
+          if [[ ! "$TAG" =~ $PATTERN ]]; then
+            echo "::error::Tag '$TAG' is not a valid release tag (expected vMAJOR.MINOR.PATCH with an optional aN, bN, or rcN suffix)"
+            exit 1
+          fi
+          echo "Tag format validated: $TAG"
+
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify tagged commit is on main
+        env:
+          TAG_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "::error::Tagged commit $TAG_SHA is not an ancestor of origin/main. Release tags must point at commits on main."
+            exit 1
+          fi
+          echo "Tagged commit $TAG_SHA is on main"
 
       - name: Extract version from tag
         id: version
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG=${GITHUB_REF#refs/tags/v}
-          echo "version=$TAG" >> $GITHUB_OUTPUT
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           # Determine if this is a pre-release and where to publish
-          if [[ "$TAG" =~ (a|b)[0-9]+ ]]; then
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(a|b)[0-9]+$ ]]; then
             # Alpha or Beta -> TestPyPI
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "publish_target=testpypi" >> $GITHUB_OUTPUT
-          elif [[ "$TAG" =~ rc[0-9]+ ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "publish_target=testpypi" >> "$GITHUB_OUTPUT"
+          elif [[ "$VERSION" =~ rc[0-9]+$ ]]; then
             # Release candidate -> PyPI but marked as pre-release
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "publish_target=pypi" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "publish_target=pypi" >> "$GITHUB_OUTPUT"
           else
             # Stable release -> PyPI
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "publish_target=pypi" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "publish_target=pypi" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.13'
 
       - name: Validate version matches pyproject.toml
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          pip install tomli
-          PYPROJECT_VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          if [[ "${{ steps.version.outputs.version }}" != "$PYPROJECT_VERSION" ]]; then
-            echo "::error::Tag version (${{ steps.version.outputs.version }}) does not match pyproject.toml ($PYPROJECT_VERSION)"
+          # tomllib is in the standard library on 3.13, so no install is needed
+          PYPROJECT_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [[ "$VERSION" != "$PYPROJECT_VERSION" ]]; then
+            echo "::error::Tag version ($VERSION) does not match pyproject.toml ($PYPROJECT_VERSION)"
             exit 1
           fi
           echo "Version validated: $PYPROJECT_VERSION"
@@ -68,37 +109,66 @@ jobs:
   # Run CI checks (reuse existing workflow)
   ci:
     needs: validate
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci.yml
 
   # Build distribution packages
   build:
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Python
-        uses: actions/setup-python@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          # Pinned uv, so the build tooling is the same on every release.
+          version: '0.12.21'
           python-version: '3.13'
+          enable-cache: false
 
-      - name: Install build tools
-        run: pip install build
-
+      # Builds the sdist first, then a wheel from that sdist. The build
+      # backend comes from [build-system] requires (hatchling>=1.27,<2).
       - name: Build distributions
-        run: python -m build
+        run: uv build --out-dir dist
+
+      # The sdist is an allowlist ([tool.hatch.build.targets.sdist] in
+      # pyproject.toml). Fail if an internal path is in the archive.
+      - name: Check sdist contents
+        run: |
+          shopt -s nullglob
+          sdists=(dist/*.tar.gz)
+          if [[ ${#sdists[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one sdist in dist/, found ${#sdists[@]}"
+            exit 1
+          fi
+          listing=$(tar -tzf "${sdists[0]}")
+          echo "$listing"
+          # Entries look like eventsource_py-X.Y.Z/<path>; test the path part.
+          if echo "$listing" | grep -E '^[^/]+/(\.claude|\.github|cosmic-ray|mutants|bench|dist|docs/project)(/|$)|^[^/]+/specops\.toml$'; then
+            echo "::error::sdist contains an excluded path (see listing above)"
+            exit 1
+          fi
+          echo "sdist contents check passed"
 
       # Guard against incomplete wheels reaching PyPI: the 0.8.0 wheel
       # silently shipped without eventsource.adapters.memory because
       # hatchling excludes .gitignore-matched paths from file selection.
       - name: Smoke-test the built wheel
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.13'
+      - name: Install and import the wheel
         run: |
           pip install dist/*.whl
           python -c "from eventsource import DomainEvent, InMemoryEventStore, InMemoryEventBus; print('Wheel smoke test passed')"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dist
           path: dist/
@@ -109,15 +179,19 @@ jobs:
     if: needs.validate.outputs.publish_target == 'pypi'
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      id-token: write  # Trusted Publishing (OIDC)
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          attestations: true
 
   # Publish to TestPyPI (alpha and beta releases)
   publish-testpypi:
@@ -125,48 +199,54 @@ jobs:
     if: needs.validate.outputs.publish_target == 'testpypi'
     runs-on: ubuntu-latest
     environment: testpypi
+    permissions:
+      id-token: write  # Trusted Publishing (OIDC)
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist/
 
       - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: https://test.pypi.org/legacy/
+          attestations: true
 
   # Create GitHub Release
   github-release:
     needs: [validate, build, publish-pypi, publish-testpypi]
     if: always() && needs.build.result == 'success' && (needs.publish-pypi.result == 'success' || needs.publish-testpypi.result == 'success' || needs.publish-pypi.result == 'skipped' || needs.publish-testpypi.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Create the GitHub Release
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist
           path: dist/
 
       - name: Extract changelog for this version
         id: changelog
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          VERSION=${{ needs.validate.outputs.version }}
           # Extract the section for this version from CHANGELOG.md
           # This captures everything between ## [VERSION] and the next ## [
-          CONTENT=$(awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+          CONTENT=$(awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md)
 
           # Handle multi-line content for GitHub Actions
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          echo "$CONTENT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "content<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CONTENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           files: dist/*
           prerelease: ${{ needs.validate.outputs.is_prerelease }}
@@ -187,17 +267,21 @@ jobs:
     needs: [validate, publish-pypi]
     if: needs.publish-pypi.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - name: Wait for PyPI propagation
         run: sleep 60
 
       - name: Setup Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.13'
 
       - name: Install from PyPI
-        run: pip install eventsource-py==${{ needs.validate.outputs.version }}
+        run: pip install "eventsource-py==$VERSION"
 
       - name: Verify import and version
         run: |

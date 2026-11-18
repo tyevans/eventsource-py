@@ -98,7 +98,7 @@ class TestStatusStreamerStreamStatus:
         with pytest.raises(ValueError) as exc_info:
             async for _ in streamer.stream_status(update_interval=0):
                 pass
-        assert "update_interval must be > 0" in str(exc_info.value)
+        assert "update_interval must be >= 0.05" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_stream_status_raises_if_closed(self, mock_coordinator: MagicMock) -> None:

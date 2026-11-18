@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from eventsource import TenantContextNotSetError
 from eventsource.application.projections import DeclarativeProjection
 from eventsource.domain.decorators import handles
 from eventsource.domain.event import DomainEvent
@@ -37,7 +38,7 @@ class TestCallableTenantFilter:
         assert len(projection.processed_events) == 2
 
     @pytest.mark.asyncio
-    async def test_filter_returns_none_processes_all(
+    async def test_filter_returns_none_raises_instead_of_processing_all(
         self,
         tenant_event_1: TenantEvent,
         tenant_event_2: TenantEvent,
@@ -46,10 +47,12 @@ class TestCallableTenantFilter:
             return None
 
         projection = SampleProjection(tenant_filter=no_filter)
-        await projection.handle(tenant_event_1)
-        await projection.handle(tenant_event_2)
+        with pytest.raises(TenantContextNotSetError):
+            await projection.handle(tenant_event_1)
+        with pytest.raises(TenantContextNotSetError):
+            await projection.handle(tenant_event_2)
 
-        assert len(projection.processed_events) == 2
+        assert projection.processed_events == []
 
     @pytest.mark.asyncio
     async def test_dynamic_filter_changes_between_events(

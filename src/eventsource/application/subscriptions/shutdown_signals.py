@@ -11,6 +11,7 @@ from eventsource.application.subscriptions.shutdown_models import (
     ShutdownPhase,
     ShutdownReason,
 )
+from eventsource.observability.error_summary import error_summary
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class ShutdownSignalManager:
             try:
                 await callback()
             except Exception as e:
-                logger.error("Shutdown callback error", extra={"error": str(e)}, exc_info=True)
+                logger.error("Shutdown callback error", extra={"error": error_summary(e)}, exc_info=True)  # fmt: skip
 
     def on_shutdown(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Register a callback to be invoked on shutdown signal."""

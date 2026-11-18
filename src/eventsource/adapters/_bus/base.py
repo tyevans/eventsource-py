@@ -12,6 +12,7 @@ from eventsource.adapters._bus.registry import SubscriptionRegistry
 from eventsource.application.background_tasks import BackgroundTaskManager
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.event_registry import EventRegistry
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.bus import EventBus, EventHandlerFunc
 from eventsource.ports.handlers import FlexibleEventHandler, FlexibleEventSubscriber
 
@@ -104,15 +105,12 @@ class BaseEventBus(EventBus):
 
     async def _track_background(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None] | None:
         """Schedule a coroutine as a tracked background task, or run inline at capacity."""
-        if self._tasks.at_capacity:
-            logger.debug("Background publish at capacity (%s); running inline", self._tasks.max_pending)  # fmt: skip
-            await coro
-            return None
-        return self._tasks.submit(coro, on_done=self._on_background_task_done)
+        return await self._tasks.submit_or_run_inline(coro, on_done=self._on_background_task_done)
 
     def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
         if not task.cancelled() and (exc := task.exception()) is not None:
-            logger.error(f"Background task failed: {exc}", exc_info=exc)
+            # No exc_info: background tasks run handlers, and the traceback can echo payload.
+            logger.error(f"Background task failed: {error_summary(exc)}")
 
     @property
     def _background_tasks(self) -> set[asyncio.Task[None]]:
@@ -142,7 +140,7 @@ class BaseEventBus(EventBus):
                     task.cancel()
                 await asyncio.gather(*remaining, return_exceptions=True)
         except Exception as e:
-            logger.error(f"Error draining background tasks: {e}", exc_info=True)
+            logger.error(f"Error draining background tasks: {error_summary(e)}", exc_info=True)
 
 
 __all__ = ["BaseEventBus"]

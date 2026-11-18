@@ -9,8 +9,11 @@ from ._fixtures import (  # pragma: allowlist secret
     TenantOrderAggregate,
     TenantOrderState,
 )
+from .test_tenant_mismatch_details import (  # pragma: allowlist secret
+    TestTenantMismatchErrorDetails,
+)
 from .test_tenant_repository_read import (  # pragma: allowlist secret
-    TestReadsAreNotTenantIsolated,
+    TestReadsAreTenantIsolated,
     TestTenantAwareRepositoryCreateNew,
     TestTenantAwareRepositoryExists,
     TestTenantAwareRepositoryLoad,
@@ -19,7 +22,6 @@ from .test_tenant_repository_read import (  # pragma: allowlist secret
 )
 from .test_tenant_repository_save import (  # pragma: allowlist secret
     TestTenantAwareRepositorySave,
-    TestTenantMismatchErrorDetails,
 )
 
 __all__ = [  # pragma: allowlist secret
@@ -28,7 +30,7 @@ __all__ = [  # pragma: allowlist secret
     "OrderCreated",  # pragma: allowlist secret
     "TenantOrderAggregate",  # pragma: allowlist secret
     "TenantOrderState",  # pragma: allowlist secret
-    "TestReadsAreNotTenantIsolated",  # pragma: allowlist secret
+    "TestReadsAreTenantIsolated",  # pragma: allowlist secret
     "TestTenantAwareRepositoryCreateNew",  # pragma: allowlist secret
     "TestTenantAwareRepositoryExists",  # pragma: allowlist secret
     "TestTenantAwareRepositoryLoad",  # pragma: allowlist secret

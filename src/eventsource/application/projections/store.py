@@ -46,6 +46,7 @@ class ProjectionOptions(TypedDict, total=False):
     retry_policy: ProjectionRetryPolicy | None
     tracer: Tracer | None
     tenant_filter: TenantFilter
+    projection_name: str | None
 
 
 class StoreProjection[TStore](DeclarativeProjection):

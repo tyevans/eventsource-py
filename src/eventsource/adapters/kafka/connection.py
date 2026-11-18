@@ -14,6 +14,8 @@ except ImportError:
     AIOKafkaProducer = AIOKafkaConsumer = TopicPartition = None
     _ConsumerRebalanceListener, IllegalStateError = object, Exception
 
+from eventsource.observability.error_summary import error_summary
+
 if TYPE_CHECKING:
     from eventsource.adapters.kafka.config import KafkaEventBusConfig
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
@@ -68,7 +70,9 @@ class KafkaConnectionManager:
         except Exception as e:
             if self._metrics:
                 self._metrics.connection_errors.add(1, attributes={"error.type": type(e).__name__})
-            logger.error("Failed to connect to Kafka", extra={"error": str(e)}, exc_info=True)
+            logger.error(
+                "Failed to connect to Kafka", extra={"error": error_summary(e)}, exc_info=True
+            )
             await self.cleanup()
             raise
 
@@ -86,7 +90,7 @@ class KafkaConnectionManager:
                 try:
                     await client.stop()
                 except Exception as e:
-                    logger.warning(f"Error stopping {label}: {e}")
+                    logger.warning(f"Error stopping {label}: {error_summary(e)}")
                 setattr(self, attr, None)
 
     async def reconnect_consumer(self) -> None:
@@ -95,7 +99,7 @@ class KafkaConnectionManager:
             try:
                 await self._consumer.stop()
             except Exception as e:
-                logger.warning(f"Error stopping consumer during reconnect: {e}")
+                logger.warning(f"Error stopping consumer during reconnect: {error_summary(e)}")
         self._consumer = AIOKafkaConsumer(self._config.topic_name, **self._config.get_consumer_config())  # fmt: skip
         await self._consumer.start()
         logger.info("Consumer reconnected successfully")
@@ -136,7 +140,7 @@ class KafkaRebalanceListener(_ConsumerRebalanceListener):  # type: ignore[misc]
             except IllegalStateError:
                 logger.debug("No partitions to commit during rebalance")
             except Exception as e:
-                logger.warning("Failed to commit offsets during rebalance", extra={"error": str(e)})
+                logger.warning("Failed to commit offsets during rebalance", extra={"error": error_summary(e)})  # fmt: skip
         self._manager.record_rebalance()
 
     async def on_partitions_assigned(self, assigned: set[TopicPartition]) -> None:

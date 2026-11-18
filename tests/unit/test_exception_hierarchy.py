@@ -41,12 +41,6 @@ SANCTIONED_NON_EVENTSOURCE_ERRORS: dict[str, str] = {
     "eventsource.adapters.sqlite.snapshots:SQLiteNotAvailableError": (
         "optional-dependency import sentinel"
     ),
-    # Known gap, tracked separately: lives in a module this change did not own.
-    # When it is rebased onto EventSourceError, delete this entry -- the
-    # exactness assertion below will fail until you do.
-    "eventsource.adapters.kafka.models:DeserializationError": (
-        "known gap: not yet rebased onto EventSourceError"
-    ),
 }
 
 

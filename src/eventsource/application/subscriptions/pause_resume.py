@@ -10,6 +10,7 @@ from eventsource.application.subscriptions.subscription import (
 )
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_SUBSCRIPTION_NAME
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.lifecycle import SubscriptionLifecycleManager
@@ -48,7 +49,7 @@ class PauseResumeController:
                 logger.info("Subscription paused", extra={"subscription": name, "reason": pause_reason.value, "position": render_position(subscription.last_processed_position)})  # fmt: skip
                 return True
             except Exception as e:
-                logger.error("Failed to pause subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
+                logger.error("Failed to pause subscription", extra={"subscription": name, "error": error_summary(e)}, exc_info=True)  # fmt: skip
                 return False
 
     async def resume(self, name: str) -> bool:
@@ -70,7 +71,7 @@ class PauseResumeController:
                 logger.info("Subscription resumed", extra={"subscription": name, "position": render_position(subscription.last_processed_position), "state": subscription.state.value})  # fmt: skip
                 return True
             except Exception as e:
-                logger.error("Failed to resume subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
+                logger.error("Failed to resume subscription", extra={"subscription": name, "error": error_summary(e)}, exc_info=True)  # fmt: skip
                 coordinator = self._lifecycle.get_coordinator(name)
                 if coordinator and coordinator.live_runner:
                     await coordinator.live_runner.clear_buffer()

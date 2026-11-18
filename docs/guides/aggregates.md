@@ -350,6 +350,9 @@ methods while enforcing your configured tenant policies:
   validate that every uncommitted event on each aggregate matches the active
   tenant context before delegating to `save()`, raising `TenantMismatchError` on
   a mismatch.
+- A command whose `tenant_id` differs from the active tenant scope makes
+  `execute()` raise `TenantMismatchError` before any event is applied. When no
+  tenant scope is active, the command's `tenant_id` is used as is.
 
 ```python
 from uuid import UUID, uuid4

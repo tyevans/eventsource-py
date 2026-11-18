@@ -16,6 +16,8 @@ class Snapshot:
     state: dict[str, Any]
     schema_version: int
     created_at: datetime
+    tenant_id: UUID | None = None
+    """Owner tenant of the stream the snapshot was taken from, or None if untenanted."""
 
     def __str__(self) -> str:
         """Human-readable string representation."""

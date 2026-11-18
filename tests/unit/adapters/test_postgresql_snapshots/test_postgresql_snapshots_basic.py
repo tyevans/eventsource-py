@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -19,6 +20,13 @@ from .test_postgresql_snapshots_create import (
 )
 
 
+def _upsert_calls(mock_session: AsyncMock) -> list[Any]:
+    """Return the execute calls that write a snapshot (the tenant probe is excluded)."""
+    return [
+        c for c in mock_session.execute.call_args_list if "INSERT INTO snapshots" in str(c[0][0])
+    ]
+
+
 class TestPostgreSQLSnapshotStoreBasic:
     """Tests for basic CRUD operations."""
 
@@ -28,8 +36,9 @@ class TestPostgreSQLSnapshotStoreBasic:
     ) -> None:
         mock_session.execute.return_value = create_mock_result()
         await store.save_snapshot(sample_snapshot)
-        mock_session.execute.assert_called_once()
-        sql_text = str(mock_session.execute.call_args[0][0])
+        upserts = _upsert_calls(mock_session)
+        assert len(upserts) == 1
+        sql_text = str(upserts[0][0][0])
         assert "INSERT INTO snapshots" in sql_text
         assert "ON CONFLICT" in sql_text and "DO UPDATE SET" in sql_text
 
@@ -166,8 +175,9 @@ class TestUpsertSemantics:
                     created_at=datetime.now(UTC),
                 )
             )
-        assert mock_session.execute.call_count == 2
-        for call in mock_session.execute.call_args_list:
+        upserts = _upsert_calls(mock_session)
+        assert len(upserts) == 2
+        for call in upserts:
             assert "ON CONFLICT" in str(call[0][0])
 
     @pytest.mark.asyncio
@@ -189,4 +199,4 @@ class TestUpsertSemantics:
                     created_at=datetime.now(UTC),
                 )
             )
-        assert mock_session.execute.call_count == 2
+        assert len(_upsert_calls(mock_session)) == 2

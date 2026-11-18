@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.application.subscriptions.models import (
-    RecentErrorInfo,
     SubscriptionState,
     SubscriptionStatus,
     render_position,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
@@ -37,8 +37,6 @@ class SubscriptionProgressMixin:
         _lock: asyncio.Lock
         _events_seen: int
         _events_delivered: int
-        _recent_errors: list[RecentErrorInfo]
-        _max_recent_errors: int
 
     async def record_event_processed(
         self, position: Position | None, event_id: UUID, event_type: str
@@ -52,40 +50,27 @@ class SubscriptionProgressMixin:
             self._events_delivered += 1
             self.last_processed_at = datetime.now(UTC)
 
+    async def advance_past_failed_event(
+        self, position: Position | None, event_id: UUID, event_type: str
+    ) -> None:
+        """Move the position past an event whose handler failed, without counting it processed.
+
+        The event counts as consumed (so lag stays accurate) and the position moves on
+        (so a checkpoint can pass it under `continue_on_error`). `events_processed` does
+        not change: the failure is already counted in `events_failed`.
+        """
+        async with self._lock:
+            self.last_processed_position = position
+            self.last_event_id = event_id
+            self.last_event_type = event_type
+            self._events_delivered += 1
+
     async def record_event_failed(self, error: Exception) -> None:
         """Record that an event processing failed."""
         async with self._lock:
             self.events_failed += 1
             self.last_error = error
             self.last_error_at = datetime.now(UTC)
-
-    async def record_event_error(
-        self,
-        event_id: UUID,
-        event_type: str,
-        position: Position | None,
-        error: Exception,
-        sent_to_dlq: bool = False,
-    ) -> None:
-        """Record detailed error information."""
-        async with self._lock:
-            error_info = RecentErrorInfo(
-                event_id=event_id,
-                event_type=event_type,
-                position=position,
-                error_type=type(error).__name__,
-                error_message=str(error)[:500],
-                timestamp=datetime.now(UTC),
-                sent_to_dlq=sent_to_dlq,
-            )
-            self._recent_errors.append(error_info)
-            if len(self._recent_errors) > self._max_recent_errors:
-                self._recent_errors = self._recent_errors[-self._max_recent_errors :]
-            self.events_failed += 1
-            self.last_error = error
-            self.last_error_at = datetime.now(UTC)
-            if sent_to_dlq:
-                self.events_dlq += 1
 
     async def record_events_seen(self, count: int) -> None:
         """Record events observed but not yet delivered."""
@@ -115,11 +100,6 @@ class SubscriptionProgressMixin:
         return (datetime.now(UTC) - self.started_at).total_seconds()
 
     @property
-    def recent_errors(self) -> list[RecentErrorInfo]:
-        """Get list of recent errors."""
-        return list(self._recent_errors)
-
-    @property
     def dlq_count(self) -> int:
         """Get count of events sent to DLQ."""
         return self.events_dlq
@@ -138,9 +118,8 @@ class SubscriptionProgressMixin:
             last_processed_at=last_proc,
             started_at=started,
             uptime_seconds=self.uptime_seconds,
-            error=str(self.last_error) if self.last_error else None,
+            error=error_summary(self.last_error) if self.last_error else None,
             events_dlq=self.events_dlq,
-            recent_errors_count=len(self._recent_errors),
         )
 
     def __str__(self) -> str:

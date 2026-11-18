@@ -9,7 +9,7 @@ from datetime import datetime
 from uuid import UUID
 
 from eventsource.adapters.serialization import json_dumps, json_loads
-from eventsource.adapters.sql.schemas import get_schema
+from eventsource.adapters.sqlite.snapshots_schema import ensure_snapshot_schema
 from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (  # fmt: skip
@@ -56,7 +56,7 @@ class SQLiteSnapshotStore:
                     conn = await aiosqlite.connect(self._database_path)
                     await conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout}")
                     conn.row_factory = aiosqlite.Row
-                    await conn.executescript(get_schema("snapshots", backend="sqlite"))
+                    await ensure_snapshot_schema(conn)
                     await conn.commit()
                     self._connection = conn
         return self._connection
@@ -83,8 +83,9 @@ class SQLiteSnapshotStore:
 
     async def save_snapshot(self, snapshot: Snapshot) -> None:
         attrs = {**self._agg_attrs(snapshot.aggregate_id, snapshot.aggregate_type), ATTR_VERSION: snapshot.version}  # fmt: skip
-        sql = "INSERT OR REPLACE INTO snapshots (aggregate_id, aggregate_type, version, schema_version, state, created_at) VALUES (?, ?, ?, ?, ?, ?)"  # fmt: skip
-        params = (str(snapshot.aggregate_id), snapshot.aggregate_type, snapshot.version, snapshot.schema_version, json_dumps(snapshot.state), snapshot.created_at.isoformat())  # fmt: skip
+        sql = "INSERT OR REPLACE INTO snapshots (aggregate_id, aggregate_type, version, schema_version, state, created_at, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)"  # fmt: skip
+        tenant = str(snapshot.tenant_id) if snapshot.tenant_id is not None else None
+        params = (str(snapshot.aggregate_id), snapshot.aggregate_type, snapshot.version, snapshot.schema_version, json_dumps(snapshot.state), snapshot.created_at.isoformat(), tenant)  # fmt: skip
         with self._tracer.span("eventsource.snapshot.save", attrs):
             conn = await self._conn()
             async with self._lock:
@@ -93,7 +94,7 @@ class SQLiteSnapshotStore:
             logger.debug("Saved snapshot for %s/%s", snapshot.aggregate_type, snapshot.aggregate_id)
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
-        sql = "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"  # fmt: skip
+        sql = "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at, tenant_id FROM snapshots WHERE aggregate_id = ? AND aggregate_type = ?"  # fmt: skip
         with self._tracer.span("eventsource.snapshot.get", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip
             conn = await self._conn()
             async with self._lock:
@@ -107,7 +108,8 @@ class SQLiteSnapshotStore:
             except (ValueError, TypeError) as e:
                 raise SnapshotDeserializationError(r_id, r_type, e) from e
             logger.debug("Retrieved snapshot for %s/%s", aggregate_type, aggregate_id)
-            return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], datetime.fromisoformat(row["created_at"]))  # fmt: skip
+            r_tenant = UUID(row["tenant_id"]) if row["tenant_id"] is not None else None
+            return Snapshot(r_id, r_type, row["version"], state, row["schema_version"], datetime.fromisoformat(row["created_at"]), r_tenant)  # fmt: skip
 
     async def delete_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> bool:
         with self._tracer.span("eventsource.snapshot.delete", self._agg_attrs(aggregate_id, aggregate_type)):  # fmt: skip

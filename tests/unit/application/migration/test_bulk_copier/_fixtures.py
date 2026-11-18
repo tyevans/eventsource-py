@@ -107,3 +107,24 @@ def create_migration(
         last_target_position=last_target_position,
         config=MigrationConfig(batch_size=batch_size, max_bulk_copy_rate=max_bulk_copy_rate),
     )
+
+
+def stored_view(envelopes: list[EventEnvelope]) -> Any:
+    """Return a `read_stream` callable that serves `envelopes` as the target's stored events."""
+
+    def read_stream(stream: StreamId, options: Any = None) -> AsyncIterator[EventEnvelope]:
+        async def events() -> AsyncIterator[EventEnvelope]:
+            lo = getattr(options, "from_version", None)
+            hi = getattr(options, "to_version", None)
+            for env in envelopes:
+                if env.stream_id != stream:
+                    continue
+                if lo is not None and env.stream_version < lo:
+                    continue
+                if hi is not None and env.stream_version > hi:
+                    continue
+                yield env
+
+        return events()
+
+    return read_stream

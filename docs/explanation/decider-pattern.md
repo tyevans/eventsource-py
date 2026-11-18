@@ -242,8 +242,10 @@ provenance is available.
 Stamping never overwrites a field `decide()` set explicitly — `execute()` checks
 `event.model_fields_set` per field before assigning, so an event that already carries
 its own `correlation_id` (for example, one built by `caused_by()`) keeps it. Tenant
-resolution falls back in order: the command's `tenant_id`, then the ambient tenant
-context, then untouched. `DomainCommand.caused_by(event)` copies an event's
+resolution uses the command's `tenant_id` when it is set, then the ambient tenant
+context, and otherwise leaves the event's tenant untouched. When an ambient tenant is
+set and the command's `tenant_id` differs from it, `execute()` raises
+`TenantMismatchError` before any event is applied. `DomainCommand.caused_by(event)` copies an event's
 `correlation_id` onto a new command, which is how a saga continues an existing
 workflow chain instead of starting a new one — commands deliberately carry no
 `causation_id` of their own; that linkage is by correlation.

@@ -81,7 +81,7 @@ and that design is explained, while the tables themselves belong to the
 reference material.
 
 Several neighbours are named and then left alone. Live store-to-store migration
-(`eventsource.application.migration`), GDPR erasure (`eventsource.gdpr`), the BDD and
+(`eventsource.application.migration`), the BDD and
 harness helpers in `eventsource.testing`, and the internal details of the
 conformance suites are all real parts of the package and all out of scope,
 mentioned only where they illustrate a boundary. Deeper single-topic arguments
@@ -1407,9 +1407,11 @@ still read `eventsource.dlq_manager.*` deliberately.
 (`coordinator.py`)** answer *who gets this event?* The three are layered.
 `ProjectionRegistry` holds projections and handlers and fans an event out to
 all of them with `asyncio.gather(..., return_exceptions=True)` -- concurrent,
-and explicitly non-propagating: each returned exception is logged with the
-offending projection's class name and then dropped, so one broken projection
-cannot stall its siblings, and equally cannot tell the caller it is broken.
+so one broken projection cannot stall its siblings. Each returned exception is
+logged with the offending projection's class name. `dispatch_many` returns the
+projection errors to its caller. `rebuild_all` raises `ProjectionRebuildError`
+(with `failure_count`, and the first error as `__cause__`) after every event has
+been dispatched. `dispatch` and `dispatch_events` only log.
 `SubscriberRegistry` is the narrower variant for `EventSubscriber`
 implementations, routing by `subscribed_to()` so a subscriber is only invoked
 for event types it declared. `ProjectionCoordinator` sits above a registry and

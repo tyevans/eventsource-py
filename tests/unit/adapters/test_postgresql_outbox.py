@@ -78,11 +78,13 @@ def _mock_insert_result(global_position: int) -> MagicMock:
 def _configure_append_execute(mock_session: AsyncMock, num_events: int) -> None:
     """Wire mock_session.execute to satisfy append()'s query sequence:
 
-    1. SELECT MAX(version) for current_version
-    2. one INSERT INTO events (RETURNING global_position) per event
-    3. optionally one INSERT INTO event_outbox per event
+    1. pg_advisory_xact_lock for the stream
+    2. to_regclass probe for the partitioned schema's event_ids table (first append only)
+    3. SELECT MAX(version) for current_version
+    4. one INSERT INTO events (RETURNING global_position) per event
+    5. optionally one INSERT INTO event_outbox per event
     """
-    responses = [_mock_scalar_result(0)]
+    responses = [MagicMock(), _mock_scalar_result(False), _mock_scalar_result(0)]
     for i in range(num_events):
         responses.append(_mock_insert_result(i + 1))
         responses.append(MagicMock())  # outbox insert result (unused if disabled)

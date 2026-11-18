@@ -79,3 +79,20 @@ repos:
         language: system
         pass_filenames: false
         files: ^(docs/adrs/|mkdocs\.yml|scripts/check_adr_index\.py)
+
+      # gitleaks is a Go binary, so it is not a uv-managed tool. It is found
+      # on PATH (`language: system`), the same way `uv` is. Install it with
+      # `brew install gitleaks` or from https://github.com/gitleaks/gitleaks.
+      # Rules and allowlist come from .gitleaks.toml. CI runs the same scan
+      # in the `secrets` job of .github/workflows/ci.yml.
+      - id: gitleaks
+        name: gitleaks
+        # Skips with a warning when the gitleaks binary is not installed;
+        # the CI `secrets` job still enforces the scan on every PR.
+        entry: >-
+          bash -c 'if command -v gitleaks >/dev/null 2>&1; then
+          exec gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml;
+          else echo "gitleaks not installed: secret scan skipped locally (CI enforces it)" >&2; fi'
+        language: system
+        pass_filenames: false
+        require_serial: true

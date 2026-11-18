@@ -19,6 +19,8 @@ from eventsource.observability.attributes import (
     ATTR_HANDLER_NAME,
     ATTR_HANDLER_SUCCESS,
 )
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 logger = logging.getLogger(__name__)
 TEvent = TypeVar("TEvent", bound=DomainEvent)
@@ -137,10 +139,11 @@ class InMemoryEventBus(BaseEventBus):
             except Exception as e:
                 if span:
                     span.set_attribute(ATTR_HANDLER_SUCCESS, False)
-                    span.record_exception(e)
+                    record_error(span, e)
                 self._stats["handler_errors"] += 1
-                ex = {"handler": adapter.name, "event_type": etype, "event_id": eid, "error": str(e)}  # fmt: skip
-                logger.error(f"Handler {adapter.name} failed processing {etype}: {e}", exc_info=True, extra=ex)  # fmt: skip
+                # No exc_info: the traceback repeats the message, which can echo event payload.
+                ex = {"handler": adapter.name, "event_type": etype, "event_id": eid, "error": error_summary(e)}  # fmt: skip
+                logger.error(f"Handler {adapter.name} failed processing {etype}: {error_summary(e)}", extra=ex)  # fmt: skip
 
     def get_stats(self) -> dict[str, int]:
         """Get statistics about event bus operation."""

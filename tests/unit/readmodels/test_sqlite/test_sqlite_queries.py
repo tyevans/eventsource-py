@@ -46,16 +46,16 @@ class TestBuildSelectQuery:
         assert "ORDER BY order_number ASC" in sql
 
     def test_select_with_limit(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        sql, _ = repo._build_select_query(Query(limit=10))
-        assert "LIMIT 10" in sql
+        sql, params = repo._build_select_query(Query(limit=10))
+        assert "LIMIT ?" in sql and params == (10,)
 
     def test_select_with_offset(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        sql, _ = repo._build_select_query(Query(offset=5))
-        assert "OFFSET 5" in sql
+        sql, params = repo._build_select_query(Query(offset=5))
+        assert "OFFSET ?" in sql and params == (5,)
 
     def test_select_with_pagination(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
-        sql, _ = repo._build_select_query(Query(limit=10, offset=20))
-        assert "LIMIT 10" in sql and "OFFSET 20" in sql
+        sql, params = repo._build_select_query(Query(limit=10, offset=20))
+        assert "LIMIT ?" in sql and "OFFSET ?" in sql and params == (10, 20)
 
     def test_select_include_deleted(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         sql, _ = repo._build_select_query(Query(include_deleted=True))
@@ -77,10 +77,10 @@ class TestBuildSelectQuery:
             "deleted_at IS NULL",
             "status = ?",
             "ORDER BY created_at DESC",
-            "LIMIT 10",
+            "LIMIT ?",
         ):
             assert token in sql
-        assert "active" in params
+        assert params == ("active", 10)
 
 
 class TestBuildCountQuery:
@@ -102,7 +102,8 @@ class TestQueryBuilderIntegration:
     def test_query_with_filter_method(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         filtered = Query(limit=100).with_filter(Filter.eq("status", "active"))
         sql, params = repo._build_select_query(filtered)
-        assert "status = ?" in sql and "LIMIT 100" in sql and "active" in params
+        assert "status = ?" in sql and "LIMIT ?" in sql
+        assert params == ("active", 100)
 
     def test_query_with_order_method(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         sql, _ = repo._build_select_query(Query().with_order("created_at", "desc"))
@@ -111,8 +112,8 @@ class TestQueryBuilderIntegration:
     def test_query_with_pagination_method(
         self, repo: SQLiteReadModelRepository[OrderSummary]
     ) -> None:
-        sql, _ = repo._build_select_query(Query().with_pagination(limit=20, offset=40))
-        assert "LIMIT 20" in sql and "OFFSET 40" in sql
+        sql, params = repo._build_select_query(Query().with_pagination(limit=20, offset=40))
+        assert "LIMIT ?" in sql and "OFFSET ?" in sql and params == (20, 40)
 
     def test_query_with_deleted_method(self, repo: SQLiteReadModelRepository[OrderSummary]) -> None:
         sql, _ = repo._build_select_query(Query().with_deleted(True))
@@ -128,8 +129,8 @@ class TestQueryBuilderIntegration:
         )
         sql, params = repo._build_select_query(query)
         assert "status = ?" in sql and "total_amount > ?" in sql
-        assert "ORDER BY created_at DESC" in sql and "LIMIT 10" in sql
-        assert "shipped" in params and Decimal("50") in params
+        assert "ORDER BY created_at DESC" in sql and "LIMIT ?" in sql
+        assert "shipped" in params and Decimal("50") in params and params[-1] == 10
 
 
 class TestSQLiteSyntaxDifferences:

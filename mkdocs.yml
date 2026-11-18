@@ -94,6 +94,7 @@ nav:
       - guides/index.md
       - Database Schema: guides/database-schema.md
       - Choose an Event Store Backend: how-to/choose-an-event-store-backend.md
+      - Production Security Considerations: how-to/production-security-considerations.md
       - Repository Pattern: guides/repository-pattern.md
       - Repository Operations: guides/repository-operations.md
       - Snapshotting: guides/snapshotting.md
@@ -158,6 +159,8 @@ nav:
       - "10. Ambient Multi-Tenant SaaS Isolation Model": adrs/0010-ambient-multi-tenant-saas-isolation-model.md
       - "11. Zero-Downtime 5-State Live Store Migration and Distributed Locking": adrs/0011-zero-downtime-5-state-live-store-migration-and-distributed-locking.md
       - "12. Tier-0 Packaging, PEP 562 Lazy Front Door, and Zero-Overhead Observability": adrs/0012-tier-0-packaging-pep-562-lazy-front-door-and-zero-overhead-observability.md
+      - "13. Tenant Ownership Check on the Repository Read and Write Path": adrs/0013-tenant-ownership-check-on-the-repository-read-and-write-path.md
+      - "14. Tenant Scope for Read Models, the Dead Letter Queue, and Checkpoints": adrs/0014-tenant-scope-for-read-models-the-dead-letter-queue-and-checkpoints.md
   - Development:
       - development/index.md
       - Contributing: development/contributing.md

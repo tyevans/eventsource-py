@@ -19,10 +19,11 @@ from uuid import UUID
 from eventsource.domain.exceptions import (
     TenantContextNotSetError,
     TenantContextResetError,
+    TenantMismatchError,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator
+    from collections.abc import AsyncGenerator, Generator, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,20 @@ def tenant_scope_sync(tenant_id: UUID) -> Generator[UUID]:
         logger.debug("Tenant scope (sync) exited: %s", tenant_id)
 
 
+def reject_tenant_contradiction(
+    ambient: UUID | None, tenant: UUID | None, *, event_ids: Sequence[UUID]
+) -> None:
+    """Raise TenantMismatchError if tenant differs from the active scope (PRD-0002).
+
+    Passes when there is no scope (ambient is None) or no tenant (tenant is None).
+    """
+    if ambient is None or tenant is None or tenant == ambient:
+        return
+    raise TenantMismatchError(expected=ambient, actual=tenant, event_ids=event_ids)
+
+
 __all__ = [
+    "reject_tenant_contradiction",
     "tenant_context",
     "TenantContextToken",
     "get_current_tenant",

@@ -14,7 +14,7 @@ The package is organized into five source modules:
 | --- | --- |
 | `eventsource.application.projections.base` | `Projection`, `SyncProjection`, `EventHandlerBase`, `CheckpointTrackingProjection`, `DeclarativeProjection`, `TenantFilter` |
 | `eventsource.application.projections.store` | `StoreProjection`, `ProjectionOptions` |
-| `eventsource.application.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` |
+| `eventsource.application.projections.coordinator` | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry`, `ProjectionRebuildError` |
 | `eventsource.application.projections.retry` | `ProjectionRetryPolicy`, `ExponentialBackoffRetryPolicy`, `NoRetryPolicy`, `FilteredRetryPolicy`, `DEFAULT_RETRY_POLICY` |
 | `eventsource.application.projections.checkpoints` | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` |
 | `eventsource.application.projections.dlq` | `send_to_dlq`, `read_failed_events` |
@@ -88,8 +88,8 @@ transaction would fail unconditionally.
 
 Every subclass constructor accepts at least what its parent does. `DeclarativeProjection`,
 `DatabaseProjection`, and `ReadModelProjection` each take `checkpoint_repo`, `dlq_repo`,
-`enable_tracing`, and — keyword-only — `retry_policy`, `tracer`, and `tenant_filter`,
-forwarding all of them up to `CheckpointTrackingProjection.__init__`. Omitting
+`enable_tracing`, and — keyword-only — `retry_policy`, `tracer`, `tenant_filter`, and
+`projection_name`, forwarding all of them up to `CheckpointTrackingProjection.__init__`. Omitting
 `retry_policy` still means the inline default policy — `ExponentialBackoffRetryPolicy`
 with `max_retries=2` (three total attempts), `initial_delay=2.0`, `exponential_base=2.0`,
 `jitter=0.1` — which is not `DEFAULT_RETRY_POLICY` from
@@ -131,6 +131,11 @@ takes the events as a list the caller has already read; a live subscription runn
 forever and stops on a failure, which is the wrong shape for a foreground rebuild —
 `replay()` owns the read loop itself and records a failure without stopping instead.
 
+`ProjectionCoordinator.rebuild_all` resets every projection and dispatches the events to
+all of them. If any projection call fails, it raises `ProjectionRebuildError` after all
+events are dispatched. Its `failure_count` attribute holds the number of failed calls, and
+the first failure is the `__cause__`. Use `replay()` when you need the failures one by one.
+
 ## Import Surface (`eventsource.application.projections`)
 
 The barrel module `eventsource/application/projections/__init__.py` re-exports 27 names.
@@ -142,7 +147,7 @@ This is the complete `__all__`, grouped as the source groups it:
 | Store projections | `StoreProjection`, `ProjectionOptions` | `eventsource.application.projections.store` |
 | Type aliases | `TenantFilter` | `eventsource.application.projections.base` |
 | Decorators | `handles`, `get_handled_event_type`, `is_event_handler` | `eventsource.domain.decorators` (re-export) |
-| Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry` | `eventsource.application.projections.coordinator` |
+| Coordinators and registries | `ProjectionRegistry`, `ProjectionCoordinator`, `SubscriberRegistry`, `ProjectionRebuildError` | `eventsource.application.projections.coordinator` |
 | Checkpoint functions | `record_checkpoint`, `read_checkpoint`, `lag_metrics_dict`, `reset_checkpoint` | `eventsource.application.projections.checkpoints` |
 | DLQ functions | `send_to_dlq`, `read_failed_events` | `eventsource.application.projections.dlq` |
 | Replay | `replay`, `ReplayReport`, `ReplayFailure`, `ReplayFailedError` | `eventsource.application.projections.replay` |
@@ -187,10 +192,11 @@ changes failure behavior, the deep import is the normal case, not an edge case.
 
 The top-level `eventsource/__init__.py` re-exports a strict subset: `Projection`,
 `CheckpointTrackingProjection`, `DeclarativeProjection`, `DatabaseProjection`,
-`handles`, and the four replay names (`replay`, `ReplayReport`, `ReplayFailure`,
-`ReplayFailedError`). It does **not** export `SyncProjection`, `EventHandlerBase`, `TenantFilter`,
-`get_handled_event_type`, `is_event_handler`, or any of the coordinator classes, the
-checkpoint functions, or the DLQ functions — those require
+`handles`, the four replay names (`replay`, `ReplayReport`, `ReplayFailure`,
+`ReplayFailedError`), and `ProjectionRebuildError`. It does **not** export `SyncProjection`,
+`EventHandlerBase`, `TenantFilter`, `get_handled_event_type`, `is_event_handler`, the
+coordinator and registry classes (`ProjectionCoordinator`, `ProjectionRegistry`,
+`SubscriberRegistry`), the checkpoint functions, or the DLQ functions — those require
 `eventsource.application.projections`. The protocols (`EventHandler`, `SyncEventHandler`,
 `EventSubscriber`) are available from both places, plus `eventsource.ports.handlers`,
 because all three paths resolve to the same objects.
@@ -380,6 +386,8 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
+        *,
+        projection_name: str | None = None,
     ) -> None: ...
 ```
 
@@ -451,22 +459,26 @@ Nothing here starts itself. Some caller — a subscription runner, or your own r
 
 ### Naming and identity
 
-`self._projection_name` is set to `self.__class__.__name__` and exposed read-only as the
-`projection_name` property. It is the checkpoint key and the DLQ partition key, so
-**renaming the class orphans its checkpoint**: the new name has no checkpoint row, and
-the projection restarts from the beginning of whatever the runner feeds it. There is no
-constructor parameter to override the name; if you need a stable identifier across
-renames, override the `projection_name` property and set `_projection_name` yourself
-after calling `super().__init__()`.
+`self._projection_name` is set from the `projection_name` constructor argument. When that
+argument is `None` (the default), it is `self.__class__.__name__`. The value is exposed
+read-only as the `projection_name` property. It is the checkpoint key and the DLQ
+partition key, so **renaming the class orphans its checkpoint**: the new name has no
+checkpoint row, and the projection restarts from the beginning of whatever the runner
+feeds it.
 
-Two projections whose classes share a name — for example the same class name in two
-modules — share a checkpoint key and will corrupt each other's position.
+Pass `projection_name` when one class runs as several instances, for example one per
+tenant: `projection_name=f"OrderSummary:{tenant_id}"`. Each instance then keeps its own
+checkpoint. The name must be a non-empty `str` of at most 255 characters with no control
+characters; otherwise the constructor raises `ValueError` (or `TypeError` for a non-`str`).
+
+Two projections that use the same name — by default, two instances of one class — share
+a checkpoint key and will corrupt each other's position.
 
 ### Attributes set by the constructor
 
 | Attribute | Value |
 | --- | --- |
-| `_projection_name` | `self.__class__.__name__` |
+| `_projection_name` | the `projection_name` argument, else `self.__class__.__name__` |
 | `_tracer` | the `tracer` argument, else `create_tracer(__name__, enable_tracing)` |
 | `_enable_tracing` | `self._tracer.enabled` — the *effective* state, which is `False` when tracing was requested but OpenTelemetry is not installed |
 | `_checkpoint_repo` | the `checkpoint_repo` argument, unchanged — `None` means checkpoint tracking is disabled |
@@ -503,13 +515,16 @@ CheckpointTrackingProjection(
     retry_policy: ProjectionRetryPolicy | None = None,
     tracer: Tracer | None = None,
     enable_tracing: bool = False,
+    *,
+    projection_name: str | None = None,
 ) -> None
 ```
 
-All five parameters are optional and positional-or-keyword, so
+The first five parameters are optional and positional-or-keyword, so
 `MyProjection()` is valid and produces a fully functional projection with checkpoint
-tracking and DLQ capture both disabled. Subclasses accept all five as well, though
-`retry_policy` and `tracer` become keyword-only from `DeclarativeProjection` down.
+tracking and DLQ capture both disabled. `projection_name` is keyword-only. Subclasses
+accept all six as well, though `retry_policy` and `tracer` become keyword-only from
+`DeclarativeProjection` down.
 
 | Parameter | Type | Default | Effect |
 | --- | --- | --- | --- |
@@ -518,6 +533,7 @@ tracking and DLQ capture both disabled. Subclasses accept all five as well, thou
 | `retry_policy` | `ProjectionRetryPolicy \| None` | `None` | Governs attempt count and backoff. `None` → the inline `ExponentialBackoffRetryPolicy` described in the next section (**not** `DEFAULT_RETRY_POLICY`). |
 | `tracer` | `Tracer \| None` | `None` | Custom tracer, shared by the projection's own spans and the checkpoint/DLQ spans. When given, `enable_tracing` is ignored. |
 | `enable_tracing` | `bool` | `False` | When `True` and OpenTelemetry is installed, builds a live tracer via `create_tracer(__name__, enable_tracing)`. |
+| `projection_name` | `str \| None` | `None` | Checkpoint and DLQ key, and the name used in logs and spans. `None` → `self.__class__.__name__`. Keyword-only. Validated as described in *Naming and identity*. |
 
 `checkpoint_repo` takes the `ProjectionCheckpoints` interface from
 `eventsource.ports.checkpoints`; `dlq_repo` takes `DLQRepository` from
@@ -555,7 +571,7 @@ configuration type is shared with the subscription machinery.
   `self._tracer.enabled`, so it stays `False` when `enable_tracing=True` was passed but
   the optional OpenTelemetry dependency is missing. Read this attribute, not the
   argument, to know whether spans are actually being emitted.
-- **No `projection_name` parameter.** The checkpoint and DLQ keys come from
+- **`projection_name` sets the checkpoint and DLQ keys.** Without it they come from
   `self.__class__.__name__`; see *Naming and identity* above for the consequences.
 - **Subclasses must call it.** `DeclarativeProjection` and `DatabaseProjection` both
   invoke `super().__init__()`, but a hand-written subclass that overrides `__init__`
@@ -739,7 +755,7 @@ def __init__(self, store: TStore, **options: Unpack[ProjectionOptions]) -> None
 `store` is the only parameter this class declares. Everything else is
 `ProjectionOptions`, a `TypedDict` naming exactly what `DeclarativeProjection.__init__`
 accepts — `checkpoint_repo`, `dlq_repo`, `enable_tracing`, `retry_policy`, `tracer`,
-`tenant_filter` — so the options stay individually typed and checked (PEP 692), unlike
+`tenant_filter`, `projection_name` — so the options stay individually typed and checked (PEP 692), unlike
 `**kwargs: Any`. They are keyword-only here.
 
 ### Adding your own parameters

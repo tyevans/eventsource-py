@@ -96,6 +96,7 @@ LAZY_EXPORTS: dict[str, str] = {
     "ReplayFailure": "eventsource.application.projections.replay",
     "ReplayReport": "eventsource.application.projections.replay",
     "ReplayFailedError": "eventsource.application.projections.replay",
+    "ProjectionRebuildError": "eventsource.application.projections.coordinator_projection",
     "StoreProjection": "eventsource.application.projections.store",
     "ProjectionOptions": "eventsource.application.projections.store",
     "DatabaseProjection": "eventsource.adapters.sql.projection",

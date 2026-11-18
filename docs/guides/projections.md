@@ -249,3 +249,42 @@ async def coordinate_projections(
     await subscriber_registry.dispatch_many(events)
     subscriber_registry.clear()
 ```
+
+### Failure behavior of `rebuild_all`
+
+`ProjectionCoordinator.rebuild_all` raises `ProjectionRebuildError` when a
+projection fails. It does not return the event count. The coordinator first
+dispatches every event, so healthy projections still see the full batch. The
+error reports `failure_count`, the number of failed projection calls. The
+first projection error is the `__cause__`.
+
+A returned count proves that every projection accepted every event. Catch
+`ProjectionRebuildError` to handle a failed rebuild. Use `replay()` for a
+per-event failure report:
+
+```python
+from eventsource import replay
+from eventsource.application.projections.coordinator_projection import (
+    ProjectionRebuildError,
+)
+
+
+async def rebuild_with_report(coordinator, store, balance_projection, events) -> None:
+    try:
+        await coordinator.rebuild_all(events)
+    except ProjectionRebuildError as err:
+        print(f"{err.failure_count} projection call(s) failed: {err.__cause__}")
+
+    report = await replay(store, balance_projection)
+    for failure in report.failures:
+        print(f"{failure.projection} rejected {failure.event_id}: {failure.error}")
+```
+
+`dispatch_events` and `SubscriberRegistry.dispatch_many` do not raise on
+projection failure. They log each error. Check the logs or use `replay()` when
+you need to know that a dispatch failed.
+
+Projections also differ on unhandled events. `DeclarativeProjection` defaults to
+`unregistered_event_handling="ignore"`. An event type with no `@handles` method
+is skipped silently. Set `unregistered_event_handling="warn"` or `"error"` to
+see these events.

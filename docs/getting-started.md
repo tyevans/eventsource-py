@@ -615,7 +615,8 @@ You never call `execute()` — the one public entry point `AggregateRoot` inheri
 `decide(command, self.state)`, and for every event that comes back, stamps
 `aggregate_version` and `aggregate_type` (plus `causation_id`, `correlation_id`,
 `actor_id`, and `tenant_id` from the command, whenever the event didn't set them
-itself) and applies it. `decide()` completes in full before any event is applied, so a
+itself) and applies it. If a tenant scope is active and the command names a different
+`tenant_id`, `execute()` raises `TenantMismatchError` and applies no events. `decide()` completes in full before any event is applied, so a
 rejection leaves the aggregate exactly as it was — no partial state, no version bump,
 nothing queued.
 

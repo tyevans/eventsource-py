@@ -10,6 +10,7 @@ from eventsource.application.migration.coordinator import MigrationCoordinator
 from eventsource.ports.migration.models import (
     CutoverResult,
     Migration,
+    MigrationConfig,
     MigrationPhase,
     TenantRouting,
 )
@@ -39,6 +40,7 @@ def _make_migration(
         source_store_id="default",
         target_store_id="dedicated",
         phase=phase,
+        config=MigrationConfig(verify_consistency=False, migrate_subscriptions=False),
     )
 
 

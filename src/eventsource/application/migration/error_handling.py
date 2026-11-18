@@ -18,6 +18,7 @@ from eventsource.application.migration.error_classification import (
     RetryConfig,
 )
 from eventsource.application.migration.exceptions import MigrationError
+from eventsource.observability.error_summary import error_summary
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -81,7 +82,9 @@ class ErrorHandler:
                 await asyncio.sleep(delay_s)
                 attempt += 1
             except Exception as e:
-                logger.exception("Unexpected error in '%s': %s", operation_name, str(e))
+                # No exc_info: the wrapped operation can read or write event payloads, and
+                # a traceback repeats the exception message.
+                logger.error("Unexpected error in '%s': %s", operation_name, error_summary(e))
                 raise
 
         if last_exception:

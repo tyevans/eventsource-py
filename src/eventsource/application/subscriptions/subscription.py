@@ -7,7 +7,6 @@ from eventsource.application.subscriptions.models import (
     BatchHandler,
     EventHandler,
     PauseReason,
-    RecentErrorInfo,
     SubscriptionState,
     SubscriptionStatus,
     is_valid_transition,
@@ -24,6 +23,5 @@ __all__ = [
     "VALID_TRANSITIONS",
     "EventHandler",
     "BatchHandler",
-    "RecentErrorInfo",
     "PauseReason",
 ]

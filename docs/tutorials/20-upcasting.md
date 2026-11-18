@@ -167,7 +167,7 @@ from typing import Any, Callable
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
-from eventsource import DeciderAggregate
+from eventsource import DeciderAggregate, ExpectedVersion
 from eventsource.domain import (
     DomainCommand,
     DomainEvent,
@@ -348,7 +348,7 @@ async def main() -> None:
 
     # Upcast the historical dict into a valid v2 DomainEvent instance for insertion
     upcasted_historical = OrderCreated.model_validate(upcasters.upcast(historical_v1_payload))
-    await inner_store.append(stream_id, [upcasted_historical])
+    await inner_store.append(stream_id, [upcasted_historical], ExpectedVersion.any_())
     print(f"[Store] Appended historical v1 event (upcasted to v2 on ingest).")
 
     # 3. Read back through the upcasting store

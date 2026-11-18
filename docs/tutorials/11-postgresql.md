@@ -772,7 +772,7 @@ For high-volume PostgreSQL deployments, `eventsource` also packages a partition-
 partitioned_ddl = get_schema("events_partitioned")
 ```
 
-This generates a PostgreSQL partitioned table partitioned by `RANGE (created_at)` for automated monthly partition rollover.
+This generates a PostgreSQL `events` table partitioned by `RANGE (timestamp)`. It also creates an `event_ids` side table, which enforces global `event_id` uniqueness. The schema is an alternative to the `events` schema, not a drop-in replacement. Create monthly partitions yourself, or use the optional pg_partman setup that the template comments describe.
 
 ---
 

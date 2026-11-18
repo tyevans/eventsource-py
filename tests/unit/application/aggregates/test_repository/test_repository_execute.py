@@ -138,7 +138,11 @@ class TestTenantAwareRepositoryExecute:
             assert (agg.state.owner, agg.version) == ("alice", 1)
 
     async def test_tenant_execute_callable_and_variadic_commands(self) -> None:
-        repo = TenantAwareRepository(_counter_repo(), require_tenant_context=True)
+        # Counter events carry no tenant_id, which save validation now rejects under a
+        # tenant scope. This test covers command dispatch, so it skips write validation.
+        repo = TenantAwareRepository(
+            _counter_repo(), require_tenant_context=True, validate_on_save=False
+        )
         async with tenant_scope(uuid4()):
             agg = await repo.execute(uuid4(), lambda c: c.increment(10), lambda c: c.decrement(3))
             assert agg.state is not None and (agg.state.value, agg.version) == (7, 2)

@@ -35,12 +35,12 @@ class TestStaticTenantFilter:
         assert len(projection.processed_events) == 0
 
     @pytest.mark.asyncio
-    async def test_processes_events_without_tenant_id(
+    async def test_skips_events_without_tenant_id(
         self, projection: SampleProjection, non_tenant_event: NonTenantEvent
     ) -> None:
-        """Events without tenant_id field are processed (legacy events)."""
+        """Events without a tenant_id never match a set filter (fail closed)."""
         await projection.handle(non_tenant_event)
-        assert non_tenant_event in projection.processed_events
+        assert non_tenant_event not in projection.processed_events
 
     @pytest.mark.asyncio
     async def test_multiple_events_filtering(
@@ -55,10 +55,8 @@ class TestStaticTenantFilter:
         await projection.handle(tenant_event_2)
         await projection.handle(non_tenant_event)
 
-        assert len(projection.processed_events) == 2
-        assert tenant_event_1 in projection.processed_events
-        assert tenant_event_2 not in projection.processed_events
-        assert non_tenant_event in projection.processed_events
+        assert projection.processed_events == [tenant_event_1]
+        assert non_tenant_event not in projection.processed_events
 
 
 class TestNoFilter:
@@ -116,19 +114,19 @@ class TestShouldProcessEvent:
         projection = SampleProjection(tenant_filter=tenant_id_1)
         assert projection._should_process_event(tenant_event_2) is False
 
-    def test_returns_true_for_event_without_tenant_id(
+    def test_returns_false_for_event_without_tenant_id(
         self, tenant_id_1: UUID, non_tenant_event: NonTenantEvent
     ) -> None:
-        """Returns True for events without tenant_id field."""
+        """Returns False for events without tenant_id field (fail closed)."""
         projection = SampleProjection(tenant_filter=tenant_id_1)
-        assert projection._should_process_event(non_tenant_event) is True
+        assert projection._should_process_event(non_tenant_event) is False
 
-    def test_returns_true_for_event_with_none_tenant_id(
+    def test_returns_false_for_event_with_none_tenant_id(
         self, tenant_id_1: UUID, order_created_no_tenant: OrderCreated
     ) -> None:
-        """Returns True for events where tenant_id is None."""
+        """Returns False for events where tenant_id is None (fail closed)."""
         projection = SampleProjection(tenant_filter=tenant_id_1)
-        assert projection._should_process_event(order_created_no_tenant) is True
+        assert projection._should_process_event(order_created_no_tenant) is False
 
 
 class TestGetTenantFilterValue:

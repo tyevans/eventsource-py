@@ -106,7 +106,9 @@ Two ways to make the tenant non-optional in practice:
   `tenant_scope_sync()` hold the current tenant in a `contextvars` variable
   typed `UUID | None`. `TenantDomainEvent.with_tenant_context(**kwargs)` reads
   it and populates `tenant_id` for you, raising `TenantContextNotSetError` when
-  the context is unset and no explicit `tenant_id` was passed. `get_current_tenant()`
+  the context is unset and no explicit `tenant_id` was passed. An explicit
+  `tenant_id` must equal the active scope when one is set; a different value
+  raises `TenantMismatchError`. `get_current_tenant()`
   returns `UUID | None`; `get_required_tenant()` returns `UUID` or raises.
 
 Downstream, the optionality survives into storage and querying: the PostgreSQL

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.application.migration.exceptions import PositionMappingError
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.migration.models import PositionMapping
 from eventsource.ports.positions import Position
 
@@ -57,12 +58,13 @@ class PositionMapperRecordingMixin:
                     migration_id,
                 )
             except Exception as e:
-                logger.error("Failed to record position mapping: %s", e)
+                summary = error_summary(e)
+                logger.error("Failed to record position mapping: %s", summary)
                 raise PositionMappingError(
-                    f"Failed to record mapping: {e}",
+                    f"Failed to record mapping: {summary}",
                     migration_id=migration_id,
                     source_position=source_position,
-                    reason=str(e),
+                    reason=summary,
                 ) from e
 
     async def record_mappings_batch(
@@ -88,11 +90,12 @@ class PositionMapperRecordingMixin:
                 logger.debug("Recorded %d position mappings for migration %s", count, migration_id)
                 return count
             except Exception as e:
-                logger.error("Failed to record position mappings batch: %s", e)
+                summary = error_summary(e)
+                logger.error("Failed to record position mappings batch: %s", summary)
                 raise PositionMappingError(
-                    f"Failed to record batch mappings: {e}",
+                    f"Failed to record batch mappings: {summary}",
                     migration_id=migration_id,
-                    reason=str(e),
+                    reason=summary,
                 ) from e
 
     async def get_mapping_by_event_id(

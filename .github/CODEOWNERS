@@ -1,0 +1,10 @@
+# Code owners review changes to these paths. GitHub asks for their approval
+# when a rule requires code-owner review (branch protection setting).
+# Owners are real GitHub logins.
+
+/.github/ @tyevans
+/.claude/ @tyevans
+/specops.toml @tyevans
+/pyproject.toml @tyevans
+/uv.lock @tyevans
+/RELEASING.md @tyevans

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.headers import read_header_int, read_header_str
 from eventsource.adapters.kafka.consumer_helpers import get_header_value
 from eventsource.adapters.serialization import json_loads
 from eventsource.ports.exceptions import EventBusConnectionError
@@ -64,7 +64,7 @@ class KafkaDLQAdmin:
                 async for msg in dlq_consumer:
                     if len(messages) >= limit:
                         break
-                    hdrs = {k: v.decode("utf-8") for k, v in msg.headers} if msg.headers else {}
+                    hdrs = {k: read_header_str(v) for k, v in msg.headers} if msg.headers else {}
                     try:
                         payload = json_loads(msg.value) if msg.value else None
                     except (ValueError, TypeError):
@@ -74,11 +74,13 @@ class KafkaDLQAdmin:
                             "topic": msg.topic,
                             "partition": msg.partition,
                             "offset": msg.offset,
-                            "key": msg.key.decode("utf-8") if msg.key else None,
+                            "key": read_header_str(msg.key),
                             "timestamp": msg.timestamp,
                             "headers": hdrs,
                             "payload": payload,
-                            "replay_count": int(hdrs.get("dlq_replay_count", "0")),
+                            "replay_count": read_header_int(
+                                get_header_value(msg.headers, "dlq_replay_count"), 0
+                            ),  # fmt: skip
                         }
                     )
                 if use_consumer_group and messages:
@@ -100,12 +102,9 @@ class KafkaDLQAdmin:
                 message = await asyncio.wait_for(dlq_consumer.getone(), timeout=5.0)
                 if message.offset != offset:
                     raise ValueError(f"Message not found at offset {offset}")
-                current_replay_count = 0
-                for key, value in message.headers or []:
-                    if key == "dlq_replay_count":
-                        with contextlib.suppress(ValueError, UnicodeDecodeError):
-                            current_replay_count = int(value.decode("utf-8"))
-                        break
+                current_replay_count = read_header_int(
+                    get_header_value(message.headers, "dlq_replay_count"), 0
+                )
                 max_replays = self._config.dlq_max_replay_attempts
                 if not force and current_replay_count >= max_replays:
                     rej_extra: dict[str, Any] = {"dlq_partition": partition, "dlq_offset": offset, "replay_count": current_replay_count, "max_replay_attempts": max_replays, "event_type": get_header_value(message.headers, "event_type")}  # fmt: skip

@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 StartPosition = Literal["beginning", "end", "checkpoint"] | Position
 
 
+MAX_BATCH_SIZE = 10_000
+"""Upper bound for ``SubscriptionConfig.batch_size``; a batch is held in memory."""
+
+
 class CheckpointStrategy(Enum):
     """Strategy for when to update checkpoints during event processing."""
 
@@ -53,6 +57,11 @@ class SubscriptionConfig:
             raise ValueError(
                 f"batch_size must be positive, got {self.batch_size}. "
                 "Use a value like 100 (default) or adjust based on your processing speed."
+            )
+        if self.batch_size > MAX_BATCH_SIZE:
+            raise ValueError(
+                f"batch_size must be <= {MAX_BATCH_SIZE}, got {self.batch_size}. "
+                "Each batch is held in memory; use a smaller value and more batches."
             )
         if self.processing_timeout <= 0:
             raise ValueError(

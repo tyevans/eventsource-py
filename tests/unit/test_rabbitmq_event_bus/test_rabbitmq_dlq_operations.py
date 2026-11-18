@@ -47,7 +47,7 @@ class TestSendToDLQ:
         await bus._send_to_dlq(mock_message, ValueError("Test error"), 3)
 
         dlq_message = mock_dlq_exchange.publish.call_args[0][0]
-        assert dlq_message.headers["x-dlq-reason"] == "Test error"
+        assert dlq_message.headers["x-dlq-reason"] == "ValueError: Test error"
         assert dlq_message.headers["x-dlq-error-type"] == "ValueError"
         assert dlq_message.headers["x-dlq-retry-count"] == 3
         assert "x-dlq-timestamp" in dlq_message.headers

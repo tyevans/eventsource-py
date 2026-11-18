@@ -13,7 +13,7 @@ from eventsource.domain.exceptions import (
     AggregateIdMismatchError,
     AggregateTypeMismatchError,
 )
-from eventsource.domain.tenant_context import get_current_tenant
+from eventsource.domain.tenant_context import get_current_tenant, reject_tenant_contradiction
 
 if TYPE_CHECKING:
     from typing import ClassVar
@@ -52,8 +52,23 @@ class AggregateProvenanceMixin:
 
         event = event_class(**event_kwargs)
         self._reject_foreign_aggregate_id(event, command)
+        self._reject_tenant_contradiction(event, command)
         self.apply_event(event, is_new=True)
         return event
+
+    def _reject_tenant_contradiction(self, event: DomainEvent, command: object) -> None:
+        """Raise if a command or event tenant contradicts the ambient tenant (PRD-0002).
+
+        Delegates the rule to `reject_tenant_contradiction`, shared with
+        `TenantDomainEvent.with_tenant_context`.
+        """
+        ambient = self._get_tenant_from_context()
+        candidates: list[UUID | None] = []
+        if isinstance(command, DomainCommand):
+            candidates.append(command.tenant_id)
+        candidates.append(event.tenant_id)
+        for tenant in candidates:
+            reject_tenant_contradiction(ambient, tenant, event_ids=[event.event_id])
 
     def _reject_foreign_aggregate_id(self, event: DomainEvent, command: object) -> None:
         """Raise if the event names an aggregate other than this one."""

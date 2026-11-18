@@ -87,16 +87,17 @@ class TenantContextResetError(EventSourceError):
 
 class TenantMismatchError(EventSourceError):
     """
-    Raised when event tenant_id doesn't match expected tenant context.
+    Raised when a resource's tenant_id doesn't match the expected tenant context.
 
-    This typically occurs when saving events with a different tenant_id
-    than the current context. This error prevents cross-tenant data leakage
-    and ensures tenant isolation in multi-tenant applications.
+    This typically occurs when saving events or read models owned by a
+    different tenant than the current context. This error prevents cross-tenant
+    data leakage and ensures tenant isolation in multi-tenant applications.
 
     Attributes:
         expected: The expected tenant UUID from context
-        actual: The actual tenant UUID found in the event(s)
-        event_ids: List of event IDs that have mismatched tenant
+        actual: The actual tenant UUID found on the resource(s)
+        event_ids: IDs of the mismatched resources (event IDs for events,
+            model IDs for read models)
 
     Example:
         >>> from uuid import uuid4
@@ -110,13 +111,13 @@ class TenantMismatchError(EventSourceError):
         ...     event_ids=[event_id],
         ... )
         >>> print(error)  # doctest: +ELLIPSIS
-        Tenant mismatch: expected ..., got .... Affected events: [...]
+        Tenant mismatch: expected ..., got .... Affected resources: [...]
     """
 
     def __init__(
         self,
         expected: UUID,
-        actual: UUID,
+        actual: UUID | None,
         event_ids: Sequence[UUID],
     ) -> None:
         self.expected = expected
@@ -129,12 +130,25 @@ class TenantMismatchError(EventSourceError):
             event_list += f"... and {len(self.event_ids) - 5} more"
 
         super().__init__(
-            f"Tenant mismatch: expected {expected}, got {actual}. Affected events: [{event_list}]"
+            f"Tenant mismatch: expected {expected}, got {actual}. "
+            f"Affected resources: [{event_list}]"
         )
+
+
+class TenantScopeOperationError(EventSourceError):
+    """
+    Raised when an all-tenant operation (such as a truncate or DLQ cleanup) runs
+    under an active tenant scope (ADR-0114). Run it outside tenant_scope().
+    """
+
+    def __init__(self, operation: str) -> None:
+        self.operation = operation
+        super().__init__(f"{operation} is not allowed under a tenant scope.")
 
 
 __all__ = [
     "TenantContextNotSetError",
     "TenantContextResetError",
     "TenantMismatchError",
+    "TenantScopeOperationError",
 ]

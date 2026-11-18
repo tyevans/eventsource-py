@@ -11,6 +11,7 @@ from eventsource.application.subscriptions.error_handling_types import (
     ErrorSeverity,
     SyncErrorCallback,
 )
+from eventsource.observability.error_summary import error_summary
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class ErrorHandlerRegistry:
                 sync_cb(error_info)
             except Exception as e:
                 logger.error(
-                    f"Error in sync error callback: {e}",
+                    f"Error in sync error callback: {error_summary(e)}",
                     extra={"callback": sync_cb.__name__, "error_info": error_info.to_dict()},
                 )
 
@@ -57,7 +58,7 @@ class ErrorHandlerRegistry:
                 await async_cb(error_info)
             except Exception as e:
                 logger.error(
-                    f"Error in error callback: {e}",
+                    f"Error in error callback: {error_summary(e)}",
                     extra={"callback": async_cb.__name__, "error_info": error_info.to_dict()},
                 )
 
@@ -67,7 +68,7 @@ class ErrorHandlerRegistry:
                 await cat_cb(error_info)
             except Exception as e:
                 logger.error(
-                    f"Error in category callback: {e}",
+                    f"Error in category callback: {error_summary(e)}",
                     extra={"callback": cat_cb.__name__, "category": category.value},
                 )
 
@@ -77,7 +78,7 @@ class ErrorHandlerRegistry:
                 await sev_cb(error_info)
             except Exception as e:
                 logger.error(
-                    f"Error in severity callback: {e}",
+                    f"Error in severity callback: {error_summary(e)}",
                     extra={"callback": sev_cb.__name__, "severity": severity.value},
                 )
 

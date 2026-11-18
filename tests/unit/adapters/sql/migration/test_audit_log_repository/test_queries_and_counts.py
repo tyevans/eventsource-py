@@ -111,7 +111,10 @@ class TestPostgreSQLMigrationAuditLogRepositoryGetByMigration:
     ) -> None:
         with _patched_sql_conn(fetchall=[]) as mock_conn:
             await repo.get_by_migration(uuid4(), limit=10)
-            assert "LIMIT 10" in str(mock_conn.execute.call_args[0][0])
+            sql = str(mock_conn.execute.call_args[0][0])
+            params = mock_conn.execute.call_args[0][1]
+            assert "LIMIT :limit" in sql
+            assert params["limit"] == 10
 
 
 @pytest.mark.asyncio

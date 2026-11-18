@@ -47,6 +47,18 @@ store = SQLiteEventStore(
 
 Furthermore, on its first operation, `SQLiteEventStore` lazily initializes the SQLite database schema automatically using the bundled SQLite DDL definitions.
 
+### File permissions
+
+When `SQLiteEventStore` creates a missing database file, it sets the mode to
+`0600`, so only the owner can read or write it. An existing file keeps its mode.
+The process umask removes bits from a mode. It does not add any.
+
+SQLite creates the `-wal` and `-shm` sidecar files with the same mode as the
+database file. The process umask does not change them. A database file with a
+looser mode (for example, `0644`) gives looser sidecar files. To keep the
+sidecars private, create the database file with mode `0600` yourself. Also place
+it in a directory that other local users cannot read.
+
 ---
 
 ## 3. Working with Raw SQLAlchemy Engines and Bundled Schemas

@@ -1,0 +1,121 @@
+"""Single-event and grouped batch processing modes for the catch-up runner."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from eventsource.application.subscriptions.runners.catchup_result import _BatchOutcome
+from eventsource.ports.envelopes import EventEnvelope
+from eventsource.ports.positions import Position
+
+if TYPE_CHECKING:
+    from eventsource.application.subscriptions.config import SubscriptionConfig
+    from eventsource.application.subscriptions.filtering import EventFilter
+    from eventsource.application.subscriptions.flow_control import FlowController
+    from eventsource.application.subscriptions.subscription import Subscription
+
+
+class CatchUpBatchModesMixin:
+    """Mixin providing the single-event and grouped batch processing loops."""
+
+    if TYPE_CHECKING:
+        _batch_capable: bool
+        subscription: Subscription
+        config: SubscriptionConfig
+        _reached_target: bool
+        _filter: EventFilter
+        _flow_controller: FlowController
+
+        async def _read_batch_with_retry(
+            self, from_position: Position | None, limit: int
+        ) -> list[EventEnvelope]: ...
+        async def _check_envelope_ready(
+            self, envelope: EventEnvelope, target_position: Position
+        ) -> bool: ...
+        async def _deliver_event(self, envelope: EventEnvelope) -> bool: ...
+        async def _deliver_batch(self, envelopes: list[EventEnvelope]) -> bool: ...
+        async def _record_and_checkpoint(
+            self, envelope: EventEnvelope, passes_filter: bool, *, succeeded: bool = True
+        ) -> None: ...
+        async def _finalize_batch(
+            self, log_msg: str, in_batch: int, filtered: int, last_envelope: EventEnvelope | None
+        ) -> None: ...
+
+    async def _process_batch_single(self, target_position: Position) -> _BatchOutcome:
+        pos = self.subscription.last_processed_position
+        if not (envelopes := await self._read_batch_with_retry(pos, self.config.batch_size)):
+            self._reached_target = True
+            return _BatchOutcome(envelopes_read=0, events_delivered=0)
+        await self.subscription.record_events_seen(len(envelopes))
+
+        events_in_batch = events_filtered = delivered_this_batch = failed_this_batch = 0
+        last_envelope: EventEnvelope | None = None
+        try:
+            for envelope in envelopes:
+                if not await self._check_envelope_ready(envelope, target_position):
+                    break
+                if self._filter.matches(envelope.event):
+                    async with await self._flow_controller.acquire():
+                        succeeded = await self._deliver_event(envelope)
+                        await self._record_and_checkpoint(envelope, True, succeeded=succeeded)
+                    events_in_batch += 1
+                    if not succeeded:
+                        failed_this_batch += 1
+                else:
+                    await self._record_and_checkpoint(envelope, False)
+                    events_filtered += 1
+                last_envelope, delivered_this_batch = envelope, delivered_this_batch + 1
+        finally:
+            if (undelivered := len(envelopes) - delivered_this_batch) > 0:
+                await self.subscription.record_events_unseen(undelivered)
+
+        await self._finalize_batch("Batch processed", events_in_batch, events_filtered, last_envelope)  # fmt: skip
+        delivered = events_in_batch - failed_this_batch
+        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=delivered)
+
+    async def _process_batch_grouped(self, target_position: Position) -> _BatchOutcome:
+        pos = self.subscription.last_processed_position
+        if not (envelopes := await self._read_batch_with_retry(pos, self.config.batch_size)):
+            self._reached_target = True
+            return _BatchOutcome(envelopes_read=0, events_delivered=0)
+        await self.subscription.record_events_seen(len(envelopes))
+
+        included: list[tuple[EventEnvelope, bool]] = []
+        for envelope in envelopes:
+            if not await self._check_envelope_ready(envelope, target_position):
+                break
+            included.append((envelope, self._filter.matches(envelope.event)))
+
+        deliverable = [envelope for envelope, passes in included if passes]
+        events_in_batch = events_filtered = delivered_this_batch = failed_this_batch = 0
+        last_envelope: EventEnvelope | None = None
+        try:
+            batch_succeeded = True
+            if deliverable:
+                async with await self._flow_controller.acquire():
+                    batch_succeeded = await self._deliver_batch(deliverable)
+            for envelope, passes in included:
+                succeeded = True
+                if passes and not batch_succeeded:
+                    async with await self._flow_controller.acquire():
+                        succeeded = await self._deliver_event(envelope)
+                        await self._record_and_checkpoint(envelope, passes, succeeded=succeeded)
+                else:
+                    await self._record_and_checkpoint(envelope, passes)
+                delivered_this_batch, last_envelope = delivered_this_batch + 1, envelope
+                if passes:
+                    events_in_batch += 1
+                    if not succeeded:
+                        failed_this_batch += 1
+                else:
+                    events_filtered += 1
+        finally:
+            if (undelivered := len(envelopes) - delivered_this_batch) > 0:
+                await self.subscription.record_events_unseen(undelivered)
+
+        await self._finalize_batch("Batch processed via handle_batch", events_in_batch, events_filtered, last_envelope)  # fmt: skip
+        delivered = events_in_batch - failed_this_batch
+        return _BatchOutcome(envelopes_read=len(envelopes), events_delivered=delivered)
+
+
+__all__ = ["CatchUpBatchModesMixin"]

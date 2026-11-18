@@ -12,10 +12,11 @@ from eventsource import ports as p
 from eventsource.adapters._common import check_expected, describe_expected
 from eventsource.adapters._sql.positions import IntPositionCodec
 from eventsource.adapters.serialization import json_dumps
-from eventsource.adapters.sql.schemas import get_schema
 from eventsource.adapters.sqlite import queries as q
+from eventsource.adapters.sqlite.store_connect import open_connection
 from eventsource.domain import DomainEvent, EventRegistry, StreamId, default_registry
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.outbox import outbox_event_data
 
 try:
@@ -42,19 +43,9 @@ class SQLiteEventStore:
     async def _conn(self) -> aiosqlite.Connection:
         async with self._init_lock:
             if self._connection is None:
-                try:
-                    conn = await aiosqlite.connect(self._database)
-                except (aiosqlite.Error, OSError) as e:
-                    msg = f"could not open the SQLite database at {self._database!r}: {e}"
-                    raise p.EventStoreConnectionError(msg, store=type(self).__name__) from e
-                w = ("journal_mode = WAL",) if self._wal_mode else ()
-                for pragma in ("foreign_keys = ON", f"busy_timeout = {self._busy_timeout}", *w):
-                    await conn.execute(f"PRAGMA {pragma}")
-                conn.row_factory = aiosqlite.Row
-                await conn.executescript(get_schema("all", backend="sqlite", additive=False))
-                await q.apply_additive_updates(conn)
-                await conn.commit()
-                self._connection = conn
+                self._connection = await open_connection(
+                    self._database, type(self).__name__, self._wal_mode, self._busy_timeout
+                )
         return self._connection
 
     async def close(self) -> None:
@@ -79,7 +70,9 @@ class SQLiteEventStore:
         row = await (await conn.execute(sql, (aid, category))).fetchone()
         return row[0] if row else 0
 
-    async def append(self, stream: StreamId, events: Sequence[DomainEvent], expected: Any) -> Any:
+    async def append(
+        self, stream: StreamId, events: Sequence[DomainEvent], expected: p.ExpectedVersion
+    ) -> p.AppendResult:
         if not events:
             raise ValueError("cannot append an empty batch of events")
         conn, aid, category = await self._conn(), str(stream.aggregate_id), stream.category
@@ -108,7 +101,7 @@ class SQLiteEventStore:
                 await conn.rollback()
                 err = str(e).lower() if isinstance(e, aiosqlite.IntegrityError) else ""
                 if "event_id" in err:
-                    raise DuplicateEventError(f"event_id already exists in the store: {e}") from e
+                    raise DuplicateEventError(f"event_id already exists in the store: {error_summary(e)}") from e  # fmt: skip
                 if "unique" in err and ("aggregate_id" in err or "version" in err):
                     act = await self._max_version(conn, aid, category)
                     raise OptimisticLockError(UUID(aid), describe_expected(expected), act) from e

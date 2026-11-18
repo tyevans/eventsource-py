@@ -109,7 +109,7 @@ actually owns it — `SnapshotPolicy` decides *when*, `SnapshotScheduler` decide
 `take_snapshot()` is the single construction path, and `read_valid_snapshot()` is the single
 load-path validation function, all in `application/aggregates/snapshotting.py`, composed directly
 by the repository with no manager object in between. Background task tracking was carved out for
-the same one-responsibility reason, but it lives in `_internal/background_tasks.py` rather than
+the same one-responsibility reason, but it lives in `application/background_tasks.py` rather than
 `application/aggregates/`, since its consumers are `SnapshotScheduler` and the event bus, not the
 repository.
 
@@ -386,9 +386,10 @@ differs between the two schedulers:
 
 - `ImmediateScheduler` — await the write inline; failures
   are logged and swallowed, returning `None`.
-- `BackgroundScheduler` — submits the write to a `BackgroundTaskManager` and returns `None`
-  immediately, so the save path never waits on the store. It tracks the task,
-  prunes completed ones, and exposes `pending_count` / `await_pending()`.
+- `BackgroundScheduler(max_pending=1000)` — submits the write to a `BackgroundTaskManager` and
+  returns `None`. Below `max_pending` in-flight writes the save path does not wait on the store.
+  At the ceiling the write runs inline (`submit_or_run_inline`), so the save waits. It tracks the
+  task, prunes completed ones, and exposes `pending_count` / `await_pending()`.
 
 `Never()` fills the `"should_snapshot always False"` role `NoSnapshotStrategy` used to; snapshots
 only happen via an explicit `create_snapshot()` call in that mode. `AggregateRepository.__init__`
@@ -421,7 +422,7 @@ reach for `snapshotting.py` directly:
 - `snapshot_store`, `snapshot_threshold`, `snapshot_mode`, `has_snapshot_support` — read-only
   views of the configuration.
 
-### `_internal/background_tasks.py` — `BackgroundTaskManager`
+### `application/background_tasks.py` — `BackgroundTaskManager`
 
 `BackgroundTaskManager` is a small, dependency-free collaborator for fire-and-forget asyncio
 work. `submit(coro)` creates and tracks a task in a set, attaches a done-callback that discards
@@ -432,7 +433,7 @@ returns the count.
 
 It is internal (not part of the public API) and has two real consumers today:
 `application.aggregates.snapshotting.BackgroundScheduler` delegates its pending-task bookkeeping
-and `await_pending()` to an instance, and `bus.base.BaseEventBus` delegates `_track_background` /
+and `await_pending()` to an instance, and `adapters/_bus/base.py` `BaseEventBus` delegates `_track_background` /
 `get_background_task_count` / `_drain_background` to one, while keeping its own timeout-specific
 log messages at the call site so existing log output is unchanged.
 
@@ -516,12 +517,12 @@ attribute constants, and the absence of a span when `save` has no events.
 
 A workable order:
 
-1. `domain/aggregate.py` — `apply_event`, `load_from_history`, `_apply`. Everything else assumes these.
+1. `domain/aggregate/aggregate_root.py` — `apply_event`, `load_from_history`, `_apply`. Everything else assumes these.
 2. `application/aggregates/repository.py` — `__init__` for the wiring, then `load` and `save`.
 3. `application/aggregates/snapshotting.py` — `read_valid_snapshot()` and `take_snapshot()`, then
    `SnapshotPolicy`/`EveryNEvents`/`Never` and `SnapshotScheduler`/`ImmediateScheduler`/`BackgroundScheduler`.
-4. `observability/tracer.py` — only if you are touching spans.
-5. `_internal/background_tasks.py` — standalone; read whenever background tasks come up.
+4. `observability/tracer/` — only if you are touching spans.
+5. `application/background_tasks.py` — standalone; read whenever background tasks come up.
 
 ## The same split elsewhere
 

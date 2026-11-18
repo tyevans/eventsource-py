@@ -6,9 +6,10 @@ Provides SSLContext creation and URL sanitization for logging.
 from __future__ import annotations
 
 import logging
-import re
 import ssl
 from typing import TYPE_CHECKING
+
+from eventsource.adapters._bus.redact import redact_url
 
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
@@ -25,7 +26,7 @@ def sanitize_url(url: str) -> str:
     Returns:
         URL with credentials replaced by ***
     """
-    return re.sub(r"://[^:]+:[^@]+@", "://***:***@", url)
+    return redact_url(url)
 
 
 def create_ssl_context(config: RabbitMQEventBusConfig) -> ssl.SSLContext | None:

@@ -6,6 +6,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from eventsource.observability.error_summary import error_summary
+
 if TYPE_CHECKING:
     from aio_pika import DeliveryMode, Message
     from aio_pika.abc import AbstractIncomingMessage
@@ -93,13 +95,14 @@ class RabbitMQDLQReplayMixin:
             return found
 
         except Exception as e:
+            # No exc_info: replay decodes payloads, so the traceback can echo event values.
+            summary = error_summary(e)
             self._logger.error(
-                f"Failed to replay DLQ message {message_id}: {e}",
-                exc_info=True,
+                f"Failed to replay DLQ message {message_id}: {summary}",
                 extra={
                     "message_id": message_id,
                     "dlq_queue": self._config.dlq_queue_name,
-                    "error": str(e),
+                    "error": summary,
                     "error_type": type(e).__name__,
                 },
             )

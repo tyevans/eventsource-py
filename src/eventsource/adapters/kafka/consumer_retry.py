@@ -6,11 +6,13 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.headers import read_header_int
 from eventsource.adapters.kafka.consumer_helpers import (
     create_dlq_headers,
     get_header_value,
     warn_uncommitted,
 )
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.adapters._bus.retry import RetryPolicy
@@ -48,7 +50,7 @@ class KafkaConsumerRetryMixin:
             "event_type": event_type,
             "event_id": event_id,
             "max_retries": self._config.max_retries,
-            "error": str(error),
+            "error": error_summary(error),
         }
         if retry_count >= self._config.max_retries:
             logger.error("Max retries exceeded, message will be sent to DLQ", extra={**base_extra, "retry_count": retry_count})  # fmt: skip
@@ -84,8 +86,21 @@ class KafkaConsumerRetryMixin:
             logger.debug("Message republished for retry", extra=extra)
             return True
         except Exception as e:
-            logger.error("Failed to republish message for retry, sending to DLQ", extra={"error": str(e)}, exc_info=True)  # fmt: skip
+            # No exc_info: the message value is re-sent here, so the traceback can echo payload.
+            logger.error("Failed to republish message for retry, sending to DLQ", extra={"error": error_summary(e)})  # fmt: skip
             return await self._send_to_dlq(message, e, new_retry_count - 1, reason="republish_failed")  # fmt: skip
+
+    async def _dead_letter_at_capacity(self, message: Any) -> None:
+        """Route a deferred retry to the DLQ when the retry scheduler is full, then commit."""
+        stage = "retry_capacity_exceeded"
+        error = RuntimeError("retry scheduler at capacity; deferred retry sent to DLQ")
+        logger.error("Retry scheduler full, sending message to DLQ", extra={"event_id": self._get_header_value(message.headers, "event_id")})  # fmt: skip
+        retry_count = read_header_int(self._get_header_value(message.headers, "retry_count"), 0)
+        retained = await self._send_to_dlq(message, error, retry_count, reason=stage)
+        if retained and self._consumer:
+            await self._consumer.commit()
+        elif not retained:
+            self._warn_uncommitted(message, stage)
 
     def _warn_uncommitted(self, message: Any, stage: str) -> None:
         warn_uncommitted(logger, message, stage, self._get_header_value(message.headers, "event_id"))  # fmt: skip
@@ -103,25 +118,29 @@ class KafkaConsumerRetryMixin:
         """Send a failed message to the dead letter queue."""
         event_type = self._get_header_value(message.headers, "event_type")
         if not self._config.enable_dlq:
-            logger.warning("DLQ disabled, dropping failed message", extra={"event_type": event_type, "error": str(error)})  # fmt: skip
+            logger.warning("DLQ disabled, dropping failed message", extra={"event_type": event_type, "error": error_summary(error)})  # fmt: skip
             return True
         if not self._producer:
             logger.error("Cannot send to DLQ: producer not connected", extra={"event_type": event_type})  # fmt: skip
             return False
 
         dlq_headers = self._create_dlq_headers(message, error, retry_count, reason)
-        all_headers = list(message.headers or ()) + dlq_headers
+        # Inbound dlq_* headers are publisher-controlled. Drop them so only this writer's
+        # dlq_* metadata reaches the DLQ (a forged dlq_replay_count would bypass the cap).
+        inbound = [(k, v) for k, v in (message.headers or ()) if not k.startswith("dlq_")]
+        all_headers = inbound + dlq_headers
         try:
             await self._producer.send(topic=self._config.dlq_topic_name, key=message.key, value=message.value, headers=all_headers)  # fmt: skip
             self._stats.messages_sent_to_dlq += 1
             if self._metrics:
                 attrs = {"dlq.reason": reason, "error.type": type(error).__name__}
                 self._metrics.dlq_messages.add(1, attributes=attrs)
-            dlq_extra = {"dlq_topic": self._config.dlq_topic_name, "event_type": event_type, "event_id": self._get_header_value(message.headers, "event_id"), "reason": reason, "error": str(error)[:200]}  # fmt: skip
+            dlq_extra = {"dlq_topic": self._config.dlq_topic_name, "event_type": event_type, "event_id": self._get_header_value(message.headers, "event_id"), "reason": reason, "error": error_summary(error)[:200]}  # fmt: skip
             logger.info("Message sent to DLQ", extra=dlq_extra)
             return True
         except Exception as e:
-            logger.error("Failed to send message to DLQ", extra={"error": str(e), "original_error": str(error)}, exc_info=True)  # fmt: skip
+            # No exc_info: the traceback repeats the messages, which can echo payload.
+            logger.error("Failed to send message to DLQ", extra={"error": error_summary(e), "original_error": error_summary(error)})  # fmt: skip
             raise
 
     def _create_dlq_headers(

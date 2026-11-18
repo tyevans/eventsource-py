@@ -21,6 +21,8 @@ from eventsource.observability.attributes import (
     ATTR_HANDLER_SUCCESS,
     ATTR_MESSAGING_SYSTEM,
 )
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from eventsource.adapters._bus.handler_adapter import HandlerAdapter
@@ -127,11 +129,11 @@ class RedisBusDispatchMixin:
             except Exception as e:
                 if span:
                     span.set_attribute(ATTR_HANDLER_SUCCESS, False)
-                    span.record_exception(e)
+                    record_error(span, e)
                 self._stats.handler_errors += 1
+                # No exc_info: the traceback repeats the message, which can echo payload.
                 logger.error(
-                    f"Handler {adapter.name} failed: {e}",
-                    exc_info=True,
+                    f"Handler {adapter.name} failed: {error_summary(e)}",
                     extra={
                         "handler": adapter.name,
                         "event_type": event.event_type,

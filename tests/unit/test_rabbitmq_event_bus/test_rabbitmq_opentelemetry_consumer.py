@@ -149,7 +149,16 @@ class TestOpenTelemetryConsumerTracing:
             await bus._dispatch_event(
                 _TestEvent(aggregate_id=uuid4()), MagicMock(message_id="test-id"), mock_parent_span
             )
-        mock_handler_span.record_exception.assert_called_once()
+        # record_error: a log-safe "exception" event (no stacktrace) and an ERROR status.
+        mock_handler_span.record_exception.assert_not_called()
+        mock_handler_span.add_event.assert_called_once()
+        (event_name, attributes), _ = mock_handler_span.add_event.call_args
+        assert event_name == "exception"
+        assert "exception.message" in attributes
+        from opentelemetry.trace import StatusCode
+
+        status = mock_handler_span.set_status.call_args.args[0]
+        assert status.status_code == StatusCode.ERROR
         mock_handler_span.end.assert_called()
 
 

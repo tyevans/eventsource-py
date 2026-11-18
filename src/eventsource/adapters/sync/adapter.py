@@ -25,7 +25,6 @@ from eventsource.ports.lifecycle import SupportsClose
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
-_ANY = ExpectedVersion.any_()
 
 
 class SyncEventStoreAdapter:
@@ -67,14 +66,13 @@ class SyncEventStoreAdapter:
         self,
         stream: StreamId,
         events: DomainEvent | Sequence[DomainEvent],
-        expected: ExpectedVersion | None = _ANY,
+        expected: ExpectedVersion,
         *,
         timeout: float | None = None,
     ) -> AppendResult:
         """Synchronously append one or more events to a stream."""
         batch = [events] if isinstance(events, DomainEvent) else events
-        ver = _ANY if expected is None else expected
-        return self._run_sync(self._store.append(stream, batch, ver), timeout=timeout)
+        return self._run_sync(self._store.append(stream, batch, expected), timeout=timeout)
 
     def read_stream(
         self, stream: StreamId, options: StreamReadOptions | None = None, *, timeout: float | None = None

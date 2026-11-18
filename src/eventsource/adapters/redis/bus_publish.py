@@ -12,6 +12,7 @@ from eventsource.observability.attributes import (
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
 )
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -66,7 +67,7 @@ class RedisBusPublishMixin:
             except Exception as e:
                 if span:
                     span.set_attribute("publish.success", False)
-                    span.record_exception(e)
+                    record_error(span, e)
                 raise
 
     async def _publish_single(self, event: DomainEvent) -> str:

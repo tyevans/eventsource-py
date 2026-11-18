@@ -59,16 +59,17 @@ class TestBuildSelectQuery:
         assert "ORDER BY order_number ASC" in sql
 
     def test_select_with_limit(self, repo: Repo) -> None:
-        sql, _ = repo._build_select_query(Query(limit=10))
-        assert "LIMIT 10" in sql
+        sql, params = repo._build_select_query(Query(limit=10))
+        assert "LIMIT :query_limit" in sql and params == {"query_limit": 10}
 
     def test_select_with_offset(self, repo: Repo) -> None:
-        sql, _ = repo._build_select_query(Query(offset=5))
-        assert "OFFSET 5" in sql
+        sql, params = repo._build_select_query(Query(offset=5))
+        assert "OFFSET :query_offset" in sql and params == {"query_offset": 5}
 
     def test_select_with_pagination(self, repo: Repo) -> None:
-        sql, _ = repo._build_select_query(Query(limit=10, offset=20))
-        assert "LIMIT 10" in sql and "OFFSET 20" in sql
+        sql, params = repo._build_select_query(Query(limit=10, offset=20))
+        assert "LIMIT :query_limit" in sql and "OFFSET :query_offset" in sql
+        assert params == {"query_limit": 10, "query_offset": 20}
 
     def test_select_include_deleted(self, repo: Repo) -> None:
         sql, _ = repo._build_select_query(Query(include_deleted=True))
@@ -85,8 +86,8 @@ class TestBuildSelectQuery:
         sql, params = repo._build_select_query(query)
         assert "SELECT" in sql and "FROM order_summaries" in sql and "WHERE" in sql
         assert "deleted_at IS NULL" in sql and "status = :p0" in sql
-        assert "ORDER BY created_at DESC" in sql and "LIMIT 10" in sql
-        assert params["p0"] == "active"
+        assert "ORDER BY created_at DESC" in sql and "LIMIT :query_limit" in sql
+        assert params["p0"] == "active" and params["query_limit"] == 10
 
 
 class TestBuildCountQuery:
@@ -108,15 +109,17 @@ class TestQueryBuilderIntegration:
     def test_query_with_filter_method(self, repo: Repo) -> None:
         filtered = Query(limit=100).with_filter(Filter.eq("status", "active"))
         sql, params = repo._build_select_query(filtered)
-        assert "status = :p0" in sql and "LIMIT 100" in sql and params["p0"] == "active"
+        assert "status = :p0" in sql and "LIMIT :query_limit" in sql
+        assert params["p0"] == "active" and params["query_limit"] == 100
 
     def test_query_with_order_method(self, repo: Repo) -> None:
         sql, _ = repo._build_select_query(Query().with_order("created_at", "desc"))
         assert "ORDER BY created_at DESC" in sql
 
     def test_query_with_pagination_method(self, repo: Repo) -> None:
-        sql, _ = repo._build_select_query(Query().with_pagination(limit=20, offset=40))
-        assert "LIMIT 20" in sql and "OFFSET 40" in sql
+        sql, params = repo._build_select_query(Query().with_pagination(limit=20, offset=40))
+        assert "LIMIT :query_limit" in sql and "OFFSET :query_offset" in sql
+        assert params == {"query_limit": 20, "query_offset": 40}
 
     def test_query_with_deleted_method(self, repo: Repo) -> None:
         sql, _ = repo._build_select_query(Query().with_deleted(True))
@@ -132,8 +135,9 @@ class TestQueryBuilderIntegration:
         )
         sql, params = repo._build_select_query(query)
         assert "status = :p0" in sql and "total_amount > :p1" in sql
-        assert "ORDER BY created_at DESC" in sql and "LIMIT 10" in sql
+        assert "ORDER BY created_at DESC" in sql and "LIMIT :query_limit" in sql
         assert params["p0"] == "shipped" and params["p1"] == Decimal("50")
+        assert params["query_limit"] == 10
 
     @pytest.mark.asyncio
     async def test_find_one_eq_filters_and_iterables(self) -> None:
@@ -145,8 +149,13 @@ class TestQueryBuilderIntegration:
         found = await pg_repo.find_one(Query(order_by="order_number", offset=1), status="shipped")
         assert found is not None and found.id == uid
         sql_arg = str(conn.execute.call_args[0][0])
-        assert "status = :p0" in sql_arg and "LIMIT 1" in sql_arg and "OFFSET 1" in sql_arg
-        assert conn.execute.call_args[0][1] == {"p0": "shipped"}
+        assert "status = :p0" in sql_arg and "LIMIT :query_limit" in sql_arg
+        assert "OFFSET :query_offset" in sql_arg
+        assert conn.execute.call_args[0][1] == {
+            "p0": "shipped",
+            "query_limit": 1,
+            "query_offset": 1,
+        }
 
         empty_repo = PostgreSQLReadModelRepository(_mock_conn(rows=[]), OrderSummary)
         assert await empty_repo.find_one(status="missing") is None

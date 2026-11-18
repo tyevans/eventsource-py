@@ -21,6 +21,8 @@ from eventsource.observability.attributes import (
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
 )
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
@@ -114,11 +116,13 @@ class RabbitMQPublisher(RabbitMQPublisherManyMixin, RabbitMQPublisherBatchMixin)
 
         except Exception as e:
             if span:
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.record_exception(e)
+                record_error(span, e)
 
+            # exc_info is kept: failures here come from the broker or channel. Payload
+            # decoding never runs on this path, so the traceback cannot echo event values.
+            summary = error_summary(e)
             self._logger.error(
-                f"Failed to publish {event.event_type}: {e}",
+                f"Failed to publish {event.event_type}: {summary}",
                 exc_info=True,
                 extra={
                     "event_id": str(event.event_id),
@@ -126,7 +130,7 @@ class RabbitMQPublisher(RabbitMQPublisherManyMixin, RabbitMQPublisherBatchMixin)
                     "aggregate_type": event.aggregate_type,
                     "aggregate_id": str(event.aggregate_id),
                     "routing_key": routing_key,
-                    "error": str(e),
+                    "error": summary,
                     "error_type": type(e).__name__,
                 },
             )

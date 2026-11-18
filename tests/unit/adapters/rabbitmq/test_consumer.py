@@ -150,18 +150,24 @@ async def test_failure_at_max_retries_goes_to_dlq_with_single_failure_unwrap(con
     await consumer._process_message(message)
     dlq_exchange.publish.assert_awaited_once()
     dlq_headers = dlq_exchange.publish.await_args.args[0].headers
-    assert (dlq_headers["x-dlq-error-type"], dlq_headers["x-dlq-reason"]) == ("ValueError", "boom")
+    assert (dlq_headers["x-dlq-error-type"], dlq_headers["x-dlq-reason"]) == (
+        "ValueError",
+        "ValueError: boom",
+    )
     assert dlq_headers["x-dlq-retry-count"] == config.max_retries
     assert stats.messages_sent_to_dlq == 1
     message.ack.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_unknown_event_type_is_acked(config, stats) -> None:
-    consumer = _consumer(config, stats)
+async def test_unknown_event_type_is_dead_lettered_then_acked(config, stats) -> None:
+    dlq_exchange = mock.AsyncMock()
+    consumer = _consumer(config, stats, dlq_exchange=dlq_exchange)
     consumer._resolve_event_class = lambda _name: None  # type: ignore[assignment]
     message = _message()
     await consumer._process_message(message)
+    dlq_exchange.publish.assert_awaited_once()
+    assert dlq_exchange.publish.await_args.args[0].headers["x-dlq-error-type"] == "EventDecodeError"
     message.ack.assert_awaited_once()
 
 

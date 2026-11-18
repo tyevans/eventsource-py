@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A security release. It closes the findings of the 2026-11-17 security audit
+(`TASK-0461` to `TASK-0490`). Some changes are breaking. Read **Breaking
+changes** and **Upgrade steps** before you upgrade.
+
+### Breaking changes
+
+- **Tenant isolation.**
+  - A callable tenant filter on a projection with no active tenant scope raises. Set the class attribute `tenant_filter_allow_unscoped = True` to keep the old behavior (`TASK-0467`).
+  - Under a tenant filter, events with no tenant are skipped (`TASK-0467`).
+  - A save under a tenant scope rejects events with `tenant_id=None` (`TASK-0467`).
+  - An explicit `tenant_id` that differs from the active tenant scope raises `TenantMismatchError` in `create_event`, `execute`, and `TenantDomainEvent.with_tenant_context`. Before, the explicit value won. An explicit `tenant_id` equal to the scope, or any explicit `tenant_id` with no active scope, is accepted (`TASK-0468`).
+  - `TenantAwareRepository` checks stream ownership on load and append. A tenant cannot load or append to a stream that another tenant owns (ADR-0113, `TASK-0464`). A scoped save of a new aggregate onto a missing stream with version > 0 raises `AggregateNotFoundError`.
+  - `TenantMismatchError.actual` can be `None`. Its message now says "Affected resources".
+- **Event store append.** `InMemoryEventStore.append` and `SyncEventStoreAdapter.append` require `expected`. `expected=None` no longer means "any" (`TASK-0484`).
+- **Snapshots.** A snapshot whose identity does not match the stream, or that is ahead of the stream head, is ignored. A snapshot with no events in the stream gives `AggregateNotFoundError` (`TASK-0469`).
+- **Projections.** `ProjectionCoordinator.rebuild_all` raises `ProjectionRebuildError` (with `failure_count`) when a projection fails. `ProjectionRegistry.dispatch_many` returns the list of exceptions (`TASK-0485`).
+- **Subscriptions.**
+  - `Subscription.record_event_error`, `Subscription.recent_errors`, `RecentErrorInfo`, and `SubscriptionStatus.recent_errors_count` are removed. `SubscriptionManager.get_comprehensive_health()["recent_errors"]` is the source of recent errors (`TASK-0470`).
+  - `batch_size` above 10 000 and a status `update_interval` below 0.05 s raise `ValueError`. The status streamer accepts 100 subscribers at most (`TASK-0486`).
+- **Migration cutover.** `abort` is refused in the `CUTOVER` phase. A failed consistency check or subscription switch after the routing switch sets the `FAILED` phase (was `COMPLETED`). `CutoverResult.consistency_verified` reports the check (`TASK-0471`, `TASK-0472`).
+- **Event buses.**
+  - The RabbitMQ DLQ has a default maximum length of 100 000 messages (`dlq_max_length`). Set `None` for no limit (`TASK-0479`).
+  - `KafkaEventBusConfig.create_ssl_context()` is removed (`TASK-0480`).
+  - `EventDecodeError` (RabbitMQ) and `DeserializationError` (Kafka) derive from `EventSourceError`. `DeserializationError` is still a `ValueError` (`TASK-0470`).
+- **Error text.** Log messages, log extras, span events, health output, DLQ `error_message`, the RabbitMQ `x-dlq-reason` header, Kafka DLQ headers, and `QueueInfo.error` hold an error summary (`ClassName: message`). Structured errors (validation errors, SQL statement errors) keep only their structure, with no input values. The stored DLQ `error_stacktrace` and `ErrorInfo.error_stacktrace` hold stack frames and exception type names, with no message text (`TASK-0470`).
+- **Delta compression.** `DeltaCodec` rejects payloads above `max_decompressed_bytes`, on compress and on decompress. A corrupt stream raises `DeltaIntegrityError` (was `zlib.error`) (`TASK-0483`).
+
+### Added
+
+- Tenant scope for read models: `TenantScopedReadModelRepository` and `TenantScopeOperationError` (ADR-0114).
+- Tenant owner for DLQ entries: `DLQEntry.tenant_id` and `add_failed_event(..., tenant_id=...)`. Library DLQ writers pass the keyword only when the event has a tenant, so DLQ repositories without the keyword keep working. Under a tenant scope, DLQ reads show only entries of that tenant, and `delete_resolved_events` is refused (ADR-0114).
+- `Snapshot.tenant_id`. Snapshots record their owner (ADR-0113).
+- `projection_name=` on projections, so per-tenant instances keep separate checkpoints (ADR-0114).
+- `ReadModelQueryConformance`, `DLQTenantScopeConformance`, `DLQStackTraceConformance`, and an appender identity conformance case.
+- `docs/how-to/production-security-considerations.md`.
+
+### Fixed
+
+- Read-model queries validate field names and operators in one place and bind `LIMIT` and `OFFSET` as parameters. Untrusted `order_by` values can no longer inject SQL (`TASK-0461`).
+- Subscription runners call `SubscriptionErrorHandler.handle_error()` before the checkpoint moves, so the DLQ and error callbacks receive failures (`TASK-0462`).
+- `DatabaseProjection` writes the checkpoint after the handler succeeds, outside the retry loop (`TASK-0463`).
+- A live checkpoint failure after a successful handler no longer counts the event as failed or writes a DLQ entry. It is logged and raised, the same as catch-up.
+- Undecodable RabbitMQ messages and Kafka messages with bad headers go to the DLQ. They were dropped (`TASK-0466`).
+- PostgreSQL appends take a per-stream advisory transaction lock. Bulk copy raises `BulkCopyError` on a duplicate event that does not match (`TASK-0473`).
+- Kafka `retry_after` is clamped to `retry_max_delay`. At most 1000 retries wait in memory; above that, Kafka and RabbitMQ dead-letter the message with reason `retry_capacity_exceeded` (`TASK-0479`).
+- Background snapshot scheduling holds at most 1000 pending tasks; above that, the snapshot is written inline (`TASK-0486`).
+- `CheckpointTrackingProjection` does not retry `TenantContextNotSetError`.
+- `get_by_migration` rejects a `limit` below 1.
+
+### Security
+
+- Broker and store configuration `repr` values hide passwords. Plaintext remote AMQP and Redis URLs, and the `guest` user on a remote RabbitMQ host, log a warning (`TASK-0480`, `TASK-0490`).
+- New SQLite database files are created with mode 0600 (`TASK-0482`).
+- Release workflow: all actions are pinned by commit SHA, the tag must be on `main`, jobs have no default permissions, the build uses `uv build` with a bounded hatchling, and PyPI attestations are on. CI service images are pinned by digest (`TASK-0465`, `TASK-0476`, `TASK-0477`, `TASK-0489`).
+- The sdist holds only the files a source build needs (`TASK-0489`).
+- Secret scanning runs in pre-commit and in CI (gitleaks). `.github/CODEOWNERS` added (`TASK-0488`).
+- Local test and benchmark services bind to 127.0.0.1 (`TASK-0487`).
+
+### Upgrade steps
+
+- **PostgreSQL.** Run the operator scripts in `src/eventsource/adapters/sql/schemas/updates/`:
+  - `005`: snapshot `tenant_id` column.
+  - `006`: `event_ids` table for partitioned event stores.
+  - `007`: DLQ `tenant_id` column.
+
+  Without a script, the adapter logs one warning and degrades. Snapshots and DLQ entries then have no owner, and scoped DLQ reads return no rows.
+- **SQLite.** The new columns are added on first use.
+- **Third-party DLQ repositories.** Accept the optional `tenant_id` keyword on `add_failed_event`, then add `DLQTenantScopeConformance` to your tests.
+- **Multi-tenant projections.** Read the "Run one projection instance per tenant" section of the multi-tenant guide. A checkpoint moves past events that the tenant filter skips. Two projections with the same name share one checkpoint.
+
 ## [0.15.1] - 2026-10-15
 
 ### Fixed

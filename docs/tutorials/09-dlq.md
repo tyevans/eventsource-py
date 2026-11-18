@@ -53,8 +53,8 @@ flowchart LR
 1. **Retry transient failures**: Transient errors (e.g., database deadlocks, temporary
    network timeouts) are retried with exponential backoff.
 2. **Isolate permanent failures**: If all retries are exhausted, the event is deemed a
-   "poison pill". It is captured into a `DLQRepository` alongside its error message, full
-   traceback, retry count, and original payload.
+   "poison pill". It is captured into a `DLQRepository` alongside its error summary, the stack frames of the error,
+   the retry count, and the original payload.
 3. **Notify and advance**: Operators or monitoring systems are alerted, and the projection
    can either safely advance its checkpoint (in scenarios where event-skipping is allowed)
    or freeze isolated streams while engineers inspect and redrive the failure.
@@ -263,8 +263,9 @@ Each `DLQEntry` is a rich data structure containing:
 | `projection_name` | `str` | Name of the projection that failed to handle it. |
 | `event_type` | `str` | Wire type of the event (e.g. `"OrderPlaced"`). |
 | `event_data` | `dict \| str` | Serialized JSON data of the event payload. |
-| `error_message` | `str` | String representation of the exception. |
-| `error_stacktrace` | `str \| None` | Full Python traceback when the failure occurred. |
+| `error_message` | `str` | Summary of the exception as `ClassName: message`. Framework writers store this summary, not the raw error text. Structured errors (validation and SQL statement errors) keep only their structure, with no input values. |
+| `error_stacktrace` | `str \| None` | Stack frames and exception type names of the error and its causes. It holds no exception message text, because message text can contain payload values. Empty when the entry was added outside an `except` block. |
+| `tenant_id` | `UUID \| None` | Owner tenant of the failed event. `None` when the event had no tenant. Under a tenant scope, only entries of that tenant are visible. |
 | `retry_count` | `int` | Number of retry attempts made before capturing to DLQ. |
 | `first_failed_at` | `datetime` | UTC timestamp of the first failure. |
 | `last_failed_at` | `datetime` | UTC timestamp of the most recent failure. |
@@ -398,6 +399,11 @@ async def cleanup_dlq(dlq: InMemoryDLQRepository) -> None:
 > `delete_resolved_events()` only ever deletes entries with `status="resolved"`.
 > Entries that are still `"failed"` or `"retrying"` are **never** deleted, regardless of age.
 
+> [!NOTE]
+> Under an active tenant scope, `delete_resolved_events()` raises
+> `TenantScopeOperationError`. Run retention cleanup outside any scope. See
+> [Dead letter queue under a scope](../guides/multi-tenant.md#dead-letter-queue-under-a-scope).
+
 ---
 
 ## Step 8: Automatic DLQ Integration with `CheckpointTrackingProjection`
@@ -482,7 +488,7 @@ When you run this:
 1. `_handle_with_retry()` executes `_process_event(bad_event)`.
 2. Upon failure, the retry policy is queried. It retries once after `0.05` seconds.
 3. When the second attempt fails, `max_retries` is exceeded.
-4. `send_to_dlq()` writes the event, exception, and stack trace directly into `dlq`.
+4. `send_to_dlq()` writes the event, an error summary (`ClassName: message`), and the stack trace directly into `dlq`.
 5. The original exception is re-raised so the caller (or subscription runner) can respond appropriately.
 
 ---

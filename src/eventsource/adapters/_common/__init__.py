@@ -12,8 +12,10 @@ from eventsource.adapters._common.readmodel_filters import (
     SQLITE,
     SqlDialect,
     check_filters,
+    check_query,
     filter_to_sql,
     matches_filter,
+    order_by_sql,
 )
 from eventsource.adapters._common.registry_check import check_registered
 
@@ -23,8 +25,10 @@ __all__ = [
     "SqlDialect",
     "check_expected",
     "check_filters",
+    "check_query",
     "check_registered",
     "describe_expected",
     "filter_to_sql",
     "matches_filter",
+    "order_by_sql",
 ]

@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from eventsource.application.migration.metrics_timers import MigrationMetricsTimerMixin
 from eventsource.application.migration.metrics_types import (
     OTEL_METRICS_AVAILABLE,
     MigrationMetricSnapshot,
     NoOpCounter,
     NoOpHistogram,
-    _CutoverTimer,
     _get_meter,
-    _PhaseTimer,
 )
 
 
 @dataclass
-class MigrationMetrics:
+class MigrationMetrics(MigrationMetricsTimerMixin):
     """Container for migration metrics instruments (no-op safe when OpenTelemetry is absent)."""
 
     migration_id: str
@@ -34,9 +31,11 @@ class MigrationMetrics:
     _cutover_duration_histogram: Any = field(default=None, init=False, repr=False)
     _failed_target_writes_counter: Any = field(default=None, init=False, repr=False)
     _verification_failures_counter: Any = field(default=None, init=False, repr=False)
+    _cutover_failures_counter: Any = field(default=None, init=False, repr=False)
     _events_copied_count: int = field(default=0, init=False, repr=False)
     _failed_writes_count: int = field(default=0, init=False, repr=False)
     _verification_failures_count: int = field(default=0, init=False, repr=False)
+    _cutover_failures_count: int = field(default=0, init=False, repr=False)
     _phase_durations: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _cutover_durations: list[float] = field(default_factory=list, init=False, repr=False)
 
@@ -55,6 +54,7 @@ class MigrationMetrics:
         self._cutover_duration_histogram = self._meter.create_histogram(name="migration.cutover.duration", unit="ms", description="Time taken for cutover operations in milliseconds")  # fmt: skip
         self._failed_target_writes_counter = self._meter.create_counter(name="migration.target.writes.failed", unit="writes", description="Number of failed writes to target store during dual-write")  # fmt: skip
         self._verification_failures_counter = self._meter.create_counter(name="migration.verification.failures", unit="failures", description="Number of consistency verification failures")  # fmt: skip
+        self._cutover_failures_counter = self._meter.create_counter(name="migration.cutover.failures", unit="failures", description="Number of cutovers that ended in FAILED after routing switched")  # fmt: skip
 
     def _setup_noop(self) -> None:
         self._events_copied_counter = NoOpCounter()
@@ -62,6 +62,7 @@ class MigrationMetrics:
         self._cutover_duration_histogram = NoOpHistogram()
         self._failed_target_writes_counter = NoOpCounter()
         self._verification_failures_counter = NoOpCounter()
+        self._cutover_failures_counter = NoOpCounter()
 
     def _base_attributes(self) -> dict[str, str]:
         return {"migration_id": self.migration_id, "tenant_id": self.tenant_id}
@@ -105,25 +106,11 @@ class MigrationMetrics:
         self._verification_failures_counter.add(1, attrs)
         self._verification_failures_count += 1
 
-    @contextmanager
-    def time_phase(self, phase: str) -> Generator[_PhaseTimer]:
-        timer = _PhaseTimer()
-        timer.start()
-        try:
-            yield timer
-        finally:
-            timer.stop()
-            self.record_phase_duration(phase, timer.duration_seconds)
-
-    @contextmanager
-    def time_cutover(self) -> Generator[_CutoverTimer]:
-        timer = _CutoverTimer()
-        timer.start()
-        try:
-            yield timer
-        finally:
-            timer.stop()
-            self.record_cutover_duration(timer.duration_ms, timer.success)
+    def record_cutover_failure(self, reason: str | None = None) -> None:
+        """Count a cutover that switched routing but ended in FAILED."""
+        attrs = {**self._base_attributes(), **({"reason": reason} if reason else {})}
+        self._cutover_failures_counter.add(1, attrs)
+        self._cutover_failures_count += 1
 
     def get_snapshot(self) -> MigrationMetricSnapshot:
         return MigrationMetricSnapshot(
@@ -134,6 +121,7 @@ class MigrationMetrics:
             self._verification_failures_count,
             dict(self._phase_durations),
             list(self._cutover_durations),
+            self._cutover_failures_count,
         )
 
     @property

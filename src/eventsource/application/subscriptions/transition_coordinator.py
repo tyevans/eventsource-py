@@ -11,6 +11,7 @@ from eventsource.application.subscriptions.transition_models import TransitionPh
 from eventsource.observability import Tracer, create_tracer
 
 if TYPE_CHECKING:
+    from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
     from eventsource.application.subscriptions.flow_control import FlowController
     from eventsource.application.subscriptions.retry import CircuitBreaker
     from eventsource.application.subscriptions.runners.catchup import CatchUpRunner
@@ -42,6 +43,7 @@ class TransitionCoordinator(TransitionExecutionMixin):
         subscription: Subscription,
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
+        error_handler: SubscriptionErrorHandler | None = None,
     ) -> None:
         """
         Initialize the transition coordinator.
@@ -53,6 +55,8 @@ class TransitionCoordinator(TransitionExecutionMixin):
             subscription: The subscription being transitioned
             tracer: Optional custom Tracer instance.
             enable_tracing: Whether to enable OpenTelemetry tracing (default True).
+            error_handler: Handler that receives each failed event (DLQ, callbacks).
+                The runners create a private one when omitted.
         """
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
@@ -61,6 +65,7 @@ class TransitionCoordinator(TransitionExecutionMixin):
         self.event_bus = event_bus
         self.checkpoint_repo = checkpoint_repo
         self.subscription = subscription
+        self._error_handler = error_handler
 
         self._phase = TransitionPhase.NOT_STARTED
         self._watermark: Position | None = None

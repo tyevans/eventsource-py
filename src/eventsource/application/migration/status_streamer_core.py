@@ -8,6 +8,10 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from eventsource.application.migration.status_streamer_limits import (
+    check_subscriber_capacity,
+    check_update_interval,
+)
 from eventsource.observability import Tracer, create_tracer
 from eventsource.ports.migration.models import MigrationStatus
 
@@ -53,8 +57,7 @@ class StatusStreamer:
         self, *, update_interval: float = 1.0, include_initial: bool = True
     ) -> AsyncIterator[MigrationStatus]:
         """Stream migration status updates until terminal state or streamer closure."""
-        if update_interval <= 0:
-            raise ValueError(f"update_interval must be > 0, got {update_interval}")
+        check_update_interval(update_interval)
         if self._closed:
             raise RuntimeError("StatusStreamer has been closed")
 
@@ -104,6 +107,7 @@ class StatusStreamer:
 
     async def _register_subscriber(self) -> int:
         async with self._lock:
+            check_subscriber_capacity(len(self._subscribers), self._migration_id)
             subscriber_id = self._next_subscriber_id
             self._next_subscriber_id += 1
             self._subscribers[subscriber_id] = asyncio.Queue(maxsize=100)

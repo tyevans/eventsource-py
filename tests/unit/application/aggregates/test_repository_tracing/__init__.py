@@ -12,9 +12,11 @@ from ._fixtures import (  # pragma: allowlist secret
 )
 from .test_span_attributes import (  # pragma: allowlist secret
     TestAggregateRepositorySpanDynamicAttributes,
-    TestAggregateRepositoryTracingMultipleEvents,
 )
 from .test_span_creation import TestAggregateRepositorySpanCreation  # pragma: allowlist secret
+from .test_span_event_count import (  # pragma: allowlist secret
+    TestAggregateRepositoryTracingMultipleEvents,
+)
 from .test_tracing_composition import (  # pragma: allowlist secret
     TestAggregateRepositoryStandardAttributes,
     TestAggregateRepositoryTracingComposition,

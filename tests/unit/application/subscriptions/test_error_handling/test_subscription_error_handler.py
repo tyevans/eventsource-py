@@ -36,7 +36,7 @@ class TestSubscriptionErrorHandler:
     async def test_handle_error_basic(self, handler: SubscriptionErrorHandler):
         error_info = await handler.handle_error(ValueError("Test error"))
         assert error_info.error_type == "ValueError"
-        assert error_info.error_message == "Test error"
+        assert error_info.error_message == "ValueError: Test error"
         assert error_info.subscription_name == "TestSubscription"
 
     @pytest.mark.asyncio
@@ -78,8 +78,8 @@ class TestSubscriptionErrorHandler:
         for i in range(10):
             await handler.handle_error(ValueError(f"Error {i}"))
         assert len(handler.recent_errors) == 5
-        assert handler.recent_errors[0].error_message == "Error 5"
-        assert handler.recent_errors[-1].error_message == "Error 9"
+        assert handler.recent_errors[0].error_message == "ValueError: Error 5"
+        assert handler.recent_errors[-1].error_message == "ValueError: Error 9"
 
     @pytest.mark.asyncio
     async def test_handle_error_sends_to_dlq(

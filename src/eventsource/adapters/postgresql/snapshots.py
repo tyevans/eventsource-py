@@ -9,6 +9,11 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.adapters.postgresql.snapshot_tenant import (
+    SELECT_WITHOUT_TENANT_SQL,
+    UPSERT_WITHOUT_TENANT_SQL,
+    SnapshotTenantColumnProbe,
+)
 from eventsource.adapters.serialization import json_dumps, json_loads
 from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.observability import Tracer, create_tracer
@@ -22,14 +27,16 @@ from eventsource.ports.snapshots import Snapshot
 logger = logging.getLogger(__name__)
 
 _UPSERT_SQL = text(
-    "INSERT INTO snapshots (aggregate_id, aggregate_type, version, schema_version, state, created_at) "
-    "VALUES (:aggregate_id, :aggregate_type, :version, :schema_version, :state, :created_at) "
+    "INSERT INTO snapshots (aggregate_id, aggregate_type, version, schema_version, state, "
+    "created_at, tenant_id) "
+    "VALUES (:aggregate_id, :aggregate_type, :version, :schema_version, :state, :created_at, "
+    ":tenant_id) "
     "ON CONFLICT (aggregate_id, aggregate_type) DO UPDATE SET "
     "version = EXCLUDED.version, schema_version = EXCLUDED.schema_version, "
-    "state = EXCLUDED.state, created_at = EXCLUDED.created_at"
+    "state = EXCLUDED.state, created_at = EXCLUDED.created_at, tenant_id = EXCLUDED.tenant_id"
 )
 _SELECT_SQL = text(
-    "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at "
+    "SELECT aggregate_id, aggregate_type, version, schema_version, state, created_at, tenant_id "
     "FROM snapshots WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type"
 )
 _DELETE_SQL = text(
@@ -54,6 +61,7 @@ class PostgreSQLSnapshotStore:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._session_factory = session_factory
+        self._tenant_probe = SnapshotTenantColumnProbe()
         logger.debug("PostgreSQLSnapshotStore initialized")
 
     async def close(self) -> None: return None  # fmt: skip
@@ -72,9 +80,14 @@ class PostgreSQLSnapshotStore:
                 "schema_version": snapshot.schema_version,
                 "state": json_dumps(snapshot.state),
                 "created_at": snapshot.created_at,
+                "tenant_id": snapshot.tenant_id,
             }
             async with self._session_factory() as session, session.begin():
-                await session.execute(_UPSERT_SQL, params)
+                if await self._tenant_probe.has_tenant_column(session):
+                    await session.execute(_UPSERT_SQL, params)
+                else:
+                    legacy = {k: v for k, v in params.items() if k != "tenant_id"}
+                    await session.execute(UPSERT_WITHOUT_TENANT_SQL, legacy)
             logger.debug("Saved snapshot for %s/%s at version %d", snapshot.aggregate_type, snapshot.aggregate_id, snapshot.version)  # fmt: skip
 
     async def get_snapshot(self, aggregate_id: UUID, aggregate_type: str) -> Snapshot | None:
@@ -82,7 +95,11 @@ class PostgreSQLSnapshotStore:
         with self._tracer.span("eventsource.snapshot.get", attrs):
             params = {"aggregate_id": aggregate_id, "aggregate_type": aggregate_type}
             async with self._session_factory() as session:
-                row = (await session.execute(_SELECT_SQL, params)).fetchone()
+                if await self._tenant_probe.has_tenant_column(session):
+                    select_sql = _SELECT_SQL
+                else:
+                    select_sql = SELECT_WITHOUT_TENANT_SQL
+                row = (await session.execute(select_sql, params)).fetchone()
             if row is None:
                 logger.debug("No snapshot found for %s/%s", aggregate_type, aggregate_id)
                 return None
@@ -92,7 +109,7 @@ class PostgreSQLSnapshotStore:
                     state = json_loads(state)
                 except (ValueError, TypeError) as e:
                     raise SnapshotDeserializationError(row.aggregate_id, row.aggregate_type, e) from e  # fmt: skip
-            snapshot = Snapshot(row.aggregate_id, row.aggregate_type, row.version, state, row.schema_version, row.created_at)  # fmt: skip
+            snapshot = Snapshot(row.aggregate_id, row.aggregate_type, row.version, state, row.schema_version, row.created_at, row.tenant_id)  # fmt: skip
             logger.debug("Retrieved snapshot for %s/%s at version %d", aggregate_type, aggregate_id, snapshot.version)  # fmt: skip
             return snapshot
 

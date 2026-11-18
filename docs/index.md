@@ -116,8 +116,10 @@ complexity. The cost is real and mostly paid up front:
 - **Deletion is hard on purpose.** An append-only log and a "delete all data
   about this person" requirement are in genuine tension. None of the store
   ports has a delete method, and resolving the tension takes deliberate design
-  (crypto-shredding, keeping personal data out of the events and referencing it
-  by key) rather than a `DELETE` statement.
+  rather than a `DELETE` statement. Common application patterns are to keep
+  personal data out of the events and reference it by key, or to encrypt it with
+  a per-subject key that is stored outside the log (crypto-shredding). The library
+  does not provide either pattern.
 - **Query cost.** Ad-hoc queries over the event log are slow and awkward. Every
   question you want to ask needs a read model, which means every question has an
   operational cost.

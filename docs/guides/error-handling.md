@@ -272,7 +272,7 @@ Bound the loop. Conflicts on the same aggregate mean contention, and unbounded r
 Two ways to avoid the conflict rather than absorb it:
 
 - **Serialize the writers.** `PostgreSQLLockManager` (`eventsource.adapters.postgresql.locks`) gives you advisory locks keyed by aggregate id, so a second writer waits instead of racing. Worth it when conflicts are frequent and the command is expensive to replay; see [Distributed locks](distributed-locks.md).
-- **Opt out of the check.** `ExpectedVersion.ANY` (`-1`) tells `append()` to skip the version check entirely. That disables optimistic locking for that append, so reserve it for genuinely order-independent streams — it does not make concurrent writes safe, it makes them silent.
+- **Opt out of the check.** `ExpectedVersion.any_()` tells `append()` to skip the version check entirely. That disables optimistic locking for that append, so reserve it for genuinely order-independent streams — it does not make concurrent writes safe, it makes them silent.
 
 Transient infrastructure failures are the second retryable class, and they are *not* `EventSourceError` subclasses — they arrive as `ConnectionError`, `TimeoutError`, `asyncio.TimeoutError`, or `OSError` from the driver, sometimes wrapped in `EventStoreError` or `EventBusError`. The library ships a helper for exactly this shape, `retry_async()` from `eventsource.application.subscriptions`:
 

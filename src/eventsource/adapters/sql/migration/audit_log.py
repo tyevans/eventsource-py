@@ -74,7 +74,15 @@ class PostgreSQLMigrationAuditLogRepository:
         until: datetime | None = None,
         limit: int | None = None,
     ) -> list[MigrationAuditEntry]:
-        """Get audit entries for a migration ordered by occurred_at ascending."""
+        """Get audit entries for a migration ordered by occurred_at ascending.
+
+        `limit` is None (no cap) or an int >= 1. Anything else raises ValueError
+        before a connection is opened; `bool` is rejected even though it is an int.
+        """
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+        ):
+            raise ValueError(f"limit must be None or an int >= 1, got {limit!r}")
         attrs = {"migration.id": str(migration_id), ATTR_DB_SYSTEM: "postgresql"}
         with self._tracer.span("eventsource.audit_log_repo.get_by_migration", attrs):
             conditions = ["migration_id = :migration_id"]
@@ -90,8 +98,10 @@ class PostgreSQLMigrationAuditLogRepository:
                 params["until"] = until
 
             where_clause = " AND ".join(conditions)
-            limit_clause = f"LIMIT {limit}" if limit else ""
-            sql = f"{_SELECT_COLS} WHERE {where_clause} ORDER BY occurred_at ASC {limit_clause}"  # nosec B608
+            sql = f"{_SELECT_COLS} WHERE {where_clause} ORDER BY occurred_at ASC"  # nosec B608
+            if limit is not None:
+                sql += " LIMIT :limit"
+                params["limit"] = limit
             async with sql_connection(self._conn, write=False) as conn:
                 rows = (await conn.execute(text(sql), params)).fetchall()
             return [self._row_to_entry(row) for row in rows]

@@ -64,7 +64,7 @@ exposed by `eventsource.adapters.sql.schemas` and nothing else:
 | Schema name | Objects it creates | Backends |
 | --- | --- | --- |
 | `events` | `events` (non-partitioned) plus its indexes | postgresql, sqlite |
-| `events_partitioned` | `events` declaratively partitioned by `timestamp`, the `events_global_position_seq` sequence, monthly partitions and lifecycle helpers | postgresql |
+| `events_partitioned` | `events` declaratively partitioned by `timestamp`, the `events_global_position_seq` sequence, monthly partitions and lifecycle helpers, plus the non-partitioned `event_ids` side table that enforces global `event_id` uniqueness | postgresql |
 | `outbox` | `event_outbox` | postgresql, sqlite |
 | `checkpoints` | `projection_checkpoints` | postgresql, sqlite |
 | `dlq` | `dead_letter_queue` | postgresql, sqlite |
@@ -96,12 +96,19 @@ does not support it. Asking for one you do not get a degraded substitute; you
 get a `ValueError` naming what is available.
 
 Also in scope, though it sits slightly outside the `get_schema()` surface, is
-`src/eventsource/adapters/sql/schemas/updates/` — currently the pair of
-`001_add_global_position` files that retrofit position-based resume onto an
-existing `projection_checkpoints` table. New installs get that column from the
-shipped template already; the update files exist for databases created before
-it landed. They explain the append-only convention discussed later on this
-page, so they are discussed here too.
+`src/eventsource/adapters/sql/schemas/updates/`. These are numbered, append-only
+scripts for databases created before a column or table existed. New installs
+get the same objects from the shipped templates. Each script has a PostgreSQL
+form and, where SQLite needs one, a `_sqlite` form:
+
+- `001_add_global_position` (`.sql`, `_sqlite.sql`): adds `global_position` to `projection_checkpoints`.
+- `002_add_position_token` (`.sql`, `_sqlite.sql`): adds `position_token` to `projection_checkpoints`.
+- `003_add_migration_position_tokens` (`.sql`): adds position tokens to the migration bookkeeping tables.
+- `004_add_events_txid` (`.sql`): adds `txid` to `events` (PostgreSQL 13 or later).
+- `005_add_snapshot_tenant` (`.sql`, `_sqlite.sql`): adds `tenant_id` to `snapshots`.
+
+They explain the append-only convention discussed later on this page, so they
+are discussed here too.
 
 Deliberately **out of scope**:
 
@@ -399,7 +406,7 @@ it is a textbook read-then-write race. Nothing between the `SELECT` and the
 `INSERT` locks the aggregate: no `SELECT ... FOR UPDATE`, no advisory lock, no
 serializable isolation requirement. Two processes can both read version 7,
 both conclude they may write version 8, and both proceed. Under
-`ExpectedVersion.any()` there is no application-side check at all.
+`ExpectedVersion.any_()` there is no application-side check at all.
 
 The constraint is what makes that safe. One insert of version 8 commits; the
 other violates `uq_events_aggregate_version` and the driver raises

@@ -11,6 +11,8 @@ from eventsource.adapters.kafka.serialization import EventSerializer
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
 from eventsource.observability import attributes as _attr
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,12 +61,13 @@ class KafkaPublisher:
         return {"messaging.system": "kafka", "messaging.destination": self._config.topic_name, "event.type": event_type, **extra}  # fmt: skip
 
     def _record_publish_error(self, event: DomainEvent, span: Any, error: Exception) -> None:
-        if span:
-            span.set_status(Status(StatusCode.ERROR, str(error)))
-            span.record_exception(error)
+        record_error(span, error)
         if self._metrics:
             self._metrics.publish_errors.add(1, attributes=self._metric_attrs(event.event_type, **{"error.type": type(error).__name__}))  # fmt: skip
-        logger.error("Failed to publish event", extra={"error": str(error)}, exc_info=True)
+        # exc_info is kept: serialization runs before this path, so only the producer send fails.
+        logger.error(
+            "Failed to publish event", extra={"error": error_summary(error)}, exc_info=True
+        )
         self._stats.last_error_at = datetime.now(UTC)
 
     async def _begin_publish_single_event(self, event: DomainEvent, background: bool) -> tuple[Any, DomainEvent, Any]:  # fmt: skip
@@ -122,13 +125,11 @@ class KafkaPublisher:
             if fut.cancelled():
                 return
             if isinstance(exc := fut.exception(), Exception):
-                logger.error("Background event publish failed", extra={"error": str(exc), "event_type": event_type, "event_id": event_id}, exc_info=False)  # fmt: skip
+                logger.error("Background event publish failed", extra={"error": error_summary(exc), "event_type": event_type, "event_id": event_id}, exc_info=False)  # fmt: skip
                 self._stats.last_error_at = datetime.now(UTC)
                 if self._metrics:
                     self._metrics.publish_errors.add(1, attributes={**base_attrs, "error.type": type(exc).__name__})  # fmt: skip
-                if span:
-                    span.set_status(Status(StatusCode.ERROR, str(exc)))
-                    span.record_exception(exc)
+                record_error(span, exc)
             else:
                 meta = fut.result()
                 extra = {"topic": meta.topic, "partition": meta.partition, "offset": meta.offset, "event_type": event_type, "event_id": event_id}  # fmt: skip

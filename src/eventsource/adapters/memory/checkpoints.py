@@ -1,4 +1,4 @@
-"""In-memory checkpoint adapter."""
+"""In-memory checkpoint adapter for tests. Not for production use."""
 
 import asyncio
 from datetime import UTC, datetime

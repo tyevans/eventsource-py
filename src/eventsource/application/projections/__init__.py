@@ -20,6 +20,7 @@ from eventsource.application.projections.checkpoints import (
 )
 from eventsource.application.projections.coordinator import (
     ProjectionCoordinator,
+    ProjectionRebuildError,
     ProjectionRegistry,
     SubscriberRegistry,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "Projection",
     "ProjectionCoordinator",
     "ProjectionOptions",
+    "ProjectionRebuildError",
     "ProjectionRegistry",
     "ReplayFailedError",
     "ReplayFailure",

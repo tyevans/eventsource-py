@@ -49,6 +49,25 @@ These security and supply-chain guardrails are non-negotiable across all autonom
 2. **Lockfile Immutability**: Autonomous agents are strictly forbidden from modifying unapproved lockfiles (`uv.lock`, `package-lock.json`) without explicit human architectural approval.
 3. **Allowlisted Command Execution**: Autonomous agents are strictly forbidden from executing non-allowlisted shell commands outside approved development toolchains.
 
+### Secret Scanning (gitleaks)
+
+Secret scanning runs in two places:
+- **Pre-commit**: the `gitleaks` hook in `.pre-commit-config.yaml` scans staged changes.
+- **CI**: the `secrets` job in `.github/workflows/ci.yml` scans the full git history.
+
+Rules and the allowlist are in `.gitleaks.toml`. Keep allowlist entries narrow. Each entry must match one exact fake value, and the test that uses it must say why.
+
+To run the scan by hand:
+
+```bash
+# Install gitleaks first (for example: brew install gitleaks).
+gitleaks git --pre-commit --staged --redact --config .gitleaks.toml   # staged changes
+gitleaks git --redact --config .gitleaks.toml                         # full history
+gitleaks dir --redact --config .gitleaks.toml .                       # working tree
+```
+
+If the scan finds a real secret, rotate it first. Then remove it from the history. Do not only delete it in a new commit.
+
 <!-- BEGIN CUSTOM INVARIANTS -->
 10. **Dependency Management with UV**:
    - Never edit `pyproject.toml` dependency tables by hand — use `uv add`, `uv add --optional <extra>`, or `uv remove`.

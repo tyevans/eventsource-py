@@ -522,7 +522,7 @@ for name, sub_status in status.items():
 subscription name. `SubscriptionStatus` is a point-in-time snapshot with more
 fields than the example prints: `state`, `position`, `lag_events`,
 `events_processed`, `events_failed`, `events_dlq`, `last_processed_at`,
-`started_at`, `uptime_seconds`, `error`, and `recent_errors_count`. It also has
+`started_at`, `uptime_seconds`, and `error`. It also has
 a `to_dict()` method, which is what you would expose from a metrics or health
 endpoint.
 

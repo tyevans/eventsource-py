@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 import ssl
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+from eventsource.adapters._bus.redact import (
+    is_loopback_host,
+    redacted_repr,
+    url_host,
+    url_username,
+    warn_if_plaintext_remote,
+)
+
+logger = logging.getLogger("eventsource.adapters.rabbitmq.config")
+
+_PLAINTEXT_SCHEMES = frozenset({"amqp"})
+_DEFAULT_GUEST_USER = "guest"
 
 
 @dataclass
@@ -23,7 +37,9 @@ class RabbitMQEventBusConfig:
     enable_dlq: bool = True
     dlq_exchange_suffix: str = "_dlq"
     dlq_message_ttl: int | None = None
-    dlq_max_length: int | None = None
+    # Maximum messages the DLQ holds (x-max-length). Default 100_000 bounds growth from
+    # poison traffic. Pass None to remove the limit.
+    dlq_max_length: int | None = 100_000
     durable: bool = True
     auto_delete: bool = False
     reconnect_delay: float = 1.0
@@ -47,6 +63,31 @@ class RabbitMQEventBusConfig:
         """Generate consumer name ({hostname}-{uuid[:8]}) if not provided."""
         if self.consumer_name is None:
             self.consumer_name = f"{socket.gethostname()}-{str(uuid.uuid4())[:8]}"
+        self._warn_on_insecure_url()
+
+    def __repr__(self) -> str:
+        """Show the connection URL with its credentials redacted."""
+        return redacted_repr(self, url_fields=("rabbitmq_url",))
+
+    def _warn_on_insecure_url(self) -> None:
+        """Warn on plaintext transport to a remote host and on the default guest user."""
+        warn_if_plaintext_remote(
+            logger,
+            self.rabbitmq_url,
+            plaintext_schemes=_PLAINTEXT_SCHEMES,
+            broker="RabbitMQ",
+        )
+        # The default URL keeps guest:guest for backward compatibility. RabbitMQ
+        # itself only accepts guest from localhost, so this warns about a
+        # configuration that was copied to a remote host.
+        if url_username(self.rabbitmq_url) == _DEFAULT_GUEST_USER and not is_loopback_host(
+            url_host(self.rabbitmq_url)
+        ):
+            logger.warning(
+                "RabbitMQ connection uses the default 'guest' user with a non-loopback host. "
+                "Create a dedicated user and set rabbitmq_url with its credentials.",
+                extra={"username": _DEFAULT_GUEST_USER},
+            )
 
     @property
     def queue_name(self) -> str:

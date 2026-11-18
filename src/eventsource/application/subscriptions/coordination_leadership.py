@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.coordination import LeaderElector
 from eventsource.ports.exceptions import TransitionError
 
@@ -59,7 +60,7 @@ async def verify_leadership_lease(elector: LeaderElector | None) -> bool:
     except Exception as e:
         logger.error(
             "Leadership lease renewal failed",
-            extra={"identity": elector.identity, "error": str(e)},
+            extra={"identity": elector.identity, "error": error_summary(e)},
             exc_info=True,
         )
         return False

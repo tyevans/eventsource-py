@@ -14,8 +14,10 @@ from eventsource.domain.event import DomainEvent
 UnregisteredEventHandling = str  # "ignore" | "warn" | "error"
 
 # Tenant filter can be:
-# - Static UUID: Always filter by this tenant
-# - Callable: Dynamic filter, called per-event (e.g., get_current_tenant)
+# - Static UUID: Always filter by this tenant; events with tenant_id None never match
+# - Callable: Dynamic filter, called per-event (e.g., get_current_tenant). Returning
+#   None raises TenantContextNotSetError unless the projection sets
+#   tenant_filter_allow_unscoped = True
 # - None: No filtering, process all events
 type TenantFilter = UUID | Callable[[], UUID | None] | None
 

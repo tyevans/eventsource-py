@@ -95,6 +95,8 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
           correlation_id, actor_id
         - tenant_id: command value if DomainCommand, else ambient tenant
           context, else untouched — for every command type
+        - when an ambient tenant is set, a command or event tenant_id that
+          differs from it raises TenantMismatchError before any apply
         """
         events = self.decide(command, self.state)
         applied: list[DomainEvent] = []
@@ -117,9 +119,9 @@ class DeciderAggregate[TState: BaseModel, TCommand = object](AggregateRoot[TStat
             self._reject_divergent_aggregate_type(type(event))
             updates["aggregate_type"] = self.aggregate_type
         updates.update(self._provenance_updates(command, fields_set))
-        if not updates:
-            return event
-        return event.model_copy(update=updates)
+        stamped = event.model_copy(update=updates) if updates else event
+        self._reject_tenant_contradiction(stamped, command)
+        return stamped
 
 
 __all__ = ["DeciderAggregate"]

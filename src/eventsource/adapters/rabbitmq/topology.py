@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.models import QueueInfo
 from eventsource.adapters.rabbitmq.topology_bindings import RabbitMQTopologyBindingsMixin
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractExchange, AbstractQueue
@@ -77,10 +78,14 @@ class RabbitMQTopology(RabbitMQTopologyBindingsMixin):
                 name=queue_name, message_count=msg_cnt, consumer_count=con_cnt, state=state
             )
         except Exception as e:
-            err_extra = {"queue_name": queue_name, "error": str(e), "error_type": type(e).__name__}
-            self._logger.error(f"Failed to get queue info: {e}", exc_info=True, extra=err_extra)
+            summary = error_summary(e)
+            err_extra = {"queue_name": queue_name, "error": summary, "error_type": type(e).__name__}
+            # exc_info is kept: queue_health only performs a passive declare (broker call).
+            self._logger.error(
+                f"Failed to get queue info: {summary}", exc_info=True, extra=err_extra
+            )
             return QueueInfo(
-                name=queue_name, message_count=0, consumer_count=0, state="error", error=str(e)
+                name=queue_name, message_count=0, consumer_count=0, state="error", error=summary
             )
 
     async def _declare_exchange(self) -> None:

@@ -8,9 +8,14 @@ from typing import Any
 from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.application.aggregates.tenant_ownership import (
+    active_scope_tenant,
+    owned_stream_version,
+    require_owned_append,
+)
 from eventsource.domain.aggregate import AggregateRoot
 from eventsource.domain.exceptions import AggregateNotFoundError, TenantMismatchError
-from eventsource.domain.tenant_context import get_required_tenant
+from eventsource.domain.tenant_context import get_current_tenant, get_required_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +42,12 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         return self._repository.aggregate_type
 
     async def save(self, aggregate: TAggregate) -> None:
-        """Save aggregate, validating tenant consistency when enabled."""
+        """Save aggregate. Under a scope, an existing stream must be owned by it (ADR-0113)."""
         if self._validate_on_save:
             self._validate_tenant_consistency(aggregate)
+        existed = aggregate.version > len(aggregate.uncommitted_events)  # prior version above zero
+        if existed and (tenant := get_current_tenant()) is not None:
+            await require_owned_append(self._repository, aggregate.aggregate_id, tenant)
         await self._repository.save(aggregate)
 
     async def save_all(self, *aggregates: TAggregate | Iterable[TAggregate]) -> None:
@@ -58,12 +66,13 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         mismatched_events: list[UUID] = []
         mismatched_tenant: UUID | None = None
         for event in aggregate.uncommitted_events:
+            # An event with no tenant (None) is a mismatch too: fail closed.
             event_tenant = getattr(event, "tenant_id", None)
-            if event_tenant is not None and event_tenant != expected_tenant:
-                mismatched_events.append(event.event_id)
-                if mismatched_tenant is None:
+            if event_tenant != expected_tenant:
+                if not mismatched_events:
                     mismatched_tenant = event_tenant
-        if mismatched_events and mismatched_tenant is not None:
+                mismatched_events.append(event.event_id)
+        if mismatched_events:
             logger.warning(
                 "Tenant mismatch detected for %s: expected %s, got %s. Affected events: %d",
                 agg_name, expected_tenant, mismatched_tenant, len(mismatched_events),
@@ -99,18 +108,20 @@ class TenantAwareRepository[TAggregate: AggregateRoot[Any]]:
         return results
 
     async def exists(self, aggregate_id: UUID) -> bool:
-        if self._require_tenant_context:
-            get_required_tenant()
-        return await self._repository.exists(aggregate_id)
+        """Whether the stream exists and, under a scope, belongs to the active tenant (ADR-0113)."""
+        if (tenant := active_scope_tenant(require_context=self._require_tenant_context)) is None:
+            return await self._repository.exists(aggregate_id)
+        return await owned_stream_version(self._repository, aggregate_id, tenant) > 0  # fmt: skip
 
     async def get_version(self, aggregate_id: UUID) -> int:
-        if self._require_tenant_context:
-            get_required_tenant()
-        return await self._repository.get_version(aggregate_id)
+        """Stream version, or 0 for a missing stream or one another tenant owns (ADR-0113)."""
+        if (tenant := active_scope_tenant(require_context=self._require_tenant_context)) is None:
+            return await self._repository.get_version(aggregate_id)
+        return await owned_stream_version(self._repository, aggregate_id, tenant)
 
     async def load_or_create(self, aggregate_id: UUID) -> TAggregate:
-        if self._require_tenant_context:
-            get_required_tenant()
+        """Load or create. A foreign stream reads as missing; its save fails at append (ADR-0113)."""
+        active_scope_tenant(require_context=self._require_tenant_context)
         return await self._repository.load_or_create(aggregate_id)
 
     def create_new(self, aggregate_id: UUID) -> TAggregate:

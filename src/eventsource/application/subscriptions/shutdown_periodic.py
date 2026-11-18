@@ -13,6 +13,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+from eventsource.observability.error_summary import error_summary
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,7 +70,7 @@ class PeriodicCheckpointManager:
             except Exception as e:
                 logger.warning(
                     "Error in periodic checkpoint loop",
-                    extra={"error": str(e)},
+                    extra={"error": error_summary(e)},
                 )
                 await asyncio.sleep(0.5)
 

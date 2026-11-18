@@ -14,6 +14,7 @@ from eventsource.application.migration.subscription_migrator_types import (
     SubscriptionMigrationError,
     SubscriptionMigrationResult,
 )
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.migration.position_mapper import PositionMapper
@@ -75,8 +76,9 @@ class SubscriptionMigratorExecutionMixin:
                 try:
                     result = await self._migrate_single_subscription(migration_id, name)
                 except Exception as e:
-                    msg = f"Critical error migrating subscription {name}: {e}"
-                    raise SubscriptionMigrationError(msg, migration_id, name, str(e)) from e
+                    summary = error_summary(e)
+                    msg = f"Critical error migrating subscription {name}: {summary}"
+                    raise SubscriptionMigrationError(msg, migration_id, name, summary) from e
                 if result is None:
                     skip_cnt += 1
                 else:
@@ -110,9 +112,10 @@ class SubscriptionMigratorExecutionMixin:
                     migration_id=migration_id, source_position=current_pos, use_nearest=True
                 )
             except PositionMappingError as e:
-                err_ctx = {**log_ctx, "position": current_pos.to_str(), "error": str(e)}
+                summary = error_summary(e)
+                err_ctx = {**log_ctx, "position": current_pos.to_str(), "error": summary}
                 logger.error("Failed to translate position", extra=err_ctx)
-                return SubscriptionMigrationResult(name, False, current_pos, error_message=f"Position translation failed: {e}")  # fmt: skip
+                return SubscriptionMigrationResult(name, False, current_pos, error_message=f"Position translation failed: {summary}")  # fmt: skip
             target_pos = tr.target_position
             try:
                 await self._checkpoint_repo.save_position(
@@ -125,8 +128,9 @@ class SubscriptionMigratorExecutionMixin:
                 logger.info("Subscription checkpoint migrated", extra=ok_ctx)
                 return SubscriptionMigrationResult(name, True, current_pos, target_pos, tr.is_exact, tr.nearest_source_position, migrated_at=datetime.now(UTC))  # fmt: skip
             except Exception as e:
-                logger.error("Failed to update checkpoint", extra={**log_ctx, "error": str(e)})
-                return SubscriptionMigrationResult(name, False, current_pos, target_pos, error_message=f"Checkpoint update failed: {e}")  # fmt: skip
+                summary = error_summary(e)
+                logger.error("Failed to update checkpoint", extra={**log_ctx, "error": summary})
+                return SubscriptionMigrationResult(name, False, current_pos, target_pos, error_message=f"Checkpoint update failed: {summary}")  # fmt: skip
 
     async def migrate_tenant_subscriptions(
         self,

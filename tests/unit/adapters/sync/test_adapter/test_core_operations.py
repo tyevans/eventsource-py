@@ -70,15 +70,13 @@ class TestSyncEventStoreAdapterAppend:
         assert result.new_version == 1
         assert result.stream == stream
 
-    def test_append_single_event_and_default_expected(
-        self, sync_store: SyncEventStoreAdapter
-    ) -> None:
+    def test_append_single_event_with_any_expected(self, sync_store: SyncEventStoreAdapter) -> None:
         agg_id = uuid4()
         stream = StreamId(aggregate_id=agg_id, category="Sample")
         e1 = SampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=1)
         e2 = SampleEvent(aggregate_id=agg_id, aggregate_type="Sample", aggregate_version=2)
-        res1 = sync_store.append(stream, e1)
-        res2 = sync_store.append(stream, e2)
+        res1 = sync_store.append(stream, e1, ExpectedVersion.any_())
+        res2 = sync_store.append(stream, e2, ExpectedVersion.any_())
         assert res1.new_version == 1
         assert res2.new_version == 2
 

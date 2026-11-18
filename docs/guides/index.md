@@ -31,8 +31,8 @@ Guides are the right page when you can phrase your need as a task:
   SQLite, or from `InMemoryEventBus` to Redis, RabbitMQ, or Kafka, without changing
   your aggregates.
 - **"I need to add a capability to an app that already works."** Snapshots for a
-  long-lived aggregate, projections and read models, distributed locks, GDPR
-  erasure, or OpenTelemetry spans.
+  long-lived aggregate, projections and read models, distributed locks, or
+  OpenTelemetry spans.
 - **"I need to run this in production."** Checkpointed subscriptions, retry policy,
   a dead-letter queue, flow control, schema migrations, and live event store
   migration with dual-write and cutover.

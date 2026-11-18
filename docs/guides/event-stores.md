@@ -116,6 +116,32 @@ Python with `-W error::ResourceWarning`:
 uv run pytest -W error::ResourceWarning
 ```
 
+## Append signatures by store
+
+Each store declares its own `append`. The `expected` argument differs:
+
+```python
+# InMemoryEventStore: a single event or a sequence; expected is required.
+async def append(
+    self,
+    stream: StreamId,
+    events: DomainEvent | Sequence[DomainEvent],
+    expected: ExpectedVersion,
+) -> AppendResult: ...
+
+# PostgreSQLEventStore and SQLiteEventStore: a sequence only; expected is required.
+async def append(
+    self,
+    stream: StreamId,
+    events: Sequence[DomainEvent],
+    expected: ExpectedVersion,
+) -> AppendResult: ...
+```
+
+Pass `expected` on every append to PostgreSQL and SQLite. Wrap a single event in a
+list (`[event]`) for those stores. The synchronous adapter has its own signature.
+See the [sync adapter reference](../api/sync.md).
+
 ## `InMemoryEventStore` Ergonomics
 
 In addition to implementing `FullEventStore` and `SupportsAsyncContextManager`,
@@ -130,10 +156,10 @@ in-process workflows:
 - **Stream existence check (`await store.stream_exists(stream) -> bool`)**:
   Returns `True` if `stream` has at least one appended event, or `False` when
   the stream does not exist.
-- **Single-event and default-expected `append`**:
-  `await store.append(stream, events, expected=ExpectedVersion.any_())` accepts
-  either a single `DomainEvent` or a `Sequence[DomainEvent]` for `events`, and
-  defaults `expected` to `ExpectedVersion.any_()` when omitted.
+- **Single-event `append`**: `InMemoryEventStore.append` accepts either a single
+  `DomainEvent` or a `Sequence[DomainEvent]` for `events`. Like every store, it
+  requires `expected`. Omitting it raises `TypeError`. See the append signatures
+  section below.
 
 ```python
 from uuid import uuid4
@@ -143,13 +169,13 @@ async with InMemoryEventStore() as store:
     stream = StreamId(aggregate_id=uuid4(), category="Order")
     assert await store.stream_exists(stream) is False
 
-    # Append a single DomainEvent using the default ExpectedVersion.any_()
+    # Append a single DomainEvent. ExpectedVersion.any_() skips the version check.
     created = OrderCreated(aggregate_id=stream.aggregate_id, customer_id=uuid4())
-    await store.append(stream, created)
+    await store.append(stream, created, ExpectedVersion.any_())
 
     # Append a sequence with an explicit ExpectedVersion
     shipped = OrderShipped(aggregate_id=stream.aggregate_id, tracking_number="TRACK-1")
-    await store.append(stream, [shipped], expected=ExpectedVersion.exact(1))
+    await store.append(stream, [shipped], ExpectedVersion.exact(1))
 
     assert await store.stream_exists(stream) is True
     assert created.event_id in store

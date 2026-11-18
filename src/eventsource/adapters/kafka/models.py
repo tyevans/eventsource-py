@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from eventsource.domain.exceptions import EventSourceError
+
 
 class KafkaNotAvailableError(ImportError):
     """Raised when aiokafka package is not installed.
@@ -27,12 +29,16 @@ class KafkaNotAvailableError(ImportError):
         )
 
 
-class DeserializationError(ValueError):
+class DeserializationError(EventSourceError, ValueError):
     """Raised when a message cannot be deserialized.
 
     This exception is raised when a Kafka message cannot be deserialized
     into a valid DomainEvent. These errors are unrecoverable and the message
     should be sent directly to the DLQ without retry attempts.
+
+    It derives from ``EventSourceError`` so that ``except EventSourceError``
+    catches it. It keeps ``ValueError`` as a base so existing ``except ValueError``
+    handlers still work. The message never embeds payload or header values.
 
     Attributes:
         message: Description of the deserialization failure.

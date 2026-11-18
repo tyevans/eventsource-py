@@ -18,6 +18,7 @@ from eventsource.adapters.postgresql.store_read import (
 )
 from eventsource.adapters.sql.schemas import get_schema
 from eventsource.domain.event_registry import EventRegistry, default_registry
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports import EventStoreConnectionError
 
 try:
@@ -90,7 +91,7 @@ class PostgreSQLEventStore(
                     await conn.commit()
             except OperationalError as e:
                 raise EventStoreConnectionError(
-                    f"could not connect to PostgreSQL to create the schema: {e}",
+                    f"could not connect to PostgreSQL to create the schema: {error_summary(e)}",
                     store=type(self).__name__,
                 ) from e
             self._schema_ready = True

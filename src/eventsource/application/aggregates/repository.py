@@ -97,7 +97,8 @@ class AggregateRepository[TAggregate: AggregateRoot[Any]](
             f'         aggregate_type = "YourTypeName"'
         )
 
-    def _stream(self, aggregate_id: UUID) -> StreamId:
+    def stream_for(self, aggregate_id: UUID) -> StreamId:
+        """Return the stream that holds the aggregate's events."""
         return StreamId(aggregate_id=aggregate_id, category=self._aggregate_type)
 
     @property

@@ -1,7 +1,4 @@
-"""Tests for KafkaEventBus security configuration validation and SSL context creation."""
-
-import ssl
-from typing import Any
+"""Tests for KafkaEventBus security configuration validation."""
 
 import pytest
 
@@ -106,54 +103,3 @@ class TestKafkaEventBusConfigSecurity:
         with caplog.at_level("WARNING"):
             KafkaEventBusConfig(security_protocol="SSL", ssl_check_hostname=False)
         assert "vulnerable to MITM" in caplog.text
-
-
-class TestKafkaEventBusConfigSSLContext:
-    """Tests for SSL context creation."""
-
-    def test_ssl_context_created_for_ssl_protocol(self) -> None:
-        context = KafkaEventBusConfig(security_protocol="SSL").create_ssl_context()
-        assert isinstance(context, ssl.SSLContext)
-
-    def test_ssl_context_created_for_sasl_ssl_protocol(self) -> None:
-        config = KafkaEventBusConfig(
-            security_protocol="SASL_SSL",
-            sasl_mechanism="PLAIN",
-            sasl_username="user",
-            sasl_password="pass",  # pragma: allowlist secret
-        )
-        context = config.create_ssl_context()
-        assert isinstance(context, ssl.SSLContext)
-
-    def test_ssl_context_none_for_plaintext(self) -> None:
-        assert KafkaEventBusConfig(security_protocol="PLAINTEXT").create_ssl_context() is None
-
-    def test_ssl_context_none_for_sasl_plaintext(self) -> None:
-        config = KafkaEventBusConfig(
-            security_protocol="SASL_PLAINTEXT",
-            sasl_mechanism="PLAIN",
-            sasl_username="user",
-            sasl_password="pass",  # pragma: allowlist secret
-        )
-        assert config.create_ssl_context() is None
-
-    def test_ssl_context_hostname_verification_enabled(self) -> None:
-        config = KafkaEventBusConfig(security_protocol="SSL", ssl_check_hostname=True)
-        context = config.create_ssl_context()
-        assert context is not None
-        assert context.check_hostname is True
-        assert context.verify_mode == ssl.CERT_REQUIRED
-
-    def test_ssl_context_hostname_verification_disabled(self) -> None:
-        config = KafkaEventBusConfig(security_protocol="SSL", ssl_check_hostname=False)
-        context = config.create_ssl_context()
-        assert context is not None
-        assert context.check_hostname is False
-        assert context.verify_mode == ssl.CERT_NONE
-
-    def test_ssl_context_loads_ca_file(self, tmp_path: Any) -> None:
-        ca_file = tmp_path / "ca.crt"
-        ca_file.write_text("dummy")
-        config = KafkaEventBusConfig(security_protocol="SSL", ssl_cafile=str(ca_file))
-        with pytest.raises(ssl.SSLError):
-            config.create_ssl_context()

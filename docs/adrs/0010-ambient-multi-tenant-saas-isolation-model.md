@@ -1,5 +1,8 @@
 # ADR 10: Ambient Multi-Tenant SaaS Isolation Model
 
+Amended by [ADR-0113](0013-tenant-ownership-check-on-the-repository-read-and-write-path.md) (Consequences).
+Amended by [ADR-0114](0014-tenant-scope-for-read-models-the-dead-letter-queue-and-checkpoints.md) (Consequences).
+
 ## Summary
 ContextVar tenant propagation, hard reset safety, and storage query pushdown.
 
@@ -13,6 +16,6 @@ Multi-tenant SaaS architectures require absolute data isolation. Manual passing 
 4. Storage-level tenant filtering: push `tenant_id` into adapter queries (`FeedReadOptions(tenant_id=...)`) preventing cross-tenant memory leakage.
 
 ## Consequences
-- Bulletproof cross-tenant data leak defense in multi-tenant SaaS environments.
+- Write-side tenant validation on `TenantAwareRepository`. Under an active scope, the repository also refuses to load, probe, or append to a stream that another tenant owns (ADR-0113). This is a repository-level control. It does not cover direct store access, unscoped repositories, or the global uniqueness of event ids. Under an active scope, read models through `TenantScopedReadModelRepository` and DLQ reads and state changes through the DLQ repository match only rows of the active tenant (ADR-0114). Checkpoints are not tenant-scoped. Each per-tenant projection instance uses its own name. This is an application-level control. It does not cover direct adapter access or the global feed.
 - Clean application code without polluting domain signatures with tenant parameters.
 - Storage pushdown maximizes database index efficiency.

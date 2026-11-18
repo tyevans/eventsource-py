@@ -7,6 +7,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Self
 
+from eventsource.observability.error_summary import error_summary
+
 from .shutdown import ShutdownCoordinator, ShutdownResult
 from .subscription import render_position
 
@@ -71,7 +73,7 @@ class ManagerLifecycleMixin:
             self._last_shutdown_result = r = await sc.shutdown(a, b, self._save_final_checkpoints)
             return r
         except Exception as e:
-            logger.error("Error during run_until_shutdown", extra={"error": str(e)}, exc_info=True)
+            logger.error("Error during run_until_shutdown", extra={"error": error_summary(e)}, exc_info=True)  # fmt: skip
             await self.stop()
             raise
         finally:
@@ -98,7 +100,7 @@ class ManagerLifecycleMixin:
         try:
             results = await asyncio.gather(*(t for _, t in tasks), return_exceptions=True)
         except Exception as e:
-            logger.error("Error during drain phase", extra={"error": str(e)}, exc_info=True)
+            logger.error("Error during drain phase", extra={"error": error_summary(e)}, exc_info=True)  # fmt: skip
             return total
         rem = 0
         for (n, _), res in zip(tasks, results, strict=True):
@@ -130,7 +132,8 @@ class ManagerLifecycleMixin:
                 logger.debug("Checkpoint saved", extra=ex)
             except Exception as e:
                 logger.error(
-                    "Failed to save checkpoint", extra={"subscription": name, "error": f"{e}"}
+                    "Failed to save checkpoint",
+                    extra={"subscription": name, "error": error_summary(e)},
                 )
         logger.info("Final checkpoints saved", extra={"checkpoints_saved": saved})
         return saved

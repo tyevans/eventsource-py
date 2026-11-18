@@ -10,6 +10,7 @@ from eventsource.adapters._bus.retry_scheduler import RetryScheduler
 from eventsource.adapters.kafka.consumer_dispatch import KafkaConsumerDispatchMixin
 from eventsource.adapters.kafka.consumer_message import KafkaConsumerMessageMixin
 from eventsource.adapters.kafka.consumer_retry import KafkaConsumerRetryMixin
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.exceptions import EventBusConnectionError
 
 try:
@@ -112,7 +113,8 @@ class KafkaConsumerLoop(
             except Exception as e:
                 if self._metrics:
                     self._metrics.connection_errors.add(1, attributes={"error.type": type(e).__name__})  # fmt: skip
-                err_extra = {"error": str(e), "auto_reconnect": auto_reconnect}
+                # exc_info is kept: this is the consume loop failing, not per-message processing.
+                err_extra = {"error": error_summary(e), "auto_reconnect": auto_reconnect}
                 logger.error("Consumer error", extra=err_extra, exc_info=True)
                 if not auto_reconnect or not self._consuming:
                     raise
@@ -123,7 +125,7 @@ class KafkaConsumerLoop(
                 try:
                     await self._connection.reconnect_consumer()
                 except Exception as reconnect_error:
-                    logger.error("Failed to reconnect consumer", extra={"error": str(reconnect_error)}, exc_info=True)  # fmt: skip
+                    logger.error("Failed to reconnect consumer", extra={"error": error_summary(reconnect_error)}, exc_info=True)  # fmt: skip
 
         self._consuming = False
         logger.info("Consumer stopped")

@@ -9,7 +9,11 @@ from eventsource.application.migration.bulk_copier import BulkCopier
 from eventsource.domain import StreamId
 from eventsource.domain.exceptions import DuplicateEventError
 from eventsource.ports import AppendResult
-from tests.unit.application.migration.test_bulk_copier._fixtures import _pos, create_test_events
+from tests.unit.application.migration.test_bulk_copier._fixtures import (
+    _pos,
+    create_test_events,
+    stored_view,
+)
 
 
 @pytest.mark.asyncio
@@ -102,6 +106,7 @@ class TestBulkCopierWriteBatch:
             create_test_events(1, tenant_id, agg1_id, start=1, stream_id=stream1)[0],
             create_test_events(1, tenant_id, agg2_id, start=2, stream_id=stream2)[0],
         ]
+        target_store.read_stream = stored_view(events)
         last_pos = await copier._write_batch(uuid4(), tenant_id, events)
         assert target_store.append.call_count == 3 and last_pos == _pos("target", 9)
 
@@ -112,6 +117,7 @@ class TestBulkCopierWriteBatch:
         tenant_id, agg_id = uuid4(), uuid4()
         copier = BulkCopier(MagicMock(), target_store, MagicMock(), enable_tracing=False)
         events = create_test_events(1, tenant_id, agg_id, start=1)
+        target_store.read_stream = stored_view(events)
         assert await copier._write_batch(uuid4(), tenant_id, events) is None
 
     async def test_duplicate_on_per_event_append_records_no_mapping(self) -> None:
@@ -134,6 +140,7 @@ class TestBulkCopierWriteBatch:
             enable_tracing=False,
         )
         events = create_test_events(2, tenant_id, agg_id, start=1)
+        target_store.read_stream = stored_view(events)
         await copier._write_batch(migration_id, tenant_id, events)
         assert position_mapper.record_mapping.call_count == 1
         assert position_mapper.record_mapping.call_args.args == (

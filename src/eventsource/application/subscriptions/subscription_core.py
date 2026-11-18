@@ -13,7 +13,6 @@ from eventsource.application.subscriptions.config import SubscriptionConfig
 from eventsource.application.subscriptions.models import (
     VALID_TRANSITIONS,
     PauseReason,
-    RecentErrorInfo,
     SubscriptionState,
     is_valid_transition,
 )
@@ -21,6 +20,7 @@ from eventsource.application.subscriptions.subscription_pause import Subscriptio
 from eventsource.application.subscriptions.subscription_progress import (
     SubscriptionProgressMixin,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.exceptions import SubscriptionStateError
 from eventsource.ports.positions import Position
 
@@ -74,13 +74,10 @@ class Subscription(SubscriptionPauseMixin, SubscriptionProgressMixin):
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _events_seen: int = field(default=0, repr=False)
     _events_delivered: int = field(default=0, repr=False)
-    _recent_errors: list[RecentErrorInfo] = field(default_factory=list, repr=False)
-    _max_recent_errors: int = field(default=100, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize the subscription."""
         self.started_at = datetime.now(UTC)
-        self._recent_errors = []
         self._pause_event.set()
 
     async def transition_to(self, new_state: SubscriptionState) -> None:
@@ -109,7 +106,7 @@ class Subscription(SubscriptionPauseMixin, SubscriptionProgressMixin):
                         "subscription": self.name,
                         "from_state": old_state.value,
                         "to_state": new_state.value,
-                        "error": str(self.last_error) if self.last_error else None,
+                        "error": error_summary(self.last_error) if self.last_error else None,
                     },
                 )
             else:

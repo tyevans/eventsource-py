@@ -153,7 +153,11 @@ async def test_drain_background_logs_and_suppresses_wait_errors(
 
     errors = [r for r in caplog.records if r.levelname == "ERROR"]
     assert len(errors) == 1 and errors[0].exc_info
-    assert "Error draining background tasks: distinctive wait failure" in errors[0].message
+    # exc_info is kept on the drain path (shutdown); the message holds the summary only.
+    assert (
+        "Error draining background tasks: RuntimeError: distinctive wait failure"
+        in errors[0].message
+    )
     for task in bus._background_tasks:
         task.cancel()
 
@@ -176,8 +180,12 @@ async def test_on_background_task_done_logs_the_actual_task_exception(caplog) ->
         await bus._drain_background(timeout=5.0)
 
     own_records = [r for r in caplog.records if r.name == "eventsource.adapters._bus.base"]
-    assert len(own_records) == 1 and own_records[0].exc_info is not None
-    assert "Background task failed: distinctive background failure" in own_records[0].message
+    # No exc_info: background tasks run handlers, and the traceback can echo payload.
+    assert len(own_records) == 1 and own_records[0].exc_info is None
+    assert (
+        "Background task failed: ValueError: distinctive background failure"
+        in own_records[0].message
+    )
 
 
 async def test_drain_background_waits_for_every_pending_task_not_just_the_first() -> None:

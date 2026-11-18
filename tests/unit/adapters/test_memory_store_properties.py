@@ -179,7 +179,7 @@ async def test_contains_stream_exists_and_single_event_append() -> None:
     assert event not in store
     assert "invalid" not in store
     assert await store.stream_exists(stream) is False
-    result = await store.append(stream, event)
+    result = await store.append(stream, event, ExpectedVersion.any_())
     assert result.new_version == 1
     assert event.event_id in store
     assert event in store

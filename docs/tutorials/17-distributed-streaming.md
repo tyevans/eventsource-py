@@ -328,6 +328,8 @@ rabbit_config = RabbitMQEventBusConfig(
 rabbit_bus = RabbitMQEventBus(config=rabbit_config, event_registry=registry)
 ```
 
+The default `guest:guest` account works only when you connect from localhost. A remote broker needs real credentials for a dedicated user, and you should connect with `amqps://` so the traffic uses TLS.
+
 ### Redis Streams (`RedisEventBus`)
 
 Redis 5.0+ introduced **Redis Streams**, an append-only log data structure (`XADD`, `XREADGROUP`, `XACK`).
@@ -383,7 +385,7 @@ A critical danger in distributed event-driven systems is the **Dual-Write Hazard
 
 ```python
 # ANTI-PATTERN: DO NOT DO THIS
-await event_store.append(stream_id, events)
+await event_store.append(stream_id, events, ExpectedVersion.any_())
 await kafka_bus.publish(events)  # If network drops or broker is down, publish fails!
 ```
 

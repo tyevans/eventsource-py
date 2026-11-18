@@ -111,7 +111,7 @@ class TestCompleteCutoverWithP3005:
             mock_verify.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_complete_cutover_handles_verification_error_gracefully(
+    async def test_complete_cutover_fails_migration_when_verification_raises(
         self, coordinator_deps: dict
     ) -> None:
         migration_id = uuid4()
@@ -130,13 +130,15 @@ class TestCompleteCutoverWithP3005:
 
         with patch.object(coordinator, "verify_consistency", new_callable=AsyncMock) as mock_verify:
             mock_verify.side_effect = Exception("Verification failed")
-            await coordinator._complete_cutover(migration)
+            outcome = await coordinator._complete_cutover(migration)
             coordinator_deps["migration_repo"].update_phase.assert_called_once_with(
-                migration_id, MigrationPhase.COMPLETED
+                migration_id, MigrationPhase.FAILED
             )
+        assert outcome.success is False and outcome.consistency_verified is False
+        assert "Verification failed" in (outcome.error_message or "")
 
     @pytest.mark.asyncio
-    async def test_complete_cutover_handles_subscription_migration_error_gracefully(
+    async def test_complete_cutover_fails_migration_when_subscription_migration_raises(
         self, coordinator_deps: dict
     ) -> None:
         migration_id = uuid4()
@@ -161,10 +163,11 @@ class TestCompleteCutoverWithP3005:
             coordinator, "migrate_subscriptions", new_callable=AsyncMock
         ) as mock_migrate:
             mock_migrate.side_effect = Exception("Migration failed")
-            await coordinator._complete_cutover(migration)
+            outcome = await coordinator._complete_cutover(migration)
             coordinator_deps["migration_repo"].update_phase.assert_called_once_with(
-                migration_id, MigrationPhase.COMPLETED
+                migration_id, MigrationPhase.FAILED
             )
+        assert outcome.success is False and "Migration failed" in (outcome.error_message or "")
 
 
 class TestCleanupMigrationResourcesP3005:

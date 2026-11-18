@@ -1,18 +1,20 @@
 """Conformance suite for the `EventAppender` port."""
 
+import inspect
 from abc import ABC, abstractmethod
-from typing import Protocol
 from uuid import uuid4
 
 import pytest
 
 from eventsource.domain.exceptions import (
-    DuplicateEventError,
     EventTypeNotFoundError,
     OptimisticLockError,
 )
 from eventsource.ports import AppendResult, ExpectedVersion
-from eventsource.ports.store import EventAppender, StreamReader
+from eventsource.testing.conformance_ports._appender_identity import (
+    AppenderIdentityConformance,
+    _AppenderUnderTest,
+)
 from eventsource.testing.conformance_ports._fixtures import (
     UnregisteredEvent,
     make_event,
@@ -20,11 +22,7 @@ from eventsource.testing.conformance_ports._fixtures import (
 )
 
 
-class _AppenderUnderTest(EventAppender, StreamReader, Protocol):
-    """Adapter surface needed by this suite: append plus version lookup."""
-
-
-class AppenderConformance(ABC):
+class AppenderConformance(AppenderIdentityConformance, ABC):
     """Conformance suite for `EventAppender` implementations (`positions_expected` toggles position checks)."""
 
     positions_expected: bool = True
@@ -103,17 +101,6 @@ class AppenderConformance(ABC):
         with pytest.raises(OptimisticLockError):
             await store.append(stream, [make_event(stream.aggregate_id)], ExpectedVersion.exact(1))
 
-    async def test_duplicate_event_id_raises_and_batch_is_atomic(
-        self, store: _AppenderUnderTest
-    ) -> None:
-        stream = make_stream()
-        first = make_event(stream.aggregate_id)
-        await store.append(stream, [first], ExpectedVersion.no_stream())
-        duplicate_batch = [make_event(stream.aggregate_id), first]
-        with pytest.raises(DuplicateEventError):
-            await store.append(stream, duplicate_batch, ExpectedVersion.any_())
-        assert await store.get_stream_version(stream) == 1
-
     async def test_empty_batch_raises_value_error(self, store: _AppenderUnderTest) -> None:
         stream = make_stream()
         with pytest.raises(ValueError, match="empty"):
@@ -153,3 +140,8 @@ class AppenderConformance(ABC):
         )
         assert isinstance(result, AppendResult)
         assert result.stream == stream
+
+    async def test_append_expected_argument_is_required(self, store: _AppenderUnderTest) -> None:
+        """`expected` has no default, so no adapter can silently skip the concurrency check."""
+        parameter = inspect.signature(store.append).parameters["expected"]
+        assert parameter.default is inspect.Parameter.empty

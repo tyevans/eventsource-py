@@ -19,6 +19,7 @@ from tests.unit.application.migration.test_bulk_copier._fixtures import (
     empty_event_generator,
     make_append_result,
     make_event_generator,
+    stored_view,
 )
 
 
@@ -179,6 +180,7 @@ class TestBulkCopierRunProgress:
             DuplicateEventError("already present"),
         ]
         target_store = AsyncMock(get_stream_version=AsyncMock(return_value=0), append=AsyncMock(side_effect=side_effects))  # fmt: skip
+        target_store.read_stream = stored_view(events)
         migration = create_migration(id=migration_id, tenant_id=tenant_id, events_total=2, batch_size=1)  # fmt: skip
         copier = BulkCopier(source_store, target_store, AsyncMock(), enable_tracing=False)
         assert [p async for p in copier.run(migration)][-1].last_target_position == _pos("target", 4)  # fmt: skip

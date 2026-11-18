@@ -12,7 +12,10 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.headers import read_header_str
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import EventSourceError
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractIncomingMessage
@@ -107,46 +110,49 @@ def create_message_with_tracing(
     )
 
 
+class EventDecodeError(EventSourceError):
+    """An inbound AMQP message could not be decoded into a DomainEvent.
+
+    Raised for a missing ``event_type`` header, an unregistered event type, or a
+    body that is not valid UTF-8 JSON for the resolved event class. The message
+    never embeds the ``event_type`` header value, which is publisher-controlled.
+    """
+
+
+def decode_event(
+    message: AbstractIncomingMessage,
+    resolve_event_class: Callable[[str], type[DomainEvent] | None],
+    logger: logging.Logger,
+) -> DomainEvent:
+    """Decode an AMQP message to a DomainEvent; raises EventDecodeError on bad input."""
+    event_type_name = read_header_str((message.headers or {}).get("event_type"))
+
+    if not event_type_name:
+        logger.warning("Message missing event_type header", extra={"message_id": message.message_id})  # fmt: skip
+        raise EventDecodeError("Message missing event_type header")
+
+    event_class = resolve_event_class(event_type_name)
+    if event_class is None:
+        # The header value is untrusted: it travels in extra only, never in the message.
+        logger.warning("Unknown event type", extra={"event_type": event_type_name, "message_id": message.message_id})  # fmt: skip
+        raise EventDecodeError("Unknown event type")
+
+    try:
+        body = message.body.decode("utf-8")
+        return event_class.model_validate_json(body)
+    except Exception as e:
+        summary = error_summary(e)  # No exc_info: a traceback repeats str(e).
+        logger.error("Failed to deserialize event", extra={"event_type": event_type_name, "message_id": message.message_id, "error": summary})  # fmt: skip
+        raise EventDecodeError(f"Failed to deserialize event: {summary}") from e
+
+
 def deserialize_event(
     message: AbstractIncomingMessage,
     resolve_event_class: Callable[[str], type[DomainEvent] | None],
     logger: logging.Logger,
 ) -> DomainEvent | None:
     """Deserialize an AMQP message to a DomainEvent, or None on missing/unknown/invalid data."""
-    headers = message.headers or {}
-    event_type_name = headers.get("event_type")
-
-    if not event_type_name:
-        logger.warning(
-            "Message missing event_type header",
-            extra={"message_id": message.message_id},
-        )
-        return None
-
-    event_type_str = str(event_type_name)
-    event_class = resolve_event_class(event_type_str)
-    if event_class is None:
-        logger.warning(
-            f"Unknown event type: {event_type_str}",
-            extra={
-                "event_type": event_type_str,
-                "message_id": message.message_id,
-            },
-        )
-        return None
-
     try:
-        body = message.body.decode("utf-8")
-        return event_class.model_validate_json(body)
-    except Exception as e:
-        logger.error(
-            f"Failed to deserialize event: {e}",
-            exc_info=True,
-            extra={
-                "event_type": event_type_name,
-                "message_id": message.message_id,
-                "error": str(e),
-                "error_type": type(e).__name__,
-            },
-        )
+        return decode_event(message, resolve_event_class, logger)
+    except EventDecodeError:
         return None

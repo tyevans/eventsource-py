@@ -13,6 +13,7 @@ from eventsource.application.projections.base_protocols import (
 from eventsource.application.projections.handlers import HandlerRegistry
 from eventsource.application.projections.retry import ProjectionRetryPolicy
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import TenantContextNotSetError
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
@@ -33,6 +34,10 @@ class DeclarativeProjection(CheckpointTrackingProjection):
     """
 
     unregistered_event_handling: UnregisteredEventHandling = "ignore"
+    # Fail-closed default: a callable tenant filter that resolves to None raises
+    # TenantContextNotSetError. Set True to restore the legacy behavior, where None
+    # processes events of every tenant. A static UUID filter is never affected.
+    tenant_filter_allow_unscoped: bool = False
 
     def __init__(
         self,
@@ -43,6 +48,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
+        projection_name: str | None = None,
     ) -> None:
         """Initialize the declarative projection and discover `@handles` methods."""
         self._handler_registry = HandlerRegistry(
@@ -59,6 +65,7 @@ class DeclarativeProjection(CheckpointTrackingProjection):
             retry_policy=retry_policy,
             tracer=tracer,
             enable_tracing=enable_tracing,
+            projection_name=projection_name,
         )
 
     def subscribed_to(self) -> list[type[DomainEvent]]:
@@ -74,15 +81,22 @@ class DeclarativeProjection(CheckpointTrackingProjection):
         return self._tenant_filter()
 
     def _should_process_event(self, event: DomainEvent) -> bool:
-        """Check if event should be processed based on tenant filter."""
+        """Check if event should be processed based on tenant filter (fail closed).
+
+        No filter processes everything. A filter that resolves to None raises
+        TenantContextNotSetError unless `tenant_filter_allow_unscoped` is True. An
+        event whose tenant_id is None never matches a set filter.
+        """
+        if self._tenant_filter is None:
+            return True
+
         filter_value = self._get_tenant_filter_value()
         if filter_value is None:
-            return True
+            if self.tenant_filter_allow_unscoped:
+                return True
+            raise TenantContextNotSetError()
 
         event_tenant: UUID | None = getattr(event, "tenant_id", None)
-        if event_tenant is None:
-            return True
-
         return bool(event_tenant == filter_value)
 
     async def _process_event(self, event: DomainEvent) -> None:

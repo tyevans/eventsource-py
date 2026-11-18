@@ -36,6 +36,22 @@ class BackgroundTaskManager:
         task.add_done_callback(lambda t: self._on_task_done(t, on_done))
         return task
 
+    async def submit_or_run_inline(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        *,
+        on_done: Callable[[asyncio.Task[Any]], None] | None = None,
+    ) -> asyncio.Task[Any] | None:
+        """Track the coroutine as a background task, or await it inline at capacity.
+
+        Returns the tracked task, or None when the coroutine ran inline.
+        """
+        if self.at_capacity:
+            logger.debug("Background work at capacity (%s); running inline", self.max_pending)
+            await coro
+            return None
+        return self.submit(coro, on_done=on_done)
+
     def _on_task_done(
         self,
         task: asyncio.Task[Any],
@@ -48,7 +64,7 @@ class BackgroundTaskManager:
             return
         if not task.cancelled():
             exc = task.exception()
-            if exc:
+            if exc is not None:
                 logger.error("Background task failed: %s", exc, exc_info=exc)
 
     @property

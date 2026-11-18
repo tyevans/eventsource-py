@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 from eventsource.ports.positions import Position
 
@@ -78,31 +76,6 @@ EventHandler = Callable[["DomainEvent"], Awaitable[None]]
 BatchHandler = Callable[[Sequence["DomainEvent"]], Awaitable[None]]
 
 
-@dataclass
-class RecentErrorInfo:
-    """Lightweight information about a recent processing error."""
-
-    event_id: UUID
-    event_type: str
-    position: Position | None
-    error_type: str
-    error_message: str
-    timestamp: datetime
-    sent_to_dlq: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "event_id": str(self.event_id),
-            "event_type": self.event_type,
-            "position": render_position(self.position),
-            "error_type": self.error_type,
-            "error_message": self.error_message,
-            "timestamp": self.timestamp.isoformat(),
-            "sent_to_dlq": self.sent_to_dlq,
-        }
-
-
 @dataclass(frozen=True)
 class SubscriptionStatus:
     """Point-in-time status snapshot for health checks and monitoring."""
@@ -118,7 +91,6 @@ class SubscriptionStatus:
     uptime_seconds: float
     error: str | None = None
     events_dlq: int = 0
-    recent_errors_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -134,7 +106,6 @@ class SubscriptionStatus:
             "started_at": self.started_at,
             "uptime_seconds": self.uptime_seconds,
             "error": self.error,
-            "recent_errors_count": self.recent_errors_count,
         }
 
 
@@ -142,7 +113,6 @@ __all__ = [
     "BatchHandler",
     "EventHandler",
     "PauseReason",
-    "RecentErrorInfo",
     "SubscriptionState",
     "SubscriptionStatus",
     "VALID_TRANSITIONS",

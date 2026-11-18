@@ -144,7 +144,8 @@ class TestTransitionEdgeCases:
 
         # Should complete despite errors
         assert result.success is True
-        assert result.catchup_events_processed == 5
+        assert result.catchup_events_processed == 0  # failed events are not delivered
+        assert subscription.events_processed == 0
         assert subscription.events_failed == 5  # All events failed but continued
 
     @pytest.mark.asyncio

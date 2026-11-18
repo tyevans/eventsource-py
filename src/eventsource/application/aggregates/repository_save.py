@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from eventsource.application.aggregates.snapshot_owner import snapshot_owner
 from eventsource.application.aggregates.snapshotting import (
     SnapshotPolicy,
     SnapshotScheduler,
@@ -42,7 +43,7 @@ class AggregateRepositorySaveMixin[TAggregate: AggregateRoot[Any]]:
     _snapshot_policy: SnapshotPolicy
     _snapshot_scheduler: SnapshotScheduler
 
-    def _stream(self, aggregate_id: UUID) -> StreamId:
+    def stream_for(self, aggregate_id: UUID) -> StreamId:
         """Stream identity for one aggregate of this repository's type."""
         raise NotImplementedError
 
@@ -94,7 +95,7 @@ class AggregateRepositorySaveMixin[TAggregate: AggregateRoot[Any]]:
 
             # Append events to event store
             await self._event_store.append(
-                self._stream(aggregate.aggregate_id),
+                self.stream_for(aggregate.aggregate_id),
                 uncommitted_events,
                 ExpectedVersion.exact(expected_version),
             )
@@ -122,8 +123,13 @@ class AggregateRepositorySaveMixin[TAggregate: AggregateRoot[Any]]:
                         ATTR_VERSION: aggregate.version,
                     },
                 ):
+                    # Owner comes from the events just written, not the ambient scope:
+                    # a background snapshot can run after the scope has exited.
+                    owner = snapshot_owner(uncommitted_events)
                     await self._snapshot_scheduler.schedule(
-                        take_snapshot(aggregate, self._aggregate_type, self._snapshot_store),
+                        take_snapshot(
+                            aggregate, self._aggregate_type, self._snapshot_store, tenant=owner
+                        ),
                         aggregate_type=self._aggregate_type,
                         aggregate_id=aggregate.aggregate_id,
                     )

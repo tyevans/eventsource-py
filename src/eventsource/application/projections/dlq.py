@@ -7,6 +7,7 @@ checkpoints module.
 
 import logging
 
+from eventsource.application.dlq_owner import dlq_owner_kwargs
 from eventsource.domain.event import DomainEvent
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
@@ -15,6 +16,7 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
     ATTR_RETRY_COUNT,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.dlq import DLQEntry, DLQRepository
 
 logger = logging.getLogger(__name__)
@@ -43,14 +45,18 @@ async def send_to_dlq(
             ATTR_RETRY_COUNT: retry_count,
         },
     ):
+        summary = error_summary(error)
+        tenant_kwargs = dlq_owner_kwargs(event)
         try:
+            # The raw exception may carry payload values. Only its summary is stored.
             await repo.add_failed_event(
                 event_id=event.event_id,
                 projection_name=projection_name,
                 event_type=event.event_type,
                 event_data=event.model_dump(mode="json"),
-                error=error,
+                error=Exception(summary),
                 retry_count=retry_count,
+                **tenant_kwargs,
             )
 
             logger.warning(
@@ -63,7 +69,7 @@ async def send_to_dlq(
                     "event_id": str(event.event_id),
                     "event_type": event.event_type,
                     "retry_count": retry_count,
-                    "error": str(error),
+                    "error": summary,
                     "error_type": type(error).__name__,
                 },
             )
@@ -74,14 +80,13 @@ async def send_to_dlq(
                 "Failed to write event %s to DLQ for projection %s: %s",
                 event.event_id,
                 projection_name,
-                dlq_error,
-                exc_info=True,
+                error_summary(dlq_error),
                 extra={
                     "projection": projection_name,
                     "event_id": str(event.event_id),
                     "event_type": event.event_type,
-                    "original_error": str(error),
-                    "dlq_error": str(dlq_error),
+                    "original_error": summary,
+                    "dlq_error": error_summary(dlq_error),
                 },
             )
             return False
@@ -107,7 +112,7 @@ async def read_failed_events(
             logger.error(
                 "Failed to get DLQ events for projection %s: %s",
                 projection_name,
-                e,
+                error_summary(e),
                 exc_info=True,
             )
             return []

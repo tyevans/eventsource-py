@@ -1,4 +1,4 @@
-"""In-memory outbox repository for testing."""
+"""In-memory outbox repository for tests. Not for production use."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta

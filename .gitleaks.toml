@@ -1,0 +1,19 @@
+# gitleaks configuration. Read by the local `gitleaks` pre-commit hook and by
+# the `secrets` job in .github/workflows/ci.yml (both use the default rule set).
+#
+# Keep the allowlist narrow. Each entry matches one exact fixture value, not a
+# whole file or pattern, so a real credential is still reported.
+#
+# Use the legacy `[allowlist]` table. Gitleaks 8.24.x silently ignores
+# `[[allowlists]]`, so an entry written in that form suppresses nothing.
+
+title = "eventsource-py secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used by unit tests"
+# tests/unit/test_redis_event_bus/test_redis_redaction_and_transport.py:12
+# Fake Redis password. The test checks that repr() and logs hide it.
+regexes = ['''R3disSecretPw''']

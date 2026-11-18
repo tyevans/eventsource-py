@@ -182,6 +182,8 @@ class TestRepositorySnapshotLoad:
         self, event_store: InMemoryEventStore, snapshot_store: InMemorySnapshotStore
     ) -> None:
         aggregate_id = uuid4()
+        stream = StreamId(aggregate_id=aggregate_id, category="Test")
+        await event_store.append(stream, _make_events(aggregate_id, 5), ExpectedVersion.exact(0))
         await snapshot_store.save_snapshot(
             _make_snapshot(aggregate_id, {"value": "snapshot_only", "count": 5, "items": []})
         )

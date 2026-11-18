@@ -9,6 +9,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.exceptions import LockAcquisitionError
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ async def acquire_advisory_lock_session(
         await session.close()
         raise LockAcquisitionError(
             key=key,
-            reason=f"Database error: {e}",
+            reason=f"Database error: {error_summary(e)}",
         ) from e
 
 

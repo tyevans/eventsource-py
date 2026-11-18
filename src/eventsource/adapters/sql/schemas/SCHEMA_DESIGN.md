@@ -235,4 +235,4 @@ template = get_alembic_template("all_tables")
 1. **Access Control:** Restrict direct table access; use application layer
 2. **Tenant Isolation:** Always filter by tenant_id in multi-tenant deployments
 3. **Audit Trail:** The events table provides a complete audit trail
-4. **Sensitive Data:** Consider encryption for sensitive payload data
+4. **Sensitive Data:** The schema has no built-in payload encryption. Event payloads are stored as plain JSON. To protect sensitive fields, either encrypt them in the application before the event is appended (keep the keys outside the event store, and plan for key rotation), or enable encryption at rest for the database volumes. Encryption at rest does not hide data from database users who are authorized to read it.

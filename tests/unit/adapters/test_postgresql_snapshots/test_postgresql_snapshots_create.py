@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from eventsource.ports.snapshots import Snapshot
 
@@ -36,3 +36,19 @@ def create_snapshot_row(snapshot: Snapshot) -> MagicMock:
     row.state = snapshot.state  # Can be dict or JSON string
     row.created_at = snapshot.created_at
     return row
+
+
+TENANT_PROBE_MARKER = "information_schema"
+
+
+def route_tenant_probe(session: AsyncMock, *, column_present: bool) -> None:
+    """Answer the snapshots.tenant_id probe; other statements get ``execute.return_value``."""
+    probe = MagicMock()
+    probe.scalar.return_value = column_present
+
+    async def execute(statement: object, *args: object, **kwargs: object) -> object:
+        if TENANT_PROBE_MARKER in str(statement):
+            return probe
+        return session.execute.return_value
+
+    session.execute.side_effect = execute

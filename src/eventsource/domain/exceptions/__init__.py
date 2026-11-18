@@ -41,6 +41,7 @@ from eventsource.domain.exceptions.tenant import (
     TenantContextNotSetError,
     TenantContextResetError,
     TenantMismatchError,
+    TenantScopeOperationError,
 )
 
 __all__ = [
@@ -71,5 +72,6 @@ __all__ = [
     "TenantContextNotSetError",
     "TenantContextResetError",
     "TenantMismatchError",
+    "TenantScopeOperationError",
     "UnhandledEventError",
 ]

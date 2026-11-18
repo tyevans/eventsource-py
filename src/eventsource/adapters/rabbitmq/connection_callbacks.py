@@ -6,6 +6,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from eventsource.observability.error_summary import error_summary
+
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 
@@ -68,9 +70,9 @@ class RabbitMQConnectionCallbacksMixin:
             self._connected = False
             self._reconnecting = False
             logger.error(
-                f"Failed to restore topology after reconnection: {e}",
+                f"Failed to restore topology after reconnection: {error_summary(e)}",
                 exc_info=True,
-                extra={"reconnections": self._stats.reconnections, "error": str(e)},
+                extra={"reconnections": self._stats.reconnections, "error": error_summary(e)},
             )
 
     def _on_connection_close(

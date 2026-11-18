@@ -11,6 +11,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+from eventsource.observability.error_summary import error_summary
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,16 +22,30 @@ class RetryScheduler:
     Instead of sleeping synchronously within the consumer loop, retries
     are scheduled as background tasks with async sleep timers. Tasks are
     tracked to enable graceful draining and shutdown.
+
+    The number of pending tasks is bounded by ``max_pending``. Callers check
+    :attr:`is_full` before scheduling and route work elsewhere (for example,
+    a dead letter queue) when it is set. ``schedule`` itself does not refuse.
     """
 
-    def __init__(self, *, custom_logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self, *, custom_logger: logging.Logger | None = None, max_pending: int = 1000
+    ) -> None:
+        if max_pending < 1:
+            raise ValueError("max_pending must be at least 1")
         self._logger = custom_logger or logger
+        self._max_pending = max_pending
         self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def active_count(self) -> int:
         """Return the number of currently pending retry tasks."""
         return len(self._tasks)
+
+    @property
+    def is_full(self) -> bool:
+        """Return True when the pending task count has reached ``max_pending``."""
+        return len(self._tasks) >= self._max_pending
 
     @property
     def tasks(self) -> frozenset[asyncio.Task[None]]:
@@ -67,8 +83,7 @@ class RetryScheduler:
                 self._logger.error(
                     "Error executing retry action in %s: %s",
                     name or "unnamed-task",
-                    e,
-                    exc_info=True,
+                    error_summary(e),
                 )
 
         task = asyncio.create_task(_runner(), name=name)

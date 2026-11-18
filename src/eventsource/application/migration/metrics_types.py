@@ -76,6 +76,7 @@ class MigrationMetricSnapshot:
     verification_failures: int = 0
     phase_durations: dict[str, float] = field(default_factory=dict)
     cutover_durations: list[float] = field(default_factory=list)
+    cutover_failures: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -87,6 +88,7 @@ class MigrationMetricSnapshot:
             "verification_failures": self.verification_failures,
             "phase_durations": dict(self.phase_durations),
             "cutover_durations": list(self.cutover_durations),
+            "cutover_failures": self.cutover_failures,
         }
 
 

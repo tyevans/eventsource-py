@@ -3,6 +3,10 @@
 # Coexists with docker-compose.test.yml -- all host ports are offset.
 # No volumes: benchmark data is disposable by design.
 #
+# Ports bind to 127.0.0.1 only, so other hosts on the network cannot reach them.
+# The credentials in this file (bench/bench, guest/guest) are local throwaway values.
+# Never reuse them.
+#
 #   make bench-up      # start all four services
 #   make bench         # run the full matrix
 #   make bench-down    # stop and remove
@@ -16,7 +20,7 @@ services:
       POSTGRES_USER: bench
       POSTGRES_PASSWORD: bench
     ports:
-      - "${BENCH_POSTGRES_PORT:-5434}:5432"
+      - "127.0.0.1:${BENCH_POSTGRES_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bench -d eventsource_bench"]
       interval: 5s
@@ -28,7 +32,7 @@ services:
     image: redis:7
     container_name: eventsource-bench-redis
     ports:
-      - "${BENCH_REDIS_PORT:-6381}:6379"
+      - "127.0.0.1:${BENCH_REDIS_PORT:-6381}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -42,7 +46,7 @@ services:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
     ports:
-      - "${BENCH_RABBITMQ_PORT:-5673}:5672"
+      - "127.0.0.1:${BENCH_RABBITMQ_PORT:-5673}:5672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -54,7 +58,11 @@ services:
     image: apache/kafka:3.7.0
     container_name: eventsource-bench-kafka
     ports:
-      - "${BENCH_KAFKA_PORT:-9094}:9094"
+      # The EXTERNAL listener must bind 0.0.0.0 INSIDE the container, because Docker
+      # forwards published ports to the container address. The 127.0.0.1 prefix on the
+      # host side is what keeps the port off other hosts. The advertised address is
+      # localhost, so host clients connect to 127.0.0.1 only.
+      - "127.0.0.1:${BENCH_KAFKA_PORT:-9094}:9094"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
