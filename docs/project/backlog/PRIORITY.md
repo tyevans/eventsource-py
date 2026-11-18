@@ -513,3 +513,4 @@ Strict sequential order of execution for engineering tasks.
 - **TASK-0499 (Proposed)**: [`0499-run-the-postgresql-schema-probes-and-upgrade-scrip`](proposed/0499-run-the-postgresql-schema-probes-and-upgrade-scrip.md)
 - **TASK-0500 (Proposed)**: [`0500-rewrite-docscore-surfacemd-against-the-current-tre`](proposed/0500-rewrite-docscore-surfacemd-against-the-current-tre.md)
 - **TASK-0501 (Proposed)**: [`0501-write-the-missing-steps-of-the-multi-tenancy-tutor`](proposed/0501-write-the-missing-steps-of-the-multi-tenancy-tutor.md)
+- **TASK-0502 (Proposed)**: [`0502-make-the-kafka-metrics-overhead-test-stable-on-sha`](proposed/0502-make-the-kafka-metrics-overhead-test-stable-on-sha.md)
