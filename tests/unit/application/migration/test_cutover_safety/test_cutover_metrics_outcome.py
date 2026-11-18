@@ -41,7 +41,11 @@ def observed(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
 
 
 def _points(reader: Any, name: str) -> list[Any]:
-    data = reader.get_metrics_data()
+    # Collect once per reader. Older SDKs (1.16) reset histogram points after a
+    # collect, so a second collect would read an empty histogram.
+    if not hasattr(reader, "_collected"):
+        reader._collected = reader.get_metrics_data()
+    data = reader._collected
     if data is None:
         return []
     return [
