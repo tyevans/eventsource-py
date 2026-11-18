@@ -120,7 +120,7 @@ The installed version is available at runtime, resolved from package metadata:
 ```python
 import eventsource
 
-eventsource.__version__  # e.g. "0.15.1"
+eventsource.__version__  # e.g. "0.16.0"
 ```
 
 When running from a source checkout that has not been installed, this falls back to `"0.0.0.dev0"` rather than raising.
@@ -129,13 +129,13 @@ The wheel includes a `py.typed` marker (`src/eventsource/py.typed`), so `mypy`, 
 
 ### Pinning
 
-The project follows semantic versioning and is currently at `0.15.1`, classified as `Development Status :: 4 - Beta`. Because the public API can still change in minor releases before 1.0, pin at least the minor version in applications:
+The project follows semantic versioning and is currently at `0.16.0`, classified as `Development Status :: 4 - Beta`. Because the public API can still change in minor releases before 1.0, pin at least the minor version in applications:
 
 ```
-eventsource-py>=0.15,<0.16
+eventsource-py>=0.16,<0.17
 ```
 
-Libraries that depend on `eventsource-py` should prefer a compatible-release constraint (`~=0.15`) and let the application pick the exact version.
+Libraries that depend on `eventsource-py` should prefer a compatible-release constraint (`~=0.16`) and let the application pick the exact version.
 
 ## Core Dependencies
 
