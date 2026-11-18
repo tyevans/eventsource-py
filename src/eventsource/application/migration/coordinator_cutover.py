@@ -1,60 +1,51 @@
-"""Cutover triggering, completion, rollback, and sync lag management for MigrationCoordinator."""
+"""Cutover triggering, rollback, and sync lag management for MigrationCoordinator."""
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from eventsource.application.migration.consistency import VerificationLevel, VerificationReport
+from eventsource.application.migration.coordinator_cutover_completion import (
+    CoordinatorCutoverCompletionMixin,
+)
 from eventsource.application.migration.cutover import CutoverManager
 
 from eventsource.application.migration.exceptions import MigrationError, MigrationNotFoundError, MigrationStateError  # fmt: skip  # isort: skip
-from eventsource.application.migration.metrics import release_migration_metrics
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import ATTR_MIGRATION_ID, ATTR_MIGRATION_PHASE
-from eventsource.ports import FullEventStore, Position
+from eventsource.ports import Position
 from eventsource.ports.migration import models as m
 
 if TYPE_CHECKING:
     from eventsource.application.migration.dual_write import DualWriteInterceptor
-    from eventsource.application.migration.position_mapper import PositionMapper
     from eventsource.application.migration.router import TenantStoreRouter
-    from eventsource.application.migration.subscription_migrator import MigrationSummary
     from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
-    from eventsource.ports.checkpoints import CheckpointRepository
     from eventsource.ports.locks import DistributedLock
     from eventsource.ports.migration.repositories import MigrationRepository, TenantRoutingRepository  # fmt: skip  # isort: skip
 
 logger = logging.getLogger(__name__)
 
 
-class CoordinatorCutoverMixin:
-    """Mixin providing cutover execution, completion, rollback, and lag checks."""
+class CoordinatorCutoverMixin(CoordinatorCutoverCompletionMixin):
+    """Mixin providing cutover triggering, rollback, and lag checks."""
 
     _tracer: Tracer
     _migration_repo: MigrationRepository
     _routing_repo: TenantRoutingRepository
     _router: TenantStoreRouter
     _lag_trackers: dict[UUID, SyncLagTracker]
-    _target_stores: dict[UUID, FullEventStore]
     _interceptors: dict[UUID, DualWriteInterceptor]
     _cutover_manager: CutoverManager | None
     _lock_manager: DistributedLock | None
-    _position_mapper: PositionMapper | None
-    _checkpoint_repo: CheckpointRepository | None
-    _consistency_reports: dict[UUID, VerificationReport]
-    _subscription_summaries: dict[UUID, MigrationSummary]
     _enable_tracing: bool
 
     if TYPE_CHECKING:
 
         async def _record_audit(self, entry: m.MigrationAuditEntry) -> None: ...
         async def _notify_status_update(self, migration_id: UUID) -> None: ...
-        def _cleanup_status_queues(self, migration_id: UUID) -> None: ...
-        async def verify_consistency(self, migration_id: UUID, *, level: VerificationLevel = ..., sample_percentage: float = ...) -> VerificationReport: ...  # fmt: skip
-        async def migrate_subscriptions(self, migration_id: UUID) -> MigrationSummary: ...
 
     async def _audit_cutover(self, migration_id: UUID, event_type: m.AuditEventType, new_phase: m.MigrationPhase, details: dict[str, object] | None = None, *, old_phase: m.MigrationPhase = m.MigrationPhase.CUTOVER) -> None:  # fmt: skip
         await self._record_audit(m.MigrationAuditEntry(None, migration_id, event_type, old_phase, new_phase, details, None, datetime.now(UTC)))  # fmt: skip
@@ -74,41 +65,25 @@ class CoordinatorCutoverMixin:
             await self._migration_repo.update_phase(migration_id, m.MigrationPhase.CUTOVER)
             logger.info("Starting cutover for %s, tenant %s", migration_id, migration.tenant_id)
             await self._audit_cutover(migration_id, m.AuditEventType.CUTOVER_INITIATED, m.MigrationPhase.CUTOVER, old_phase=m.MigrationPhase.DUAL_WRITE)  # fmt: skip
-            result = await mgr.execute_cutover(migration_id, migration.tenant_id, lag_tracker, migration.target_store_id, config=migration.config, timeout_ms=timeout_ms, since=self._lag_anchor(migration))  # fmt: skip
-            await (self._complete_cutover(migration) if result.success else self._rollback_cutover(migration, result))  # fmt: skip
+            still_in_cutover = partial(self._is_still_in_cutover, migration_id)
+            result = await mgr.execute_cutover(migration_id, migration.tenant_id, lag_tracker, migration.target_store_id, config=migration.config, timeout_ms=timeout_ms, since=self._lag_anchor(migration), still_in_cutover=still_in_cutover)  # fmt: skip
+            if result.success:
+                return await self._complete_cutover(migration, result)
+            self._record_cutover_duration(migration, result, success=False)
+            if await self._was_aborted(migration_id):
+                logger.warning("Cutover for %s stopped: migration was aborted", migration_id)
+                return result
+            await self._rollback_cutover(migration, result)
             return result
 
-    async def _complete_cutover(self, migration: m.Migration) -> None:
-        mid, consistency_verified, subscriptions_migrated = migration.id, False, 0
-        if migration.config.verify_consistency:
-            try:
-                if self._target_stores.get(mid) is None:
-                    logger.warning("Cannot verify consistency: target store not found for %s", mid)
-                elif not (consistency_verified := (rep := await self.verify_consistency(mid, level=VerificationLevel.HASH, sample_percentage=100.0)).is_consistent):  # fmt: skip
-                    logger.warning("Consistency found %d violations for %s", len(rep.violations), mid)  # fmt: skip
-            except Exception as e:
-                logger.error("Consistency verification failed for %s: %s", mid, e)
+    async def _is_still_in_cutover(self, migration_id: UUID) -> bool:
+        """Re-read the phase; cutover must not switch routing once the migration left CUTOVER."""
+        current = await self._migration_repo.get(migration_id)
+        return current is not None and current.phase == m.MigrationPhase.CUTOVER
 
-        if migration.config.migrate_subscriptions:
-            try:
-                if self._position_mapper is not None and self._checkpoint_repo is not None:
-                    summary = await self.migrate_subscriptions(mid)
-                    subscriptions_migrated = summary.successful_count
-                    if (n_fail := summary.failed_count) > 0:
-                        logger.warning("Subscription migration had %d failures for %s", n_fail, mid)
-                else:
-                    logger.debug("Subscription migration skipped for %s", mid)
-            except Exception as e:
-                logger.error("Subscription migration failed for %s: %s", mid, e)
-
-        await self._migration_repo.update_phase(mid, m.MigrationPhase.COMPLETED)
-        logger.info("Cutover completed for %s -> %s", mid, migration.target_store_id)
-        details: dict[str, object] = {"target_store_id": migration.target_store_id, "consistency_verified": consistency_verified, "subscriptions_migrated": subscriptions_migrated}  # fmt: skip
-        await self._audit_cutover(mid, m.AuditEventType.CUTOVER_COMPLETED, m.MigrationPhase.COMPLETED, details)  # fmt: skip
-        self._lag_trackers.pop(mid, None)
-        self._target_stores.pop(mid, None)
-        self._cleanup_status_queues(mid)
-        release_migration_metrics(str(mid))
+    async def _was_aborted(self, migration_id: UUID) -> bool:
+        current = await self._migration_repo.get(migration_id)
+        return current is not None and current.phase == m.MigrationPhase.ABORTED
 
     async def _rollback_cutover(self, migration: m.Migration, result: m.CutoverResult) -> None:
         await self._migration_repo.update_phase(migration.id, m.MigrationPhase.DUAL_WRITE)

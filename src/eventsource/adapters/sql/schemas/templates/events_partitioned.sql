@@ -23,7 +23,13 @@
 -- Note: In partitioned tables, the partition key MUST be included in:
 --   1. The primary key
 --   2. All unique constraints
--- This is a PostgreSQL requirement for partition pruning.
+-- This is a PostgreSQL requirement. It means the unique constraints below
+-- cannot, on their own, stop a duplicate event_id or a duplicate stream
+-- version when the timestamps differ. The adapter closes both gaps:
+--   - event_ids (below) enforces global event_id uniqueness.
+--   - PostgreSQLEventStore.append takes a per-stream advisory lock before it
+--     reads MAX(version), so concurrent appends to one stream serialize.
+-- Direct SQL writes that bypass the adapter get neither guarantee.
 
 -- Sequence for global ordering (partitioned tables can't use BIGSERIAL)
 CREATE SEQUENCE IF NOT EXISTS events_global_position_seq;
@@ -108,6 +114,20 @@ CREATE INDEX IF NOT EXISTS idx_events_type_position
 -- Index for aggregate stream loading
 CREATE INDEX IF NOT EXISTS idx_events_aggregate_version
     ON events (aggregate_id, aggregate_type, version);
+
+-- =============================================================================
+-- Event ID Uniqueness (non-partitioned side table)
+-- =============================================================================
+-- A partitioned table cannot hold a global UNIQUE(event_id) without the
+-- partition key. This table holds one row per stored event_id and is written
+-- in the same transaction as the event. Its primary key is global, so a
+-- second append of the same event_id fails whatever its timestamp.
+-- Rows are not removed when partitions are detached: an event_id stays
+-- reserved after its event leaves the active partitions.
+
+CREATE TABLE IF NOT EXISTS event_ids (
+    event_id UUID PRIMARY KEY
+);
 
 -- =============================================================================
 -- Partition Creation Examples

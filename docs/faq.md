@@ -16,8 +16,13 @@ The questions are grouped roughly in the order they tend to arise: first whether
 event sourcing suits your problem at all, then installation and the optional
 dependency story, then the three core building blocks (events, aggregates, and
 the store/bus/projection triad), then the async model and testing, and finally
-operational concerns — multi-tenancy, migration, GDPR, observability — and the
+operational concerns — multi-tenancy, migration, data protection, observability — and the
 project's compatibility commitments.
+
+On data protection: the library has no erasure (right-to-be-forgotten) feature
+and no built-in payload encryption. Event streams are append-only. Read
+[production security considerations](how-to/production-security-considerations.md)
+for the controls you must provide around it.
 
 A few conventions used throughout:
 

@@ -42,6 +42,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
         retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         tenant_filter: TenantFilter = None,
+        projection_name: str | None = None,
     ) -> None:
         super().__init__(
             session_factory=session_factory,
@@ -51,6 +52,7 @@ class ReadModelProjection[TModel: ReadModel](DatabaseProjection):
             retry_policy=retry_policy,
             tracer=tracer,
             tenant_filter=tenant_filter,
+            projection_name=projection_name,
         )
         self._model_class = model_class
         self._current_repository: ReadModelRepository[TModel] | None = None

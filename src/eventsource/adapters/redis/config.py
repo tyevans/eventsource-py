@@ -7,10 +7,13 @@ Governed by:
 
 from __future__ import annotations
 
+import logging
 import socket
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+from eventsource.adapters._bus.redact import redacted_repr, warn_if_plaintext_remote
 
 # Optional Redis import - fail gracefully if not installed
 try:
@@ -37,6 +40,11 @@ DecodedFields = dict[str, str]
 DecodedEntry = tuple[str, DecodedFields]
 DecodedStreams = list[tuple[str, list[DecodedEntry]]]
 DecodedPending = list[dict[str, Any]]
+
+
+logger = logging.getLogger("eventsource.adapters.redis")
+
+_PLAINTEXT_SCHEMES = frozenset({"redis"})
 
 
 class RedisNotAvailableError(ImportError):
@@ -97,6 +105,13 @@ class RedisEventBusConfig:
             hostname = socket.gethostname()
             unique_id = str(uuid.uuid4())[:8]
             self.consumer_name = f"{hostname}-{unique_id}"
+        warn_if_plaintext_remote(
+            logger, self.redis_url, plaintext_schemes=_PLAINTEXT_SCHEMES, broker="Redis"
+        )
+
+    def __repr__(self) -> str:
+        """Show the connection URL with its credentials redacted."""
+        return redacted_repr(self, url_fields=("redis_url",))
 
     @property
     def stream_name(self) -> str:

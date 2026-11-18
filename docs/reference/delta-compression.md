@@ -21,7 +21,11 @@ domain diffs) cause storage growth proportional to $\mathcal{O}(\text{size}
 preset dictionaries with multi-tier integrity checks:
 
 - **Per-Frame CRC32**: Detects transmission or disk bit-flips prior to decompressing.
-- **SHA-256 Content Hash**: Cryptographically verifies reconstructed payload against the original uncompressed state.
+- **SHA-256 Content Hash**: Verifies the reconstructed payload against the original uncompressed state.
+
+The CRC32 and SHA-256 checks detect accidental corruption only. They do not
+detect tampering. An attacker who can write to the store can change a frame and
+recompute both checks. Use access controls on the store to prevent tampering.
 - **Adaptive Re-Baselining**: Automatically forces self-contained baseline frames when:
   1. The delta chain length exceeds `max_chain_length` (default: 32).
   2. The compressed delta size exceeds `ratio_threshold` of the uncompressed payload (default: 80%).
@@ -79,6 +83,47 @@ restored_v1 = codec.decompress_to_dict(p1)
 restored_v2 = codec.decompress_to_dict(p2, base_payload=restored_v1)
 assert restored_v2 == v2_doc
 ```
+
+---
+
+### Decompression Limits
+
+`DeltaCodec(max_decompressed_bytes=...)` caps the output of `decompress`. The
+default is 64 MiB (`64 * 1024 * 1024` bytes). Lower the limit when you read
+frames from a store that you do not fully trust.
+
+`decompress` raises `DeltaIntegrityError` in these cases:
+
+- `raw_size` is negative or exceeds `max_decompressed_bytes`. The codec checks
+  this before it decompresses anything.
+- The decompressed output is longer than `raw_size`. Decompression stops at the bound.
+- The decompressed output length differs from `raw_size`.
+- The compressed stream is truncated, or it has data after the end of the stream.
+
+### Checksums
+
+A frame stores two checksums. They are checked in this order:
+
+- **CRC32 of the compressed bytes.** `decompress` computes the CRC32 of
+  `compressed_bytes` and compares it with `payload_checksum`. This check runs
+  before any inflate. It covers the stored frame data (a delta or a standalone
+  compressed payload).
+- **SHA-256 of the decompressed bytes.** After inflate, `decompress` computes the
+  SHA-256 of the raw payload and compares it with `content_hash`. It covers the
+  original payload. A wrong `base_payload` on a delta frame fails this check, or
+  fails earlier with `DeltaIntegrityError` when zlib rejects the dictionary.
+
+Both checks detect accidental corruption, such as bit flips or truncated writes.
+They do not authenticate a frame. The checksums are not keyed, and anyone who can
+write a frame can write matching checksums. The checks do not cover:
+
+- the `is_delta` flag, `base_version`, and `raw_size` fields, except as the
+  bounds described above;
+- the identity of the base payload. The caller passes `base_payload`, and the
+  codec does not check its version.
+
+Do not use these checksums as a signature. To detect tampering, sign or MAC the
+frames at the storage layer.
 
 ---
 

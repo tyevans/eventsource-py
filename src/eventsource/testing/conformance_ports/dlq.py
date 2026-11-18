@@ -7,9 +7,10 @@ from uuid import UUID, uuid4
 import pytest
 
 from eventsource.ports.dlq import DLQRepository
+from eventsource.testing.conformance_ports.dlq_stacktrace import DLQStackTraceConformance
 
 
-class DLQRepositoryConformance(ABC):
+class DLQRepositoryConformance(DLQStackTraceConformance, ABC):
     """Conformance suite for `DLQRepository` implementations."""
 
     @abstractmethod
@@ -44,7 +45,8 @@ class DLQRepositoryConformance(ABC):
         assert entry.event_id == event_id
         assert entry.projection_name == "P"
         assert entry.event_type == "Created"
-        assert entry.error_message == "boom"
+        # Stored text is the error_summary, never the raw message (TASK-0470).
+        assert entry.error_message == "RuntimeError: boom"
         assert entry.retry_count == 0
 
     async def test_second_add_for_same_key_upserts_rather_than_duplicates(

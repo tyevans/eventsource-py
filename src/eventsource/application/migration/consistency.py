@@ -18,6 +18,7 @@ from eventsource.application.migration.consistency_stream_checker import (
 )
 from eventsource.application.migration.exceptions import ConsistencyError
 from eventsource.observability import Tracer, create_tracer
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports import FullEventStore
 
 logger = logging.getLogger(__name__)
@@ -105,9 +106,12 @@ class ConsistencyVerifier(ConsistencyStreamCheckerMixin):
                     logger.warning(err_msg, tenant_id, len(violations), duration)
                 return report
             except Exception as e:
-                logger.error("Consistency verification error for tenant %s: %s", tenant_id, e)
+                summary = error_summary(e)
+                logger.error("Consistency verification error for tenant %s: %s", tenant_id, summary)
                 null_id = UUID("00000000-0000-0000-0000-000000000000")
-                raise ConsistencyError(f"Verification failed: {e}", null_id, details=str(e)) from e
+                raise ConsistencyError(
+                    f"Verification failed: {summary}", null_id, details=summary
+                ) from e
 
     async def verify_event_checksums(
         self, tenant_id: UUID, sample_percentage: float = 100.0

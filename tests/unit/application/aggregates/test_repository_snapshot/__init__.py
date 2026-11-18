@@ -17,8 +17,10 @@ from tests.unit.application.aggregates.test_repository_snapshot.test_repository_
     TestRepositoryBackgroundSnapshot,
     TestSnapshotPolicyLogic,
 )
-from tests.unit.application.aggregates.test_repository_snapshot.test_repository_snapshot_integration import (
+from tests.unit.application.aggregates.test_repository_snapshot.test_repository_snapshot_edge_cases import (
     TestEdgeCases,
+)
+from tests.unit.application.aggregates.test_repository_snapshot.test_repository_snapshot_integration import (
     TestFullCycleIntegration,
 )
 from tests.unit.application.aggregates.test_repository_snapshot.test_repository_snapshot_load import (

@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from eventsource.adapters._common import POSTGRESQL, filter_to_sql
+from eventsource.adapters._common import POSTGRESQL, check_query, filter_to_sql, order_by_sql
 from eventsource.adapters._sql.connection import sql_connection
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
@@ -66,26 +66,33 @@ class PostgreSQLReadModelQueryMixin[TModel: ReadModel]:
         where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         return where_sql, params
 
-    def _append_order_limit_offset(self, parts: list[str], query: Query) -> None:
+    def _append_order_limit_offset(
+        self, parts: list[str], params: dict[str, Any], query: Query
+    ) -> None:
+        """Append ORDER BY, LIMIT and OFFSET; the paging values are bound, never rendered."""
         if query.order_by:
-            parts.append(f"ORDER BY {query.order_by} {query.order_direction.upper()}")
+            parts.append(order_by_sql(query))
         if query.limit is not None:
-            parts.append(f"LIMIT {query.limit}")
+            parts.append("LIMIT :query_limit")
+            params["query_limit"] = query.limit
         if query.offset:
-            parts.append(f"OFFSET {query.offset}")
+            parts.append("OFFSET :query_offset")
+            params["query_offset"] = query.offset
 
     def _build_select_query(self, query: Query) -> tuple[str, dict[str, Any]]:
         """Build SELECT SQL and parameter dict from Query."""
+        check_query(self._model_class, query)
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
         base = [] if query.include_deleted else ["deleted_at IS NULL"]
         where_sql, params = self._build_where_clause(query, base_clauses=base)
         if where_sql:
             parts.append(where_sql)
-        self._append_order_limit_offset(parts, query)
+        self._append_order_limit_offset(parts, params, query)
         return " ".join(parts), params
 
     def _build_count_query(self, query: Query) -> tuple[str, dict[str, Any]]:
         """Build COUNT SQL and parameter dict from Query."""
+        check_query(self._model_class, query)
         parts = [f"SELECT COUNT(*) FROM {self._table_name}"]  # nosec B608
         base = [] if query.include_deleted else ["deleted_at IS NULL"]
         where_sql, params = self._build_where_clause(query, base_clauses=base)
@@ -95,10 +102,11 @@ class PostgreSQLReadModelQueryMixin[TModel: ReadModel]:
 
     def _build_select_deleted_query(self, query: Query) -> tuple[str, dict[str, Any]]:
         """Build SELECT SQL from Query for soft-deleted records only."""
+        check_query(self._model_class, query)
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
         where_sql, params = self._build_where_clause(query, base_clauses=["deleted_at IS NOT NULL"])
         parts.append(where_sql)
-        self._append_order_limit_offset(parts, query)
+        self._append_order_limit_offset(parts, params, query)
         return " ".join(parts), params
 
     async def find(self, query: Query | None = None, **eq_filters: Any) -> list[TModel]:
@@ -119,7 +127,9 @@ class PostgreSQLReadModelQueryMixin[TModel: ReadModel]:
 
     async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None:
         """Find the first read model matching `query` and `**eq_filters`, or None."""
-        effective = replace(_resolve_query(query, eq_filters), limit=1)
+        base = _resolve_query(query, eq_filters)
+        check_query(self._model_class, base)
+        effective = replace(base, limit=1)
         results = await self.find(effective)
         return results[0] if results else None
 

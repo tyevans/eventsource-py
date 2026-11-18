@@ -19,6 +19,9 @@ Filters: `uv run python -m bench run --interface store --backend postgresql
 
 ## Endpoints (env-overridable)
 
+The compose services publish their ports on `127.0.0.1` only. The credentials
+in `docker-compose.bench.yml` are local throwaway values.
+
 | Variable | Default |
 |---|---|
 | `BENCH_POSTGRES_URL` | `postgresql+asyncpg://bench:bench@localhost:5434/eventsource_bench` |

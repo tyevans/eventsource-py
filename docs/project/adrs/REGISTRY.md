@@ -24,3 +24,5 @@
 | ADR-0110 | Ambient Multi-Tenant SaaS Isolation Model | Accepted | Foundational Domain Architecture |
 | ADR-0111 | Zero-Downtime 5-State Live Store Migration and Distributed Locking | Accepted | Foundational Domain Architecture |
 | ADR-0112 | Tier-0 Packaging, PEP 562 Lazy Front Door, and Zero-Overhead Observability | Accepted | Foundational Domain Architecture |
+| ADR-0113 | Tenant Ownership Check on the Repository Read and Write Path | Accepted | Foundational Domain Architecture |
+| ADR-0114 | Tenant Scope for Read Models, the Dead Letter Queue, and Checkpoints | Accepted | Foundational Domain Architecture |

@@ -11,10 +11,16 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from eventsource import TenantDomainEvent, clear_tenant_context, tenant_scope_sync
+from eventsource import (
+    TenantDomainEvent,
+    TenantMismatchError,
+    clear_tenant_context,
+    tenant_scope_sync,
+)
 
 
 class Widget(TenantDomainEvent):
@@ -87,19 +93,18 @@ def test_with_tenant_context_uses_scope_tenant_for_arbitrary_ids(
 
 @given(scope_tenant=uuid_strategy, explicit_tenant=uuid_strategy, aggregate_id=uuid_strategy)
 @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_explicit_tenant_id_always_overrides_scope(
+def test_explicit_tenant_id_must_match_scope(
     scope_tenant: UUID, explicit_tenant: UUID, aggregate_id: UUID
 ) -> None:
-    """An explicitly-passed tenant_id must win over the scope's tenant for
-    ANY pair of tenant IDs, including when they happen to be equal."""
+    """An explicit tenant_id is accepted only when it equals the active scope;
+    any other tenant raises TenantMismatchError, for every pair of tenant IDs."""
     clear_tenant_context()
+    kwargs = {"aggregate_id": aggregate_id, "tenant_id": explicit_tenant}
     with tenant_scope_sync(scope_tenant):
-        event = Widget.with_tenant_context(
-            aggregate_id=aggregate_id,
-            tenant_id=explicit_tenant,
-            name="thing",
-            quantity=1,
-            price=1.0,
-        )
-    assert event.tenant_id == explicit_tenant
+        if explicit_tenant == scope_tenant:
+            event = Widget.with_tenant_context(name="thing", quantity=1, price=1.0, **kwargs)
+            assert event.tenant_id == scope_tenant
+        else:
+            with pytest.raises(TenantMismatchError):
+                Widget.with_tenant_context(name="thing", quantity=1, price=1.0, **kwargs)
     clear_tenant_context()

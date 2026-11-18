@@ -8,7 +8,9 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.redact import redact_url
 from eventsource.adapters.redis.config import ResponseError
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -60,12 +62,14 @@ class RedisBusConnectionMixin:
                 raise RuntimeError("Redis client not initialized")
             await self._redis.ping()
             logger.info(
-                "Connected to Redis", extra={"redis_url": cfg.redis_url, "stream": cfg.stream_name}
+                "Connected to Redis",
+                extra={"redis_url": redact_url(cfg.redis_url), "stream": cfg.stream_name},
             )
             await self._ensure_consumer_group_exists()
             self._connected = True
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}", exc_info=True)
+            safe = error_summary(e).replace(cfg.redis_url, redact_url(cfg.redis_url))  # fmt: skip
+            logger.error(f"Failed to connect to Redis: {safe}", extra={"redis_url": redact_url(cfg.redis_url), "error": safe})  # fmt: skip
             raise
 
     async def disconnect(self) -> None:
@@ -90,7 +94,7 @@ class RedisBusConnectionMixin:
             if "BUSYGROUP" in str(e):
                 logger.debug(f"Consumer group '{g}' already exists")
             else:
-                logger.error(f"Failed to create consumer group: {e}")
+                logger.error(f"Failed to create consumer group: {error_summary(e)}")
                 raise
 
     async def get_stream_info(self) -> dict[str, Any]:
@@ -124,8 +128,8 @@ class RedisBusConnectionMixin:
                 "stats": self.get_stats_dict(),
             }
         except Exception as e:
-            logger.error(f"Failed to get stream info: {e}", exc_info=True)
-            return {"connected": True, "error": str(e)}
+            logger.error(f"Failed to get stream info: {error_summary(e)}", exc_info=True)
+            return {"connected": True, "error": error_summary(e)}
 
     def get_stats_dict(self) -> dict[str, int]:
         s = self._stats

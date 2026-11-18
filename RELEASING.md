@@ -6,11 +6,42 @@ This document describes the release process for eventsource-py.
 
 Releases are automated via GitHub Actions. When you push a version tag, the release workflow:
 
-1. Validates the tag version matches `pyproject.toml`
-2. Runs all CI checks (lint, type-check, tests)
-3. Builds wheel and source distributions
-4. Publishes to PyPI or TestPyPI (based on version type)
-5. Creates a GitHub Release with changelog and artifacts
+1. Checks the tag format (see [Release gate](#release-gate))
+2. Checks that the tagged commit is on `main`
+3. Validates the tag version matches `pyproject.toml`
+4. Runs all CI checks (lint, type-check, tests)
+5. Builds the source distribution and a wheel from it, then checks the sdist contents
+6. Publishes to PyPI or TestPyPI (based on version type), after environment approval
+7. Creates a GitHub Release with changelog and artifacts
+
+## Release gate
+
+The release workflow stops before it publishes if any check fails.
+
+### Checks in the workflow
+
+- **Tag format.** The tag must match `^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$`.
+  Examples: `v1.2.3`, `v1.2.3a1`, `v1.2.3b2`, `v1.2.3rc1`. Any other tag fails
+  in the first step, before the code is checked out.
+- **Commit on main.** The tagged commit must be an ancestor of `origin/main`.
+  A tag on a branch, or on an unmerged commit, fails. Merge the release
+  commit to `main` before you push the tag.
+- **Version match.** The tag version must equal `version` in `pyproject.toml`.
+- **Sdist contents.** The built sdist must not contain `.claude/`, `.github/`,
+  `specops.toml`, `cosmic-ray/`, `mutants/`, `bench/`, `dist/`, or `docs/project/`.
+
+### Checks that need maintainer settings
+
+The workflow cannot enforce these. The repository owner must set them in
+GitHub. They are listed again in [Maintainer checklist](#maintainer-checklist).
+
+- The `pypi` and `testpypi` environments require a reviewer. A release waits
+  for that approval before it publishes.
+- The `pypi` and `testpypi` environments allow deployments from `v*` tags only.
+- A tag ruleset limits who can create `v*` tags.
+
+Without these settings, anyone with write access can push a `v*` tag and
+publish. The workflow checks format and ancestry, not who pushed the tag.
 
 ## Release Types
 
@@ -68,10 +99,15 @@ git push origin main
 
 ### 4. Create and Push Tag
 
+Tag the commit on `main` that holds the release changes.
+
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
+
+A maintainer must approve the `pypi` (or `testpypi`) deployment before the
+publish job runs.
 
 ### 5. Monitor Release
 
@@ -128,16 +164,30 @@ git checkout -b hotfix/0.1.1 v0.1.0
 
 git add -A
 git commit -m "fix: description of the fix"
-git tag v0.1.1
-git push origin v0.1.1
 
-# Merge back to main
+# Merge to main first. The release gate rejects a tag that is not on main.
 git checkout main
 git merge hotfix/0.1.1
 git push origin main
+
+# Tag the commit on main
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 ## Troubleshooting
+
+### Tag Format Error
+
+If the first step fails with "is not a valid release tag", the tag does not
+match the release gate pattern. Delete the tag and create a valid one, for
+example `v0.2.0` instead of `v0.2.0-beta`.
+
+### Commit Not on Main Error
+
+If the workflow fails with "is not an ancestor of origin/main", the tag points
+at a commit that is not on `main`. Merge the commit to `main`, then delete and
+recreate the tag on the merged commit.
 
 ### Version Mismatch Error
 
@@ -183,6 +233,27 @@ Two environments are configured in the repository:
 - `pypi`: For production releases to PyPI
 - `testpypi`: For pre-releases to TestPyPI
 
+Both must have the protection settings in the checklist below.
+
+### Maintainer checklist
+
+These settings are changed in the GitHub web interface by a repository
+owner. The workflow cannot set them. Check each item after any change to
+the repository settings.
+
+- [ ] `pypi` environment: required reviewers set (at least one maintainer other than the release author, if possible)
+- [ ] `pypi` environment: deployment branch and tag policy allows only `v*` tags
+- [ ] `testpypi` environment: required reviewers set
+- [ ] `testpypi` environment: deployment branch and tag policy allows only `v*` tags
+- [ ] Tag ruleset: creation of `v*` tags limited to maintainers
+- [ ] PyPI trusted publisher: workflow is `release.yml`, environment is `pypi`
+- [ ] TestPyPI trusted publisher: workflow is `release.yml`, environment is `testpypi`
+- [ ] Repository default workflow token permissions: read-only
+
+Admins can bypass environment protection rules unless the admin bypass is
+turned off. Turn it off for the `pypi` environment if the repository allows
+it.
+
 ## Agent-Assisted Releases
 
 AI agents can help prepare releases by:
@@ -195,3 +266,4 @@ AI agents can help prepare releases by:
 **Human approval is always required** before:
 - Merging the release preparation PR
 - Creating and pushing the release tag
+- Approving the `pypi` or `testpypi` deployment in GitHub

@@ -187,6 +187,32 @@ ordering; and on *every* backend, handlers for the same event run without any
 ordering between them. Do not encode a dependency between two handlers by
 registration order.
 
+### Dead letters and retry limits
+
+RabbitMQ and Kafka send a message to their dead letter queue (DLQ) when retries
+run out or when the consumer cannot retry it. These limits apply:
+
+- **RabbitMQ DLQ size.** `RabbitMQEventBusConfig.dlq_max_length` sets the
+  `x-max-length` of the DLQ queue. The default is `100_000`. Pass `None` to
+  remove the limit. The framework does not set an overflow policy, so the
+  broker's default applies when the queue is full.
+- **Retry delay cap.** `retry_max_delay` (default `60.0` seconds) caps the
+  retry delay. On RabbitMQ it caps the exponential backoff. On Kafka it also
+  caps the wait that a message's `retry_after` header asks for. A far-future
+  header cannot hold a consumer longer than the cap. A missing, past, or
+  non-numeric `retry_after` gives no wait.
+- **Pending retries.** Each consumer holds up to 1000 pending retries in its
+  in-process retry scheduler. You cannot change this limit in the config.
+- **At capacity.** When the scheduler is full, a message that needs a delayed
+  retry goes to the DLQ at once with reason `retry_capacity_exceeded`. Kafka
+  then commits the offset. RabbitMQ then acknowledges the message. If the DLQ
+  write fails on Kafka, the offset stays uncommitted and the bus logs at
+  critical level.
+- **DLQ reason and error.** RabbitMQ sets the `x-dlq-reason` header to the
+  reason. When there is no explicit reason, it is the error summary, which has
+  the form `ClassName: message`. Kafka sets `dlq_reason` and `dlq_error_message`
+  the same way. The Kafka error message is capped at 1000 characters.
+
 ## Install the right optional extra
 
 Only `InMemoryEventBus` works with the core install. Each distributed backend

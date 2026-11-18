@@ -40,6 +40,8 @@ class DomainCommand(BaseModel):
         actor_id: Optional identifier of who issued the command.
         tenant_id: Optional tenant. When unset, stamping falls back to the
             tenant context (see DeciderAggregate.execute / create_event).
+            When an ambient tenant is set and this value differs from it,
+            event creation raises TenantMismatchError.
     """
 
     model_config = ConfigDict(frozen=True)

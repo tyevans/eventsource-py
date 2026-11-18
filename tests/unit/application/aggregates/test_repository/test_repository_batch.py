@@ -159,12 +159,16 @@ class TestTenantAwareRepositoryBatch:
     async def test_tenant_save_all_validates_tenant_consistency(self) -> None:
         tenant_repo = _make_tenant_repo(require_tenant_context=True)
         tenant_id, wrong_tenant, id1, id2 = uuid4(), uuid4(), uuid4(), uuid4()
+        # execute() refuses a foreign tenant inside a scope (TASK-0468), so build a2 unscoped.
+        a2 = tenant_repo.create_new(id2)
+        a2.execute(OpenTenantAccount(account_id=id2, owner="mallory", tenant_id=wrong_tenant))
         async with tenant_scope(tenant_id):
-            a1, a2 = tenant_repo.create_new(id1), tenant_repo.create_new(id2)
+            a1 = tenant_repo.create_new(id1)
             a1.execute(OpenTenantAccount(account_id=id1, owner="alice", tenant_id=tenant_id))
-            a2.execute(OpenTenantAccount(account_id=id2, owner="mallory", tenant_id=wrong_tenant))
             with pytest.raises(TenantMismatchError):
                 await tenant_repo.save_all([a1, a2])
+            loaded = await tenant_repo.load_many([id1, id2], ignore_missing=True)
+        assert id2 not in loaded
 
     @pytest.mark.asyncio
     async def test_tenant_load_many_raises_when_missing_by_default(self) -> None:

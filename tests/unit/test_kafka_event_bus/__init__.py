@@ -41,7 +41,6 @@ from .test_kafka_event_bus_metrics_edge_cases import (
 )
 from .test_kafka_event_bus_security import (
     TestKafkaEventBusConfigSecurity,
-    TestKafkaEventBusConfigSSLContext,
 )
 from .test_kafka_event_bus_subscriber import (
     test_handlers_resolve_when_event_type_field_differs_from_class_name,
@@ -60,7 +59,6 @@ __all__ = [
     "TestKafkaEventBus",
     "TestKafkaEventBusConfig",
     "TestKafkaEventBusConfigProducerConsumer",  # pragma: allowlist secret
-    "TestKafkaEventBusConfigSSLContext",
     "TestKafkaEventBusConfigSanitization",
     "TestKafkaEventBusConfigSecurity",
     "TestKafkaEventBusCounterMetrics",

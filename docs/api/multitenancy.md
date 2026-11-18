@@ -33,9 +33,11 @@ field and can read that field from the context; `TenantAwareRepository` wraps an
 belongs to the tenant currently in context.
 
 Nothing in this feature touches the event store's SQL. Isolation is enforced in
-Python, on the write path, against values already present on the events. Read
-isolation -- filtering loaded events by tenant -- is not implemented here; see
-the known limitation under `TenantAwareRepository`.
+Python, at the repository, against values already present on the events. Under an
+active scope, `TenantAwareRepository` also checks that a stream belongs to the active
+tenant on load, existence probe, version probe, and append; a foreign stream reads as
+missing (ADR-0113). The limits of that check are listed in the Limitations section of
+the [multi-tenancy guide](../guides/multi-tenant.md#limitations).
 
 ### Import Surface
 
@@ -94,20 +96,21 @@ It is *not* the right tool when:
 - **Tenants must be physically separated.** Nothing here shards or routes to
   per-tenant databases or schemas; every tenant's events live in the same
   stream space.
-- **You need loads filtered by tenant.** `require_tenant_context=True` only
-  asserts that *a* context exists -- it never compares that context against the
-  aggregate, and it does not restrict which events come back. A `load()` in
-  tenant A's scope for an id belonging to tenant B returns B's aggregate.
-  Pair this module with database-level isolation (for example PostgreSQL row
-  level security) when read isolation matters. See ADR 0057.
-- **You need projection or subscription filtering.** Projections and
-  subscriptions have no tenant awareness in this feature; a projection reads
-  every tenant's events unless you filter inside the handler.
+- **You need physical separation or read-model isolation.** Under a scope, a
+  `load()` in tenant A's scope for an id that belongs to tenant B raises
+  `AggregateNotFoundError`. Unscoped code, direct store access, and read models are
+  not covered by this check. Pair this module with database-level isolation (for
+  example PostgreSQL row level security) when those paths matter. See ADR 0057 and
+  ADR 0113.
+- **You need bus, outbox, or subscription isolation.** The outbox and the bus carry
+  `tenant_id` as a field or a header but do not filter by it. Every subscriber sees
+  every tenant's events. A projection filters only when you set `tenant_filter`, and
+  that filter skips events rather than rejecting them.
 
-Events that lack a `tenant_id` entirely are skipped by save-time validation, so
-tenant-aware and legacy non-tenant events can coexist on the same aggregate
-during a migration. `validate_on_save=False` disables the check outright for the
-same reason.
+Under a scope, save-time validation rejects an event with no `tenant_id`. Global
+events must be saved outside a scope, with a plain `AggregateRepository` or with
+`validate_on_save=False`. `validate_on_save=False` also disables the tenant-match
+check, but it does not disable the stream-ownership check on save.
 
 ## Tenant Context
 
@@ -275,7 +278,7 @@ missing scope surfaces as `TenantContextNotSetError` from code you did not write
 
 | Caller | Behavior when context is unset |
 | --- | --- |
-| `TenantDomainEvent.with_tenant_context(**kwargs)` | Raises, unless an explicit `tenant_id` was passed in `kwargs` (the context is only consulted when the key is absent) |
+| `TenantDomainEvent.with_tenant_context(**kwargs)` | Raises `TenantContextNotSetError`, unless an explicit `tenant_id` was passed in `kwargs` (the context is only consulted when the key is absent). An explicit `tenant_id` that differs from an active scope raises `TenantMismatchError` |
 | `TenantAwareRepository.save()` with `validate_on_save=True` (default) | Raises before any event is appended |
 | `TenantAwareRepository.load()` / `load_or_create()` / `exists()` with `require_tenant_context=True` | Raises before delegating to the wrapped repository |
 | `TenantAwareRepository.create_new()`, at either setting | Never raises -- it allocates an in-memory aggregate and touches no storage |

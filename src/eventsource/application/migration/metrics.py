@@ -26,6 +26,7 @@ Metrics Exposed:
     - migration.active (Gauge): Number of active migrations
     - migration.target.writes.failed (Counter): Failed writes to target during dual-write
     - migration.verification.failures (Counter): Consistency verification failures
+    - migration.cutover.failures (Counter): Cutovers that ended in FAILED after routing switched
 
 All metrics include the 'migration_id' and 'tenant_id' attributes for filtering.
 

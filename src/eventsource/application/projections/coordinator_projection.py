@@ -9,10 +9,19 @@ from typing import Any, Self
 from eventsource.application.projections.base import EventHandlerBase, Projection
 from eventsource.application.projections.coordinator_registry import ProjectionRegistry
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import EventSourceError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import ATTR_EVENT_COUNT
 
 logger = logging.getLogger(__name__)
+
+
+class ProjectionRebuildError(EventSourceError):
+    """Raised by ``rebuild_all`` after dispatching all events; ``failure_count`` counts failed projection calls."""
+
+    def __init__(self, failure_count: int) -> None:
+        self.failure_count = failure_count
+        super().__init__(f"{failure_count} projection failure(s) while rebuilding projections")
 
 
 class ProjectionCoordinator:
@@ -65,10 +74,15 @@ class ProjectionCoordinator:
             return len(events)
 
     async def rebuild_all(self, events: Sequence[DomainEvent]) -> int:
-        """Reset all registered projections and replay ``events`` in order."""
+        """Reset all projections and replay ``events``; raise ``ProjectionRebuildError`` on any failure.
+
+        Use ``replay()`` for a per-event failure report.
+        """
         logger.warning("Rebuilding all projections", extra={"event_count": len(events)})
         await self.registry.reset_all()
-        await self.registry.dispatch_many(events)
+        failures = await self.registry.dispatch_many(events)
+        if failures:
+            raise ProjectionRebuildError(len(failures)) from failures[0]
         logger.info("Completed rebuilding projections", extra={"event_count": len(events)})
         return len(events)
 

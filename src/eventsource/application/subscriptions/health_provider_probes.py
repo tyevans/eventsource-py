@@ -10,6 +10,7 @@ from eventsource.application.subscriptions.health import (
     SubscriptionHealth,
 )
 from eventsource.application.subscriptions.subscription import Subscription, SubscriptionState
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
@@ -62,7 +63,7 @@ class HealthCheckProbesMixin:
             events_failed=subscription.events_failed,
             lag_events=subscription.lag,
             error_rate=handler.stats.error_rate_per_minute if handler else 0.0,
-            last_error=str(subscription.last_error) if subscription.last_error else None,
+            last_error=error_summary(subscription.last_error) if subscription.last_error else None,
             uptime_seconds=self.uptime_seconds,
         )
 
@@ -128,7 +129,7 @@ class HealthCheckProbesMixin:
         try:
             details["subscription_count"] = len(self._registry)
         except Exception as e:
-            msg = f"Error accessing subscriptions: {e}"
+            msg = f"Error accessing subscriptions: {error_summary(e)}"
             return LivenessStatus(alive=False, reason=msg, details=details)
         return LivenessStatus(alive=True, reason="Manager is alive and responsive", details=details)
 

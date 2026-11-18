@@ -1,73 +1,35 @@
-"""Delta compression codec for sequential event stream payloads (ADR-0007, TASK-0002)."""
+"""Delta compression codec for sequential event stream payloads (ADR-0007, TASK-0002).
+
+CRC32 and SHA-256 values are stored beside the data. They detect accidental
+corruption only. They are not tamper or authenticity checks: an attacker who
+can write a frame can also write its checksums.
+"""
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import zlib
-from dataclasses import dataclass
 from typing import Any
 
 import orjson
 
-from eventsource.domain.exceptions import EventSourceError
-
-
-class DeltaIntegrityError(EventSourceError, ValueError):
-    """Raised when delta payload checksum or content hash fails verification."""
-
-
-class DeltaChainError(EventSourceError, RuntimeError):
-    """Raised when a delta chain cannot be reconstructed due to missing base."""
-
-
-@dataclass(frozen=True, slots=True)
-class DeltaPayload:
-    """Serialized representation of a delta-compressed or baseline event payload."""
-
-    is_delta: bool
-    base_version: int | None
-    compressed_bytes: bytes
-    content_hash: str
-    payload_checksum: int
-    raw_size: int
-    compressed_size: int
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize into a JSON-compatible dictionary for database storage."""
-        return {
-            "__delta__": True,
-            "v": 1,
-            "is_delta": self.is_delta,
-            "base_version": self.base_version,
-            "data": base64.b64encode(self.compressed_bytes).decode("ascii"),
-            "hash": self.content_hash,
-            "crc": self.payload_checksum,
-            "raw_size": self.raw_size,
-            "comp_size": self.compressed_size,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DeltaPayload:
-        """Construct from a dictionary serialized by to_dict."""
-        if not data.get("__delta__"):
-            raise ValueError("Dictionary does not represent a DeltaPayload")
-        return cls(
-            is_delta=bool(data["is_delta"]),
-            base_version=data.get("base_version"),
-            compressed_bytes=base64.b64decode(data["data"]),
-            content_hash=str(data["hash"]),
-            payload_checksum=int(data["crc"]),
-            raw_size=int(data["raw_size"]),
-            compressed_size=int(data["comp_size"]),
-        )
-
-
-type _In = bytes | str | dict[str, Any] | list[Any]
+from eventsource.adapters.serialization.delta_inflate import inflate_bounded
+from eventsource.adapters.serialization.delta_types import (
+    DEFAULT_MAX_DECOMPRESSED_BYTES,
+    DeltaChainError,
+    DeltaIntegrityError,
+    DeltaPayload,
+    _In,
+)
 
 
 class DeltaCodec:
-    """Configurable codec for sequential stream payload delta compression."""
+    """Configurable codec for sequential stream payload delta compression.
+
+    `max_decompressed_bytes` caps the output of `decompress`. A frame whose
+    `raw_size` exceeds the cap is rejected before any decompression, so a
+    small, hostile frame cannot expand past it (decompression bomb).
+    """
 
     def __init__(
         self,
@@ -77,12 +39,14 @@ class DeltaCodec:
         cumulative_ratio_threshold: float = 2.0,
         min_payload_size: int = 128,
         compression_level: int = 6,
+        max_decompressed_bytes: int = DEFAULT_MAX_DECOMPRESSED_BYTES,
     ) -> None:
         self.max_chain_length = max_chain_length
         self.ratio_threshold = ratio_threshold
         self.cumulative_ratio_threshold = cumulative_ratio_threshold
         self.min_payload_size = min_payload_size
         self.compression_level = compression_level
+        self.max_decompressed_bytes = max_decompressed_bytes
 
     @staticmethod
     def _to_bytes(data: _In) -> bytes:
@@ -104,6 +68,9 @@ class DeltaCodec:
         """Compress payload against optional base_payload or produce a standalone baseline."""
         raw_bytes = self._to_bytes(payload)
         sz, h = len(raw_bytes), hashlib.sha256(raw_bytes).hexdigest()
+        if sz > self.max_decompressed_bytes:
+            # Same bound decompress enforces, so compress never emits an unreadable frame.
+            raise DeltaIntegrityError(f"payload size {sz} is outside the codec limit of {self.max_decompressed_bytes} bytes")  # fmt: skip
         can_delta = (
             base_payload is not None
             and base_version is not None
@@ -122,17 +89,21 @@ class DeltaCodec:
         return DeltaPayload(False, None, c_bytes, h, zlib.crc32(c_bytes), sz, len(c_bytes))
 
     def decompress(self, delta: DeltaPayload, *, base_payload: _In | None = None) -> bytes:
-        """Decompress delta payload, verifying CRC32 and SHA256 content hash."""
+        """Decompress a delta payload, verifying CRC32 and SHA-256 content hash.
+
+        The CRC32 and SHA-256 checks detect accidental corruption only. They
+        do not authenticate the frame. Output is bounded by `raw_size`, which
+        must not exceed `max_decompressed_bytes`.
+        """
+        if not 0 <= delta.raw_size <= self.max_decompressed_bytes:
+            raise DeltaIntegrityError(f"raw_size={delta.raw_size} is outside the codec limit of {self.max_decompressed_bytes} bytes")  # fmt: skip
         actual_crc = zlib.crc32(delta.compressed_bytes)
         if actual_crc != delta.payload_checksum:
             raise DeltaIntegrityError(f"Checksum mismatch on compressed frame: expected {delta.payload_checksum:#x}, got {actual_crc:#x}")  # fmt: skip
-        if delta.is_delta:
-            if base_payload is None:
-                raise DeltaChainError(f"Cannot decompress delta payload without base_version={delta.base_version}")  # fmt: skip
-            decompressor = zlib.decompressobj(zdict=self._to_bytes(base_payload))
-        else:
-            decompressor = zlib.decompressobj()
-        raw_bytes = decompressor.decompress(delta.compressed_bytes) + decompressor.flush()
+        if delta.is_delta and base_payload is None:
+            raise DeltaChainError(f"Cannot decompress delta payload without base_version={delta.base_version}")  # fmt: skip
+        zdict = self._to_bytes(base_payload) if delta.is_delta else None  # type: ignore[arg-type]
+        raw_bytes = inflate_bounded(delta, zdict)
         actual_hash = hashlib.sha256(raw_bytes).hexdigest()
         if actual_hash != delta.content_hash:
             raise DeltaIntegrityError(f"Content hash mismatch on decompressed payload: expected {delta.content_hash}, got {actual_hash}")  # fmt: skip

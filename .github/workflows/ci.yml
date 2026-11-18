@@ -6,6 +6,7 @@
 # - type-check: mypy strict type checking
 # - import-linter: architecture layering contracts (pyproject.toml [tool.importlinter])
 # - audit: pip-audit dependency vulnerability scan
+# - secrets: gitleaks secret scan over full git history (.gitleaks.toml)
 # - test: pytest with coverage (matrix: Python 3.13)
 #
 # Every job installs with `uv sync --all-extras --locked` and runs tools via
@@ -54,11 +55,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 
@@ -71,16 +73,32 @@ jobs:
       - name: Run ruff format check
         run: uv run ruff format --check .
 
+      # Supply-chain guard: every third-party `uses:` must name a full
+      # 40-hex commit SHA (the tag goes in a trailing comment). Local
+      # reusable-workflow refs (`uses: ./...`) are exempt.
+      - name: Check actions are pinned to commit SHAs
+        run: |
+          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows/ \
+            | grep -vE 'uses:[[:space:]]+\./' \
+            | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)
+          if [[ -n "$bad" ]]; then
+            echo "::error::These uses: lines are not pinned to a 40-character commit SHA:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "All uses: lines are pinned to commit SHAs"
+
   # Type checking with mypy
   type-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 
@@ -95,11 +113,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 
@@ -114,11 +133,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 
@@ -131,6 +151,25 @@ jobs:
       - name: Run pip-audit
         run: uv run pip-audit
 
+  # Secret scanning with gitleaks. fetch-depth 0 scans the full history, so a
+  # credential that was committed and later removed is still reported.
+  # Mirrors the local `gitleaks` hook in .pre-commit-config.yaml. Rules and
+  # allowlist live in .gitleaks.toml.
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Testing with pytest
   test:
     runs-on: ubuntu-latest
@@ -141,11 +180,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
@@ -160,7 +200,7 @@ jobs:
 
       - name: Upload coverage report
         if: matrix.python-version == '3.13'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-report
           path: coverage.xml
@@ -174,7 +214,7 @@ jobs:
 
     services:
       redis:
-        image: redis:7
+        image: redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
         ports:
           - 6379:6379
         options: >-
@@ -185,11 +225,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 
@@ -209,7 +250,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
@@ -223,7 +264,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7
+        image: redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
         ports:
           - 6379:6379
         options: >-
@@ -234,11 +275,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 
@@ -274,11 +316,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
+          version: '0.12.21'
           python-version: '3.13'
           enable-cache: true
 

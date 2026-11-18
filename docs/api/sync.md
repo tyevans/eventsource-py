@@ -41,9 +41,11 @@ plus one extra keyword-only `timeout` parameter.
 Methods that return an async iterator on the underlying port (`read_stream`,
 `read_all`, `read_category`) return a plain `list[EventEnvelope]` here (`read_events`
 returns unwrapped `list[DomainEvent]`) — the adapter collects the iterator before
-returning. `append(stream, events, expected=ExpectedVersion.any(), *, timeout=None)`
-additionally accepts either a single `DomainEvent` or a `Sequence[DomainEvent]`
-and defaults `expected` to `ExpectedVersion.any()`. There is no sync bus, sync
+returning. `append(stream, events, expected, *, timeout=None)`
+additionally accepts either a single `DomainEvent` or a `Sequence[DomainEvent]`.
+`expected` is required: omitting it raises `TypeError`, and `None` is not accepted
+as a shorthand for any version. Pass `ExpectedVersion.any_()` to skip the check.
+There is no sync bus, sync
 repository, or sync projection runner — the adapter covers the event store
 surface only.
 
@@ -261,7 +263,7 @@ def append(
     self,
     stream: StreamId,
     events: DomainEvent | Sequence[DomainEvent],
-    expected: ExpectedVersion = ExpectedVersion.any(),
+    expected: ExpectedVersion,
     *,
     timeout: float | None = None,
 ) -> AppendResult: ...
@@ -302,7 +304,7 @@ def read_category(
 def current_position(self, *, timeout: float | None = None) -> Position | None: ...
 ```
 
-- `append(stream, events, expected=ExpectedVersion.any(), *, timeout=None)` accepts either a single `DomainEvent` (normalized to `[events]`) or a `Sequence[DomainEvent]`, and defaults `expected` to `ExpectedVersion.any()` (also accessible as `ExpectedVersion.ANY`).
+- `append(stream, events, expected, *, timeout=None)` accepts either a single `DomainEvent` (normalized to `[events]`) or a `Sequence[DomainEvent]`. `expected` is required; omitting it raises `TypeError`, and `None` is not accepted. Use `ExpectedVersion.any_()` to skip the version check.
 - `read_events(stream, options=None, *, timeout=None) -> list[DomainEvent]` reads the stream via `read_stream(stream, options, timeout=timeout)` and unwraps `.event` from each `EventEnvelope`.
 - `stream_exists(stream, *, timeout=None) -> bool` returns `True` if the stream has at least one event (`get_stream_version(stream, timeout=timeout) > 0`), or `False` when empty.
 

@@ -21,10 +21,12 @@ from eventsource.observability.attributes import (
     ATTR_SUBSCRIPTION_PHASE,
     ATTR_WATERMARK,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.exceptions import TransitionError
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
+    from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
     from eventsource.ports.bus import SubscribableEventBus
     from eventsource.ports.checkpoints import SubscriptionPositions
     from eventsource.ports.store import GlobalEventFeed
@@ -41,6 +43,7 @@ class TransitionExecutionMixin:
         event_bus: SubscribableEventBus
         checkpoint_repo: SubscriptionPositions
         subscription: Subscription
+        _error_handler: SubscriptionErrorHandler | None
         _phase: TransitionPhase
         _watermark: Position | None
         _catchup_runner: CatchUpRunner | None
@@ -82,6 +85,7 @@ class TransitionExecutionMixin:
                     event_store=self.event_store,
                     checkpoint_repo=self.checkpoint_repo,
                     subscription=self.subscription,
+                    error_handler=self._error_handler,
                 )
                 catchup_result = await self._catchup_runner.run_until_position(watermark)
                 catchup_processed = catchup_result.events_processed
@@ -107,8 +111,9 @@ class TransitionExecutionMixin:
                 return TransitionResult(True, catchup_processed, buffer_processed, final_pos, TransitionPhase.LIVE)  # fmt: skip
             except Exception as e:
                 self._set_phase(TransitionPhase.FAILED, span)
-                extra_err = {"subscription": sub_name, "phase": self._phase.value, "error": str(e)}
-                logger.error("Transition failed", extra=extra_err, exc_info=True)
+                extra_err = {"subscription": sub_name, "phase": self._phase.value, "error": error_summary(e)}  # fmt: skip
+                # No exc_info: catch-up and buffer delivery run event handlers, and the traceback repeats the message.  # fmt: skip
+                logger.error("Transition failed", extra=extra_err)
                 await self._cleanup()
                 final_pos = self.subscription.last_processed_position
                 return TransitionResult(False, catchup_processed, buffer_processed, final_pos, self._phase, error=e)  # fmt: skip
@@ -119,6 +124,7 @@ class TransitionExecutionMixin:
             checkpoint_repo=self.checkpoint_repo,
             event_feed=self.event_store,
             subscription=self.subscription,
+            error_handler=self._error_handler,
         )
         await self._live_runner.start(buffer_events=buffer_events)
 

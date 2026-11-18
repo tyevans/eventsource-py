@@ -82,7 +82,7 @@ Several public subsystems ship in the package but are **not** re-exported at the
 level. They are imported from their own modules: `eventsource.testing`,
 `eventsource.application.subscriptions`, `eventsource.observability`, `eventsource.application.migration`,
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks`,
-`eventsource.gdpr`, and the raw SQL under `eventsource.adapters.sql.schemas`.
+and the raw SQL under `eventsource.adapters.sql.schemas`.
 (`eventsource.locks` no longer exists -- see ADR 0030; import
 `eventsource.ports.locks` / `eventsource.adapters.postgresql.locks` instead.
 `eventsource.config` no longer exists either -- it was an empty placeholder
@@ -824,7 +824,6 @@ Import these from their module:
 | `eventsource.testing` | Assertions, BDD helpers, the test harness, builders, and the conformance suites |
 | `eventsource.observability` | OpenTelemetry tracing integration (`telemetry` extra) |
 | `eventsource.application.migration` | Live event-store migration tooling: dual-write, cutover, sync tracking |
-| `eventsource.gdpr` | GDPR compliance utilities |
 
 Two modules are re-exported *and* importable directly, because they are canonical
 homes rather than optional add-ons: `eventsource.domain.decorators` (`handles`) and
@@ -1221,7 +1220,8 @@ and — only for `is_new=True` — appends the event to the uncommitted list. Re
 constructs *and applies* an event, auto-populating `aggregate_id`, `aggregate_type`, and
 `aggregate_version=get_next_version()`, plus `tenant_id` from the ambient tenant context
 when one is set and `tenant_id` was not passed explicitly. Explicit keyword arguments
-override every auto-populated value. It returns the created event.
+override every auto-populated value, except that an explicit `tenant_id` must equal the
+active tenant scope; a different value raises `TenantMismatchError`. It returns the created event.
 
 ```python
 from eventsource import DeclarativeAggregate, handles

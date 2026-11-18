@@ -1409,8 +1409,21 @@ projection = OrderSummaryProjection(session_factory=sf, tenant_filter=get_curren
 ```
 
 A non-matching event is skipped with a debug log -- and, as with `"ignore"`, checkpointed.
-Events with no `tenant_id` at all are always processed, so legacy and system events are not
-accidentally filtered out.
+An event with no `tenant_id` (`None`) never matches a set filter, so the projection skips it
+too. A projection with no `tenant_filter` processes these events.
+
+A callable filter that returns `None` means that no tenant scope is active. `get_current_tenant`
+returns `None` when no tenant is set. So an unscoped call with the filter above raises
+`TenantContextNotSetError`, and the projection does not process the event. The error is a
+configuration error, so the projection does not retry it. To process the events of every
+tenant when no scope is active, set `tenant_filter_allow_unscoped = True` on the class:
+
+```python
+class AllTenantsOrderSummary(OrderSummaryProjection):
+    tenant_filter_allow_unscoped = True
+```
+
+Set this flag only when you want that behavior. It does not affect a static `UUID` filter.
 
 With routing understood, the remaining question is who calls `handle()` in the first place,
 and how the projection knows where it left off.
@@ -1557,7 +1570,7 @@ Three views, from coarse to fine.
 SubscriptionStatus(name='order-summary', state='live', position=2, lag_events=0,
                    events_processed=2, events_failed=0, last_processed_at='...',
                    started_at='...', uptime_seconds=0.4, error=None,
-                   events_dlq=0, recent_errors_count=0)
+                   events_dlq=0)
 ```
 
 `state='live'` means catch-up finished and the subscription has switched to the bus.

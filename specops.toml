@@ -48,15 +48,25 @@ preflight = [
 ]
 
 [execution]
-agent_command = "agy --dangerously-skip-permissions -p {prompt}"
+# Permission prompts stay on for shell commands. `--mode accept-edits` auto-
+# approves file edits only. `--sandbox` adds terminal restrictions.
+# Not yet verified: how `agy -p` behaves when a prompt would be needed (hang,
+# deny, or fail). Run a dry task to confirm before relying on it.
+# Do not add --dangerously-skip-permissions back. Agents read backlog and
+# issue text, so prompt injection is a real risk. Run agents in a sandbox.
+agent_command = "agy --sandbox --mode accept-edits -p {prompt}"
 agent_max_attempts = 3
 git_branch_prefix = "feat/"
 backlog_isolation = true
 
 [security]
+# Enforced by gitleaks: the `gitleaks` hook in .pre-commit-config.yaml and the
+# `secrets` job in .github/workflows/ci.yml. Rules and allowlist: .gitleaks.toml.
 secret_scanning = true
 lockfile_immutability = true
 enforce_lockfile = true
+# Advisory only. No code in this repo reads this key, so nothing enforces it.
+# Sandboxing is set per agent run in [execution] agent_command (`--sandbox`).
 sandbox_enabled = true
 allowed_commands = ["pytest", "git", "uv", "make", "ruff", "mypy"]
 reporting_contact = "tyevans@gmail.com"

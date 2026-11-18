@@ -102,7 +102,7 @@ The adapter exposes one method per store port operation plus two stream convenie
 
 | Sync method | Wraps | Returns |
 | --- | --- | --- |
-| `append(stream, events, expected=ExpectedVersion.any(), *, timeout=None)` | `append` | `AppendResult` |
+| `append(stream, events, expected, *, timeout=None)` | `append` | `AppendResult` |
 | `read_stream(stream, options=None, *, timeout=None)` | `read_stream` | `list[EventEnvelope]` |
 | `read_events(stream, options=None, *, timeout=None)` | `read_stream` (unwrapped) | `list[DomainEvent]` |
 | `get_stream_version(stream, *, timeout=None)` | `get_stream_version` | `int` |
@@ -148,13 +148,13 @@ If you need the async surface directly — to build a coroutine that batches sev
 
 ### `append` (optimistic locking with `ExpectedVersion`)
 
-`append` writes one or more events to one stream and enforces optimistic concurrency using an `ExpectedVersion` (which defaults to `ExpectedVersion.any()` when omitted):
+`append` writes one or more events to one stream and enforces optimistic concurrency using a required `ExpectedVersion` argument. `expected` has no default: omitting it raises `TypeError`, so the concurrency check is never skipped by accident.
 
 ```python
 result = sync_store.append(
     stream,                         # StreamId
     [OrderShipped(...)],            # DomainEvent | Sequence[DomainEvent]
-    ExpectedVersion.exact(current_version),  # defaults to ExpectedVersion.any()
+    ExpectedVersion.exact(current_version),  # required; pass ExpectedVersion.any_() to skip the check
     timeout=None,                   # keyword-only override
 )
 ```
@@ -184,7 +184,7 @@ If you do not need the events themselves — you are appending a fact that does 
 
 | Constructor | Meaning |
 | --- | --- |
-| `ExpectedVersion.any()` / `ExpectedVersion.any_()` | Skip the version check entirely — no optimistic locking (the default in `SyncEventStoreAdapter.append`). |
+| `ExpectedVersion.any_()` | Skip the version check entirely — no optimistic locking. You must pass it explicitly; there is no default. |
 | `ExpectedVersion.no_stream()` | The stream must not exist yet (zero events). |
 | `ExpectedVersion.stream_exists()` | The stream must already have at least one event; any version is accepted. |
 | `ExpectedVersion.exact(n)` | The stream must currently have exactly `n` events. |
@@ -195,7 +195,7 @@ from eventsource.ports import ExpectedVersion
 sync_store.append(stream, OrderCreated(...), ExpectedVersion.no_stream())
 ```
 
-Reserve `ExpectedVersion.any()` / `ExpectedVersion.any_()` for append-only streams or quick scripts where concurrent writers genuinely cannot conflict; in contended production workflows, pass an explicit `ExpectedVersion`.
+Reserve `ExpectedVersion.any_()` for append-only streams or quick scripts where concurrent writers genuinely cannot conflict; in contended production workflows, pass an explicit `ExpectedVersion`.
 
 #### Handling `OptimisticLockError`
 

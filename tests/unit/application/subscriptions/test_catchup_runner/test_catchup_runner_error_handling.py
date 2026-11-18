@@ -49,7 +49,9 @@ class TestCatchUpRunnerErrorHandling:
 
         # Should complete despite errors
         assert result.completed is True
-        assert result.events_processed == 3
+        # Failed events are not delivered: nothing counts as processed
+        assert result.events_processed == 0
+        assert subscription.events_processed == 0
         # Subscription should track failures
         assert subscription.events_failed == 3  # All fail since type is SampleTestEvent
 

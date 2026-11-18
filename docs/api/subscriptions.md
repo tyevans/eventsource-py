@@ -592,10 +592,13 @@ tenant_config = SubscriptionConfig(
 | `retry_exponential_base` | `float` | `2.0` |
 | `retry_jitter` | `float` | `0.1` |
 
-`continue_on_error` governs what happens once an event has exhausted retries and
-been dead-lettered: with the default `True` the runner moves on to the next
-event; with `False` the runner stops. Both the catch-up and live runners check
-it at that point.
+`continue_on_error` governs whether a runner moves on after a handler failure.
+On every handler failure, both the catch-up and live runners first call the
+subscription's error handler (a DLQ row when routed there, then `on_error`
+callbacks). With the default `True`, the checkpoint then advances past the
+event and the runner continues. The failed event is not counted in
+`events_processed`. With `False`, the runner re-raises and the checkpoint does
+not advance past the event.
 
 The five `retry_*`/`*_retry_*` fields are stored flat here and assembled into a
 `RetryConfig` by `get_retry_config()`. They are not read directly by the
@@ -631,6 +634,7 @@ offending value, and most suggest a workable default.
 | Rule | Raised when |
 | --- | --- |
 | `batch_size` must be positive | `batch_size < 1` |
+| `batch_size` must be at most `MAX_BATCH_SIZE` (10,000) | `batch_size > 10_000`; a batch is held in memory |
 | `processing_timeout` must be positive | `<= 0` |
 | `checkpoint_interval_seconds` must be positive | `<= 0` |
 | `max_retries` must be `>= 0` | negative (`0` is legal — it means no retries) |

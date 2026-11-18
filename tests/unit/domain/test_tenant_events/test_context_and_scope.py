@@ -47,22 +47,6 @@ class TestWithTenantContext:
                 customer_id=uuid4(),
             )
 
-    def test_explicit_tenant_id_overrides_context(self) -> None:
-        """Explicit tenant_id in kwargs overrides context."""
-        context_tenant = uuid4()
-        explicit_tenant = uuid4()
-
-        set_current_tenant(context_tenant)
-
-        event = OrderCreated.with_tenant_context(
-            aggregate_id=uuid4(),
-            customer_id=uuid4(),
-            tenant_id=explicit_tenant,
-        )
-
-        assert event.tenant_id == explicit_tenant
-        assert event.tenant_id != context_tenant
-
     def test_all_other_fields_work(self) -> None:
         """All other event fields can be passed through kwargs."""
         tenant_id = uuid4()

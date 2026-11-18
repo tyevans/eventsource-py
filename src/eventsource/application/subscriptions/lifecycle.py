@@ -6,8 +6,10 @@ import asyncio
 import logging
 from typing import Any
 
+from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability import attributes as attr
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.exceptions import SubscriptionError, TransitionError
 
 from .subscription import Subscription, SubscriptionState, render_position
@@ -27,8 +29,11 @@ class SubscriptionLifecycleManager:
         tracer: Tracer | None = None,
         enable_tracing: bool = True,
         leader_elector: Any = None,
+        error_handlers: dict[str, SubscriptionErrorHandler] | None = None,
     ) -> None:
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
+        # Shared with the manager (by reference): a handler subscribed later is still found.
+        self._error_handlers = error_handlers if error_handlers is not None else {}
         self._enable_tracing = self._tracer.enabled
         self.event_store, self.event_bus = event_store, event_bus
         self.checkpoint_repo, self.leader_elector = checkpoint_repo, leader_elector
@@ -41,7 +46,7 @@ class SubscriptionLifecycleManager:
         try:
             return bool(await self.leader_elector.renew() and self.leader_elector.is_leader)
         except Exception as e:
-            extra = {"identity": self.leader_elector.identity, "error": str(e)}
+            extra = {"identity": self.leader_elector.identity, "error": error_summary(e)}
             logger.error("Leadership lease renewal failed", extra=extra, exc_info=True)
             return False
 
@@ -62,7 +67,7 @@ class SubscriptionLifecycleManager:
                 if span and pos_token is not None:
                     span.set_attribute(attr.ATTR_POSITION, pos_token)
                 logger.info("Starting subscription", extra={"subscription": name, "start_position": pos_token})  # fmt: skip
-                coord = TransitionCoordinator(self.event_store, self.event_bus, self.checkpoint_repo, subscription)  # fmt: skip
+                coord = TransitionCoordinator(self.event_store, self.event_bus, self.checkpoint_repo, subscription, error_handler=self._error_handlers.get(name))  # fmt: skip
                 self._coordinators[name] = coord
                 result = await coord.execute()
                 if not result.success:
@@ -78,7 +83,7 @@ class SubscriptionLifecycleManager:
                 }
                 logger.info("Subscription started successfully", extra=ok_extra)
             except Exception as e:
-                logger.error("Failed to start subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
+                logger.error("Failed to start subscription", extra={"subscription": name, "error": error_summary(e)}, exc_info=True)  # fmt: skip
                 await subscription.set_error(e)
                 raise
 
@@ -100,7 +105,7 @@ class SubscriptionLifecycleManager:
                     results[name] = await task
                 except Exception as e:
                     results[name] = e
-                    logger.error("Unexpected error starting subscription", extra={"subscription": name, "error": str(e)}, exc_info=True)  # fmt: skip
+                    logger.error("Unexpected error starting subscription", extra={"subscription": name, "error": error_summary(e)}, exc_info=True)  # fmt: skip
         else:
             for sub in subscriptions:
                 results[sub.name] = await self.start_subscription_isolated(sub)

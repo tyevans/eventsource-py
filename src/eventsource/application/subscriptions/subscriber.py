@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.subscribers import (
     BatchSubscriber,
     Subscriber,
@@ -89,7 +90,7 @@ class BatchAwareSubscriber(BaseSubscriber):
                         "subscriber": self.__class__.__name__,
                         "event_type": event.event_type,
                         "event_id": str(event.event_id),
-                        "error": str(e),
+                        "error": error_summary(e),
                     },
                 )
 

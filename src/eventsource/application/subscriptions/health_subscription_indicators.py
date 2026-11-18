@@ -10,6 +10,7 @@ from eventsource.application.subscriptions.health_check import (
     HealthIndicator,
     HealthStatus,
 )
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
@@ -39,11 +40,12 @@ class SubscriptionHealthIndicatorsMixin:
         if state == SubscriptionState.PAUSED:
             return HealthIndicator("state", HealthStatus.DEGRADED, "Subscription is paused", details)  # fmt: skip
         if state == SubscriptionState.ERROR:
+            summary = error_summary(self.subscription.last_error) if self.subscription.last_error else "none"  # fmt: skip
             return HealthIndicator(
                 "state",
                 HealthStatus.UNHEALTHY,
-                f"Subscription in error state: {self.subscription.last_error}",
-                {"state": state.value, "error": str(self.subscription.last_error)},
+                f"Subscription in error state: {summary}",
+                {"state": state.value, "error": summary},
             )
         if state == SubscriptionState.STOPPED:
             return HealthIndicator("state", HealthStatus.DEGRADED, "Subscription is stopped", details)  # fmt: skip

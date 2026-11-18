@@ -809,8 +809,12 @@ Three properties of this mode to plan around:
 - **Failures are invisible to the caller.** The scheduler's guarded wrapper
   catches everything and logs at `WARNING`; nothing propagates into `save()`,
   and the returned value was already `None`.
-- **Tasks are only tracked, not bounded.** There is no concurrency limit and no
-  backpressure. Completed tasks are pruned whenever a new one is scheduled or
+- **Tasks are tracked and bounded.** `BackgroundScheduler` allows up to
+  `max_pending` unfinished snapshot writes (default `1000`). At that limit,
+  `save()` runs the next write inline and waits for it, so the number of
+  pending tasks never grows past the limit. Pass
+  `snapshot_scheduler=BackgroundScheduler(max_pending=...)` to change it.
+  Completed tasks are pruned whenever a new one is scheduled or
   `pending_count` is read. If the process exits with tasks outstanding, those
   snapshots are simply never written -- which is safe, because the event stream
   is the system of record.

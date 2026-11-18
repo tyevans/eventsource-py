@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.dlq_replay import RabbitMQDLQReplayMixin
 from eventsource.adapters.rabbitmq.models import DLQMessage, RabbitMQEventBusStats
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
@@ -36,13 +37,15 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
         self._topology, self._stats = topology, stats
         self._logger = logging.getLogger("eventsource.adapters.rabbitmq")
 
-    def _log_dlq_error(self, message: str, exc: Exception) -> None:
+    def _log_dlq_error(self, message: str, exc: Exception, *, traceback: bool = False) -> None:
+        """Log a DLQ failure. Pass ``traceback=True`` only on paths that never decode payloads."""
+        summary = error_summary(exc)
         extra = {
             "dlq_queue": self._config.dlq_queue_name,
-            "error": str(exc),
+            "error": summary,
             "error_type": type(exc).__name__,
         }
-        self._logger.error(f"{message}: {exc}", exc_info=True, extra=extra)
+        self._logger.error(f"{message}: {summary}", exc_info=traceback, extra=extra)
 
     def _check_channel(self, action: str) -> bool:
         if not self._connection._connected or not self._config.enable_dlq:
@@ -119,7 +122,7 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
             self._logger.debug(f"DLQ message count: {count}", extra=extra)
             return count
         except Exception as e:
-            self._log_dlq_error("Failed to get DLQ message count", e)
+            self._log_dlq_error("Failed to get DLQ message count", e, traceback=True)
             return 0
 
     async def purge(self) -> int:
@@ -135,7 +138,7 @@ class RabbitMQDLQAdmin(RabbitMQDLQReplayMixin):
             self._logger.info(f"Purged {purged_count} messages from DLQ", extra=extra)
             return purged_count
         except Exception as e:
-            self._log_dlq_error("Failed to purge DLQ", e)
+            self._log_dlq_error("Failed to purge DLQ", e, traceback=True)
             return 0
 
 

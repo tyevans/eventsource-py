@@ -26,8 +26,6 @@ from eventsource.ports import (
     StreamReadOptions,
 )
 
-_ANY = ExpectedVersion.any_()
-
 
 class InMemoryEventStore:
     """In-memory implementation of `FullEventStore` (structural conformance only)."""
@@ -69,7 +67,7 @@ class InMemoryEventStore:
             for col in (self._events, self._streams, self._categories, self._event_ids):
                 col.clear()
 
-    async def append(self, stream: StreamId, events: DomainEvent | Sequence[DomainEvent], expected: ExpectedVersion = _ANY) -> AppendResult:  # fmt: skip
+    async def append(self, stream: StreamId, events: DomainEvent | Sequence[DomainEvent], expected: ExpectedVersion) -> AppendResult:  # fmt: skip
         batch: Sequence[DomainEvent] = (events,) if isinstance(events, DomainEvent) else events
         if not batch:
             raise ValueError("cannot append an empty batch of events")

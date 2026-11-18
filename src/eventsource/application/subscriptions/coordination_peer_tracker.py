@@ -8,6 +8,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from eventsource.observability.error_summary import error_summary
+
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.coordination_shutdown import (
         PeerInfo,
@@ -120,7 +122,7 @@ class WorkRedistributionPeerTrackerMixin:
                         "Peer timeout callback failed",
                         extra={
                             "peer_id": peer_id,
-                            "error": str(e),
+                            "error": error_summary(e),
                         },
                         exc_info=True,
                     )

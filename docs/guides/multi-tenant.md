@@ -1,8 +1,9 @@
 # Multi-Tenancy
 
-Use this guide to run one event-sourced application for many tenants: bind a
+Use this guide to run one event-sourced application for many tenants. Bind a
 tenant to the current request, stamp that tenant onto every event you emit, and
-have the repository reject writes that mix tenants.
+let the repository check stream ownership under that tenant's scope. A stream that
+belongs to another tenant looks the same as a stream that does not exist.
 
 Multi-tenancy support gives you four pieces to wire together, split across
 `domain/tenant_context.py`, `domain/tenant_events.py`,
@@ -18,16 +19,18 @@ all reachable from the top-level `eventsource` package except
   required rather than optional, with `with_tenant_context(...)` to fill it in
   from the ambient scope.
 - **`TenantAwareRepository`** — a wrapper around `AggregateRepository` that
-  validates the tenant of every uncommitted event before it is persisted, and
-  can optionally require tenant context on load.
+  checks the tenant of every uncommitted event before it is persisted. Under an
+  active scope it also checks that the stream belongs to that tenant on load,
+  existence probe, version probe, and append. The optional
+  `require_tenant_context` flag adds a precondition on the same calls.
 - **`TenantContextNotSetError` and `TenantMismatchError`** — the two failures
   you need to handle at your request boundary.
 
 Follow the steps in order: context first, then events, then the repository
 wrapper, then the configuration and error handling that match how strict you
-need to be. The final sections cover nesting scopes for background work and the
-isolation guarantees this wrapper does *not* provide — read those before you
-rely on it as your only tenant boundary.
+need to be. The later sections cover context propagation, projection filters,
+stream ownership, auditing existing data, upgrade notes, and the limits of this
+feature. Read the limits before you rely on it as your only tenant boundary.
 
 ## Before you start
 
@@ -79,19 +82,20 @@ uses nothing beyond pydantic and the standard library's `contextvars`.
 Two decisions to make before you write code, because they change what the rest
 of this guide tells you to configure:
 
-- **Whether every event on your aggregates is tenant-scoped.** Genuinely global
-  events can stay plain `DomainEvent` subclasses — `DomainEvent` declares
-  `tenant_id: UUID | None`, so an absent tenant is representable. See "Mixing
-  tenant and non-tenant events on one aggregate".
+- **Whether every event on your aggregates is tenant-scoped.** Under a tenant
+  scope, `save()` rejects an event whose `tenant_id` is `None`. Save global
+  events with a plain `AggregateRepository`, or with `validate_on_save=False`
+  outside a scope.
 - **Whether you are adopting this on an existing store.** Events written before
-  you introduced tenants will not carry a `tenant_id`. Plan to start in
-  migration mode (`validate_on_save=False`) rather than the default, and read
-  Step 4 before flipping any switch.
+  you introduced tenants have no `tenant_id`. Under a scope, `TenantAwareRepository`
+  does not load these streams. Read "Auditing existing streams" and
+  "Upgrade notes" before you change any switch.
 
-Finally, know the boundary of this feature up front: `TenantAwareRepository`
-validates the tenant of the events you are about to write. It does not filter
-events on load and it does not partition storage — physical isolation remains
-your event store's responsibility. See "Limitations" at the end of this guide.
+Finally, know the boundary of this feature up front. Under a scope,
+`TenantAwareRepository` checks ownership of the streams it reads and writes. It
+does not check direct store access or unscoped repositories, and it does not
+partition storage. Physical isolation remains your event store's responsibility.
+See "Limitations" at the end of this guide.
 
 ## Step 1: Establish tenant context at the request boundary
 
@@ -151,7 +155,7 @@ Because the reset happens in `finally`, an exception raised inside the scope
 propagates normally and the previous tenant is restored on the way out. The
 reset is token-based (`tenant_context.reset(token)`), not a clear, so it
 restores whatever was set before — `None` at the top level, the outer tenant
-inside a nested scope. See "Nesting tenant scopes" below.
+inside a nested scope. The nesting example is under "Sync entrypoints" below.
 
 Entry and exit are logged at `DEBUG` on `eventsource.domain.tenant_context`
 (`"Tenant scope entered: %s"` / `"Tenant scope exited: %s"`), which is the
@@ -508,11 +512,12 @@ projection = OrderSummaryProjection(tenant_filter=current_tenant_for_worker)
 
 Two consequences worth planning for:
 
-- **Outside any tenant scope the callable returns `None`**, and `None` means
-  *no filtering* rather than *no events* — every event is processed. If a stray
-  unscoped `handle()` call would corrupt the read model, either assert the scope
-  yourself before dispatching (`get_required_tenant()` raises
-  `TenantContextNotSetError` when unset) or use a static `UUID` filter instead.
+- **Outside any tenant scope the callable returns `None`, and `handle()` raises
+  `TenantContextNotSetError`.** The event is not processed. Retries do not help,
+  so fix the missing scope at the call site. A static `UUID` filter never raises
+  this error. Set `tenant_filter_allow_unscoped = True` on the class only to
+  restore the legacy behavior, where `None` processes events of every tenant. Do
+  not set it for an isolated read model.
 - **The callable runs on the projection's event-handling path**, so keep it
   cheap and non-blocking. A `ContextVar` read is effectively free; a database
   lookup per event is not — resolve that once and cache it in the cell your
@@ -520,9 +525,57 @@ Two consequences worth planning for:
 
 If the projection is driven by a subscription runner rather than by your request
 handler, remember that the runner, not the request, calls `handle()`. Establish
-the scope around that call — for example inside the handler you register with
-the subscription — or fall back to one instance per tenant (see "Run one
-projection instance per tenant").
+the scope around that call, for example inside the handler you register with
+the subscription. Read "Run one projection instance per tenant" before you run
+more than one instance.
+
+## Run one projection instance per tenant
+
+The checkpoint key is the projection name. By default the name is the class
+name, not the instance. Two instances of one class that use the default name
+share one checkpoint row. The instance that advances the row moves it past
+events that the other instance has not handled. The other instance then skips
+those events.
+
+Give each per-tenant instance its own name. Pass `projection_name` to the
+constructor:
+
+```python
+tenant_projection = OrderSummary(
+    checkpoint_repo=checkpoints,
+    tenant_filter=tenant_id,
+    projection_name=f"OrderSummary:{tenant_id}",
+)
+```
+
+Each instance now has its own checkpoint row. The name also labels the
+instance's dead letter entries, logs, and spans. Use the same name on every
+restart. The name must be 1 to 255 characters and must not contain control
+characters.
+
+Use these rules with `projection_name`:
+
+- The name is the checkpoint key. Changing it on a running projection starts
+  a new checkpoint at the beginning of the feed.
+- A projection with a callable filter resolves its tenant per event. It cannot
+  have one name per tenant. Use a fixed `UUID` filter for each per-tenant
+  instance, or use the first option below.
+
+A checkpoint advances over every event that the tenant filter skips. The
+projection does not handle a skipped event, but the checkpoint still moves past
+it. Projections that share a name therefore share one checkpoint row. One
+instance can move the row past events that the other instance must handle.
+Give every projection instance its own name.
+
+Choose one of these options:
+
+- **Run one instance per class.** Use a callable filter, and set the scope
+  around each `handle()` call. See "Scope a projection to the request's tenant".
+  Use one shared checkpoint for all tenants. Accept that the checkpoint is
+  shared and document that choice.
+- **Use one class per tenant when the tenant set is fixed.** Each class has its
+  own checkpoint key. Each class reads every event and skips the events of other
+  tenants, so the read cost grows with the number of tenants.
 
 ## How filter values are resolved: `_get_tenant_filter_value`
 
@@ -546,10 +599,10 @@ at event-handling time rather than at construction. Convert strings yourself:
 projection = OrderSummaryProjection(tenant_filter=UUID(tenant_id_str))
 ```
 
-The resolved value feeds `_should_process_event(event)`, which treats `None` as
-"process everything". So a callable returning `None` — `get_current_tenant`
-outside any tenant scope, for instance — disables filtering for that event
-instead of dropping it.
+The resolved value feeds `_should_process_event(event)`. An unset filter (`None`)
+processes everything. A callable that returns `None` — `get_current_tenant`
+outside any tenant scope, for instance — raises `TenantContextNotSetError`,
+unless the class sets `tenant_filter_allow_unscoped = True`.
 
 Use the method directly when you want to see what a projection would filter on
 right now, without dispatching an event:
@@ -658,75 +711,53 @@ Note that the filter value is resolved again while building the message and the
 `extra` mapping, so a callable filter is invoked three times for each skipped
 event — one more reason to keep it a cheap contextvar read.
 
-### Events with no `tenant_id` attribute or `tenant_id=None` -> processed anyway (legacy/system events)
+### Events with no `tenant_id` -> skipped under a set filter
 
-`_should_process_event` reads the tenant defensively —
-`getattr(event, "tenant_id", None)` — so two different situations collapse to
-the same `None`:
+`_should_process_event` reads the tenant with `getattr(event, "tenant_id", None)`.
+Two situations collapse to the same `None`:
 
-- the event class declares `tenant_id` but this instance left it unset.
-  `DomainEvent.tenant_id` is `UUID | None` and defaults to `None`, so this is
+- the event class declares `tenant_id` but this instance left it unset, which is
   the common case for anything not built through `TenantDomainEvent` or
   `with_tenant_context(...)`;
-- the event class has no `tenant_id` attribute at all — a model that predates
-  the field, or a non-`DomainEvent` payload routed through the projection.
+- the event class has no `tenant_id` attribute at all.
 
-Either way the next branch returns `True` before the equality check ever runs,
-so the event is handled exactly as if no filter were set:
+Neither value equals a set filter, so the event is skipped like any other
+other-tenant event:
 
 ```python
 acme = UUID("11111111-1111-1111-1111-111111111111")
 projection = OrderSummaryProjection(tenant_filter=acme)
 
-await projection.handle(OrderCreated(aggregate_id=uuid4()))                 # processed
-await projection.handle(OrderCreated(aggregate_id=uuid4(), tenant_id=None)) # processed
-await projection.handle(LegacyImported(aggregate_id=uuid4()))               # processed
+await projection.handle(OrderCreated(aggregate_id=uuid4(), tenant_id=None))  # skipped
+await projection.handle(LegacyImported(aggregate_id=uuid4()))                # skipped
 ```
 
-This is deliberate. Events written before multi-tenancy existed, and system
-events that belong to no tenant (schema markers, imports, maintenance events),
-would otherwise be invisible to *every* tenant-scoped projection — each
-per-tenant instance would skip them and the checkpoint would move past them, so
-nothing would ever see them. Passing them through means each instance sees them
-once, which is the right default for events that are global by nature.
-
-The consequence to plan around: **the filter is not a security boundary.** An
-event with a missing or null tenant reaches the handlers of a projection scoped
-to any tenant. Two ways to close that:
-
-Reject untenanted events inside the handler, where you can decide per event
-type:
+With no filter set, the same events are processed:
 
 ```python
-@handles(OrderCreated)
-async def _handle_order_created(self, event: OrderCreated) -> None:
-    if event.tenant_id is None:
-        return
-    ...
+projection = OrderSummaryProjection()
+await projection.handle(OrderCreated(aggregate_id=uuid4(), tenant_id=None))  # processed
 ```
 
-Or remove the case at the source by deriving your events from
-`TenantDomainEvent` (`eventsource.domain.tenant_events`, re-exported from
-`eventsource`), which redeclares `tenant_id`
-as a required `UUID`; construction without a tenant then fails validation
-rather than producing an unfiltered event. Note that the guard only helps for
-events you control — replayed history written before the switch still carries
-`tenant_id=None`.
+Global events, such as schema markers or imports, therefore need a projection
+with no filter, or a separate projection class. A tenant filter is not an
+authorization check. Check the caller's rights in your handler or in the code
+that calls it. The filter only chooses which events a projection handles.
 
 ### `tenant_filter=None` (default) -> no filtering, all events processed
 
-`_should_process_event` returns `True` immediately when the resolved value is
-`None`, without touching the event. Omitting `tenant_filter` therefore preserves
-pre-tenant behaviour exactly — and, as noted earlier, a *callable* that returns
-`None` lands in this same branch, so an unscoped `get_current_tenant` processes
-everything rather than nothing.
+`_should_process_event` returns `True` immediately when the filter is unset,
+without touching the event. Omitting `tenant_filter` therefore preserves
+pre-tenant behaviour exactly. A callable that returns `None` does not reach this
+branch. It raises, as described above, unless `tenant_filter_allow_unscoped` is
+`True`.
 
 | Filter value | Event `tenant_id` | Result |
 | --- | --- | --- |
 | `None` | anything | processed |
 | `UUID` | equal `UUID` | processed |
 | `UUID` | different `UUID` | skipped, DEBUG log, checkpoint advances |
-| `UUID` | `None` / attribute absent | processed |
+| `UUID` | `None` / attribute absent | skipped, DEBUG log, checkpoint advances |
 
 ## Reading, querying, and executing with `TenantAwareRepository`
 
@@ -734,14 +765,17 @@ everything rather than nothing.
 `AggregateRepository`:
 
 - **`await tenant_repo.load(aggregate_id)`** and **`await tenant_repo.get_or_raise(aggregate_id)`**:
-  Load an existing aggregate by ID (raising `AggregateNotFoundError` when
-  missing). `get_or_raise(aggregate_id)` is an intent-revealing alias for
+  Load an existing aggregate by ID. Raises `AggregateNotFoundError` when the
+  stream is missing or, under a scope, belongs to another tenant.
+  `get_or_raise(aggregate_id)` is an intent-revealing alias for
   `load(aggregate_id)`.
 - **`await tenant_repo.get_or_none(aggregate_id)`**:
-  Returns the aggregate if found, or `None` when the stream does not exist.
+  Returns the aggregate, or `None` when the stream is missing or belongs to
+  another tenant.
 - **`await tenant_repo.exists(aggregate_id)`** and **`await tenant_repo.get_version(aggregate_id)`**:
   Query whether the aggregate stream exists (`bool`) or inspect its current
-  version (`int`, `0` when absent).
+  version (`int`). Under a scope, a stream that another tenant owns reads as
+  absent: `False` and `0`.
 - **`await tenant_repo.execute(aggregate_id, command, *more_commands, create_if_missing=True)`**:
   Loads (or creates) the aggregate, applies one or more commands or callables
   sequentially, and saves with tenant consistency validation.
@@ -750,4 +784,252 @@ When `require_tenant_context=True`, `load(aggregate_id)`,
 `get_or_raise(aggregate_id)`, `get_or_none(aggregate_id)`,
 `load_or_create(aggregate_id)`, `exists(aggregate_id)`, and
 `get_version(aggregate_id)` all verify `get_required_tenant()` before
-delegating to the wrapped `AggregateRepository`.
+delegating to the wrapped `AggregateRepository`. Under an active scope, these
+calls also check stream ownership, whether or not `require_tenant_context` is
+set. See "Stream ownership under a scope".
+
+## Stream ownership under a scope
+
+The owner of a stream is the tenant of its events. When a tenant scope is
+active, `TenantAwareRepository` applies these rules. Unscoped calls are not
+checked at all. A repository built with `require_tenant_context=False` does this
+on purpose, for system code.
+
+- **Load.** Every event in the stream must carry the active tenant. A stream
+  with one event of another tenant, or with one event that has no tenant, is
+  refused. The refusal is `AggregateNotFoundError`, the same error as a missing
+  stream.
+- **Snapshots.** A snapshot is used under a scope only when its `tenant_id`
+  equals the active tenant. Any other snapshot is ignored, and the stream is
+  replayed in full. A snapshot with no tenant is ignored too. Snapshots record
+  the owner tenant when they are written. A background snapshot takes the owner
+  from the events it was built from, so it keeps the right owner after the scope
+  exits.
+- **Exists and version.** The owner is the tenant of the first event of the
+  stream. A foreign stream reads as absent: `exists` returns `False`, and
+  `get_version` returns `0`.
+- **Save with a prior version above zero.** The repository checks the owner
+  before it appends. A foreign stream raises `AggregateNotFoundError`, and
+  nothing is appended. This check runs whether or not `validate_on_save` is set.
+- **Save with a new aggregate.** An aggregate with prior version `0` is not
+  checked by the repository. When the stream already exists, the store's
+  concurrency check fails the append with `OptimisticLockError`. Nothing is
+  appended.
+- **Save with validation on.** With `validate_on_save=True` (the default), a
+  scope rejects any uncommitted event whose `tenant_id` is `None`, and any event
+  of another tenant. The error is `TenantMismatchError`, and `actual` is `None`
+  for an untenanted event. Without a scope, `save()` raises
+  `TenantContextNotSetError`.
+- **Command tenant.** When a command or an explicit `tenant_id` contradicts the
+  active tenant, `create_event()` raises `TenantMismatchError` before the event
+  is applied.
+
+Code that runs in a scope sees foreign streams as missing. The example below
+shows the same aggregate id read from two scopes:
+
+```python
+from eventsource import tenant_scope
+from eventsource.application.aggregates.tenant_repository import TenantAwareRepository
+from eventsource.domain.exceptions import AggregateNotFoundError
+
+repo = TenantAwareRepository(order_repository)
+
+async with tenant_scope(acme):
+    order = await repo.load(order_id)        # owned by acme: loads
+
+async with tenant_scope(globex):
+    assert await repo.exists(order_id) is False
+    assert await repo.get_version(order_id) == 0
+    try:
+        await repo.load(order_id)
+    except AggregateNotFoundError:
+        pass                                  # foreign stream reads as missing
+```
+
+## Auditing existing streams
+
+Streams written before you adopted tenant ownership can mix tenants, or can hold
+events with no tenant. Scoped code refuses to load these streams. Run the query
+below before you turn on scoped reads for a store that already holds data.
+
+The query is read-only. It returns one row for each stream that has an event
+with no tenant, or with a tenant that differs from the tenant of the stream's
+first event. The result has the columns `aggregate_type`, `aggregate_id`, and
+`flagged_events`.
+
+<!-- audit-query -->
+```sql
+SELECT e.aggregate_type, e.aggregate_id, COUNT(*) AS flagged_events
+FROM events AS e
+JOIN events AS first_event
+  ON first_event.aggregate_type = e.aggregate_type
+ AND first_event.aggregate_id = e.aggregate_id
+ AND first_event.version = (
+       SELECT MIN(v.version)
+       FROM events AS v
+       WHERE v.aggregate_type = e.aggregate_type
+         AND v.aggregate_id = e.aggregate_id)
+WHERE e.tenant_id IS NULL
+   OR e.tenant_id <> first_event.tenant_id
+GROUP BY e.aggregate_type, e.aggregate_id
+ORDER BY e.aggregate_type, e.aggregate_id
+```
+
+The same text runs on PostgreSQL (12 or later) and on SQLite. The `events`
+table has the same column names on both. The query scans the whole table, so
+run it on a replica or in a quiet window for a large store.
+
+The query does not change data. It does not repair a stream. Decide what to do
+with each flagged stream. Read "Limitations" for the streams that no current step
+can fix.
+
+## Read models under a scope
+
+`TenantScopedReadModelRepository` wraps any read model repository. Import it
+from `eventsource.application.readmodels`. It is not in the top-level package.
+The read model must have a `tenant_id` field:
+
+```python
+from uuid import UUID
+
+from eventsource import ReadModel, tenant_scope
+from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
+from eventsource.application.readmodels import TenantScopedReadModelRepository
+
+
+class OrderSummary(ReadModel):
+    tenant_id: UUID | None = None
+    total: int = 0
+
+
+orders = TenantScopedReadModelRepository(InMemoryReadModelRepository(OrderSummary))
+
+async with tenant_scope(tenant_id):
+    summary = await orders.get(order_id)  # None when the row belongs to another tenant
+    await orders.save(OrderSummary(id=order_id, tenant_id=tenant_id, total=40))
+```
+
+Under an active scope:
+
+- Reads add the active tenant as a filter. A row of another tenant looks like a
+  missing row. `get` returns `None`, `exists` returns `False`, and `find` and
+  `count` leave the row out.
+- A row with no tenant is invisible under every scope.
+- A save checks the owner of the id first, including soft-deleted rows. A save
+  to an id that another tenant owns raises `TenantMismatchError`. A model whose
+  `tenant_id` differs from the active tenant also raises it.
+- `save_many` checks every model before it writes. If one model fails, the
+  batch writes nothing.
+- `delete`, `soft_delete`, and `restore` return `False` for an id that another
+  tenant owns. The row does not change.
+- `truncate` raises `TenantScopeOperationError`. Run it outside any scope.
+- Do not pass `tenant_id=` as a filter keyword. The wrapper raises `ValueError`.
+- A model with no `tenant_id` field raises `ValueError` from the wrapped
+  repository under a scope.
+
+With no scope, every call passes straight to the wrapped repository. Set
+`require_tenant_context=True` on the wrapper to raise `TenantContextNotSetError`
+when no scope is active.
+
+**Adopting an existing table.** Rows saved before you add `tenant_id` have no
+owner. Under a scope they are invisible. Backfill the column with the owner of
+each row before you put the wrapper in front of the table.
+
+## Dead letter queue under a scope
+
+A dead letter queue (DLQ) entry has an owner, `DLQEntry.tenant_id`. The framework
+sets it from the failed event. An event with no tenant gives an entry with no
+owner.
+
+Under an active scope:
+
+- `get_failed_events`, `get_failed_event_by_id`, `mark_resolved`,
+  `mark_retrying`, `get_failure_stats`, and `get_projection_failure_counts` act
+  only on entries of the active tenant.
+- An entry with no owner is invisible under every scope. Unscoped calls see it.
+- `delete_resolved_events` raises `TenantScopeOperationError`. Run retention
+  cleanup outside any scope.
+
+The owner is set on the first insert. A later failure of the same event in the
+same projection does not change it.
+
+## Upgrade notes
+
+These changes affect code written against earlier releases. Read them before you
+upgrade.
+
+1. **A callable tenant filter that returns `None` raises.** `handle()` raises
+   `TenantContextNotSetError` and does not process the event. To keep the old
+   behavior, set `tenant_filter_allow_unscoped = True` on that projection class.
+   Do not set it on an isolated read model.
+2. **A set tenant filter skips events with no tenant.** Before this change, these
+   events were processed. Use a projection with no filter for global events.
+3. **`save()` rejects untenanted events under a scope.** The error is
+   `TenantMismatchError`, and `actual` is `None`. Before this change, validation
+   skipped these events.
+4. **A command or explicit `tenant_id` that contradicts the active tenant raises.**
+   `create_event()` raises `TenantMismatchError`. Before this change, such events
+   were accepted.
+5. **Stream ownership applies under a scope.** Load raises `AggregateNotFoundError`
+   for a foreign or untenanted stream. `exists` returns `False`, and `get_version`
+   returns `0`. A save to a foreign stream raises `AggregateNotFoundError` and
+   appends nothing. These checks run with `validate_on_save=False` too.
+6. **Snapshots carry an owner.** `Snapshot` has a new optional field,
+   `tenant_id`, which defaults to `None`, so existing callers still work. Under a
+   scope, a snapshot is used only when its tenant matches. Existing snapshot rows
+   have no tenant. Under a scope they are ignored, so each aggregate replays once
+   and is snapshotted again. No data migration is needed.
+7. **Audit before you enable scoped reads.** Run the query in "Auditing existing
+   streams" on any store that holds data from before tenant ownership.
+8. **Add the DLQ owner column (PostgreSQL).** Run
+   `src/eventsource/adapters/sql/schemas/updates/007_add_dlq_tenant.sql` once.
+   The script adds a nullable `tenant_id` column. Until you run it, the adapter
+   writes DLQ entries with no owner. It logs one warning for each repository
+   instance. Under a scope its reads return no entries, and unscoped reads still
+   work. Restart the process after you run the script. SQLite adds the column
+   the first time the adapter uses the table. The file
+   `007_add_dlq_tenant_sqlite.sql` is for manual runs. It fails with
+   "duplicate column name" if the column exists.
+9. **Backfill read model owners.** Read model rows saved before you add
+   `tenant_id` are invisible under a scope. See "Read models under a scope".
+
+## Limitations
+
+The ownership checks apply to `TenantAwareRepository` under an active scope. They
+do not cover these paths:
+
+- **Direct store access.** Code that calls an event store or a snapshot store
+  directly bypasses every check. Limit direct access to trusted code.
+- **Unscoped repositories.** Without a scope, `load`, `exists`, and `get_version`
+  apply no ownership check. This is intended for system code.
+- **Global event id uniqueness.** Event ids are unique across all tenants. An
+  append that reuses an event id from another tenant raises
+  `DuplicateEventError`. That error tells the caller that the foreign event id
+  exists. This is an accepted residual risk (ADR-0113). Event ids are the
+  deduplication key for the bus, the outbox, and event lookup, so they stay
+  global.
+- **Mixed legacy streams.** `exists` and `get_version` read only the first event
+  of a stream. A stream that mixes tenants therefore reports as existing, with
+  its full version, to the tenant of its first event. `load` still refuses it.
+  Use the audit query to find these streams.
+- **Pre-tenancy streams.** A stream with no tenant on any event is owned by no
+  scope, so scoped code cannot load it. No supported step assigns an owner to
+  existing untenanted events yet. This is a follow-up task (ADR-0113).
+- **The outbox and the bus form one trust domain.** The outbox stores `tenant_id`
+  as a column. The bus and the Kafka publisher carry it as a field or a header.
+  Neither one filters by tenant. Every subscriber receives events for every
+  tenant. A subscriber that serves one tenant must filter in its own code. Do not
+  treat the header as an access control.
+- **Projections and subscriptions.** A projection filters only when you set
+  `tenant_filter`, and the filter only skips events. See "Run one projection
+  instance per tenant" for the checkpoint risk.
+- **Save to another tenant's id.** Under a scope, a save to an id that another
+  tenant owns raises `TenantMismatchError`. The error shows that the id exists
+  for another tenant. This is an accepted residual risk (ADR-0114).
+- **Bare read model and DLQ repositories.** The read model wrapper and the DLQ
+  scope apply in the application and the DLQ adapter. Code that calls the bare
+  repository directly bypasses both.
+- **Checkpoints have no owner.** A checkpoint row is keyed by the projection
+  name only. See "Run one projection instance per tenant".
+- **Physical isolation.** Separate databases, separate schemas, and PostgreSQL
+  row-level security remain your responsibility.

@@ -8,6 +8,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from eventsource.observability.error_summary import error_summary
+
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.connection import RabbitMQConnectionManager
     from eventsource.adapters.rabbitmq.consumer import RabbitMQConsumer
@@ -66,9 +68,9 @@ class RabbitMQEventBusShutdownMixin:
         except Exception as e:
             shutdown_duration = (datetime.now(UTC) - shutdown_start).total_seconds()
             self._logger.error(
-                f"Error during shutdown after {shutdown_duration:.2f}s: {e}",
+                f"Error during shutdown after {shutdown_duration:.2f}s: {error_summary(e)}",
                 exc_info=True,
-                extra={"duration_seconds": shutdown_duration, "error": str(e)},
+                extra={"duration_seconds": shutdown_duration, "error": error_summary(e)},
             )
             raise
 

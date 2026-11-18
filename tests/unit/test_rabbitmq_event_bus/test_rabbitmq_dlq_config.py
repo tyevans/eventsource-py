@@ -16,8 +16,12 @@ class TestRabbitMQDLQConfigOptions:
         config = RabbitMQEventBusConfig()
         assert config.dlq_message_ttl is None
 
-    def test_dlq_max_length_default_is_none(self) -> None:
+    def test_dlq_max_length_default_is_bounded(self) -> None:
         config = RabbitMQEventBusConfig()
+        assert config.dlq_max_length == 100_000
+
+    def test_dlq_max_length_none_removes_the_limit(self) -> None:
+        config = RabbitMQEventBusConfig(dlq_max_length=None)
         assert config.dlq_max_length is None
 
     def test_dlq_message_ttl_can_be_set(self) -> None:
@@ -97,11 +101,29 @@ class TestRabbitMQDLQQueueDeclarationWithOptions:
 
     @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
     @pytest.mark.asyncio
-    async def test_dlq_queue_declared_without_arguments_when_options_not_set(
+    async def test_dlq_queue_declared_with_default_length_bound(
         self, mock_aio_pika: MagicMock, config_without_dlq_options: RabbitMQEventBusConfig
     ) -> None:
         mock_channel = self._setup_mock_pika(mock_aio_pika)
         bus = RabbitMQEventBus(config=config_without_dlq_options)
+        await bus.connect()
+
+        dlq_queue_call = mock_channel.declare_queue.call_args_list[0]
+        assert dlq_queue_call.kwargs["arguments"] == {"x-max-length": 100_000}
+
+    @patch("eventsource.adapters.rabbitmq.connection.aio_pika")
+    @pytest.mark.asyncio
+    async def test_dlq_queue_declared_without_arguments_when_limits_removed(
+        self, mock_aio_pika: MagicMock
+    ) -> None:
+        config = RabbitMQEventBusConfig(
+            exchange_name="test-events",
+            consumer_group="test-group",
+            enable_dlq=True,
+            dlq_max_length=None,
+        )
+        mock_channel = self._setup_mock_pika(mock_aio_pika)
+        bus = RabbitMQEventBus(config=config)
         await bus.connect()
 
         dlq_queue_call = mock_channel.declare_queue.call_args_list[0]

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -12,14 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from eventsource.adapters._common import check_expected, describe_expected
 from eventsource.adapters._sql.positions import IntPositionCodec
+from eventsource.adapters.postgresql.locks_helpers import key_to_lock_id
+from eventsource.adapters.postgresql.store_append_conflicts import classify_integrity_error
+from eventsource.adapters.postgresql.store_append_outbox import write_outbox_row
 from eventsource.adapters.serialization import json_dumps
 from eventsource.domain import StreamId
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import DuplicateEventError, OptimisticLockError
-from eventsource.ports import AppendResult, ExpectedVersion, Position, outbox_event_data
+from eventsource.observability.error_summary import error_summary
+from eventsource.ports import AppendResult, ExpectedVersion, Position
 
-_EVENT_ID_UNIQUE_CONSTRAINT = "events_event_id_key"
-_AGGREGATE_VERSION_UNIQUE_CONSTRAINT = "uq_events_aggregate_version"
+# Per-stream append lock. Taken before the MAX(version) read so that two
+# appends to one stream serialize, whatever the table's unique constraints say.
+# Transaction-scoped: released at commit or rollback.
+_STREAM_APPEND_LOCK_SQL = text("SELECT pg_advisory_xact_lock(:lock_id)")
+# Side table present only in the partitioned schema (events_partitioned.sql).
+_EVENT_IDS_PROBE_SQL = text("SELECT to_regclass('event_ids') IS NOT NULL")
+_INSERT_EVENT_ID_SQL = text("INSERT INTO event_ids (event_id) VALUES (:event_id)")
 _MAX_VERSION_SQL = text(
     "SELECT COALESCE(MAX(version), 0) FROM events "
     "WHERE aggregate_id = :aggregate_id AND aggregate_type = :aggregate_type"
@@ -30,11 +38,6 @@ _INSERT_EVENT_SQL = text(
     ":aggregate_type, :aggregate_id, :tenant_id, :actor_id, :version, :timestamp, :payload, NOW()) "
     "RETURNING global_position"
 )
-_INSERT_OUTBOX_SQL = text(
-    "INSERT INTO event_outbox (id, event_id, event_type, aggregate_id, aggregate_type, "
-    "tenant_id, event_data, created_at, status) VALUES (:id, :event_id, :event_type, "
-    ":aggregate_id, :aggregate_type, :tenant_id, :event_data, :created_at, 'pending')"
-)
 
 
 class PostgreSQLEventStoreAppendMixin:
@@ -43,30 +46,11 @@ class PostgreSQLEventStoreAppendMixin:
     _session_factory: async_sessionmaker[AsyncSession]
     _codec: IntPositionCodec
     _outbox_enabled: bool
+    # None until the first append probes the database for the `event_ids` side table.
+    _event_ids_table: bool | None = None
 
     async def _ensure_schema(self) -> None:
         """Ensures schema is initialized (implemented in PostgreSQLEventStore)."""
-
-    def _classify_integrity_error(self, e: IntegrityError) -> str | None:
-        """Classify an append `IntegrityError` by the real constraint name or substring fallback."""
-        constraint_name = getattr(e.orig, "constraint_name", None) or getattr(
-            getattr(e.orig, "__cause__", None), "constraint_name", None
-        )
-        if constraint_name == _EVENT_ID_UNIQUE_CONSTRAINT:
-            return "event_id"
-        if constraint_name == _AGGREGATE_VERSION_UNIQUE_CONSTRAINT:
-            return "aggregate_version"
-        if constraint_name is not None:
-            return None
-
-        error_str = str(e).lower()
-        if "event_id" in error_str:
-            return "event_id"
-        if "uq_events_aggregate_version" in error_str or (
-            "unique" in error_str and "aggregate" in error_str and "version" in error_str
-        ):
-            return "aggregate_version"
-        return None
 
     async def append(
         self, stream: StreamId, events: Sequence[DomainEvent], expected: ExpectedVersion
@@ -80,6 +64,9 @@ class PostgreSQLEventStoreAppendMixin:
 
         async with self._session_factory() as session:
             try:
+                lock_id = key_to_lock_id(f"eventsource.append:{category}:{stream.aggregate_id}")
+                await session.execute(_STREAM_APPEND_LOCK_SQL, {"lock_id": lock_id})
+                use_event_ids = await self._uses_event_ids_table(session)
                 result = await session.execute(_MAX_VERSION_SQL, ver_params)
                 current_version = result.scalar() or 0
                 check_expected(current_version, expected, stream)
@@ -108,22 +95,24 @@ class PostgreSQLEventStoreAppendMixin:
                         "timestamp": event.occurred_at,
                         "payload": json_dumps(event.model_dump(mode="json")),
                     }
+                    if use_event_ids:
+                        await session.execute(_INSERT_EVENT_ID_SQL, {"event_id": event.event_id})
                     insert_result = await session.execute(_INSERT_EVENT_SQL, params)
                     global_position = insert_result.scalar()
                     if first_position is None and global_position is not None:
                         first_position = self._codec.encode(global_position)
                     if self._outbox_enabled:
-                        await self._write_to_outbox(session, event, category)
+                        await write_outbox_row(session, event, category)
 
                 await session.commit()
                 return AppendResult(stream=stream, new_version=version, position=first_position)
 
             except IntegrityError as e:
                 await session.rollback()
-                conflict = self._classify_integrity_error(e)
+                conflict = classify_integrity_error(e)
                 if conflict == "event_id":
                     raise DuplicateEventError(
-                        f"an event_id in this batch already exists in the store: {e}"
+                        f"an event_id in this batch already exists in the store: {error_summary(e)}"
                     ) from e
                 if conflict == "aggregate_version":
                     result = await session.execute(_MAX_VERSION_SQL, ver_params)
@@ -133,20 +122,9 @@ class PostgreSQLEventStoreAppendMixin:
                     ) from e
                 raise
 
-    async def _write_to_outbox(
-        self, session: AsyncSession, event: DomainEvent, aggregate_type: str
-    ) -> None:
-        """Write one outbox row for `event`, on `session`, before commit."""
-        await session.execute(
-            _INSERT_OUTBOX_SQL,
-            {
-                "id": uuid4(),
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "aggregate_id": event.aggregate_id,
-                "aggregate_type": aggregate_type,
-                "tenant_id": str(event.tenant_id) if event.tenant_id else None,
-                "event_data": json_dumps(outbox_event_data(event)),
-                "created_at": datetime.now(UTC),
-            },
-        )
+    async def _uses_event_ids_table(self, session: AsyncSession) -> bool:
+        """Detect the partitioned schema's `event_ids` side table once per store."""
+        if self._event_ids_table is None:
+            result = await session.execute(_EVENT_IDS_PROBE_SQL)
+            self._event_ids_table = bool(result.scalar())
+        return self._event_ids_table

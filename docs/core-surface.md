@@ -47,51 +47,51 @@ Any module that passes that test -- imports cleanly with nothing but the standar
 |--------|------------------------------|---------|
 | `domain/event.py` | pydantic | `DomainEvent` base class |
 | `domain/event_registry.py` | (none beyond domain/event) | `EventRegistry` auto-registration |
-| `domain/aggregate.py` | pydantic (via domain/event, types) | `AggregateRoot`, `DeclarativeAggregate` |
+| `domain/aggregate/` | pydantic (via domain/event, types) | `AggregateRoot`, `DeclarativeAggregate` |
 | `domain/stream_id.py` | (none -- stdlib only) | `StreamId` value object |
-| `protocols.py` | `from eventsource.domain.event import DomainEvent` (module level, so pydantic transitively) -- not standalone | `EventHandler`, `SyncEventHandler`, `EventSubscriber` protocols/ABCs |
-| `bus/interface.py` | (none beyond domain/event, protocols) | `EventBus` ABC |
+| `ports/handlers.py` | `from eventsource.domain.event import DomainEvent` (module level, so pydantic transitively) -- not standalone | `EventHandler`, `SyncEventHandler`, `EventSubscriber` protocols/ABCs |
+| `ports/bus.py` | (none beyond domain/event, protocols) | `EventBus` ABC |
 | `ports/snapshots.py` | (none -- stdlib only) | `SnapshotStore` ABC, `Snapshot` dataclass |
 | `ports/positions.py` | (none beyond exceptions) | `Position`, `ExpectedVersion` value objects |
 | `ports/envelopes.py` | pydantic (via domain, events) | `EventEnvelope`, read-option value objects, `AppendResult`, `ReadDirection` |
 | `ports/store.py` | (none beyond domain, events, ports siblings) | `EventAppender`, `StreamReader`, `CategoryQuery`, `EventLookup`, `GlobalEventFeed`, `FullEventStore` port Protocols |
-| `ports/bus.py` | (none beyond events/base) | `EventPublisher` publishing port |
+| `ports/bus.py` | (none beyond domain/event) | `EventPublisher` publishing port |
 | `ports/checkpoints.py` | (none -- stdlib only) | `ProjectionCheckpoints`, `SubscriptionPositions`, composed `CheckpointRepository` Protocols; `CheckpointData`, `LagMetrics` dataclasses. Replaced the Protocol/dataclass half of the old `repositories/checkpoint.py` (see boundary finding 2 and ADR 0024). |
 | `ports/dlq.py` | (none -- stdlib only) | `DLQRepository` Protocol; `DLQEntry`, `DLQStats`, `ProjectionFailureCount` dataclasses. Replaced the Protocol/dataclass half of the old `repositories/dlq.py` (see boundary finding 2 and ADR 0024). |
 | `ports/migration/` | (none -- stdlib + pydantic only) | `models.py` (`Migration`, `MigrationConfig`, `TenantRouting`, `PositionMapping`, `MigrationAuditEntry`, and their enums) plus `repositories.py` (`MigrationRepository`, `TenantRoutingRepository`, `PositionMappingRepository`, `MigrationAuditLogRepository` Protocols). Cut out of the sqlalchemy-backed `migration/repositories/` modules by ADR 0034 -- the Protocol classes were already pure in shape, just colocated with their implementations. |
 | `ports/lifecycle.py` | (none -- stdlib only) | `SupportsClose` Protocol -- optional resource-release capability (ADR 0037). |
-| `application/projections/base.py`, `checkpoints.py`, `dlq.py`, `coordinator.py`, `retry.py` | (none beyond `ports/checkpoints`, `ports/dlq`, `events/base`, `handlers/registry`, `observability`, `protocols`, `application/subscriptions/retry`) | Replaces the old `projections/` package (dissolved by ADR 0024). `Projection`, `EventHandlerBase`, `DeclarativeProjection`, checkpoint/DLQ recording helpers, `RetryConfig`. This is the module the rest of this document now describes as Tier-0-clean where `projections/base.py`, `projections/checkpoint_manager.py`, and `projections/dlq_manager.py` used to be blocked (see boundary finding 1). |
-| `application/aggregates/snapshotting.py` | `_internal/background_tasks`, `domain/aggregate`, `ports/snapshots` | `SnapshotPolicy`, `SnapshotScheduler`, `EveryNEvents`, `Never`, `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`, `read_valid_snapshot()` |
-| `handlers/decorators.py` | pydantic (via events/base) | `@handles` decorator |
-| `handlers/registry.py` | (none beyond handlers/decorators, events, exceptions) | `HandlerRegistry` |
-| `handlers/adapter.py` | (none beyond protocols, events) | Sync/async handler adapter |
-| `exceptions.py` | (none) | All exception types |
-| `config.py` | (none -- empty placeholder module, defines zero configuration classes) | Nothing yet; see "Empty and placeholder modules" below |
-| `types.py` | (none) | `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` (the aggregate state parameter is now an inline PEP 695 type parameter on `AggregateRoot`, not a module-level type) |
+| `application/projections/base.py`, `checkpoints.py`, `dlq.py`, `coordinator.py`, `retry.py` | (none beyond `ports/checkpoints`, `ports/dlq`, `domain/event`, `application/projections/handlers`, `observability`, `ports/handlers`, `application/subscriptions/retry`) | Replaces the old `projections/` package (dissolved by ADR 0024). `Projection`, `EventHandlerBase`, `DeclarativeProjection`, checkpoint/DLQ recording helpers, `RetryConfig`. This is the module the rest of this document now describes as Tier-0-clean where `projections/base.py`, `projections/checkpoint_manager.py`, and `projections/dlq_manager.py` used to be blocked (see boundary finding 1). |
+| `application/aggregates/snapshotting.py` | `application/background_tasks`, `domain/aggregate`, `ports/snapshots` | `SnapshotPolicy`, `SnapshotScheduler`, `EveryNEvents`, `Never`, `ImmediateScheduler`, `BackgroundScheduler`, `take_snapshot()`, `read_valid_snapshot()` |
+| `domain/decorators.py` | pydantic (via domain/event) | `@handles` decorator |
+| `application/projections/handlers.py` | (none beyond domain/decorators, domain/event, domain/exceptions) | `HandlerRegistry` |
+| `adapters/_bus/handler_adapter.py` | (none beyond ports/handlers, domain/event) | Sync/async handler adapter |
+| `domain/exceptions/` | (none) | All exception types |
+| *(`config.py` -- deleted)* | -- | The placeholder module no longer exists. See "Empty and placeholder modules" below. |
+| `domain/types.py` | (none) | `AggregateId`, `EventId`, `TenantId`, `CorrelationId`, `CausationId` (the aggregate state parameter is now an inline PEP 695 type parameter on `AggregateRoot`, not a module-level type) |
 | `observability/` | (none -- opentelemetry is optional, guarded) | `Tracer`, attribute constants |
-| `bus/memory.py` | (none beyond bus/interface, bus/base, events, handlers/adapter, observability) | `InMemoryEventBus` |
+| `adapters/memory/bus.py` | (none beyond ports/bus, adapters/_bus/base, events, adapters/_bus/handler_adapter, observability) | `InMemoryEventBus` |
 | `adapters/memory/store.py` | (none beyond domain, events, exceptions, ports) | `InMemoryEventStore` (ring in-memory store) |
 | `adapters/memory/snapshots.py` | `observability`, `ports/snapshots` | `InMemorySnapshotStore` |
 | `adapters/memory/checkpoints.py` | `observability`, `ports/checkpoints` | `InMemoryCheckpointRepository` -- the in-memory half of the old `repositories/checkpoint.py` split (ADR 0024). Tier 0 only when imported by its own submodule path (`eventsource.adapters.memory.checkpoints`); importing the `eventsource.adapters.memory` package pulls its sibling `dlq.py`, which is not Tier 0 -- see the next table and boundary finding 2. |
 | `adapters/_sql/positions.py` | (none beyond exceptions, ports/positions) | `IntPositionCodec` |
-| `testing/builder.py` | pydantic (via events/base) | `EventBuilder` fluent test-event builder |
-| `testing/assertions.py` | pydantic (via events/base) | `EventAssertions` domain-specific test assertions |
-| `testing/conformance.py` | (none beyond events/base, bus/interface) | `EventBusConformanceSuite`; store conformance now lives in `testing/conformance_ports/` (see below) |
-| `testing/recording.py` | (none beyond bus/interface, events/base, protocols) | `RecordingEventBus` |
+| `testing/builder.py` | pydantic (via domain/event) | `EventBuilder` fluent test-event builder |
+| `testing/assertions.py` | pydantic (via domain/event) | `EventAssertions` domain-specific test assertions |
+| `testing/conformance_ports/bus.py` | (none beyond domain/event, ports/bus) | `EventBusConformanceSuite`; store conformance now lives in `testing/conformance_ports/` (see below) |
+| `testing/recording.py` | (none beyond ports/bus, domain/event, ports/handlers) | `RecordingEventBus` |
 | `testing/partitioned_memory.py` | (none beyond domain, events, exceptions, ports) | Partitioned in-memory store for feed/ordering tests |
 | `testing/sync_facade.py` | (none beyond domain, events, ports) | `SyncStoreFacade` synchronous wrapper over the ports surface |
 | `application/aggregates/repository.py` | `application/aggregates/snapshotting`, `domain/aggregate`, `exceptions`, `observability`, `ports/bus`, `ports/envelopes`, `ports/positions`, `ports/store` (`ports/snapshots` types imported under `TYPE_CHECKING`) | `AggregateRepository` load/save orchestration, composing a `SnapshotPolicy` and `SnapshotScheduler` |
-| `sync/adapter.py` | stdlib `threading` + `concurrent.futures.ThreadPoolExecutor`, plus `domain`, `events/base`, and `ports` | `SyncEventStoreAdapter` wrapping an async store for sync callers |
-| `multitenancy/context.py` | stdlib `contextvars` only, plus `multitenancy/exceptions` | Tenant context get/set, `get_required_tenant` |
-| `multitenancy/events.py` | pydantic (`Field`), plus `events/base` and `multitenancy/context` | `TenantDomainEvent` |
-| `multitenancy/exceptions.py` | (none beyond `eventsource.exceptions`) | `TenantContextNotSetError`, `TenantMismatchError` |
-| `multitenancy/repository.py` | (none beyond application/aggregates/repository, domain/aggregate, multitenancy context + exceptions) | Tenant-scoped aggregate repository |
-| `readmodels/base.py` | pydantic (`BaseModel`, `ConfigDict`, `Field`) | `ReadModel` base class |
-| `readmodels/query.py` | (none -- stdlib only) | `Query`, `Filter`, operators |
-| `readmodels/schema.py` | pydantic (`FieldInfo`), stdlib `types`/`decimal`, plus `readmodels/base` | Read model schema derivation from pydantic fields |
-| `readmodels/repository.py` | (none beyond `readmodels/base`; `Query` imported under `TYPE_CHECKING`) | `ReadModelRepository` interface |
-| `readmodels/in_memory.py` | (none beyond readmodels base/query/exceptions and `observability`) | `InMemoryReadModelRepository` |
-| `readmodels/exceptions.py` | (none) | `ReadModelNotFoundError`, `ReadModelVersionConflictError` |
+| `adapters/sync/adapter.py` | stdlib `threading` + `concurrent.futures.ThreadPoolExecutor`, plus `domain`, `domain/event`, and `ports` | `SyncEventStoreAdapter` wrapping an async store for sync callers |
+| `domain/tenant_context.py` | stdlib `contextvars` only, plus `domain/exceptions/tenant` | Tenant context get/set, `get_required_tenant` |
+| `domain/tenant_events.py` | pydantic (`Field`), plus `domain/event` and `domain/tenant_context` | `TenantDomainEvent` |
+| `domain/exceptions/tenant.py` | (none beyond `eventsource.exceptions`) | `TenantContextNotSetError`, `TenantMismatchError` |
+| `application/aggregates/tenant_repository.py` | (none beyond application/aggregates/repository, domain/aggregate, multitenancy context + exceptions) | Tenant-scoped aggregate repository |
+| `ports/readmodels/model.py` | pydantic (`BaseModel`, `ConfigDict`, `Field`) | `ReadModel` base class |
+| `ports/readmodels/query.py` | (none -- stdlib only) | `Query`, `Filter`, operators |
+| *(`readmodels/schema.py` -- moved to `adapters/sql/readmodel_schema*.py`; no longer Tier 0)* | -- | Read model schema derivation from pydantic fields (SQL DDL generation) |
+| `ports/readmodels/repository.py` | (none beyond `ports/readmodels/model`; `Query` imported under `TYPE_CHECKING`) | `ReadModelRepository` interface |
+| `adapters/memory/readmodels.py` | (none beyond `ports/readmodels` and `observability`) | `InMemoryReadModelRepository` |
+| `ports/readmodels/exceptions.py` | (none) | `ReadModelNotFoundError`, `ReadModelVersionConflictError` |
 
 `domain/`, `ports/`, and `application/` are Tier 0 in full, package `__init__`s included: every module under them resolves to stdlib, pydantic, and other Tier 0 in-library modules. This now includes `ports/checkpoints.py` and `ports/dlq.py`, and all five modules of `application/projections/` -- the pure and application-ring halves of the old checkpoint/DLQ Tier-0 blocker (see boundary finding 2, resolved by ADR 0024).
 
@@ -107,7 +107,7 @@ Their sibling modules in the same package are not Tier 0, and the package `__ini
 
 `readmodels/` is tiered per module in the same way `testing/` is. The contract and in-memory half -- `base.py`, `query.py`, `schema.py`, `repository.py`, `in_memory.py`, `exceptions.py` -- is Tier 0; the backend half (`postgresql.py`, `sqlite.py`, `projection.py`) is not. See the next table.
 
-`config.py` remains a seven-line placeholder with no imports and no configuration classes defined.
+`config.py` no longer exists. The placeholder described above was deleted.
 
 ## Module-level import coupling within Tier 0
 
@@ -146,7 +146,7 @@ Two modules are worth calling out as exceptions, because they behave differently
 
 One module qualifies as Tier 0 for a reason worth stating out loud: it contains no code.
 
-`src/eventsource/config.py` is seven lines long in full -- a five-line module docstring, a blank line, and a single trailing comment:
+*Historical: `config.py` was deleted after this section was written. The text below describes the file as it was.* `src/eventsource/config.py` is seven lines long in full -- a five-line module docstring, a blank line, and a single trailing comment:
 
 ```python
 """Configuration dataclasses for the eventsource library.
@@ -186,9 +186,9 @@ Until one of the first two happens, option three is what is in effect, and this 
 | `adapters/sql/checkpoints.py` | sqlalchemy (`text`, `AsyncConnection`, `AsyncEngine`); `adapters/_sql/dialect` (sqlalchemy + orjson) | `SQLCheckpointRepository`, dialect-parameterized for PostgreSQL and SQLite. The SQL-backed half of the old `repositories/checkpoint.py` split (ADR 0024, resolving boundary finding 2). |
 | `adapters/sql/dlq.py` | sqlalchemy (`text`, `AsyncConnection`, `AsyncEngine`); `adapters/_sql/dialect` (sqlalchemy + orjson) | `SQLDLQRepository`, dialect-parameterized for PostgreSQL and SQLite. The SQL-backed half of the old `repositories/dlq.py` split (ADR 0024, resolving boundary finding 2). |
 | `adapters/memory/dlq.py` | orjson via `eventsource.serialization` (`json_dumps`) | `InMemoryDLQRepository`. No sqlalchemy of its own, unlike its pre-ADR-0024 predecessor -- but it is not stdlib-only either, so it stays out of Tier 0 and is the reason importing the `eventsource.adapters.memory` package (rather than `adapters.memory.checkpoints` directly) still costs a non-stdlib dependency. Its sibling `adapters/memory/checkpoints.py` has no such import and is Tier 0; see the previous table. |
-| `bus/redis.py` | redis (guarded, lines 64-67) | Redis event bus -- backend module by runtime contract |
-| `bus/kafka/` | aiokafka (guarded, across `bus.py`, `connection.py`, `dlq.py`) | Kafka event bus package |
-| `bus/rabbitmq/` | aio-pika (guarded, across its modules) | RabbitMQ event bus package |
+| `adapters/redis/` | redis (guarded, lines 64-67) | Redis event bus -- backend module by runtime contract |
+| `adapters/kafka/` | aiokafka (guarded, across `adapters/kafka/bus.py`, `adapters/kafka/connection.py`, `adapters/kafka/dlq.py`) | Kafka event bus package |
+| `adapters/rabbitmq/` | aio-pika (guarded, across its modules) | RabbitMQ event bus package |
 | *(`repositories/checkpoint.py` and `repositories/dlq.py` -- deleted)* | -- | These two files, which used to mix a Protocol, dataclasses, an in-memory implementation, and a sqlalchemy-backed SQL implementation in one module each, no longer exist. ADR 0024 split each into a Tier 0 `ports/` module (`ports/checkpoints.py`, `ports/dlq.py`), a Tier 0 in-memory adapter (`adapters/memory/checkpoints.py`; `adapters/memory/dlq.py` is not Tier 0 for an unrelated orjson reason, see above), and a non-Tier-0 SQL adapter (`adapters/sql/checkpoints.py`, `adapters/sql/dlq.py`). See boundary finding 2. |
 | *(`repositories/outbox.py` and `repositories/_connection.py` -- deleted)* | -- | ADR 0026 completed the split ADR 0024 made for checkpoints and DLQ: the Tier 0 half (`OutboxRepository` Protocol, `OutboxEntry`/`OutboxStats`, `outbox_event_data()`) now lives in `ports/outbox.py`; the backend half is three per-technology modules, not one dialect-parameterized module (see `adapters/postgresql/outbox.py` below and its sibling `adapters/sqlite/outbox.py`, which is aiosqlite-guarded and appears in the `TYPE_CHECKING` table). `execute_with_connection` is gone with `_connection.py`; every former caller now uses `sql_connection` from `adapters/_sql/connection.py`. The whole `repositories/` package, including its eager JSON-utility re-exports, is deleted. See boundary finding 2. |
 | `adapters/postgresql/outbox.py` | sqlalchemy (`sql_connection`, `text`) | `PostgreSQLOutboxRepository`. Same shape as `adapters/postgresql/store.py` and `adapters/postgresql/snapshots.py` -- a genuine SQL adapter, not Tier 0 by design. |

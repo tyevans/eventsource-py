@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from eventsource.adapters._common import SQLITE, filter_to_sql
+from eventsource.adapters._common import SQLITE, check_query, filter_to_sql, order_by_sql
 from eventsource.observability import Tracer
 from eventsource.observability.attributes import (
     ATTR_BATCH_SIZE,
@@ -90,7 +90,9 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
 
     async def find_one(self, query: Query | None = None, **eq_filters: Any) -> TModel | None:
         """Find the first read model matching `query` and `**eq_filters`, or None."""
-        results = await self.find(replace(_resolve_query(query, eq_filters), limit=1))
+        base = _resolve_query(query, eq_filters)
+        check_query(self._model_class, base)
+        results = await self.find(replace(base, limit=1))
         return results[0] if results else None
 
     async def count(self, query: Query | None = None, **eq_filters: Any) -> int:
@@ -111,22 +113,30 @@ class SQLiteReadModelQueryMixin[TModel: _BaseReadModel]:
             params.extend(filter_params)
         return (("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""), params
 
+    def _append_order_limit_offset(self, parts: list[str], params: list[Any], query: Query) -> None:
+        """Append ORDER BY, LIMIT and OFFSET; the paging values are bound, never rendered."""
+        if query.order_by:
+            parts.append(order_by_sql(query))
+        if query.limit is not None:
+            parts.append("LIMIT ?")
+            params.append(query.limit)
+        elif query.offset:
+            parts.append("LIMIT -1")
+        if query.offset:
+            parts.append("OFFSET ?")
+            params.append(query.offset)
+
     def _build_select_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
+        check_query(self._model_class, query)
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
         where_sql, params = self._build_where_clause(query)
         if where_sql:
             parts.append(where_sql)
-        if query.order_by:
-            parts.append(f"ORDER BY {query.order_by} {query.order_direction.upper()}")
-        if query.limit is not None:
-            parts.append(f"LIMIT {query.limit}")
-        elif query.offset:
-            parts.append("LIMIT -1")
-        if query.offset:
-            parts.append(f"OFFSET {query.offset}")
+        self._append_order_limit_offset(parts, params, query)
         return " ".join(parts), tuple(params)
 
     def _build_count_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
+        check_query(self._model_class, query)
         parts = [f"SELECT COUNT(*) FROM {self._table_name}"]  # nosec B608
         where_sql, params = self._build_where_clause(query)
         if where_sql:

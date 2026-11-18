@@ -7,6 +7,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from eventsource.observability.error_summary import error_summary
+
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.shutdown_models import ShutdownResult
 
@@ -61,7 +63,7 @@ class ShutdownHookManager:
             except Exception as e:
                 logger.error(
                     "Pre-shutdown hook failed",
-                    extra={"hook": hook_name, "error": str(e)},
+                    extra={"hook": hook_name, "error": error_summary(e)},
                     exc_info=True,
                 )
         logger.info("Pre-shutdown hooks completed")
@@ -103,7 +105,7 @@ class ShutdownHookManager:
             except Exception as e:
                 logger.error(
                     "Post-shutdown hook failed",
-                    extra={"hook": hook_name, "error": str(e)},
+                    extra={"hook": hook_name, "error": error_summary(e)},
                     exc_info=True,
                 )
         logger.info("Post-shutdown hooks completed")

@@ -20,6 +20,7 @@ from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.application.migration.sync_lag_tracker import SyncLagTracker
 from eventsource.observability import Tracer
 from eventsource.observability import attributes as _attr
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports import FullEventStore
 from eventsource.ports.migration import (  # fmt: skip
     Migration,
@@ -86,8 +87,9 @@ class CoordinatorCopyMixin:
                 logger.info("Bulk copy cancelled for migration %s", m.id)
                 raise
             except Exception as e:
-                logger.error("Bulk copy failed for migration %s: %s", m.id, e)
-                await self._fail_migration(m, str(e))
+                summary = error_summary(e)
+                logger.error("Bulk copy failed for migration %s: %s", m.id, summary)
+                await self._fail_migration(m, summary)
             finally:
                 get_migration_metrics(str(m.id), str(m.tenant_id)).record_phase_duration("bulk_copy", time.monotonic() - phase_start)  # fmt: skip
                 self._active_copiers.pop(m.id, None)

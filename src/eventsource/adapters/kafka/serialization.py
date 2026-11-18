@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from eventsource.adapters.kafka.models import DeserializationError
 from eventsource.domain.event import DomainEvent
+from eventsource.observability.error_summary import error_summary
 
 
 class EventSerializer:
@@ -70,7 +71,8 @@ class EventSerializer:
         try:
             return event_class.model_validate_json(data)
         except Exception as e:
-            raise DeserializationError(f"Failed to deserialize {event_type}: {e}") from e
+            # The message carries a summary, not str(e): pydantic echoes input values.
+            raise DeserializationError(f"Failed to deserialize event: {error_summary(e)}") from e
 
     def content_type(self) -> str:
         """Get the content type for this serializer.

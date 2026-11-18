@@ -58,8 +58,15 @@ class TestRabbitMQProcessMessage:
             message_id="test-msg-id",
             routing_key="Unknown.UnknownEvent",
         )
+        mock_dlq = AsyncMock()
+        bus._topology._dlq_exchange = mock_dlq
+        order: list[str] = []
+        mock_dlq.publish.side_effect = lambda *_a, **_k: order.append("dlq")
+        mock_message.ack.side_effect = lambda: order.append("ack")
         await bus._process_message(mock_message)
-        mock_message.ack.assert_called_once()
+        mock_dlq.publish.assert_awaited_once()
+        assert mock_dlq.publish.await_args.args[0].headers["x-dlq-error-type"] == "EventDecodeError"
+        assert order == ["dlq", "ack"]
         mock_message.reject.assert_not_called()
 
     @pytest.mark.asyncio

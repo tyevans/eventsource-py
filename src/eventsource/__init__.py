@@ -29,6 +29,7 @@ if TYPE_CHECKING:  # isort: skip
     from eventsource.adapters.sync import SyncEventStoreAdapter
     from eventsource.application.aggregates.repository import AggregateRepository
     from eventsource.application.projections.base import CheckpointTrackingProjection, DeclarativeProjection, Projection  # isort: skip
+    from eventsource.application.projections.coordinator_projection import ProjectionRebuildError  # isort: skip
     from eventsource.application.projections.replay import ReplayFailedError, ReplayFailure, ReplayReport, replay  # isort: skip
     from eventsource.application.projections.store import ProjectionOptions, StoreProjection
     from eventsource.domain import StreamId
@@ -91,7 +92,7 @@ __all__ = [
     "InMemoryOutboxRepository", "OutboxEntry", "OutboxStats", "outbox_event_data",
     "Projection", "CheckpointTrackingProjection", "DeclarativeProjection",
     "StoreProjection", "ProjectionOptions", "DatabaseProjection", "replay",
-    "ReplayFailure", "ReplayReport", "ReplayFailedError", "ReadModelProjection",
+    "ReplayFailure", "ReplayReport", "ReplayFailedError", "ProjectionRebuildError", "ReadModelProjection",
     "ReadModel", "AggregateTypeNotSetError", "AggregateTypeMismatchError",
     "AggregateIdMismatchError", "Snapshot", "SnapshotStore", "InMemorySnapshotStore",
     "SnapshotError", "SnapshotDeserializationError", "SnapshotSchemaVersionError",

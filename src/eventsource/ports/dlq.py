@@ -23,6 +23,7 @@ class DLQEntry:
     status: str = "failed"
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+    tenant_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -57,8 +58,15 @@ class DLQRepository(Protocol):
         event_data: dict[str, Any],
         error: Exception,
         retry_count: int = 0,
+        *,
+        tenant_id: UUID | None = None,
     ) -> None:
-        """Add or update (upsert) a failed event in the DLQ with retry count and error info."""
+        """Add or update (upsert) a failed event in the DLQ with retry count and error info.
+
+        `tenant_id` is the owner of the failed event. Implementations that accept
+        it store it and apply tenant scope to reads (ADR-0114). It is optional so
+        that callers which omit it keep working.
+        """
         ...
 
     async def get_failed_events(

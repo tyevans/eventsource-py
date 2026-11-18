@@ -15,16 +15,12 @@ from eventsource.observability.attributes import (
     ATTR_EVENT_TYPE,
     ATTR_HANDLER_NAME,
 )
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from eventsource.adapters.kafka.metrics import KafkaEventBusMetrics
     from eventsource.adapters.kafka.models import KafkaEventBusStats
-
-try:
-    from opentelemetry.trace import Status, StatusCode
-except ImportError:
-    Status = None  # type: ignore[assignment, misc]
-    StatusCode = None  # type: ignore[assignment, misc]
 
 logger = logging.getLogger("eventsource.bus.kafka")
 
@@ -90,19 +86,17 @@ class KafkaConsumerDispatchMixin:
                             self._metrics.handler_errors.add(
                                 1, attributes={**metric_attrs, "error.type": type(e).__name__}
                             )
-                        if span is not None and Status is not None and StatusCode is not None:
-                            span.set_status(Status(StatusCode.ERROR, str(e)))
-                            span.record_exception(e)
+                        record_error(span, e)
                         self._stats.handler_errors += 1
+                        # No exc_info: the traceback repeats the message, which can echo payload.
                         logger.error(
                             "Handler error",
                             extra={
                                 "event_type": event.event_type,
                                 "event_id": str(event.event_id),
                                 "handler": handler_name,
-                                "error": str(e),
+                                "error": error_summary(e),
                             },
-                            exc_info=True,
                         )
                         failures.append((handler_name, e))
             else:
@@ -136,15 +130,15 @@ class KafkaConsumerDispatchMixin:
                             1, attributes={**metric_attrs, "error.type": type(e).__name__}
                         )
                     self._stats.handler_errors += 1
+                    # No exc_info: the traceback repeats the message, which can echo payload.
                     logger.error(
                         "Handler error",
                         extra={
                             "event_type": event.event_type,
                             "event_id": str(event.event_id),
                             "handler": handler_name,
-                            "error": str(e),
+                            "error": error_summary(e),
                         },
-                        exc_info=True,
                     )
                     failures.append((handler_name, e))
 

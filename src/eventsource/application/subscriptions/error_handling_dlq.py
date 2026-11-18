@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from eventsource.application.dlq_owner import dlq_owner_kwargs
 from eventsource.application.subscriptions.error_handling_types import (
     ErrorHandlingConfig,
     ErrorHandlingStrategy,
@@ -13,6 +14,7 @@ from eventsource.application.subscriptions.error_handling_types import (
     ErrorSeverity,
 )
 from eventsource.application.subscriptions.subscription import render_position
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.positions import Position
 
 if TYPE_CHECKING:
@@ -95,10 +97,10 @@ class SubscriptionErrorDLQMixin:
             return
         try:
             event_data: dict[str, Any] = {}
-            if event:
-                event_data = event.model_dump(mode="json")
-            elif envelope:
-                event_data = envelope.event.model_dump(mode="json")
+            source = event if event else (envelope.event if envelope else None)
+            if source is not None:
+                event_data = source.model_dump(mode="json")
+            tenant_kwargs = dlq_owner_kwargs(source)
 
             await self._dlq_repo.add_failed_event(
                 event_id=error_info.event_id,
@@ -107,6 +109,7 @@ class SubscriptionErrorDLQMixin:
                 event_data=event_data,
                 error=Exception(error_info.error_message),
                 retry_count=error_info.retry_count,
+                **tenant_kwargs,
             )
             error_info.sent_to_dlq = True
             logger.info(
@@ -119,7 +122,7 @@ class SubscriptionErrorDLQMixin:
             )
         except Exception as dlq_error:
             logger.error(
-                f"Failed to send event to DLQ: {dlq_error}",
+                f"Failed to send event to DLQ: {error_summary(dlq_error)}",
                 extra={
                     "subscription": self.subscription_name,
                     "event_id": str(error_info.event_id),

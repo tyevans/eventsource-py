@@ -179,6 +179,16 @@ and `enable_tracing` constructor keyword arguments directly, while the
 distributed buses take `tracer` as a keyword argument and read
 `enable_tracing` from their config dataclass (default `True` in each case).
 
+## Dead letter and retry limits
+
+The RabbitMQ and Kafka buses bound their dead letter queues and retry waits.
+The config fields that set the bounds are `RabbitMQEventBusConfig.dlq_max_length`
+(default `100_000`) and `retry_max_delay` on both configs (default `60.0`
+seconds). Each consumer also holds at most 1000 pending retries, and that limit
+is fixed. A message that needs a delayed retry while the scheduler is full goes
+to the DLQ with reason `retry_capacity_exceeded`. The full behavior is in
+[Dead letters and retry limits](../guides/event-bus.md#dead-letters-and-retry-limits).
+
 ## `EventBus` (abstract base class)
 
 ```python

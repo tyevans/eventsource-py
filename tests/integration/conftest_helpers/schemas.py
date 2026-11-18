@@ -34,6 +34,7 @@ DLQ_SCHEMA_STATEMENTS = [
         status VARCHAR(50) DEFAULT 'failed',
         resolved_at TIMESTAMPTZ,
         resolved_by VARCHAR(255),
+        tenant_id UUID,
         UNIQUE(event_id, projection_name)
     )
     """,

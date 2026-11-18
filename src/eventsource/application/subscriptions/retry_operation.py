@@ -16,6 +16,7 @@ from eventsource.application.subscriptions.retry_types import (
     RetryStats,
     calculate_backoff,
 )
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.retry_circuit import CircuitBreaker
@@ -56,7 +57,7 @@ async def retry_async[T](
         except retryable_exceptions as e:
             last_error = e
             stats.failures += 1
-            stats.last_error = str(e)
+            stats.last_error = error_summary(e)
             if attempt < config.max_retries:
                 delay = calculate_backoff(attempt, config)
                 stats.total_delay_seconds += delay
@@ -67,7 +68,7 @@ async def retry_async[T](
                         "attempt": attempt + 1,
                         "max_retries": config.max_retries,
                         "delay_seconds": delay,
-                        "error": str(e),
+                        "error": error_summary(e),
                         "error_type": type(e).__name__,
                     },
                 )
@@ -79,21 +80,21 @@ async def retry_async[T](
                         "operation": operation_name,
                         "attempts": stats.attempts,
                         "total_delay_seconds": stats.total_delay_seconds,
-                        "error": str(e),
+                        "error": error_summary(e),
                         "error_type": type(e).__name__,
                     },
                 )
-        except Exception:
+        except Exception as e:
+            # No exc_info: the operation can deliver events, and the traceback repeats the message.
             logger.error(
-                f"Non-retryable error in {operation_name}",
+                f"Non-retryable error in {operation_name}: {error_summary(e)}",
                 extra={"operation": operation_name, "attempt": attempt + 1},
-                exc_info=True,
             )
             raise
 
     assert last_error is not None
     raise RetryError(
-        f"Failed after {stats.attempts} attempts: {last_error}",
+        f"Failed after {stats.attempts} attempts: {error_summary(last_error)}",
         attempts=stats.attempts,
         last_error=last_error,
     )

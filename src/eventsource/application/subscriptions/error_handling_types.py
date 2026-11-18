@@ -56,10 +56,12 @@ class ErrorInfo:
 
     # fmt: off
     def to_dict(self) -> dict[str, Any]:
+        # error_stacktrace stays on the object for logs. It is left out of the health
+        # report because a traceback can repeat payload values from the failed exception.
         return {
             "event_id": str(self.event_id), "event_type": self.event_type,
             "position": render_position(self.position), "error_type": self.error_type,
-            "error_message": self.error_message, "error_stacktrace": self.error_stacktrace,
+            "error_message": self.error_message,
             "category": self.classification.category.value, "severity": self.classification.severity.value,
             "retryable": self.classification.retryable, "timestamp": self.timestamp.isoformat(),
             "subscription_name": self.subscription_name, "retry_count": self.retry_count,

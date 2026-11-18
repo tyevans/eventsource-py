@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import traceback
 from typing import TYPE_CHECKING, Any
 
 from eventsource.application.subscriptions.error_handling_classifier import (
@@ -21,6 +20,8 @@ from eventsource.application.subscriptions.error_handling_types import (
     ErrorStats,
     SyncErrorCallback,
 )
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.stack_trace import frames_only_trace
 
 if TYPE_CHECKING:
     from eventsource.domain.event import DomainEvent
@@ -72,8 +73,8 @@ class SubscriptionErrorHandler(SubscriptionErrorDLQMixin):
             event_type=self._get_event_type(envelope, event),
             position=self._get_position(envelope),
             error_type=type(error).__name__,
-            error_message=str(error),
-            error_stacktrace=traceback.format_exc(),
+            error_message=error_summary(error),
+            error_stacktrace=frames_only_trace(),
             classification=self._classifier.classify(error),
             subscription_name=self.subscription_name,
             retry_count=retry_count,

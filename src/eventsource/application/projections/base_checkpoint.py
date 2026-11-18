@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
 from eventsource.domain.event import DomainEvent
+from eventsource.domain.exceptions import TenantContextNotSetError
 from eventsource.observability import Tracer, create_tracer
 from eventsource.observability.attributes import (
     ATTR_EVENT_ID,
@@ -18,15 +19,21 @@ from eventsource.observability.attributes import (
     ATTR_PROJECTION_NAME,
     ATTR_RETRY_COUNT,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.checkpoints import ProjectionCheckpoints
 from eventsource.ports.dlq import DLQRepository
 from eventsource.ports.handlers import EventSubscriber
 
 from .checkpoints import lag_metrics_dict, read_checkpoint, record_checkpoint, reset_checkpoint
 from .dlq import send_to_dlq
+from .projection_name import resolve_projection_name
 from .retry import ExponentialBackoffRetryPolicy, ProjectionRetryPolicy
 
 logger = logging.getLogger(__name__)
+
+# Configuration errors are not event faults: retrying cannot fix them, and they
+# never produce a DLQ row. They re-raise on the first attempt.
+_CONFIGURATION_ERRORS: tuple[type[Exception], ...] = (TenantContextNotSetError,)
 
 
 class CheckpointTrackingProjection(EventSubscriber, ABC):
@@ -39,8 +46,10 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
         retry_policy: ProjectionRetryPolicy | None = None,
         tracer: Tracer | None = None,
         enable_tracing: bool = False,
+        *,
+        projection_name: str | None = None,
     ) -> None:
-        self._projection_name = self.__class__.__name__
+        self._projection_name = resolve_projection_name(projection_name, self.__class__.__name__)
         self._tracer = tracer or create_tracer(__name__, enable_tracing)
         self._enable_tracing = self._tracer.enabled
         self._checkpoint_repo: ProjectionCheckpoints | None = checkpoint_repo
@@ -68,9 +77,13 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                 await self._process_event(event)
             except Exception as e:
                 att = attempt + 1
-                ex = {**base_ex, "attempt": att, "max_attempts": max_att, "error": str(e)}
+                summary = error_summary(e)
+                ex = {**base_ex, "attempt": att, "max_attempts": max_att, "error": summary}
                 msg = "Projection %s failed to process event %s (attempt %d/%d): %s"
-                logger.error(msg, name, event.event_id, att, max_att, e, exc_info=True, extra=ex)
+                # No exc_info: the traceback repeats the message, which can echo payload values.
+                logger.error(msg, name, event.event_id, att, max_att, summary, extra=ex)
+                if isinstance(e, _CONFIGURATION_ERRORS):
+                    raise
                 if not self._retry_policy.should_retry(attempt, e):
                     if span is not None:
                         span.set_attribute(ATTR_RETRY_COUNT, att)
@@ -104,13 +117,14 @@ class CheckpointTrackingProjection(EventSubscriber, ABC):
                 span.set_attribute("checkpoint.updated", False)
                 span.set_attribute("checkpoint.failed", True)
             p, eid, et = self._projection_name, event.event_id, event.event_type
-            ex = {"projection": p, "event_id": str(eid), "event_type": et, "error": str(e)}
+            summary = error_summary(e)
+            ex = {"projection": p, "event_id": str(eid), "event_type": et, "error": summary}
             msg = (
                 "Projection %s applied event %s but could not record its checkpoint: %s. "
                 "The event will be re-delivered and re-applied on restart; this is a "
                 "checkpoint-store outage, not a bad event."
             )
-            logger.critical(msg, p, eid, e, exc_info=True, extra=ex)
+            logger.critical(msg, p, eid, summary, exc_info=True, extra=ex)
             raise
         if span is not None:
             span.set_attribute("checkpoint.updated", True)

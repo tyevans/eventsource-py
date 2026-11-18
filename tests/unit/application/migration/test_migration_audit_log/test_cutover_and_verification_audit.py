@@ -10,7 +10,12 @@ import pytest
 from eventsource.application.migration.consistency import ConsistencyViolation, VerificationLevel
 from eventsource.application.migration.coordinator import MigrationCoordinator
 from eventsource.application.migration.cutover import CutoverManager
-from eventsource.ports.migration.models import AuditEventType, Migration, MigrationPhase
+from eventsource.ports.migration.models import (
+    AuditEventType,
+    Migration,
+    MigrationConfig,
+    MigrationPhase,
+)
 from tests.unit.application.migration.test_coordinator_subscriptions import (
     make_verification_report,
 )
@@ -65,6 +70,7 @@ class TestCutoverAudit:
             source_store_id="default",
             target_store_id="dedicated",
             phase=MigrationPhase.DUAL_WRITE,
+            config=MigrationConfig(verify_consistency=False, migrate_subscriptions=False),
         )
         migration_repo = AsyncMock(get=AsyncMock(return_value=migration), update_phase=AsyncMock())
         routing_repo = AsyncMock(set_migration_state=AsyncMock())

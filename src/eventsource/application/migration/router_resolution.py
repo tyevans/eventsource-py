@@ -83,16 +83,26 @@ class RouterResolutionMixin:
         """
         Get the store for write operations based on tenant and migration state.
 
+        The CUTOVER_PAUSED check runs before the dual-write interceptor branch.
+        The interceptor stays registered until the routing switch completes, so
+        an earlier interceptor return would let writes reach the target while
+        the tenant is paused.
+
         Raises:
             WritePausedError: If tenant is in CUTOVER_PAUSED state
         """
         if tenant_id is None:
             return self._default_store
 
+        routing = await self._routing_repo.get_routing(tenant_id)
+        if routing is not None and routing.migration_state == TenantMigrationState.CUTOVER_PAUSED:
+            # In-process waiting happens in _wait_if_paused; a write that reaches
+            # this point from another process is rejected rather than queued.
+            raise WritePausedError(tenant_id, self._write_pause_timeout)
+
         if tenant_id in self._dual_write_interceptors:
             return self._dual_write_interceptors[tenant_id]
 
-        routing = await self._routing_repo.get_routing(tenant_id)
         if routing is None:
             return self._default_store
 
@@ -111,10 +121,6 @@ class RouterResolutionMixin:
                 return interceptor
             logger.warning(f"Dual-write state but no interceptor for tenant {tenant_id}")
             return self._stores.get(routing.store_id, self._default_store)
-
-        if state == TenantMigrationState.CUTOVER_PAUSED:
-            # Writes should be paused; _wait_if_paused should have blocked
-            raise WritePausedError(tenant_id, self._write_pause_timeout)
 
         return self._default_store
 

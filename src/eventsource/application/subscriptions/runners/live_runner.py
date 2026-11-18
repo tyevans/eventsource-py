@@ -8,8 +8,9 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from eventsource.application.subscriptions.filtering import EventFilter, FilterStats
-from eventsource.application.subscriptions.flow_control import FlowController, FlowControlStats
+from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
+from eventsource.application.subscriptions.filtering import EventFilter
+from eventsource.application.subscriptions.flow_control import FlowController
 from eventsource.application.subscriptions.metrics import SubscriptionMetrics
 from eventsource.application.subscriptions.retry import CircuitBreaker, RetryableOperation
 from eventsource.application.subscriptions.runners.live_checkpoint import LiveCheckpointMixin
@@ -18,6 +19,9 @@ from eventsource.application.subscriptions.runners.live_drain import LiveDrainMi
 from eventsource.application.subscriptions.runners.live_models import (  # fmt: skip
     LiveRunnerStats,
     _LiveEventHandler,
+)
+from eventsource.application.subscriptions.runners.live_runner_properties import (
+    LiveRunnerPropertiesMixin,
 )
 from eventsource.application.subscriptions.subscription import Subscription, SubscriptionState
 from eventsource.domain.event import DomainEvent
@@ -34,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
+class LiveRunner(LiveRunnerPropertiesMixin, LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
     """Wakes on bus notifications and delivers events read from the global feed."""
 
     event_bus: SubscribableEventBus
@@ -44,8 +48,11 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
     tracer: Tracer | None = None
     enable_metrics: bool = True
     enable_tracing: bool = True
+    error_handler: SubscriptionErrorHandler | None = None
 
     def __post_init__(self) -> None:
+        # Standalone runners get a private handler (DLQ-less, no callbacks) so failures still classify.
+        self._error_handler = self.error_handler or SubscriptionErrorHandler(self.subscription.name)
         self._running = self._subscribed = self._buffer_enabled = False
         self._buffered_wakes = self._paused_wakes = self._events_buffered_during_pause = 0
         self._last_checkpoint_time, self._stop_event, self._stats = 0.0, asyncio.Event(), LiveRunnerStats()  # fmt: skip
@@ -95,65 +102,6 @@ class LiveRunner(LiveDrainMixin, LiveDeliveryMixin, LiveCheckpointMixin):
             s = self._stats
             stats = {"received": s.events_received, "processed": s.events_processed, "skipped_filtered": s.events_skipped_filtered, "failed": s.events_failed}  # fmt: skip
             logger.info("Live runner stopped", extra={"subscription": self.subscription.name, "stats": stats})  # fmt: skip
-
-    @property
-    def is_running(self) -> bool:
-        return self._running
-
-    @property
-    def _stop_requested(self) -> bool:
-        return self._stop_event.is_set()
-
-    @property
-    def buffer_size(self) -> int:
-        return self._buffered_wakes
-
-    @property
-    def pause_buffer_size(self) -> int:
-        return self._paused_wakes
-
-    @property
-    def events_buffered_during_pause(self) -> int:
-        return self._events_buffered_during_pause
-
-    @property
-    def stats(self) -> LiveRunnerStats:
-        return self._stats
-
-    @property
-    def flow_controller(self) -> FlowController:
-        assert self._flow_controller is not None
-        return self._flow_controller
-
-    @property
-    def flow_control_stats(self) -> FlowControlStats:
-        return self.flow_controller.stats
-
-    @property
-    def handler_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._handler_circuit_breaker
-
-    @property
-    def infra_circuit_breaker(self) -> CircuitBreaker | None:
-        return self._infra_circuit_breaker
-
-    @property
-    def retry_operation(self) -> RetryableOperation | None:
-        return self._retry
-
-    @property
-    def event_filter(self) -> EventFilter:
-        assert self._filter is not None
-        return self._filter
-
-    @property
-    def filter_stats(self) -> FilterStats:
-        return self.event_filter.stats
-
-    @property
-    def metrics(self) -> SubscriptionMetrics:
-        assert self._metrics is not None
-        return self._metrics
 
 
 __all__ = ["LiveRunner"]

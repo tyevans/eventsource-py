@@ -12,11 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from eventsource.adapters.postgresql.snapshots import PostgreSQLSnapshotStore
 from eventsource.ports.snapshots import Snapshot
 
+from .test_postgresql_snapshots_create import route_tenant_probe
+
 
 @pytest.fixture
 def mock_session() -> AsyncMock:
     """Create a mock async session."""
     session = AsyncMock(spec=AsyncSession)
+    # Default: the snapshots table has tenant_id (the state after updates/005).
+    route_tenant_probe(session, column_present=True)
     return session
 
 

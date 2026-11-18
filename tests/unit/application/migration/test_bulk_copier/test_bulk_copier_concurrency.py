@@ -16,6 +16,7 @@ from tests.unit.application.migration.test_bulk_copier._fixtures import (
     _REGISTRY,
     TestEvent,
     _pos,
+    stored_view,
 )
 
 
@@ -109,6 +110,7 @@ class TestBulkCopierOverlapWithLiveMirror:
             stored_at=datetime.now(UTC),
         )
 
+        target_store.read_stream = stored_view([envelope])
         last_pos = await copier._write_batch(uuid4(), tenant_id, [envelope])
 
         assert last_pos is None

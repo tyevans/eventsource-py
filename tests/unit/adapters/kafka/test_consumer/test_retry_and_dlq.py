@@ -43,7 +43,7 @@ class TestRetryAndDlq:
         headers = dict(kwargs["headers"])
         assert headers["dlq_reason"] == b"max_retries_exceeded"
         assert headers["dlq_error_type"] == b"ValueError"
-        assert headers["dlq_error_message"] == b"boom"
+        assert headers["dlq_error_message"] == b"ValueError: boom"
         assert headers["dlq_retry_count"] == b"3"
         assert headers["dlq_original_topic"] == b"events.stream"
         assert loop._stats.messages_sent_to_dlq == 1

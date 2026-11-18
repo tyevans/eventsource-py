@@ -21,11 +21,13 @@ from eventsource.observability.attributes import (
     ATTR_POSITION,
     ATTR_SUBSCRIPTION_NAME,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.envelopes import EventEnvelope
 from eventsource.ports.subscribers import BatchSubscriber
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.config import SubscriptionConfig
+    from eventsource.application.subscriptions.error_handling import SubscriptionErrorHandler
     from eventsource.application.subscriptions.metrics import SubscriptionMetrics
     from eventsource.application.subscriptions.retry import CircuitBreaker
 
@@ -40,6 +42,7 @@ class CatchUpDeliveryMixin:
     _tracer: Tracer
     _metrics: SubscriptionMetrics
     _handler_circuit_breaker: CircuitBreaker | None
+    _error_handler: SubscriptionErrorHandler
 
     async def _call_guarded[T](
         self,
@@ -79,7 +82,7 @@ class CatchUpDeliveryMixin:
                     extra={
                         "subscription": self.subscription.name,
                         "batch_size": len(events),
-                        "error": str(e),
+                        "error": error_summary(e),
                     },
                 )
                 return False
@@ -94,8 +97,12 @@ class CatchUpDeliveryMixin:
             self._metrics.record_lag(self.subscription.lag)
             return True
 
-    async def _deliver_event(self, envelope: EventEnvelope) -> None:
-        """Deliver a single event to the subscriber, recording metrics and handling errors."""
+    async def _deliver_event(self, envelope: EventEnvelope) -> bool:
+        """Deliver one event. Return True on success; on failure, dispatch to the error handler.
+
+        The error handler runs before this returns, so the caller's checkpoint
+        always comes after the DLQ row and callbacks for a failed event.
+        """
         event = envelope.event
         with self._tracer.span(
             "eventsource.catchup_runner.deliver_event",
@@ -112,12 +119,6 @@ class CatchUpDeliveryMixin:
                 await self._call_guarded(
                     lambda: settle_handler_result(subscriber.handle(event)), "handle_event"
                 )
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                self._metrics.record_event_processed(
-                    event_type=event.event_type,
-                    duration_ms=duration_ms,
-                )
-                self._metrics.record_lag(self.subscription.lag)
             except Exception as e:
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 self._metrics.record_event_failed(
@@ -126,6 +127,7 @@ class CatchUpDeliveryMixin:
                     duration_ms=duration_ms,
                 )
                 await self.subscription.record_event_failed(e)
+                await self._error_handler.handle_error(e, envelope=envelope, event=event)
                 if not self.config.continue_on_error:
                     raise
                 logger.warning(
@@ -135,9 +137,17 @@ class CatchUpDeliveryMixin:
                         "event_id": str(event.event_id),
                         "event_type": event.event_type,
                         "position": render_position(envelope.position),
-                        "error": str(e),
+                        "error": error_summary(e),
                     },
                 )
+                return False
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_event_processed(
+                event_type=event.event_type,
+                duration_ms=duration_ms,
+            )
+            self._metrics.record_lag(self.subscription.lag)
+            return True
 
 
 __all__ = ["CatchUpDeliveryMixin"]

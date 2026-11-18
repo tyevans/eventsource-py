@@ -84,7 +84,7 @@ construct.
 | `projection_checkpoints` | `get_schema("checkpoints")` | `PostgreSQLCheckpointRepository`, `SQLiteCheckpointRepository` -- resumable projections and subscriptions | postgresql, sqlite |
 | `dead_letter_queue` | `get_schema("dlq")` | `PostgreSQLDLQRepository`, `SQLiteDLQRepository` | postgresql, sqlite |
 | `snapshots` | `get_schema("snapshots")` | `PostgreSQLSnapshotStore`; `SQLiteSnapshotStore` applies the sqlite variant itself on connect | postgresql, sqlite |
-| `events` (partitioned) | `get_schema("events_partitioned")` | drop-in replacement for `events` on high-volume PostgreSQL | postgresql only |
+| `events` (partitioned) | `get_schema("events_partitioned")` | the `events` table for high-volume PostgreSQL, with a few differences (see [The partitioned events table](#the-partitioned-events-table)); also creates `event_ids` | postgresql only |
 | `tenant_migrations`, `tenant_routing`, `migration_position_mappings`, `migration_audit_log` | `get_schema("migration")` | `PostgreSQLMigrationRepository` -- live store-to-store migration tooling | postgresql only |
 
 The combined schema (`get_all_schemas()`, `schemas/all.sql`,
@@ -506,13 +506,65 @@ Two differences from the combined file are worth planning around:
   an implicit transaction).
 
 Beyond the five tables in the combined schema, `get_schema()` is the only way to
-reach `events_partitioned` (a drop-in replacement for `events`, covered below)
+reach `events_partitioned` (an alternative to `events`, covered below)
 and `migration` (the four tables behind `PostgreSQLMigrationRepository`). Both
 are PostgreSQL-only.
 
 If you would rather hand a path to an external tool than pass a string around,
 `get_template_path(name, backend=...)` returns the `Path` to the same file
 without reading it.
+
+### The partitioned events table
+
+`get_schema("events_partitioned")` creates an `events` table that uses
+PostgreSQL native range partitioning on `timestamp`. It also creates a
+non-partitioned `event_ids` table. It is an alternative to the `events` template,
+not a drop-in replacement. Use it only when you need partition-based archival
+or time-range pruning, and only on PostgreSQL 12 or later.
+
+Apply it in place of `events`, never alongside it. The event store writes to
+`events` and, when `event_ids` exists, also to `event_ids`:
+
+```python
+from eventsource.adapters.sql.schemas import get_schema
+
+partitioned_sql = get_schema("events_partitioned")
+# Apply with one asyncpg execute() call, as for the other templates.
+```
+
+The template creates a `events_default` partition. Add monthly partitions with
+`create_events_partition(year, month)` or your own range partitions before
+volume grows into the default partition.
+
+Differences from the default `events` schema:
+
+- **Event id uniqueness.** PostgreSQL requires the partition key in every unique
+  constraint, so the table alone cannot enforce a global `event_id` uniqueness.
+  The `event_ids` side table enforces it. A second append of the same `event_id`
+  raises `DuplicateEventError` whatever its timestamp.
+- **Stream version uniqueness.** The same rule means the table's
+  `(aggregate_id, aggregate_type, version, timestamp)` constraint allows two rows
+  at one version when the timestamps differ. `PostgreSQLEventStore.append` closes
+  this gap with a per-stream advisory lock (`pg_advisory_xact_lock`), taken before
+  it reads the current version. Concurrent appends to one stream therefore
+  serialize: one succeeds and the other raises `OptimisticLockError`. Writes that
+  bypass the adapter (for example, hand-written SQL) get no such guarantee.
+- **Retention of `event_ids`.** Detaching or dropping a partition does not remove
+  its `event_ids` rows. An `event_id` stays reserved after its event leaves the
+  active partitions. The table grows by one 16-byte key per event and is not
+  partitioned.
+- **Detection.** The store checks once, on its first append, whether `event_ids`
+  exists. Create the table before the first append. A store instance keeps that
+  first answer for its lifetime, so create a new instance after you create the
+  table.
+- **Position lookups.** The primary key is `(global_position, timestamp)`. A
+  lookup by `global_position` alone must check every partition. The default
+  schema has a single global primary key on `global_position`.
+
+Two guarantees of the default schema now depend on the adapter, not on the
+table alone: event id uniqueness (through `event_ids`) and stream version
+uniqueness (through the advisory lock). Keep all writes to the table on the
+adapter.
 
 ### Discover what is available: list_schemas() and list_backends()
 
@@ -566,3 +618,29 @@ for name in wanted:
         sql = get_schema(name, backend=backend)
         ...
 ```
+
+## Upgrading to this release
+
+Apply the scripts in `updates/` that match your backend and your schema. Each
+script is idempotent, so running it twice is safe.
+
+### PostgreSQL
+
+- **Snapshot tenant column (`updates/005_add_snapshot_tenant.sql`).** Run this
+  script on every PostgreSQL database that holds a `snapshots` table. The
+  snapshot store now reads and writes `snapshots.tenant_id`. Until you run the
+  script, the store probes for the column and falls back to snapshots without a
+  tenant. It logs one warning per store instance. Snapshots written during the
+  fallback have no tenant.
+- **Partitioned events schema (`updates/006_add_event_ids_side_table.sql`).**
+  Run this script only if you created `events` from `events_partitioned`. It
+  creates the `event_ids` side table and fills it from existing events.
+
+A store instance checks for these objects once, on its first use, and keeps the
+answer for its lifetime. Restart each application process after you run a
+script, so that every process sees the new schema.
+
+### SQLite
+
+The SQLite snapshot store adds `tenant_id` when it opens the database. You do not
+need to run `updates/005_add_snapshot_tenant_sqlite.sql` by hand.

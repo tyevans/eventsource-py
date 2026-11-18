@@ -54,8 +54,8 @@ By the end that file contains:
    to save an event stamped for tenant A, and a `TenantContextNotSetError` raised when
    you save with no scope at all.
 5. **A strict variant** constructed with `require_tenant_context=True`, so `load()`,
-   `exists()`, and `load_or_create()` also refuse to run outside a scope -- while still
-   returning whatever the id points at, including another tenant's aggregate.
+   `exists()`, and `load_or_create()` also refuse to run outside a scope. Inside a scope,
+   the same calls also refuse another tenant's stream: the id reads as missing.
 6. **A concurrency check**: two `asyncio` tasks in different `tenant_scope()` blocks
    running at once, each seeing only its own tenant -- because the context lives in a
    `ContextVar`, not a global.
@@ -65,6 +65,12 @@ By the end that file contains:
 Everything is in-memory and single-file. No Docker, no PostgreSQL, no migrations -- the
 storage layer is deliberately dumb so that every guarantee you see comes from the
 multi-tenancy module itself, and every gap it leaves is equally visible.
+
+!!! note "This tutorial is not complete"
+    The steps on this page cover items 1 and 2 of the list above. The steps for
+    items 3 to 7 are not written yet. For the repository wrapper, the two failure
+    modes, the strict variant, and tests, read the
+    [multi-tenant guide](../guides/multi-tenant.md).
 
 
 ## Prerequisites
@@ -76,7 +82,7 @@ multi-tenancy module itself, and every gap it leaves is equally visible.
 - **Tutorial 8 (Testing)** is helpful but not required -- only the last step uses
   `pytest`.
 - **Comfort with `asyncio`**, including `async with`, `asyncio.run()`, and
-  `asyncio.gather()`. Step 11 runs two tenant scopes concurrently.
+  `asyncio.gather()`.
 - **A rough idea of what a `ContextVar` is.** You do not need to have used
   `contextvars` directly; the point to hold onto is that the value is per-task, not
   per-process, which is exactly why the concurrency step works.
@@ -161,11 +167,12 @@ tenant-aware aggregate fills it from it, and `get_required_tenant()` raises
 `TenantContextNotSetError` rather than silently returning `None` if the scope was never
 entered. A `ContextVar` is the right container here because its value is per-task, not
 per-process: two `asyncio` tasks serving two customers concurrently see two different
-tenants, which a module-level global could never do. Step 11 demonstrates exactly that.
+tenants, which a module-level global could never do.
 
 **Then verify at the boundary.** Context can still be circumvented -- an event
-constructed with an explicit `tenant_id`, or built earlier under a different scope and
-saved later. `TenantAwareRepository.save()` is the last check before persistence. It walks
+constructed outside every scope with a foreign explicit `tenant_id`, or built earlier under
+a different scope and saved later. The constructor refuses an explicit `tenant_id` that
+differs from the active scope, so only the saved-later case reaches this check. `TenantAwareRepository.save()` is the last check before persistence. It walks
 `aggregate.uncommitted_events`, compares each event's `tenant_id` against
 `get_required_tenant()`, and raises `TenantMismatchError` (carrying `expected`, `actual`,
 and the offending `event_ids`) if any of them disagree. Nothing is written: the check runs
@@ -178,23 +185,21 @@ the others leave open.
 
 Two limits are worth internalizing now rather than discovering in production.
 
-**These are write-side guarantees only.** `TenantAwareRepository.load()` does not filter
-events by tenant. With the default `require_tenant_context=False` it is a plain
-delegation; with `require_tenant_context=True` it checks only that *a* tenant context
-exists before loading -- it never compares that context against the aggregate it returns.
-Hand it an aggregate id belonging to tenant B while inside tenant A's scope and you get
-tenant B's aggregate, fully replayed and without an error. The flag is named for what it
-does, a precondition on the caller, precisely so it is not mistaken for read isolation
-(ADR 0057). Read isolation has to come from your storage layer -- separate databases,
-separate schemas, or PostgreSQL row-level security. Step 15 covers this.
+**The read guard covers only the scope you establish.** Under an active scope,
+`TenantAwareRepository` checks that the stream belongs to the active tenant before it
+loads, probes, or appends. A stream that another tenant owns reads as missing, so
+`load()` raises `AggregateNotFoundError` and `exists()` returns `False`. Outside a scope
+the guard does not run, and a direct call to the event store is never checked. Hand the
+repository an id that belongs to tenant B while inside tenant A's scope, and you get
+`AggregateNotFoundError`, not B's aggregate. The `require_tenant_context` flag adds a
+precondition on top of this check; it does not replace it. Read the Limitations section of
+the [multi-tenancy guide](../guides/multi-tenant.md) for the paths that stay unchecked.
 
-**Events without a `tenant_id` are skipped, not rejected.** `_validate_tenant_consistency`
-reads `getattr(event, "tenant_id", None)` and `continue`s when it is `None`. This is a
-deliberate accommodation for aggregates that emit both tenant-scoped and system-level
-events (Step 14) and for incremental migrations -- but it means a plain `DomainEvent`
-sneaking into a tenant-scoped aggregate passes validation silently. Subclassing
-`TenantDomainEvent` is what makes the check meaningful, which is why the next step starts
-there.
+**Events without a `tenant_id` are rejected inside a scope.** Under a scope, `save()`
+raises `TenantMismatchError` with `actual=None` for an event whose `tenant_id` is `None`.
+Outside a scope, `save()` raises `TenantContextNotSetError`. Subclassing `TenantDomainEvent`
+still matters, because it makes the required field a construction-time error, before the
+save check runs.
 
 ## Step 2: Define a Tenant-Scoped Event with TenantDomainEvent
 
@@ -363,6 +368,7 @@ import asyncio
 from eventsource import (
     TenantContextNotSetError,
     TenantDomainEvent,
+    TenantMismatchError,
     get_current_tenant,
     get_required_tenant,
     tenant_scope,
@@ -425,8 +431,7 @@ dropped you out of tenant A's scope while still inside its `async with`.
 
 Alongside the permissive accessor there is a strict one. `get_required_tenant()` returns
 the same UUID when a scope is active, and raises `TenantContextNotSetError` when there is
-none. This is the function `TenantAwareRepository` calls internally, so the error you will
-see in Step 9 originates here.
+none. This is the function `TenantAwareRepository` calls internally.
 
 ```python
     try:
@@ -465,8 +470,8 @@ cleaned up after exception: None
 ```
 
 This is the main reason to prefer `tenant_scope()` over the manual
-`set_current_tenant()` / `clear_tenant_context()` pair. The manual functions exist and are
-covered in Step 13, but they put the cleanup on you, and any `return`, `raise`, or early
+`set_current_tenant()` / `clear_tenant_context()` pair. The manual functions exist, but they put
+the cleanup on you, and any `return`, `raise`, or early
 exit between the two calls leaks the tenant into whatever runs next on that task.
 
 ### Where the scope belongs
@@ -501,20 +506,28 @@ You now have a required `tenant_id` field (Step 2) and an ambient tenant in a
 `TenantDomainEvent` that reads the current scope and fills `tenant_id` in for you, so the
 call site never names a tenant at all.
 
-Its whole body is three lines:
+Its body has two paths:
 
 ```python
 @classmethod
 def with_tenant_context(cls, **kwargs: Any) -> Self:
     if "tenant_id" not in kwargs:
         kwargs["tenant_id"] = get_required_tenant()
-    return cls(**kwargs)
+        return cls(**kwargs)
+    event = cls(**kwargs)
+    reject_tenant_contradiction(
+        get_current_tenant(), event.tenant_id, event_ids=[event.event_id]
+    )
+    return event
 ```
 
-Note which accessor it uses: `get_required_tenant()`, the strict one. Constructing an
-event outside a scope is not a "no tenant yet" state, it is a bug, so the classmethod
-raises rather than producing an event with `tenant_id=None` -- which the required field
-would reject a moment later anyway, with a less informative message.
+Without an explicit `tenant_id`, the call reads the scope with `get_required_tenant()`, the
+strict accessor. Constructing an event outside a scope is not a "no tenant yet" state, it is
+a bug, so the classmethod raises rather than producing an event with `tenant_id=None`.
+
+With an explicit `tenant_id`, the scope is optional. The explicit value is accepted when no
+scope is active or when it equals the active scope. A different tenant raises
+`TenantMismatchError`. The rule is the same one `create_event()` applies.
 
 Replace `explore_context()` with `build_events()` in `multi_tenancy.py`:
 
@@ -551,33 +564,36 @@ would if you had called `SubscriptionStarted(...)` directly. `with_tenant_contex
 `**kwargs` passthrough with one key injected; it is not a restricted subset of the
 constructor.
 
-### Explicit `tenant_id` still wins
+### An explicit `tenant_id` must match the scope
 
-The injection only happens when the key is absent. Pass `tenant_id` yourself and the
-context is ignored entirely:
+The injection only happens when the key is absent. When you pass `tenant_id` yourself, the
+classmethod checks it against the active scope. A matching value is accepted. A different
+tenant is refused before any event exists:
 
 ```python
-        override = SubscriptionStarted.with_tenant_context(
-            aggregate_id=subscription_id,
-            plan="enterprise",
-            seats=50,
-            tenant_id=tenant_b,
-        )
-        print("explicit wins:", override.tenant_id == tenant_b)
+        try:
+            SubscriptionStarted.with_tenant_context(
+                aggregate_id=subscription_id,
+                plan="enterprise",
+                seats=50,
+                tenant_id=tenant_b,
+            )
+        except TenantMismatchError as exc:
+            print("explicit mismatch:", exc.expected == tenant_a, exc.actual == tenant_b)
 ```
 
 ```console
-explicit wins: True
+explicit mismatch: True True
 ```
 
-That is a documented behavior, not a loophole to be closed -- a system-level job that
-legitimately writes on behalf of a specific tenant needs a way to say so. But look at what
-you just built: an event stamped `tenant_b`, constructed inside `tenant_a`'s scope, with
-no complaint from Pydantic. Both halves of the design so far accept it. This is exactly the
-event that Step 8 will hand to `TenantAwareRepository.save()` to produce a
-`TenantMismatchError`, and the reason the repository check has to exist at all. Required
-fields and ambient context cannot catch a caller who is explicit about being wrong; only
-the write boundary can.
+The rule is deliberate. An event stamped `tenant_b`, built inside `tenant_a`'s scope, is a
+contradiction, and the constructor will not build it. Passing `tenant_id=tenant_a` inside
+`tenant_a`'s scope is fine. Outside every scope, an explicit `tenant_id` is used as given.
+
+The constructor sees only the scope it runs in. An event built outside every scope with a
+foreign `tenant_id`, and saved later inside another scope, passes construction. The
+repository check in `TenantAwareRepository.save()` is what catches that case. Required fields
+and the constructor rule cannot catch it; only the write boundary can.
 
 ### Nesting resolves to the innermost scope
 
@@ -663,8 +679,7 @@ error inside an aggregate command, call `get_required_tenant()` yourself at the 
 the method.
 
 With that, event construction is safe as long as the caller is honest and inside a scope.
-Step 5 builds the `Subscription` aggregate around `create_event()`, and Step 6 adds the
-wrapper that stops handling honesty as an assumption.
+Step 5 builds the `Subscription` aggregate around `create_event()`.
 
 ## Step 5: Build the Tenant-Aware Aggregate and Its @handles Methods
 
@@ -749,9 +764,9 @@ self.apply_event(event, is_new=True)
 
 Four fields for free, then `apply_event(..., is_new=True)`, which validates the version,
 advances `self._version`, dispatches to the matching `@handles` method, and appends the
-event to `uncommitted_events`. Your kwargs are applied *last*, so an explicit
-`tenant_id=` in a command method would override the context -- the same escape hatch
-`with_tenant_context()` has, and the same hazard.
+event to `uncommitted_events`. Your kwargs are applied *last*, so an explicit `tenant_id=` in
+a command method reaches the event. If it differs from the active scope, `create_event()`
+raises `TenantMismatchError`, as `with_tenant_context()` does. It is not an override.
 
 The `@handles` methods do the opposite job: they mutate state and nothing else. No
 validation, no event creation, no tenant logic. They run both for new events and for
@@ -838,8 +853,8 @@ and specifically at the top of a command, call the strict accessor yourself:
 
 That is a style choice, not a safety one -- both paths refuse to produce an event.
 
-What none of this covers is the dishonest caller: an event constructed with an explicit
-foreign `tenant_id`, or built under one scope and saved under another. The aggregate has
-no opinion about that, and neither does Pydantic. Step 6 adds `TenantAwareRepository`,
+What none of this covers is the dishonest caller who builds an event outside every scope
+with a foreign explicit `tenant_id`, or builds it under one scope and saves it under
+another. Neither the aggregate nor Pydantic checks those. `TenantAwareRepository`,
 which inspects `uncommitted_events` at the moment of saving and is the only component in
-the stack positioned to catch it.
+the stack positioned to catch them.

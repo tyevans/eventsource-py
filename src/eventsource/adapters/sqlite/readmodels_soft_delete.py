@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from eventsource.adapters._common import check_query
 from eventsource.adapters.sqlite.readmodels_query import SQLiteReadModelQueryMixin
 from eventsource.observability.attributes import (
     ATTR_DB_OPERATION,
@@ -95,6 +96,7 @@ class SQLiteReadModelSoftDeleteMixin[TModel: _BaseReadModel](SQLiteReadModelQuer
 
     def _build_select_deleted_query(self, query: Query) -> tuple[str, tuple[Any, ...]]:
         """Build SELECT SQL from Query for soft-deleted records only."""
+        check_query(self._model_class, query)
         parts = [f"SELECT {', '.join(self._field_names)} FROM {self._table_name}"]  # nosec B608
         params: list[Any] = []
         where_clauses: list[str] = ["deleted_at IS NOT NULL"]
@@ -103,14 +105,7 @@ class SQLiteReadModelSoftDeleteMixin[TModel: _BaseReadModel](SQLiteReadModelQuer
             where_clauses.append(clause)
             params.extend(filter_params)
         parts.append("WHERE " + " AND ".join(where_clauses))
-        if query.order_by:
-            parts.append(f"ORDER BY {query.order_by} {query.order_direction.upper()}")
-        if query.limit is not None:
-            parts.append(f"LIMIT {query.limit}")
-        elif query.offset:
-            parts.append("LIMIT -1")
-        if query.offset:
-            parts.append(f"OFFSET {query.offset}")
+        self._append_order_limit_offset(parts, params, query)
         return " ".join(parts), tuple(params)
 
 

@@ -85,7 +85,8 @@ class TestTriggerCutover:
         self, coordinator_deps: dict, phase: MigrationPhase = MigrationPhase.DUAL_WRITE
     ):
         migration_id, tenant_id = uuid4(), uuid4()
-        migration = create_test_migration(id=migration_id, tenant_id=tenant_id, phase=phase)
+        config = MigrationConfig(verify_consistency=False, migrate_subscriptions=False)
+        migration = create_test_migration(id=migration_id, tenant_id=tenant_id, phase=phase, config=config)  # fmt: skip
         coordinator_deps["migration_repo"].get = AsyncMock(return_value=migration)
         return migration_id, tenant_id, MigrationCoordinator(**coordinator_deps, enable_tracing=False)  # fmt: skip
 

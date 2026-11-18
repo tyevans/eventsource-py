@@ -72,8 +72,11 @@ originally defined. `SnapshotPolicy` has one member,
 and `Never()` never fires (manual mode). `SnapshotScheduler` has
 `async schedule(write, *, aggregate_type, aggregate_id) -> Snapshot | None`
 plus `pending_count` and `await_pending()`; the built-in `ImmediateScheduler`
-awaits the write inline, and `BackgroundScheduler` hands it to a
-`BackgroundTaskManager` and returns `None` immediately. `take_snapshot()` is
+awaits the write inline, and `BackgroundScheduler(max_pending: int = 1000)` hands it to a
+`BackgroundTaskManager` and returns `None`. Below `max_pending` in-flight writes, `schedule()`
+returns at once and the write runs in the background. At the ceiling, the write runs inline
+through `submit_or_run_inline()`, so the save waits for it. Either way the write never raises
+into the save path. `take_snapshot()` is
 the single free function that builds and saves a `Snapshot` from a live
 aggregate — reading `schema_version` off the aggregate class (defaulting to
 `1`), serializing state, and stamping `created_at` with `datetime.now(UTC)` —
@@ -237,7 +240,9 @@ Two consequences for hand-built snapshots, since neither `Snapshot.__init__`
 nor any store validates the number against the actual stream:
 
 - **Too high** — events between the real capture point and `version` are never
-  fetched, and the aggregate silently comes back missing them.
+  fetched, and the aggregate silently comes back missing them. A `version` above
+  the stream head is caught, as described below. A `version` that is high but
+  still below the head is not.
 - **Too low** — events already reflected in `state` are replayed on top of it,
   double-applying their effects.
 
@@ -246,6 +251,17 @@ Restoration failure is caught, but a *wrong* version is not. If
 state model), the repository logs a warning, re-fetches from version `0`, and
 rebuilds from a fresh aggregate instance. A version that is merely inaccurate
 raises nothing and produces a wrong aggregate.
+
+The load path checks a snapshot against the event stream before it uses the
+snapshot. Two checks ignore the snapshot, log a warning, and rebuild the aggregate
+from a full event replay. No error is raised:
+
+- The snapshot `aggregate_id` or `aggregate_type` does not match the aggregate
+  being loaded.
+- The snapshot `version` is greater than the stream head.
+
+One check raises. A snapshot over an empty stream does not create an aggregate.
+When the stream has no events, `load()` raises `AggregateNotFoundError`.
 
 `version` also drives the default snapshot cadence: `EveryNEvents(n).should_snapshot()`
 returns true when the save moved the version out of one block of `n` and into a

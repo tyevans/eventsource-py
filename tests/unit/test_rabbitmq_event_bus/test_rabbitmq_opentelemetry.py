@@ -164,7 +164,17 @@ class TestOpenTelemetryTracing:
         with pytest.raises(Exception, match="Publish failed"):
             await bus.publish([_make_test_event()])
 
-        mock_span.record_exception.assert_called_once()
+        # record_error: a log-safe "exception" event (no stacktrace) and an ERROR status.
+        mock_span.record_exception.assert_not_called()
+        mock_span.add_event.assert_called_once()
+        (event_name, attributes), _ = mock_span.add_event.call_args
+        assert event_name == "exception"
+        assert attributes["exception.type"] == "Exception"
+        assert "Publish failed" in attributes["exception.message"]
+        from opentelemetry.trace import StatusCode
+
+        status = mock_span.set_status.call_args.args[0]
+        assert status.status_code == StatusCode.ERROR
         mock_span.end.assert_called()
 
     def test_create_message_with_tracing_injects_context(

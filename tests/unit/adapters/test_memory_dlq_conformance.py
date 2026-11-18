@@ -7,9 +7,10 @@ import pytest
 
 from eventsource.adapters.memory import InMemoryDLQRepository
 from eventsource.testing.conformance_ports import DLQRepositoryConformance
+from eventsource.testing.conformance_ports.dlq_tenant import DLQTenantScopeConformance
 
 
-class TestMemoryDLQRepository(DLQRepositoryConformance):
+class TestMemoryDLQRepository(DLQRepositoryConformance, DLQTenantScopeConformance):
     @pytest.fixture
     async def store(self) -> AsyncIterator[InMemoryDLQRepository]:
         yield InMemoryDLQRepository()

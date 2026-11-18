@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.coordination import LeaderChangeCallback
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,11 @@ class InMemoryLeaderElector:
             except Exception as e:
                 logger.error(
                     "Leader change callback failed",
-                    extra={"identity": self._identity, "is_leader": is_leader, "error": str(e)},
+                    extra={
+                        "identity": self._identity,
+                        "is_leader": is_leader,
+                        "error": error_summary(e),
+                    },  # fmt: skip
                     exc_info=True,
                 )
 

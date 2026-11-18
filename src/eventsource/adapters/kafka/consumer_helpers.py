@@ -7,8 +7,12 @@ and isolate stateless header/logging helpers.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime
 from typing import Any
+
+from eventsource.adapters._bus.headers import read_header_str
+from eventsource.observability.error_summary import error_summary
 
 logger = logging.getLogger("eventsource.bus.kafka")
 
@@ -17,30 +21,39 @@ def get_header_value(
     headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
     key: str,
 ) -> str | None:
-    """Get a string header value by key from Kafka headers."""
+    """Get a string header value by key from Kafka headers.
+
+    Returns the first matching value. Undecodable bytes are replaced, never raised.
+    """
     if not headers:
         return None
     for k, v in headers:
         if k == key:
-            if v is None:
-                return None
-            return v.decode("utf-8")
+            return read_header_str(v)
     return None
 
 
 def get_retry_delay_remaining(
     headers: list[tuple[str, bytes]] | tuple[tuple[str, bytes], ...] | None,
+    max_delay: float,
 ) -> float:
-    """Calculate remaining retry delay from retry_after header, if any."""
+    """Return the seconds left until the retry_after header time, capped at max_delay.
+
+    A missing, non-numeric, NaN, infinite, or past time gives 0.0. The header is
+    publisher-controlled, so a far-future time cannot hold a task longer than max_delay.
+    """
     val = get_header_value(headers, "retry_after")
     if not val:
         return 0.0
     try:
         remaining = float(val) - datetime.now(UTC).timestamp()
-        return max(0.0, remaining)
     except ValueError:
         logger.warning("Ignoring unparseable retry_after header: %r", val)
         return 0.0
+    if not math.isfinite(remaining):
+        logger.warning("Ignoring non-finite retry_after header: %r", val)
+        return 0.0
+    return min(max(0.0, remaining), max_delay)
 
 
 def create_dlq_headers(
@@ -62,7 +75,7 @@ def create_dlq_headers(
     Returns:
         List of DLQ header tuples.
     """
-    error_message = str(error)[:1000]
+    error_message = error_summary(error)[:1000]
     return [
         ("dlq_reason", reason.encode("utf-8")),
         ("dlq_error_type", type(error).__name__.encode("utf-8")),

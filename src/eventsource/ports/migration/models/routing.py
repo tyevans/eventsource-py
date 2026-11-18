@@ -97,6 +97,8 @@ class CutoverResult:
     events_synced: int = 0
     error_message: str | None = None
     rolled_back: bool = False
+    consistency_verified: bool | None = None
+    """Post-switch verification outcome: True or False when verification ran, None when it did not."""
 
     @property
     def within_timeout(self) -> bool:

@@ -8,6 +8,7 @@ from typing import Any, Self
 from uuid import UUID
 
 from eventsource.domain import CommandRejectedError, DomainEvent
+from eventsource.observability.error_summary import error_summary
 from eventsource.testing.assertions import EventAssertions
 
 _NON_AGG_IDS = frozenset(("command_id", "correlation_id", "causation_id", "tenant_id", "actor_id"))
@@ -146,7 +147,7 @@ class DeciderScenario:
     def then_rejected(self, exc_type: type[BaseException] = CommandRejectedError, match: str | None = None) -> DeciderScenario:  # fmt: skip
         self._ensure_acted("then_rejected")
         if (err := self._error) is None or not isinstance(err, exc_type) or (match is not None and not re.search(match, str(err))):  # fmt: skip
-            raise AssertionError(f"expected rejection but command produced {self.events!r}" if err is None else (f"rejection message {str(err)!r} does not match {match!r}" if isinstance(err, exc_type) else f"expected {exc_type.__name__}, got {type(err).__name__}: {err}"))  # fmt: skip
+            raise AssertionError(f"expected rejection but command produced {self.events!r}" if err is None else (f"rejection message {error_summary(err)!r} does not match {match!r}" if isinstance(err, exc_type) else f"expected {exc_type.__name__}, got {error_summary(err)}"))  # fmt: skip
         return self
 
 

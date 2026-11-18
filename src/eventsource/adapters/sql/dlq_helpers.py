@@ -14,7 +14,7 @@ from eventsource.ports.dlq import DLQEntry, DLQStats, ProjectionFailureCount
 
 
 def row_to_dlq_entry(row: Any, dialect: Dialect) -> DLQEntry:
-    """Convert a database result row into a DLQEntry domain model."""
+    """Convert a row into a DLQEntry. Column 11 is the owner tenant (NULL when absent)."""
     return DLQEntry(
         id=row[0],
         event_id=uuid_result(row[1]),  # type: ignore[arg-type]
@@ -27,6 +27,7 @@ def row_to_dlq_entry(row: Any, dialect: Dialect) -> DLQEntry:
         first_failed_at=ts_result(row[8]),
         last_failed_at=ts_result(row[9]),
         status=row[10],
+        tenant_id=uuid_result(row[11]),
     )
 
 

@@ -1,4 +1,4 @@
-"""Tests for TenantAwareRepository read methods, properties, and non-isolation semantics."""
+"""Tests for TenantAwareRepository read methods, properties, and tenant-isolated reads."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from eventsource import TenantContextNotSetError, clear_tenant_context, tenant_s
 from eventsource.adapters.memory.store import InMemoryEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.application.aggregates.tenant_repository import TenantAwareRepository
+from eventsource.domain.exceptions import AggregateNotFoundError
 from tests.unit.application.aggregates.test_tenant_repository._fixtures import (
     MockAggregate,
     TenantOrderAggregate,
@@ -90,12 +91,9 @@ class TestTenantAwareRepositoryExists(_ClearTenantMixin):
         with pytest.raises(TenantContextNotSetError):
             await tenant_repo.get_version(uuid4())
 
-    async def test_exists_and_get_version_with_requirement_and_context_succeed(self, mock_repo: MagicMock) -> None:  # fmt: skip
-        tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=True)
-        async with tenant_scope(uuid4()):
-            assert await tenant_repo.exists(uuid4()) is True
-            assert await tenant_repo.get_version(uuid4()) == 3
-        mock_repo.exists.assert_called_once()
+    async def test_exists_and_get_version_unscoped_with_requirement_off_delegate(self, mock_repo: MagicMock) -> None:  # fmt: skip
+        tenant_repo = TenantAwareRepository(mock_repo, require_tenant_context=False)
+        assert await tenant_repo.get_version(uuid4()) == 3
         mock_repo.get_version.assert_called_once()
 
 
@@ -147,25 +145,28 @@ class TestTenantAwareRepositoryProperties:
         assert "require_tenant_context=False" in default_repr and "validate_on_save=True" in default_repr  # fmt: skip
 
 
-class TestReadsAreNotTenantIsolated(_ClearTenantMixin):
+class TestReadsAreTenantIsolated(_ClearTenantMixin):
+    """Under a scope, reads refuse a stream that another tenant owns (ADR-0113)."""
+
     @pytest.fixture
     def tenant_repo(self) -> TenantAwareRepository[TenantOrderAggregate]:
         base = AggregateRepository(InMemoryEventStore(), TenantOrderAggregate)
         return TenantAwareRepository(base, require_tenant_context=True)
 
-    async def test_load_and_exists_return_another_tenants_aggregate(
+    async def test_load_and_exists_refuse_another_tenants_aggregate(
         self, tenant_repo: TenantAwareRepository[TenantOrderAggregate]
     ) -> None:
         tenant_a, tenant_b, aggregate_id, customer_id = uuid4(), uuid4(), uuid4(), uuid4()
-        async with tenant_scope(tenant_b):
+        async with tenant_scope(tenant_a):
             order = tenant_repo.create_new(aggregate_id)
             order.create(customer_id=customer_id)
             await tenant_repo.save(order)
-        async with tenant_scope(tenant_a):
-            leaked = await tenant_repo.load(aggregate_id)
-            assert await tenant_repo.exists(aggregate_id) is True
-        assert leaked.version == 1 and leaked.state is not None
-        assert leaked.state.customer_id == customer_id
+        async with tenant_scope(tenant_b):
+            with pytest.raises(AggregateNotFoundError):
+                await tenant_repo.load(aggregate_id)
+            assert await tenant_repo.get_or_none(aggregate_id) is None
+            assert await tenant_repo.exists(aggregate_id) is False
+            assert await tenant_repo.get_version(aggregate_id) == 0
 
     def test_create_new_is_unguarded_even_when_context_is_required(
         self, tenant_repo: TenantAwareRepository[TenantOrderAggregate]
@@ -174,7 +175,7 @@ class TestReadsAreNotTenantIsolated(_ClearTenantMixin):
 
 
 __all__ = [
-    "TestReadsAreNotTenantIsolated",
+    "TestReadsAreTenantIsolated",
     "TestTenantAwareRepositoryCreateNew",
     "TestTenantAwareRepositoryExists",
     "TestTenantAwareRepositoryLoad",

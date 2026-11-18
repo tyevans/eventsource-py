@@ -5,17 +5,21 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from eventsource.adapters._bus.headers import read_header_int, read_header_str
 from eventsource.adapters.kafka.consumer_helpers import get_header_value, get_retry_delay_remaining
 from eventsource.adapters.kafka.models import DeserializationError, KafkaEventBusStats
 from eventsource.domain.event import DomainEvent
 from eventsource.domain.exceptions import HandlerDispatchError
 from eventsource.observability import OTEL_AVAILABLE, SpanKindEnum, Tracer
 from eventsource.observability import attributes as attr
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
     from eventsource.adapters._bus.handler_adapter import HandlerAdapter
     from eventsource.adapters._bus.retry_scheduler import RetryScheduler
@@ -53,45 +57,42 @@ class KafkaConsumerMessageMixin:
     _handle_processing_error: Any
     _send_to_dlq: Any
     _warn_uncommitted: Any
+    _dead_letter_at_capacity: Callable[[Any], Coroutine[Any, Any, None]]
 
     async def _process_message(self, message: Any, skip_await_retry: bool = False) -> None:
-        if not skip_await_retry and (remaining := get_retry_delay_remaining(message.headers)) > 0:
-
-            async def _retry_action(msg: Any = message) -> None:
-                await self._process_message(msg, skip_await_retry=True)
-
-            name = f"kafka-retry-p{message.partition}-o{message.offset}"
-            return self._retry_scheduler.schedule(remaining, _retry_action, name=name)  # type: ignore[return-value]
+        if not skip_await_retry and (remaining := get_retry_delay_remaining(message.headers, self._config.retry_max_delay)) > 0:  # fmt: skip
+            if self._retry_scheduler.is_full:
+                return await self._dead_letter_at_capacity(message)
+            self._retry_scheduler.schedule(remaining, partial(self._process_message, message, skip_await_retry=True), name=f"kafka-retry-p{message.partition}-o{message.offset}")  # fmt: skip
+            return
         self._stats.events_consumed += 1
         self._stats.last_consume_at = datetime.now(UTC)
         t, p, o = message.topic, message.partition, message.offset
-        event_type_name = self._get_header_value(message.headers, "event_type")
-        if self._metrics and event_type_name:
-            m_attrs = {"messaging.system": "kafka", "messaging.destination": t, "messaging.kafka.partition": p, "event.type": event_type_name}  # fmt: skip
-            self._metrics.messages_consumed.add(1, attributes=m_attrs)
+        header_type = self._get_header_value(message.headers, "event_type")
+        metric_type = r.event_type_name() if (r := self._resolve_event_class(header_type or "")) else "unknown"  # fmt: skip
+        if self._metrics:
+            self._metrics.messages_consumed.add(1, attributes={"messaging.system": "kafka", "messaging.destination": t, "messaging.kafka.partition": p, "event.type": metric_type})  # fmt: skip
         msg_meta = {"topic": t, "partition": p, "offset": o}
-        if not event_type_name:
+        if not header_type:
             logger.error("Message missing event_type header", extra=msg_meta)
-            if self._consumer:
-                await self._consumer.commit()
+            await self._dead_letter_undecodable(message, DeserializationError("Message missing event_type header"), self._get_retry_count(message.headers), None)  # fmt: skip
             return
-        logger.debug("Processing message", extra={"event_type": event_type_name, **msg_meta})
+        logger.debug("Processing message", extra={"event_type": header_type, **msg_meta})
         if self._enable_tracing and PROPAGATION_AVAILABLE and extract is not None:
             ctx = extract(self._extract_trace_context(message.headers))
-            s_attrs = {attr.ATTR_MESSAGING_SYSTEM: "kafka", "messaging.source": t, "messaging.source_kind": "topic", "messaging.kafka.partition": p, attr.ATTR_MESSAGING_OPERATION: "receive", "messaging.kafka.offset": o, "messaging.kafka.consumer_group": self._config.consumer_group, attr.ATTR_EVENT_TYPE: event_type_name}  # fmt: skip
-            name = f"eventsource.event_bus.consume {event_type_name}"
+            s_attrs = {attr.ATTR_MESSAGING_SYSTEM: "kafka", "messaging.source": t, "messaging.source_kind": "topic", "messaging.kafka.partition": p, attr.ATTR_MESSAGING_OPERATION: "receive", "messaging.kafka.offset": o, "messaging.kafka.consumer_group": self._config.consumer_group, attr.ATTR_EVENT_TYPE: metric_type}  # fmt: skip
+            name = f"eventsource.event_bus.consume {metric_type}"
             with self._tracer.span_with_kind(name=name, kind=SpanKindEnum.CONSUMER, attributes=s_attrs, context=ctx) as span:  # fmt: skip
-                await self._process_message_with_span(message, event_type_name, span)
+                await self._process_message_with_span(message, header_type, span)
         else:
-            await self._process_message_with_span(message, event_type_name, None)
+            await self._process_message_with_span(message, header_type, None)
 
     def _extract_trace_context(self, headers: _Headers) -> dict[str, str]:
-        return {k: v.decode("utf-8") for k, v in (headers or ()) if k in ("traceparent", "tracestate", "baggage")}  # fmt: skip
+        pairs = ((k, read_header_str(v)) for k, v in (headers or ()) if k in ("traceparent", "tracestate", "baggage"))  # fmt: skip
+        return {k: v for k, v in pairs if v is not None}
 
     def _fail_span(self, span: Any, exc: Exception) -> None:
-        if span is not None and Status is not None and StatusCode is not None:
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            span.record_exception(exc)
+        record_error(span, exc)
 
     def _record_duration(self, start_time: float, topic: str) -> None:
         if self._metrics:
@@ -103,13 +104,7 @@ class KafkaConsumerMessageMixin:
             try:
                 event = self._deserialize_message(message)
             except DeserializationError as e:
-                logger.error("Deserialization error, sending directly to DLQ", extra={"event_type": event_type_name, "error": str(e)})  # fmt: skip
-                if await self._send_to_dlq(message, e, retry_count, reason="deserialization_error"):
-                    if self._consumer:
-                        await self._consumer.commit()
-                else:
-                    self._warn_uncommitted(message, "deserialization_error")
-                self._fail_span(span, e)
+                await self._dead_letter_undecodable(message, e, retry_count, span, event_type_name)
                 return self._record_duration(start_time, message.topic)
             if span is not None:
                 span.set_attribute(attr.ATTR_EVENT_ID, str(event.event_id))
@@ -132,18 +127,33 @@ class KafkaConsumerMessageMixin:
                 e = e.failures[0][1]
             await self._handle_processing_error(message, e, retry_count)
 
+    async def _dead_letter_undecodable(
+        self,
+        message: Any,
+        error: DeserializationError,
+        retry_count: int,
+        span: Any,
+        event_type_name: str | None = None,
+    ) -> None:
+        """Send an undecodable message to the DLQ and commit its offset once it is retained."""
+        logger.error("Deserialization error, sending directly to DLQ", extra={"event_type": event_type_name, "error": error_summary(error)})  # fmt: skip
+        if await self._send_to_dlq(message, error, retry_count, reason="deserialization_error"):
+            if self._consumer:
+                await self._consumer.commit()
+        else:
+            self._warn_uncommitted(message, "deserialization_error")
+        self._fail_span(span, error)
+
     def _deserialize_message(self, message: Any) -> DomainEvent:
         if not (event_type_name := self._get_header_value(message.headers, "event_type")):
             raise DeserializationError("Message missing event_type header")
         if not (event_class := self._resolve_event_class(event_type_name)):
-            raise DeserializationError(f"Unknown event type: {event_type_name}")
+            # The header value is untrusted: it is not put in the message text.
+            raise DeserializationError("Unknown event type")
         return self._serializer.deserialize(message.value, event_type_name, event_class)
 
     def _get_header_value(self, headers: _Headers, key: str) -> str | None:
         return get_header_value(headers, key)
 
     def _get_retry_count(self, headers: _Headers) -> int:
-        try:
-            return int(val) if (val := self._get_header_value(headers, "retry_count")) else 0
-        except ValueError:
-            return 0
+        return read_header_int(self._get_header_value(headers, "retry_count"), 0)

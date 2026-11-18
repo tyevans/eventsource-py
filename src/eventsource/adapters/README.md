@@ -25,6 +25,16 @@ checkpoint and DLQ repositories.
 - `sql/` and `_sql/` -- dialect-parameterized SQL building blocks shared by the SQLite
   and PostgreSQL backends (checkpoint/DLQ/`DatabaseProjection` SQL, and position codecs
   such as `IntPositionCodec`).
+- `_common/` -- port semantics that every store adapter shares, such as `check_expected`
+  and `describe_expected` (`expected_version.py`). Adapters-internal.
+- `_bus/` -- shared helpers for the event bus backends: the base bus, the subscription
+  registry, the handler adapter, headers, redaction, and retry scheduling. Adapters-internal.
+- `kafka/`, `rabbitmq/`, `redis/` -- event bus backends. Each guards its driver import
+  (`aiokafka`, `aio-pika`, `redis`) and exports an availability flag (`KAFKA_AVAILABLE`,
+  `RABBITMQ_AVAILABLE`, `REDIS_AVAILABLE`).
+- `serialization/` -- the JSON encoder, `json_dumps` and `json_loads`, and the delta
+  compression helpers.
+- `sync/` -- `SyncEventStoreAdapter`, which wraps an async store for synchronous callers.
 
 ## Choosing a Backend
 
@@ -78,9 +88,8 @@ themselves:
 - `KAFKA_AVAILABLE` / `RABBITMQ_AVAILABLE` -- each backend has one canonical flag,
   declared and checked in that backend's `bus.py` and re-exported from the backend's
   `__init__.py`. Sibling modules that guard the same driver import for their own
-  runtime names (Kafka's `connection.py`/`dlq.py`, RabbitMQ's
-  `consumer.py`/`serialization.py`) keep the `try/except` guard but do not bind a
-  second copy of the flag -- the canonical one is the only one anything reads.
+  runtime names (Kafka's `connection.py` and `dlq.py`) keep the `try/except` guard but
+  do not bind a second copy of the flag -- the canonical one is the only one anything reads.
 
 `InMemoryEventStore` and `InMemorySnapshotStore` have no availability flag -- they are
 always importable, since they depend only on the standard library.

@@ -3,12 +3,14 @@
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
-from eventsource.domain.exceptions import SnapshotDeserializationError
 from eventsource.ports.snapshots import Snapshot, SnapshotStore, SnapshotTypeInvalidation
+from eventsource.testing.conformance_ports.snapshots_deserialization import (
+    SnapshotDeserializationConformance as SnapshotDeserializationConformance,
+)
 
 
 @runtime_checkable
@@ -73,6 +75,23 @@ class SnapshotConformance(ABC):
         await store.save_snapshot(snapshot)
         assert await store.snapshot_exists(snapshot.aggregate_id, snapshot.aggregate_type) is True
 
+    async def test_tenant_id_round_trips(self, store: SnapshotStore) -> None:
+        tenant_id = uuid4()
+        tenanted = Snapshot(
+            uuid4(), "Order", 1, {"status": "open"}, 1, datetime.now(UTC), tenant_id
+        )
+        await store.save_snapshot(tenanted)
+        loaded = await store.get_snapshot(tenanted.aggregate_id, "Order")
+        assert loaded is not None
+        assert loaded.tenant_id == tenant_id
+
+    async def test_snapshot_without_tenant_reads_back_as_none(self, store: SnapshotStore) -> None:
+        untenanted = make_snapshot()
+        await store.save_snapshot(untenanted)
+        loaded = await store.get_snapshot(untenanted.aggregate_id, untenanted.aggregate_type)
+        assert loaded is not None
+        assert loaded.tenant_id is None
+
     async def test_different_aggregate_types_are_independent(self, store: SnapshotStore) -> None:
         aid = uuid4()
         order_snapshot = Snapshot(aid, "Order", 1, {}, 1, datetime.now(UTC))
@@ -123,32 +142,3 @@ class SnapshotTypeInvalidationConformance(ABC):
 
 class SnapshotStoreConformance(SnapshotConformance, SnapshotTypeInvalidationConformance):
     """Combined conformance suite for `SnapshotStore` and `SnapshotTypeInvalidation`."""
-
-
-class SnapshotDeserializationConformance(ABC):
-    """Conformance suite for the `SnapshotDeserializationError` contract on corrupted raw state."""
-
-    @abstractmethod
-    @pytest.fixture
-    def store(self) -> object:
-        """Yield a fresh adapter instance implementing `SnapshotStore`."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def _write_raw_state(
-        self, store: SnapshotStore, *, aggregate_id: UUID, aggregate_type: str, raw_state: str
-    ) -> None:
-        """Insert a snapshot row with literal `raw_state` bypassing JSON encoding."""
-        raise NotImplementedError
-
-    async def test_get_snapshot_raises_deserialization_error_on_malformed_state(
-        self, store: SnapshotStore
-    ) -> None:
-        aggregate_id = uuid4()
-        await self._write_raw_state(
-            store, aggregate_id=aggregate_id, aggregate_type="Order", raw_state="{not valid json"
-        )
-        with pytest.raises(SnapshotDeserializationError) as exc_info:
-            await store.get_snapshot(aggregate_id, "Order")
-        assert exc_info.value.aggregate_id == aggregate_id
-        assert exc_info.value.aggregate_type == "Order"

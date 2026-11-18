@@ -46,8 +46,8 @@ governing_adrs:
 
 2. **Pluggable Storage and Bus Ports**:
    - Strict ring layering (`adapters` -> `application` -> `ports` -> `domain`).
-   - Production-ready `EventStore` implementations: PostgreSQL (with JSONB, advisory locks), SQLite, and In-Memory.
-   - Uniform `EventBus` implementations: Kafka, RabbitMQ, Redis, and In-Memory.
+   - Production-ready `EventStore` implementations: PostgreSQL (with JSONB, advisory locks) and SQLite. The In-Memory event store and bus are test doubles, not production adapters.
+   - Uniform `EventBus` implementations: Kafka, RabbitMQ, and Redis. The In-Memory event bus is a test double, not a production adapter.
 
 3. **Resilient Projections and Subscriptions**:
    - `DeclarativeProjection` with automatic event handler routing and synchronous/asynchronous execution models.

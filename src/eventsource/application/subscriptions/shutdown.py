@@ -36,6 +36,7 @@ from eventsource.application.subscriptions.shutdown_runner import (  # fmt: skip
     execute_shutdown_sequence,
 )
 from eventsource.application.subscriptions.shutdown_signals import ShutdownSignalManager
+from eventsource.observability.error_summary import error_summary
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,9 @@ class ShutdownCoordinator:
         try:
             record_in_flight_at_shutdown(count)
         except Exception as e:
-            logger.debug("Failed to record in-flight count metric", extra={"error": str(e)})
+            logger.debug(
+                "Failed to record in-flight count metric", extra={"error": error_summary(e)}
+            )
 
     def _create_result(self, start_time: datetime, *args: Any) -> ShutdownResult:
         return create_shutdown_result(self, start_time, *args)

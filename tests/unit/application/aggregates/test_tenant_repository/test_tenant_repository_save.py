@@ -81,9 +81,10 @@ class TestTenantAwareRepositorySave:
         with pytest.raises(TenantContextNotSetError):
             await tenant_repo.save(aggregate)
 
-    async def test_save_allows_events_without_tenant_id(
+    async def test_save_rejects_events_without_tenant_id(
         self, tenant_repo: TenantAwareRepository[MockAggregate], mock_repo: MagicMock
     ) -> None:
+        """An event with no tenant fails closed under an active tenant scope."""
         aggregate_id = uuid4()
         event = NonTenantOrderCreated(
             aggregate_id=aggregate_id,
@@ -93,36 +94,42 @@ class TestTenantAwareRepositorySave:
         )
         aggregate = MockAggregate(aggregate_id=aggregate_id, uncommitted_events=[event])
         async with tenant_scope(uuid4()):
-            await tenant_repo.save(aggregate)
-        mock_repo.save.assert_called_once()
+            with pytest.raises(TenantMismatchError) as exc_info:
+                await tenant_repo.save(aggregate)
+        assert exc_info.value.actual is None
+        assert exc_info.value.event_ids == [event.event_id]
+        mock_repo.save.assert_not_called()
 
-    async def test_save_allows_events_with_none_tenant_id(
+    async def test_save_rejects_events_with_none_tenant_id(
         self, tenant_repo: TenantAwareRepository[MockAggregate], mock_repo: MagicMock
     ) -> None:
+        """An explicit tenant_id=None fails closed under an active tenant scope."""
         aggregate_id = uuid4()
         event = DomainEvent(aggregate_id=aggregate_id, aggregate_type="Order", aggregate_version=1)
         aggregate = MockAggregate(aggregate_id=aggregate_id, uncommitted_events=[event])
         async with tenant_scope(uuid4()):
-            await tenant_repo.save(aggregate)
-        mock_repo.save.assert_called_once()
+            with pytest.raises(TenantMismatchError) as exc_info:
+                await tenant_repo.save(aggregate)
+        assert exc_info.value.actual is None
+        mock_repo.save.assert_not_called()
 
-    async def test_save_with_mixed_tenant_and_non_tenant_events(
+    async def test_save_rejects_mixed_tenant_and_non_tenant_events(
         self, tenant_repo: TenantAwareRepository[MockAggregate], mock_repo: MagicMock
     ) -> None:
         tenant_id, aggregate_id = uuid4(), uuid4()
-        events = [
-            NonTenantOrderCreated(
-                aggregate_id=aggregate_id,
-                aggregate_type="Order",
-                aggregate_version=1,
-                customer_id=uuid4(),
-            ),
-            _order_event(aggregate_id, tenant_id, version=2),
-        ]
+        untenanted = NonTenantOrderCreated(
+            aggregate_id=aggregate_id,
+            aggregate_type="Order",
+            aggregate_version=1,
+            customer_id=uuid4(),
+        )
+        events = [untenanted, _order_event(aggregate_id, tenant_id, version=2)]
         aggregate = MockAggregate(aggregate_id=aggregate_id, uncommitted_events=events)
         async with tenant_scope(tenant_id):
-            await tenant_repo.save(aggregate)
-        mock_repo.save.assert_called_once()
+            with pytest.raises(TenantMismatchError) as exc_info:
+                await tenant_repo.save(aggregate)
+        assert exc_info.value.event_ids == [untenanted.event_id]
+        mock_repo.save.assert_not_called()
 
     async def test_save_with_multiple_mismatched_events(
         self, tenant_repo: TenantAwareRepository[MockAggregate]
@@ -155,43 +162,4 @@ class TestTenantAwareRepositorySave:
         mock_repo.save.assert_called_once()
 
 
-class TestTenantMismatchErrorDetails:
-    """Tests for TenantMismatchError details."""
-
-    def setup_method(self) -> None:
-        clear_tenant_context()
-
-    def teardown_method(self) -> None:
-        clear_tenant_context()
-
-    async def test_error_contains_expected_tenant(self) -> None:
-        mock_repo = MagicMock(save=AsyncMock(), aggregate_type="Order")
-        tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
-        context_tenant, event_tenant, aggregate_id = uuid4(), uuid4(), uuid4()
-        event = _order_event(aggregate_id, event_tenant)
-        aggregate = MockAggregate(aggregate_id=aggregate_id, uncommitted_events=[event])
-        async with tenant_scope(context_tenant):
-            with pytest.raises(TenantMismatchError) as exc_info:
-                await tenant_repo.save(aggregate)
-            error = exc_info.value
-            assert error.expected == context_tenant
-            assert error.actual == event_tenant
-            assert str(context_tenant) in str(error)
-            assert str(event_tenant) in str(error)
-
-    async def test_error_contains_affected_event_ids(self) -> None:
-        mock_repo = MagicMock(save=AsyncMock(), aggregate_type="Order")
-        tenant_repo: TenantAwareRepository[MockAggregate] = TenantAwareRepository(mock_repo)
-        context_tenant, wrong_tenant, aggregate_id = uuid4(), uuid4(), uuid4()
-        events = [_order_event(aggregate_id, wrong_tenant, version=v) for v in (1, 2)]
-        aggregate = MockAggregate(aggregate_id=aggregate_id, uncommitted_events=events)
-        async with tenant_scope(context_tenant):
-            with pytest.raises(TenantMismatchError) as exc_info:
-                await tenant_repo.save(aggregate)
-            error = exc_info.value
-            assert len(error.event_ids) == 2
-            assert events[0].event_id in error.event_ids
-            assert events[1].event_id in error.event_ids
-
-
-__all__ = ["TestTenantAwareRepositorySave", "TestTenantMismatchErrorDetails"]
+__all__ = ["TestTenantAwareRepositorySave"]

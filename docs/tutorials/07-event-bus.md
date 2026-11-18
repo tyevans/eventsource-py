@@ -602,8 +602,9 @@ asyncio.run(main())
 ```
 
 The healthy handler ran. `publish()` returned normally -- **it did not raise**. The
-exception was caught per handler, logged at `ERROR` with a full traceback and structured
-`extra` fields (handler name, event type, event id), and counted in `handler_errors`.
+exception was caught per handler, logged at `ERROR` with an error summary and structured
+`extra` fields (handler name, event type, event id). The log has no traceback, because a
+traceback repeats the error text, and that text can hold payload values, and counted in `handler_errors`.
 
 Take the tradeoff seriously: the bus will never tell your publishing code that a
 consumer failed. If a side effect must not be silently lost, do not rely on the bus

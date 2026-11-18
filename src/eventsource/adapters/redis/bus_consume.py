@@ -13,6 +13,8 @@ from eventsource.adapters.redis.config import (
     RedisEventBusConfig,
 )
 from eventsource.observability import attributes as attr
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -73,7 +75,7 @@ class RedisBusConsumeMixin:
                 break
             except RedisConnectionError as e:
                 self._stats.reconnections += 1
-                logger.error(f"Redis connection error in consumer loop: {e}", exc_info=True)
+                logger.error(f"Redis connection error in consumer loop: {error_summary(e)}", exc_info=True)  # fmt: skip
                 await asyncio.sleep(1)
                 try:
                     await self.connect()
@@ -81,7 +83,7 @@ class RedisBusConsumeMixin:
                     logger.error("Failed to reconnect, will retry...")
                     await asyncio.sleep(5)
             except Exception as e:
-                logger.error(f"Error in consumer loop: {e}", exc_info=True)
+                logger.error(f"Error in consumer loop: {error_summary(e)}", exc_info=True)
                 await asyncio.sleep(1)
         self._consuming = False
         logger.info("Consumer loop stopped")
@@ -111,7 +113,7 @@ class RedisBusConsumeMixin:
         stream, group = self._config.stream_name, self._config.consumer_group
         with self._tracer.span("eventsource.event_bus.process", span_attrs) as span:
             try:
-                logger.debug(f"Processing message {message_id}: {event_type_name}", extra=msg_meta)
+                logger.debug("Processing message", extra=msg_meta)
                 if occurred_at_str := message_data.get("occurred_at"):
                     try:
                         occurred_at = datetime.fromisoformat(occurred_at_str)
@@ -120,9 +122,12 @@ class RedisBusConsumeMixin:
                         lag = (datetime.now(UTC) - occurred_at).total_seconds()
                         logger.debug(f"Processing lag: {lag:.3f}s", extra={"lag_seconds": lag})
                     except (ValueError, TypeError) as e:
-                        logger.warning(f"Failed to calculate processing lag: {e}")
+                        logger.warning(
+                            "Failed to calculate processing lag",
+                            extra={**msg_meta, "error": error_summary(e)},
+                        )
                 if (event := self._deserialize_event(event_type_name, message_data)) is None:
-                    logger.warning(f"Unknown event type: {event_type_name}, skipping", extra=msg_meta)  # fmt: skip
+                    logger.warning("Unknown event type, skipping", extra=msg_meta)  # fmt: skip
                     await self._redis.xack(stream, group, message_id)
                     return
                 await self._dispatch_event(event, message_id)
@@ -133,14 +138,15 @@ class RedisBusConsumeMixin:
                 if span:
                     span.set_attribute("processing.success", True)
                     span.set_attribute("processing.duration_ms", duration_ms)
-                logger.debug(f"Successfully processed {event_type_name}", extra={**msg_meta, "duration_ms": duration_ms})  # fmt: skip
+                logger.debug("Successfully processed message", extra={**msg_meta, "duration_ms": duration_ms})  # fmt: skip
             except Exception as e:
                 self._stats.events_processed_failed += 1
                 duration_ms = (datetime.now(UTC) - processing_start).total_seconds() * 1000
                 if span:
                     span.set_attribute("processing.success", False)
-                    span.record_exception(e)
-                logger.error(f"Failed to process message {message_id}: {e}", exc_info=True, extra={**msg_meta, "error": str(e), "duration_ms": duration_ms})  # fmt: skip
+                    record_error(span, e)
+                # No exc_info: the traceback repeats str(e), which can echo payload values.
+                logger.error("Failed to process message", extra={**msg_meta, "error": error_summary(e), "duration_ms": duration_ms})  # fmt: skip
 
 
 __all__ = ["RedisBusConsumeMixin"]

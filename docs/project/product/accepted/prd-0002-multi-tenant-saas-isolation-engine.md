@@ -62,8 +62,11 @@ governing_adrs:
 2. Invoking `clear_tenant_context()` invalidates active tokens, and subsequent calls to `reset_tenant_context()` raise `TenantContextResetError`.
 3. Creating a `TenantDomainEvent` without an explicit or ambient tenant ID raises a validation error.
 4. Attempting to save an aggregate emitting an event with a discordant tenant ID through `TenantAwareRepository` raises `TenantMismatchError`.
-5. Loading an aggregate through `TenantAwareRepository(require_tenant_context=True)` without an ambient tenant context raises `MissingTenantContextError`.
+5. Loading an aggregate through `TenantAwareRepository(require_tenant_context=True)` without an ambient tenant context raises `TenantContextNotSetError`.
 6. Reading from `GlobalEventFeed` or invoking `replay()` with `tenant_id` pushes the filter to the storage adapter and returns only matching envelopes.
+7. Under an active tenant scope, `TenantAwareRepository` treats a stream that another tenant owns as absent: `load` raises `AggregateNotFoundError`, `exists` returns `False`, `get_version` returns `0`, and `save` appends nothing to it (ADR-0113).
+8. A projection with a callable tenant filter raises `TenantContextNotSetError` when no tenant scope is active, unless `tenant_filter_allow_unscoped` is set.
+9. Under an active tenant scope, `TenantScopedReadModelRepository` reads, saves, and deletes only rows of the active tenant, and DLQ reads and state changes match only entries of the active tenant (ADR-0114).
 
 ## Linked User Stories
 

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 import socket
-import ssl
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger("eventsource.bus.kafka")
@@ -47,7 +46,7 @@ class KafkaEventBusConfig:
     security_protocol: str = "PLAINTEXT"
     sasl_mechanism: str | None = None
     sasl_username: str | None = None
-    sasl_password: str | None = None
+    sasl_password: str | None = field(default=None, repr=False)
     ssl_cafile: str | None = None
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None
@@ -125,18 +124,6 @@ class KafkaEventBusConfig:
         config.update({k: v for k, v in opt.items() if v})
         if "SSL" in self.security_protocol:
             config["ssl_check_hostname"] = self.ssl_check_hostname
-
-    def create_ssl_context(self) -> ssl.SSLContext | None:
-        if "SSL" not in self.security_protocol:
-            return None
-        context = ssl.create_default_context()
-        if self.ssl_cafile:
-            context.load_verify_locations(self.ssl_cafile)
-        if self.ssl_certfile and self.ssl_keyfile:
-            context.load_cert_chain(certfile=self.ssl_certfile, keyfile=self.ssl_keyfile)
-        context.check_hostname = bool(self.ssl_check_hostname)
-        context.verify_mode = ssl.CERT_REQUIRED if self.ssl_check_hostname else ssl.CERT_NONE
-        return context
 
     def get_sanitized_config(self) -> dict[str, Any]:
         res = {k: getattr(self, k) for k in _SANITIZED.split()}

@@ -19,6 +19,7 @@ from eventsource.observability import (
     ATTR_TENANT_ID,
     Tracer,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports import (
     AppendResult,
     CategoryReadOptions,
@@ -98,7 +99,7 @@ class DualWriteStoreMixin:
                 )
             except Exception as e:
                 _get_logger().warning(
-                    f"Target write failed for tenant {self._tenant_id}, stream {stream.render()}: {e}"
+                    f"Target write failed for tenant {self._tenant_id}, stream {stream.render()}: {error_summary(e)}"  # fmt: skip
                 )
                 if self._migration_id is not None:
                     metrics = get_migration_metrics(str(self._migration_id), str(self._tenant_id))

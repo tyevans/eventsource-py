@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from eventsource.application.migration.dual_write_types import FailedWrite, FailureStats
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.domain.event import DomainEvent
@@ -92,7 +93,7 @@ class DualWriteTrackingMixin:
             aggregate_id=aggregate_id,
             aggregate_type=aggregate_type,
             event_ids=[e.event_id for e in events],
-            error_message=str(error),
+            error_message=error_summary(error),
             source_position=source_position,
         )
 

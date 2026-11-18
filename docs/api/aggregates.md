@@ -130,6 +130,11 @@ snapshot properties and methods, documented under
 [Snapshot Surface](#snapshot-surface); see the
 [Snapshots reference](snapshots.md) for the collaborators themselves.
 
+`BackgroundScheduler` takes one optional argument, `max_pending: int = 1000`, which caps the
+background snapshot writes in flight. At the cap, a new write runs inline and the save waits for
+it. `AggregateRepository` builds a default `BackgroundScheduler()` for `snapshot_mode="background"`.
+To change the cap, pass your own instance as `snapshot_scheduler=BackgroundScheduler(max_pending=...)`.
+
 Symbols that support these classes but live elsewhere — the `@handles`
 decorator (`eventsource.domain.decorators`), `DomainEvent` (`eventsource.domain.event`), the
 `AggregateStore` / `EventPublisher` / `SnapshotStore` contracts

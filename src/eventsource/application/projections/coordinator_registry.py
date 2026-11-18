@@ -95,9 +95,12 @@ class ProjectionRegistry:
         return True
 
     async def dispatch(self, event: DomainEvent) -> None:
+        await self._dispatch_traced(event)
+
+    async def _dispatch_traced(self, event: DomainEvent) -> list[Exception]:
         attrs = {ATTR_EVENT_TYPE: type(event).__name__, ATTR_EVENT_ID: str(event.event_id), "projection.count": len(self._projections), "handler.count": len(self._handlers)}  # fmt: skip
         with self._tracer.span("eventsource.projection.registry.dispatch", attrs):
-            await self._dispatch_internal(event)
+            return await self._dispatch_internal(event)
 
     async def _bounded(self, coro: Any) -> Any:
         if self._semaphore is None:
@@ -105,12 +108,13 @@ class ProjectionRegistry:
         async with self._semaphore:
             return await coro
 
-    async def _dispatch_internal(self, event: DomainEvent) -> None:
+    async def _dispatch_internal(self, event: DomainEvent) -> list[Exception]:
         proj_tasks = [self._bounded(p.handle(event)) for p in self._projections]
         handler_tasks = [self._bounded(h.handle(event)) for h in self._handlers if h.can_handle(event)]  # fmt: skip
         all_tasks = proj_tasks + handler_tasks
         if not all_tasks:
-            return
+            return []
+        projection_failures: list[Exception] = []
         for i, res in enumerate(await asyncio.gather(*all_tasks, return_exceptions=True)):
             if isinstance(res, Exception):
                 is_proj = i < len(proj_tasks)
@@ -120,10 +124,13 @@ class ProjectionRegistry:
                 extra = {"event_type": ev_name, "event_id": str(event.event_id), "task_type": t_type, "task_name": t_name}  # fmt: skip
                 msg = "Error in %s %s while processing %s: %s"
                 logger.error(msg, t_type, t_name, ev_name, res, exc_info=res, extra=extra)
+                if is_proj:
+                    projection_failures.append(res)
+        return projection_failures
 
-    async def dispatch_many(self, events: Sequence[DomainEvent]) -> None:
-        for event in events:
-            await self.dispatch(event)
+    async def dispatch_many(self, events: Sequence[DomainEvent]) -> list[Exception]:
+        """Dispatch in order; return projection errors (never raises for them)."""
+        return [failure for event in events for failure in await self._dispatch_traced(event)]
 
     async def reset_all(self) -> None:
         logger.warning("Resetting all projections", extra={"projection_count": len(self._projections)})  # fmt: skip

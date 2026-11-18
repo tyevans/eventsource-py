@@ -18,6 +18,7 @@ from eventsource.application.migration.bulk_copier_writer import BulkCopierWrite
 from eventsource.application.migration.exceptions import BulkCopyError
 from eventsource.application.migration.metrics import get_migration_metrics
 from eventsource.observability import Tracer, create_tracer
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports import EventEnvelope, FullEventStore
 from eventsource.ports.migration.models import Migration
 
@@ -117,9 +118,10 @@ class BulkCopier(BulkCopierReaderMixin, BulkCopierWriterMixin):
                 yield final_progress
                 logger.info("Bulk copy completed: %d events in %.1fs", events_copied, elapsed)
             except Exception as e:
-                logger.error("Bulk copy failed: %s", e)
-                await self._migration_repo.record_error(migration.id, str(e))
-                raise BulkCopyError(migration.id, batch_start_pos, str(e)) from e
+                summary = error_summary(e)
+                logger.error("Bulk copy failed: %s", summary)
+                await self._migration_repo.record_error(migration.id, summary)
+                raise BulkCopyError(migration.id, batch_start_pos, summary) from e
 
     def cancel(self) -> None:
         self._is_cancelled = True

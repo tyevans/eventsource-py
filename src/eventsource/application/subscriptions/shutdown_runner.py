@@ -21,6 +21,7 @@ from eventsource.application.subscriptions.shutdown_models import (
     ShutdownReason,
     ShutdownResult,
 )
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from eventsource.application.subscriptions.shutdown import ShutdownCoordinator
@@ -46,7 +47,7 @@ def create_shutdown_result(
     try:
         record_shutdown_completed(outcome, duration)
     except Exception as e:
-        logger.debug("Failed to record shutdown completed metric", extra={"error": str(e)})
+        logger.debug("Failed to record shutdown completed metric", extra={"error": error_summary(e)})  # fmt: skip
     coordinator._last_metrics_snapshot = ShutdownMetricsSnapshot(duration, coordinator._drain_duration_seconds, events_drained, checkpoints_saved, in_flight, outcome)  # fmt: skip
     logger.info(
         "Shutdown complete",
@@ -83,7 +84,7 @@ async def execute_shutdown_sequence(
     try:
         record_shutdown_initiated()
     except Exception as e:
-        logger.debug("Failed to record shutdown initiated metric", extra={"error": str(e)})
+        logger.debug("Failed to record shutdown initiated metric", extra={"error": error_summary(e)})  # fmt: skip
 
     try:
         await coordinator._execute_pre_shutdown_hooks()
@@ -117,7 +118,7 @@ async def execute_shutdown_sequence(
                     record_drain_duration(coordinator._drain_duration_seconds)
                     record_events_drained(drained)
                 except Exception as e:
-                    logger.debug("Failed to record drain metrics", extra={"error": str(e)})
+                    logger.debug("Failed to record drain metrics", extra={"error": error_summary(e)})  # fmt: skip
         elif drain_func and drain_timeout == 0:
             logger.info("Skipping drain phase due to time constraint")
         if coordinator._phase == ShutdownPhase.FORCED:
@@ -140,15 +141,15 @@ async def execute_shutdown_sequence(
             except TimeoutError:
                 logger.warning("Connection close timed out")
             except Exception as e:
-                logger.error("Error closing connections", extra={"error": str(e)})
+                logger.error("Error closing connections", extra={"error": error_summary(e)})
         coordinator._phase = ShutdownPhase.FORCED if forced else ShutdownPhase.STOPPED
     except Exception as e:
-        logger.error("Shutdown error", extra={"error": str(e)}, exc_info=True)
-        coordinator._phase, forced, error_msg = ShutdownPhase.FORCED, True, str(e)
+        logger.error("Shutdown error", extra={"error": error_summary(e)}, exc_info=True)
+        coordinator._phase, forced, error_msg = ShutdownPhase.FORCED, True, error_summary(e)
 
     result = coordinator._create_result(start_time, stopped, drained, saved, forced, error_msg)
     try:
         await coordinator._execute_post_shutdown_hooks(result)
     except Exception as e:
-        logger.error("Error executing post-shutdown hooks", extra={"error": str(e)}, exc_info=True)
+        logger.error("Error executing post-shutdown hooks", extra={"error": error_summary(e)}, exc_info=True)  # fmt: skip
     return result

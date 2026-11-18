@@ -28,6 +28,9 @@ from eventsource.testing.conformance_ports._fixtures import (  # noqa: E402
     make_event,
     make_stream,
 )
+from eventsource.testing.conformance_ports.dlq_tenant import (  # noqa: E402
+    DLQTenantScopeConformance,
+)
 
 
 @asynccontextmanager
@@ -109,6 +112,7 @@ _DLQ_DDL = """CREATE TABLE IF NOT EXISTS dead_letter_queue (
     event_data JSONB NOT NULL, error_message TEXT NOT NULL, error_stacktrace TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
     first_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'failed', resolved_at TIMESTAMPTZ, resolved_by VARCHAR(255),
+    tenant_id UUID,
     CONSTRAINT chk_dlq_status_ports CHECK (status IN ('failed', 'retrying', 'resolved')),
     CONSTRAINT uq_dlq_event_projection_ports UNIQUE (event_id, projection_name))"""
 
@@ -130,7 +134,7 @@ class TestPostgreSQLCheckpointRepository(cp.CheckpointRepositoryConformance):
             await conn.execute(text(sql), {"n": sub_id, "v": val})
 
 
-class TestPostgreSQLDLQRepository(cp.DLQRepositoryConformance):
+class TestPostgreSQLDLQRepository(cp.DLQRepositoryConformance, DLQTenantScopeConformance):
     @pytest.fixture
     async def store(self, ports_postgres_connection_url: str) -> AsyncIterator[SQLDLQRepository]:
         async with _pg_engine(ports_postgres_connection_url, "dead_letter_queue", _DLQ_DDL) as eng:

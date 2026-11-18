@@ -48,7 +48,7 @@ telemetry = [
     "opentelemetry-sdk>=1.16.0,<2.0",
 ]
 rabbitmq = [
-    "aio-pika>=9.0.5",
+    "aio-pika>=9.0.5,<11",
 ]
 kafka = [
     "aiokafka>=0.12.0,<1.0.0",
@@ -94,11 +94,35 @@ Repository = "https://github.com/tyevans/eventsource-py"
 Changelog = "https://github.com/tyevans/eventsource-py/blob/main/CHANGELOG.md"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/eventsource"]
+
+# The sdist is an allowlist. Only these paths ship, so internal tool
+# configuration (.claude, .github, specops.toml, cosmic-ray, mutants, bench)
+# and project management docs (docs/project) stay out of the published archive.
+# release.yml checks the built sdist and fails if an excluded path appears.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/eventsource",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "/.claude",
+    "/.github",
+    "/specops.toml",
+    "/cosmic-ray",
+    "/mutants",
+    "/bench",
+    "/dist",
+    "/docs/project",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

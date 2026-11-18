@@ -13,6 +13,7 @@ from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
 from eventsource.adapters.rabbitmq.connection_callbacks import RabbitMQConnectionCallbacksMixin
 from eventsource.adapters.rabbitmq.connection_ssl import create_ssl_context, sanitize_url
 from eventsource.adapters.rabbitmq.models import RabbitMQEventBusStats
+from eventsource.observability.error_summary import error_summary
 
 if TYPE_CHECKING:
     from aio_pika.abc import AbstractChannel, AbstractRobustConnection
@@ -92,13 +93,16 @@ class RabbitMQConnectionManager(RabbitMQConnectionCallbacksMixin):
                 info_ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name, "queue": cfg.queue_name, "consumer_group": cfg.consumer_group, "dlq_enabled": cfg.enable_dlq, "tls_enabled": tls_on}  # fmt: skip
                 logger.info(f"Connected to RabbitMQ ({'TLS' if tls_on else 'plaintext'}) and initialized topology", extra=info_ex)  # fmt: skip
             except ssl.SSLError as e:
-                ex: dict[str, Any] = {"rabbitmq_url": s_url, "error": str(e), "error_type": type(e).__name__, "tls_enabled": ssl_context is not None}  # fmt: skip
-                logger.error(f"SSL error connecting to RabbitMQ: {e}", exc_info=True, extra=ex)
+                # The exception text can echo the broker URL with its password, so the URL is replaced first.
+                safe = error_summary(e).replace(cfg.rabbitmq_url, s_url)
+                ex: dict[str, Any] = {"rabbitmq_url": s_url, "error": safe, "tls_enabled": ssl_context is not None}  # fmt: skip
+                logger.error(f"SSL error connecting to RabbitMQ: {safe}", extra=ex)
                 await self.disconnect()
                 raise
             except Exception as e:
-                ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name, "error": str(e), "error_type": type(e).__name__}  # fmt: skip
-                logger.error(f"Failed to connect to RabbitMQ: {e}", exc_info=True, extra=ex)
+                safe = error_summary(e).replace(cfg.rabbitmq_url, s_url)
+                ex = {"rabbitmq_url": s_url, "exchange": cfg.exchange_name, "error": safe}  # fmt: skip
+                logger.error(f"Failed to connect to RabbitMQ: {safe}", extra=ex)
                 await self.disconnect()
                 raise
 

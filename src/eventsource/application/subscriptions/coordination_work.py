@@ -28,6 +28,7 @@ from eventsource.application.subscriptions.coordination_shutdown import (
     ShutdownIntent,
     ShutdownNotification,
 )
+from eventsource.observability.error_summary import error_summary
 from eventsource.ports.coordination import LeaderElector
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ class WorkRedistributionCoordinator(
             try:
                 await callback(notification)
             except Exception as e:
-                err_extra = {"peer_id": notification.instance_id, "error": str(e)}
+                err_extra = {"peer_id": notification.instance_id, "error": error_summary(e)}
                 logger.error("Peer shutdown callback failed", extra=err_extra, exc_info=True)
 
     async def handle_heartbeat(self, heartbeat: HeartbeatMessage) -> None:
@@ -133,7 +134,7 @@ class WorkRedistributionCoordinator(
             try:
                 await callback(heartbeat)
             except Exception as e:
-                err_extra = {"peer_id": heartbeat.instance_id, "error": str(e)}
+                err_extra = {"peer_id": heartbeat.instance_id, "error": error_summary(e)}
                 logger.error("Heartbeat callback failed", extra=err_extra, exc_info=True)
 
     async def handle_work_assignment(self, assignment: WorkAssignment) -> None:
@@ -149,7 +150,7 @@ class WorkRedistributionCoordinator(
             try:
                 await callback(assignment)
             except Exception as e:
-                err_extra = {"source_instance_id": assignment.source_instance_id, "error": str(e)}
+                err_extra = {"source_instance_id": assignment.source_instance_id, "error": error_summary(e)}  # fmt: skip
                 logger.error("Work assignment callback failed", extra=err_extra, exc_info=True)
 
 

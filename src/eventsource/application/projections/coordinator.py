@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from eventsource.application.projections.coordinator_projection import (
     ProjectionCoordinator,
+    ProjectionRebuildError,
 )
 from eventsource.application.projections.coordinator_registry import (
     ProjectionRegistry,
@@ -19,6 +20,7 @@ from eventsource.application.projections.coordinator_registry import (
 
 __all__ = [
     "ProjectionCoordinator",
+    "ProjectionRebuildError",
     "ProjectionRegistry",
     "SubscriberRegistry",
 ]

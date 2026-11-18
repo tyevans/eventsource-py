@@ -2,8 +2,8 @@
 
 Locks in module factoring gains (ADR-0002) by verifying that every Python
 source file under ``src/eventsource/`` contains strictly fewer than
-``MAX_SRC_LINES`` (220) lines, and every Python file under ``tests/`` and
-``examples/`` contains strictly fewer than ``MAX_TEST_EXAMPLE_LINES`` (257) lines.
+``MAX_SRC_LINES`` (160) lines, and every Python file under ``tests/`` and
+``examples/`` contains strictly fewer than ``MAX_TEST_EXAMPLE_LINES`` (203) lines.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def format_violation_report(
     return "\n".join(lines)
 
 
-def test_source_files_strictly_below_220_lines() -> None:
+def test_source_files_strictly_below_max_src_lines() -> None:
     """Every ``.py`` file under ``src/eventsource/`` must have strictly ``< MAX_SRC_LINES`` lines."""
     py_files = list(SRC_EVENTSOURCE_DIR.rglob("*.py"))
     assert py_files, f"Expected Python files under {SRC_EVENTSOURCE_DIR}"
@@ -66,7 +66,7 @@ def test_source_files_strictly_below_220_lines() -> None:
     )
 
 
-def test_test_and_example_files_strictly_below_257_lines() -> None:
+def test_test_and_example_files_strictly_below_max_test_example_lines() -> None:
     """Every ``.py`` file under ``tests/`` and ``examples/`` must have strictly ``< MAX_TEST_EXAMPLE_LINES`` lines."""
     violations: list[tuple[Path, int]] = []
     for directory in (TESTS_DIR, EXAMPLES_DIR):

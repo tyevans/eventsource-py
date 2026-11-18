@@ -87,6 +87,7 @@ class SubscriptionManager(ManagerLifecycleMixin, ManagerDispatchMixin, ManagerRe
             event_bus=event_bus,
             checkpoint_repo=checkpoint_repo,
             enable_tracing=enable_tracing,
+            error_handlers=self._error_handlers,
         )
         self._health_provider = HealthCheckProvider(
             registry=self._registry,

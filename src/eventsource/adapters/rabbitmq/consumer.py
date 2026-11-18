@@ -17,6 +17,7 @@ from eventsource.observability.attributes import (  # noqa: F401
     ATTR_HANDLER_NAME,
     ATTR_HANDLER_SUCCESS,
 )
+from eventsource.observability.error_summary import error_summary
 
 try:
     from opentelemetry.propagate import extract
@@ -73,11 +74,18 @@ class RabbitMQConsumer(RabbitMQConsumerDispatchMixin, RabbitMQConsumerRetryMixin
                 async for message in queue_iter:
                     if not self._consuming:
                         break
-                    await self._process_message(message)
+                    try:
+                        await self._process_message(message)
+                    except Exception as e:
+                        # Defense in depth: one bad message must not end the consume loop.
+                        await self._contain_unexpected_error(message, e)
         except asyncio.CancelledError:
             self._logger.info("Consumer loop cancelled", extra=base_extra)
         except Exception as e:
-            self._logger.error(f"Error in consumer loop: {e}", exc_info=True, extra={**base_extra, "error": str(e), "error_type": type(e).__name__})  # fmt: skip
+            # exc_info is kept: this is the queue iterator or connection failing, not message
+            # processing. Per-message errors are contained inside the loop above.
+            summary = error_summary(e)
+            self._logger.error(f"Error in consumer loop: {summary}", exc_info=True, extra={**base_extra, "error": summary, "error_type": type(e).__name__})  # fmt: skip
             raise
         finally:
             self._consuming, s = False, self._stats

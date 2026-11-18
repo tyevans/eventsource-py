@@ -14,6 +14,8 @@ from eventsource.observability.attributes import (
     ATTR_MESSAGING_DESTINATION,
     ATTR_MESSAGING_SYSTEM,
 )
+from eventsource.observability.error_summary import error_summary
+from eventsource.observability.span_errors import record_error
 
 if TYPE_CHECKING:
     from eventsource.adapters.rabbitmq.config import RabbitMQEventBusConfig
@@ -113,10 +115,7 @@ class RabbitMQPublisherManyMixin:
                 span.set_attribute("messaging.batch.published", published_count)
                 span.set_status(Status(StatusCode.OK))
         except Exception as e:
-            if span:
-                span.record_exception(e)
-                if not errors:
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
+            record_error(span, e)
             raise
         finally:
             if span:
@@ -130,8 +129,11 @@ class RabbitMQPublisherManyMixin:
                     return True
                 except Exception as e:
                     errors.append(e)
-                    extra = {"event_id": str(event.event_id), "event_type": event.event_type, "error": str(e)}  # fmt: skip
-                    self._logger.warning(f"Failed to publish event in batch: {e}", extra=extra)
+                    summary = error_summary(e)
+                    extra = {"event_id": str(event.event_id), "event_type": event.event_type, "error": summary}  # fmt: skip
+                    self._logger.warning(
+                        f"Failed to publish event in batch: {summary}", extra=extra
+                    )
                     return False
 
         results = await asyncio.gather(*[publish_with_semaphore(event) for event in events], return_exceptions=False)  # fmt: skip

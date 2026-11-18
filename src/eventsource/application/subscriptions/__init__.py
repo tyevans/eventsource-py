@@ -52,7 +52,7 @@ from eventsource.application.subscriptions.subscriber import (
     SyncSubscriber, get_subscribed_event_types, supports_batch_handling,
 )
 from eventsource.application.subscriptions.subscription import (
-    VALID_TRANSITIONS, BatchHandler, EventHandler, PauseReason, RecentErrorInfo, Subscription,
+    VALID_TRANSITIONS, BatchHandler, EventHandler, PauseReason, Subscription,
     SubscriptionState, SubscriptionStatus, is_valid_transition,
 )
 from eventsource.application.subscriptions.transition import (
@@ -84,7 +84,7 @@ __all__ = [
     "EventBusConnectionError", "TransitionError", "ErrorCategory", "ErrorSeverity", "ErrorClassification",
     "ErrorClassifier", "ErrorInfo", "ErrorStats", "ErrorCallback", "SyncErrorCallback", "ErrorHandlerRegistry",
     "ErrorHandlingStrategy", "ErrorHandlingConfig", "SubscriptionErrorHandler", "get_default_classifier",
-    "RecentErrorInfo", "HealthStatus", "HealthIndicator", "HealthCheckResult", "HealthCheckConfig",
+    "HealthStatus", "HealthIndicator", "HealthCheckResult", "HealthCheckConfig",
     "SubscriptionHealthChecker", "ManagerHealthChecker", "ManagerHealth", "SubscriptionHealth",
     "ReadinessStatus", "LivenessStatus", "OTEL_METRICS_AVAILABLE", "SubscriptionMetrics", "MetricSnapshot",
     "StateValue", "STATE_MAPPING", "NoOpCounter", "NoOpHistogram", "NoOpGauge", "get_metrics",

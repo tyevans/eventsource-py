@@ -15,6 +15,9 @@ version: '3.8'
 # Environment variables can be set to customize behavior:
 #   POSTGRES_PORT: PostgreSQL external port (default: 5433)
 #   REDIS_PORT: Redis external port (default: 6380)
+#
+# Ports bind to 127.0.0.1 only, so other hosts on the network cannot reach them.
+# The credentials in this file (test/test) are local throwaway values. Never reuse them.
 
 services:
   postgres:
@@ -25,7 +28,7 @@ services:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_test_data:/var/lib/postgresql/data
     healthcheck:
@@ -40,7 +43,7 @@ services:
     image: redis:7
     container_name: eventsource-test-redis
     ports:
-      - "${REDIS_PORT:-6380}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
     volumes:
       - redis_test_data:/data
     healthcheck:

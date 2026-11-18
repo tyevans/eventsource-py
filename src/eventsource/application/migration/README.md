@@ -7,7 +7,7 @@ A zero-downtime live migration system for multi-tenant event stores. This module
 The migration system provides:
 
 - **Zero data loss**: Source store remains authoritative throughout migration
-- **Minimal downtime**: Sub-100ms cutover pause with automatic rollback
+- **Short cutover pause**: Target pause under 100 ms, with a hard timeout (`cutover_timeout_ms`). Failures before the routing switch roll back automatically
 - **Transparent operation**: Application code doesn't need to change
 - **Full observability**: Real-time status streaming, metrics, and audit logging
 - **Subscription continuity**: Automatic checkpoint translation for subscriptions
@@ -48,7 +48,10 @@ The migration system provides:
 ```
 PENDING ──► BULK_COPY ──► DUAL_WRITE ──► CUTOVER ──► COMPLETED
                │              │             │
-               └──────────────┴─────────────┴──► ABORTED/FAILED
+               │              │             ├──► DUAL_WRITE  (failure before the switch)
+               │              │             └──► FAILED      (failed check after the switch)
+               │              │
+               └──────────────┴──► ABORTED  (operator abort; not allowed in CUTOVER)
 ```
 
 | Phase | Description |
@@ -56,10 +59,10 @@ PENDING ──► BULK_COPY ──► DUAL_WRITE ──► CUTOVER ──► COM
 | `PENDING` | Migration created but not started |
 | `BULK_COPY` | Historical events being copied to target store; the dual-write interceptor is already installed, so new writes are mirrored while the copy runs |
 | `DUAL_WRITE` | Copy complete; new events keep being written to both stores |
-| `CUTOVER` | Brief pause (~100ms) while routing switches to target |
-| `COMPLETED` | Migration finished successfully |
+| `CUTOVER` | Brief pause while routing switches to target |
+| `COMPLETED` | Migration finished successfully, including any enabled post-switch checks |
 | `ABORTED` | Migration cancelled by operator |
-| `FAILED` | Unrecoverable error occurred |
+| `FAILED` | Unrecoverable error occurred. Also used when a post-switch check fails: the tenant stays on the target store |
 
 ## Quick Start
 
@@ -69,6 +72,7 @@ PENDING ──► BULK_COPY ──► DUAL_WRITE ──► CUTOVER ──► COM
 from eventsource.application.migration import (
     MigrationCoordinator,
     MigrationConfig,
+    MigrationPhase,
     TenantStoreRouter,
 )
 
@@ -91,7 +95,7 @@ coordinator = MigrationCoordinator(
 
 # 3. Start the migration
 migration = await coordinator.start_migration(
-    tenant_id="tenant-123",
+    tenant_id=tenant_id,              # a UUID
     target_store=dedicated_store,
     target_store_id="dedicated-tenant-123",
 )
@@ -113,6 +117,10 @@ if ready:
     result = await coordinator.trigger_cutover(migration.id)
     if result.success:
         print(f"Cutover completed in {result.duration_ms:.2f}ms")
+    else:
+        # rolled_back=True: the tenant is back on the source (DUAL_WRITE).
+        # rolled_back=False: the tenant stays on the target and the migration is FAILED.
+        print(f"Cutover did not complete: {result.error_message} (rolled_back={result.rolled_back})")
 ```
 
 ### Configuration Options
@@ -125,16 +133,16 @@ config = MigrationConfig(
 
     # Cutover settings
     cutover_max_lag_events=0,     # strict (the default): no cutover over missing events
-    cutover_timeout_ms=500,       # Hard timeout for cutover
+    cutover_timeout_ms=500,       # Hard timeout for cutover (minimum 100)
 
     # Post-cutover options
     position_mapping_enabled=True,  # Record position mappings
-    verify_consistency=True,        # Verify data after migration
-    migrate_subscriptions=True,     # Migrate subscription checkpoints
+    verify_consistency=True,        # Verify data after the switch; a failed check ends in FAILED
+    migrate_subscriptions=True,     # Migrate subscription checkpoints; a failure ends in FAILED
 )
 
 migration = await coordinator.start_migration(
-    tenant_id="tenant-123",
+    tenant_id=tenant_id,
     target_store=dedicated_store,
     target_store_id="dedicated-tenant-123",
     config=config,
@@ -167,11 +175,11 @@ ready, error = await coordinator.is_cutover_ready(migration.id)
 # Trigger the cutover
 result = await coordinator.trigger_cutover(migration.id)
 
-# Pause/resume migration
+# Pause/resume migration (the write pause applies to this process only)
 await coordinator.pause_migration(migration.id)
 await coordinator.resume_migration(migration.id)
 
-# Abort migration
+# Abort migration (raises MigrationError when the migration is terminal or in CUTOVER)
 await coordinator.abort_migration(migration.id, reason="No longer needed")
 ```
 
@@ -200,6 +208,7 @@ Streams historical events from source to target store during the `BULK_COPY` pha
 - Pause/resume support
 - Progress tracking with estimated completion time
 - Position mapping recording for subscription continuity
+- **Duplicate events**: An event that already exists in the target counts as copied only when the target holds the same event at the same stream version, with the same event ID, type, and payload. Any other difference raises `BulkCopyError`. The coordinator then ends the migration in `FAILED`.
 
 ### DualWriteInterceptor
 
@@ -218,50 +227,60 @@ write is mirrored by nobody.
 
 Performs the atomic switch from source to target store.
 
-- **Sub-100ms pause**: Configurable timeout (default 500ms)
-- **Advisory locks**: Distributed coordination via PostgreSQL
-- **Automatic rollback**: Reverts to `DUAL_WRITE` on failure
+- **Short pause**: The target pause is under 100 ms (`CutoverResult.within_timeout`). The hard timeout is `cutover_timeout_ms` (default 500 ms). A timeout is returned as a failed `CutoverResult`; it is not raised.
+- **Cutover lock**: The coordinator takes a cutover lock from the lock manager (for example `PostgreSQLLockManager`). Abort takes the same lock, so it cannot interleave with a running cutover.
+- **Rollback before the switch**: A failure before the routing switch reverts the migration to `DUAL_WRITE`. `CutoverResult.rolled_back` is `True`.
+- **Failure after the switch**: Routing already points to the target. A failed consistency check or subscription migration ends the migration in `FAILED`. The tenant stays on the target store. `CutoverResult.success` is `False`, `CutoverResult.consistency_verified` shows the check outcome, and `CutoverResult.error_message` describes the failure.
+- **Write pause is per process**: The pause blocks writers in the process that runs the cutover only. Other processes see `CUTOVER_PAUSED` in the routing record and reject their writes, but they do not wait for the pause. A write that passed the routing check before the pause can still reach the source. Run one writer per tenant during cutover.
 
 ### SyncLagTracker
 
 Monitors synchronization lag between stores during dual-write.
 
 ```python
-# Check current lag
-lag = await sync_lag_tracker.get_current_lag(migration.id)
-print(f"Current lag: {lag.events_behind} events")
-print(f"Converging: {lag.is_converging}")
+# Most recent lag measurement (None until the first measurement)
+lag = sync_lag_tracker.current_lag
+if lag is not None:
+    print(f"Current lag: {lag.events} events")
+
+# Aggregated statistics over the sample window
+stats = sync_lag_tracker.get_lag_stats()
+print(f"Converging: {stats.is_converging}")
 ```
 
 ### ConsistencyVerifier
 
-Validates data consistency between stores after migration.
+Validates data consistency between stores. The coordinator runs this check after the switch when `verify_consistency=True`. Read the result with `coordinator.get_consistency_report(migration.id)`.
 
 ```python
 from eventsource.application.migration import VerificationLevel
 
 # Verify consistency with different levels
-report = await verifier.verify(
-    migration_id=migration.id,
+report = await verifier.verify_tenant_consistency(
+    tenant_id,
     level=VerificationLevel.HASH,  # COUNT, HASH, or FULL
+    sample_percentage=100.0,
 )
 
-for stream_id, consistency in report.streams.items():
-    print(f"Stream {stream_id}: {consistency.status}")
+print(f"Consistent: {report.is_consistent}")
+for stream in report.stream_results:
+    print(f"Stream {stream.stream_id}: consistent={stream.is_consistent}")
 ```
 
 ### SubscriptionMigrator
 
-Migrates subscription checkpoints from source to target store positions.
+Migrates subscription checkpoints from source to target store positions. The coordinator runs this step after the switch when `migrate_subscriptions=True`. A failed subscription ends the migration in `FAILED`.
 
 ```python
 # Plan the migration
-plan = await migrator.plan_migration(migration.id)
-print(f"Will migrate {len(plan.subscriptions)} subscriptions")
+plan = await migrator.plan_migration(migration.id, tenant_id, subscription_names)
+print(f"Will migrate {plan.migratable_count} of {plan.total_subscriptions} subscriptions")
 
-# Execute the migration
-summary = await migrator.execute_migration(plan)
-print(f"Migrated: {summary.successful}/{summary.total}")
+# Execute the migration (dry_run=True reports without writing checkpoints)
+summary = await migrator.migrate_subscriptions(
+    migration.id, tenant_id, subscription_names, dry_run=False
+)
+print(f"Migrated: {summary.successful_count} ok, {summary.failed_count} failed")
 ```
 
 ## Error Handling
@@ -283,39 +302,41 @@ The migration system includes sophisticated error handling with classification a
 
 ### Circuit Breaker
 
-Built-in circuit breaker for transient failures:
+`CircuitBreaker` is a standalone utility. It is exported from this package. The coordinator does not create one. To use it, pass a breaker to `ErrorHandler`:
 
 ```python
 from eventsource.application.migration import CircuitBreaker, CircuitBreakerConfig
 
 breaker = CircuitBreaker(CircuitBreakerConfig(
-    failure_threshold=5,
-    recovery_timeout_seconds=30,
-    half_open_max_calls=3,
+    failure_threshold=5,     # failures before the circuit opens
+    success_threshold=2,     # successes in half-open state before it closes
+    timeout_seconds=30.0,    # time the circuit stays open before a trial call
 ))
-
-# The coordinator uses circuit breakers internally
-# for operations like target store writes
 ```
 
 ### Common Errors
+
+`trigger_cutover` raises for invalid requests. It does not raise for a failed cutover. A failed cutover is returned as a `CutoverResult` with `success=False`.
 
 ```python
 from eventsource.application.migration import (
     MigrationNotFoundError,
     MigrationStateError,
-    CutoverTimeoutError,
-    ConsistencyError,
 )
 
 try:
-    await coordinator.trigger_cutover(migration_id)
-except CutoverTimeoutError:
-    # Cutover exceeded pause SLA - automatically rolled back
-    print("Cutover timed out, rolled back to DUAL_WRITE")
+    result = await coordinator.trigger_cutover(migration_id)
+except MigrationNotFoundError:
+    print("Unknown migration")
 except MigrationStateError as e:
-    # Invalid state for operation
+    # Not in DUAL_WRITE, so no cutover started
     print(f"Cannot cutover: {e}")
+else:
+    if not result.success:
+        if result.rolled_back:
+            print(f"Cutover timed out or failed, rolled back to DUAL_WRITE: {result.error_message}")
+        else:
+            print(f"Cutover switched routing, but a post-switch check failed. Migration is FAILED: {result.error_message}")
 ```
 
 ## Monitoring and Observability
@@ -323,28 +344,38 @@ except MigrationStateError as e:
 ### Status Streaming
 
 ```python
-async for status in coordinator.stream_status(migration.id):
+async for status in coordinator.stream_status(migration.id, update_interval=1.0):
     print(f"Phase: {status.phase.value}")
     print(f"Progress: {status.progress_percent:.1f}%")
     print(f"Events copied: {status.events_copied}")
     print(f"Sync lag: {status.sync_lag_events}")
     print(f"Rate: {status.current_rate_events_per_sec:.0f} events/sec")
-    print(f"ETA: {status.estimated_completion_time}")
+    print(f"ETA: {status.estimated_completion}")
+    print(f"Paused: {status.is_paused}")
 ```
+
+- `update_interval` must be at least 0.05 seconds. A smaller value raises `ValueError`.
+- A streamer accepts at most 100 subscribers. A new subscriber beyond that limit raises `RuntimeError`.
+- The stream stops when the migration reaches a terminal phase.
 
 ### Metrics
 
 ```python
 from eventsource.application.migration import get_migration_metrics
 
-metrics = get_migration_metrics(migration.id)
-snapshot = metrics.snapshot()
+metrics = get_migration_metrics(str(migration.id), str(migration.tenant_id))
+snapshot = metrics.get_snapshot()
 
-print(f"Bulk copy duration: {snapshot.bulk_copy_duration}")
-print(f"Dual-write duration: {snapshot.dual_write_duration}")
-print(f"Cutover duration: {snapshot.cutover_duration}")
-print(f"Total events: {snapshot.total_events_copied}")
+print(f"Events copied: {snapshot.events_copied}")
+print(f"Copy rate: {snapshot.events_copied_rate:.0f} events/sec")
+print(f"Sync lag: {snapshot.sync_lag_events}")
+print(f"Phase durations (seconds): {snapshot.phase_durations}")
+print(f"Cutover durations (ms): {snapshot.cutover_durations}")
+print(f"Cutover failures: {snapshot.cutover_failures}")
+print(f"Verification failures: {snapshot.verification_failures}")
 ```
+
+`get_migration_metrics` takes string IDs. It creates the metrics entry when none exists. The coordinator releases the entry when the migration reaches a terminal phase.
 
 ### Audit Logging
 
@@ -356,10 +387,14 @@ from eventsource.application.migration import AuditEventType
 # Events logged include:
 # - MIGRATION_STARTED
 # - PHASE_CHANGED
+# - MIGRATION_PAUSED / MIGRATION_RESUMED
 # - CUTOVER_INITIATED
 # - CUTOVER_COMPLETED
 # - CUTOVER_ROLLED_BACK
+# - VERIFICATION_STARTED / VERIFICATION_COMPLETED / VERIFICATION_FAILED
 # - MIGRATION_COMPLETED
+# - MIGRATION_ABORTED
+# - MIGRATION_FAILED
 # - ERROR_OCCURRED
 ```
 
@@ -376,7 +411,7 @@ from eventsource.application.migration import (
 )
 
 async def migrate_tenant(
-    tenant_id: str,
+    tenant_id,
     source_store,
     target_store,
     target_store_id: str,
@@ -440,25 +475,28 @@ async def migrate_tenant(
     if result.success:
         print(f"Cutover successful in {result.duration_ms:.2f}ms")
 
-        # Verify consistency
+        # Verification report (None when verify_consistency=False)
         report = coordinator.get_consistency_report(migration.id)
         if report:
             print(f"Consistency verified: {report.is_consistent}")
 
-        # Check subscription migration
+        # Subscription summary (None when migrate_subscriptions=False)
         summary = coordinator.get_subscription_summary(migration.id)
         if summary:
-            print(f"Subscriptions migrated: {summary.successful}/{summary.total}")
+            print(f"Subscriptions migrated: {summary.successful_count}/{len(summary.results)}")
 
         print("Migration complete!")
-    else:
+    elif result.rolled_back:
         print(f"Cutover failed: {result.error_message}")
         print("Rolled back to dual-write mode")
         # Handle failure - could retry or abort
+    else:
+        print(f"Post-switch check failed: {result.error_message}")
+        print("Migration is FAILED. The tenant stays on the target store.")
 
 # Run the migration
 asyncio.run(migrate_tenant(
-    tenant_id="tenant-123",
+    tenant_id=tenant_id,
     source_store=shared_store,
     target_store=dedicated_store,
     target_store_id="dedicated-tenant-123",
@@ -467,28 +505,35 @@ asyncio.run(migrate_tenant(
 
 ## Module Structure
 
+The public API comes from `eventsource.application.migration`. The data types
+(models, enums, and repository ports) live in `eventsource.ports.migration`.
+
 ```
-eventsource/migration/
-├── __init__.py              # Public API exports
-├── coordinator.py           # MigrationCoordinator - main orchestrator
-├── router.py                # TenantStoreRouter - transparent routing
-├── bulk_copier.py           # BulkCopier - historical event streaming
-├── dual_write.py            # DualWriteInterceptor - transparent dual-write
-├── cutover.py               # CutoverManager - atomic switch
-├── sync_lag_tracker.py      # SyncLagTracker - convergence monitoring
-├── position_mapper.py       # PositionMapper - position translation
-├── subscription_migrator.py # SubscriptionMigrator - checkpoint migration
-├── consistency.py           # ConsistencyVerifier - data validation
-├── write_pause.py           # WritePauseManager - pause coordination
-├── status_streamer.py       # StatusStreamer - real-time updates
-├── models.py                # Data models and enums
-├── exceptions.py            # Error types and classification
-├── metrics.py               # Migration metrics
-└── repositories/            # Data persistence
-    ├── migration.py         # Migration state repository
-    ├── routing.py           # Tenant routing repository
-    ├── position_mapping.py  # Position mapping repository
-    └── audit_log.py         # Audit log repository
+application/migration/
+├── __init__.py                     # Public API exports
+├── coordinator.py                  # MigrationCoordinator (mixins: coordinator_*.py)
+├── router.py                       # TenantStoreRouter (helpers: router_*.py)
+├── bulk_copier.py                  # BulkCopier (helpers: bulk_copier_*.py)
+├── dual_write.py                   # DualWriteInterceptor (helpers: dual_write_*.py)
+├── cutover.py                      # CutoverManager (helpers: cutover_*.py)
+├── sync_lag_tracker.py             # SyncLagTracker (helpers: sync_lag_tracker_*.py)
+├── position_mapper.py              # PositionMapper (helpers: position_mapper_*.py)
+├── subscription_migrator.py        # SubscriptionMigrator (helpers: subscription_migrator_*.py)
+├── consistency.py                  # ConsistencyVerifier (helpers: consistency_*.py)
+├── write_pause.py                  # WritePauseManager (helpers: write_pause_*.py)
+├── status_streamer.py              # StatusStreamer (helpers: status_streamer_*.py)
+├── metrics_registry.py             # get_migration_metrics and active-migration tracking
+├── metrics_recorder.py             # MigrationMetrics (mixin: metrics_timers.py)
+├── metrics_types.py                # Metric instruments and MigrationMetricSnapshot
+├── circuit_breaker.py              # CircuitBreaker
+├── error_handling.py               # ErrorHandler
+├── error_classification.py         # Error severity and recoverability
+└── exceptions*.py                  # Error types
+
+ports/migration/
+├── models/                         # Migration, MigrationConfig, MigrationPhase,
+│                                   # MigrationStatus, CutoverResult, audit types
+└── repositories/                   # Migration state, routing, position mapping, audit log
 ```
 
 ## Performance Characteristics
@@ -497,8 +542,8 @@ eventsource/migration/
 |-------|----------|--------|
 | Bulk Copy | Hours to days | Minimal - background streaming |
 | Dual-Write | Minutes to hours | Low - async target writes |
-| Cutover | <100ms | Brief pause (writes blocked) |
-| Verification | Seconds to minutes | None - post-migration |
+| Cutover | Target under 100ms; hard timeout `cutover_timeout_ms` (default 500ms) | Brief pause (writes blocked in the cutover process) |
+| Verification | Seconds to minutes | Runs after the switch; a failure ends in `FAILED` |
 
 ## Best Practices
 
@@ -508,4 +553,5 @@ eventsource/migration/
 4. **Set realistic timeouts**: Cutover timeout should account for network latency
 5. **Enable consistency verification**: Catch issues before they affect users
 6. **Keep audit logs**: Essential for debugging and compliance
-7. **Plan for rollback**: Dual-write allows reverting if issues are found
+7. **Plan for rollback**: Before the switch, a failed cutover returns to `DUAL_WRITE`. After the switch, the tenant stays on the target store. A failed check ends in `FAILED`, so rehearse this path in staging
+8. **Run one writer per tenant during cutover**: The write pause does not apply across processes
