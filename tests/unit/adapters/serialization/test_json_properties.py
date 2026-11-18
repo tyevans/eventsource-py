@@ -46,8 +46,10 @@ deeply_nested_values = st.recursive(
     | st.booleans()
     | st.integers(min_value=-(2**63), max_value=2**64 - 1)
     | st.text(max_size=5),
-    lambda children: st.lists(children, min_size=1, max_size=1)
-    | st.dictionaries(st.text(max_size=3), children, min_size=1, max_size=1),
+    lambda children: (
+        st.lists(children, min_size=1, max_size=1)
+        | st.dictionaries(st.text(max_size=3), children, min_size=1, max_size=1)
+    ),
     max_leaves=200,
 )
 
