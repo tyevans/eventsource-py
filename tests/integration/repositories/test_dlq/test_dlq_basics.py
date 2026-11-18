@@ -45,7 +45,7 @@ class TestSQLDLQRepositoryBasics:
         assert failed_events[0].event_id == event_id
         assert failed_events[0].projection_name == projection_name
         assert failed_events[0].event_type == event_type
-        assert failed_events[0].error_message == "Test error message"
+        assert failed_events[0].error_message == "ValueError: Test error message"
         assert failed_events[0].status == "failed"
 
     async def test_add_failed_event_with_stacktrace(
@@ -108,7 +108,7 @@ class TestSQLDLQRepositoryBasics:
 
         assert len(failed_events) == 1
         assert failed_events[0].retry_count == 1
-        assert failed_events[0].error_message == "Second failure"
+        assert failed_events[0].error_message == "ValueError: Second failure"
 
 
 class TestSQLDLQRepositoryStatusTransitions:
