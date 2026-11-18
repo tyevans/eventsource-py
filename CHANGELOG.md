@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-17
+
 A security release. It closes the findings of the 2026-11-17 security audit
 (`TASK-0461` to `TASK-0490`). Some changes are breaking. Read **Breaking
 changes** and **Upgrade steps** before you upgrade.
@@ -1142,7 +1144,8 @@ This release also finally lands the ADR 0038-0040 wave that was written for 0.8.
 - Automatic schema creation and migrations
 - GitHub Actions CI/CD pipeline
 
-[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/tyevans/eventsource-py/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/tyevans/eventsource-py/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/tyevans/eventsource-py/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/tyevans/eventsource-py/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/tyevans/eventsource-py/compare/v0.13.0...v0.14.0
