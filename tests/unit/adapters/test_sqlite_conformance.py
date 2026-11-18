@@ -1,5 +1,6 @@
 """Conformance tests for SQLiteEventStore against the port suites."""
 
+import threading
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -178,18 +179,17 @@ async def test_append_rolls_back_on_non_integrity_error(monkeypatch) -> None:
 
 
 def test_sync_facade_close_closes_underlying_store() -> None:
+    before = threading.active_count()
     store = SQLiteEventStore(":memory:", event_registry=make_conformance_registry())
     facade, stream = SyncStoreFacade(store), make_stream()
     ev = [ConformanceEvent(aggregate_id=stream.aggregate_id)]
     facade.append(stream, ev, ExpectedVersion.any_())
-    del stream
-    worker = store._connection
-    assert worker is not None and worker.is_alive()
+    assert threading.active_count() > before
     facade.close()
-    deadline = time.monotonic() + 2.0
-    while worker.is_alive() and time.monotonic() < deadline:
+    deadline, alive = time.monotonic() + 2.0, True
+    while (alive := threading.active_count() > before) and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert not worker.is_alive() and store._connection is None
+    assert not alive and store._connection is None
 
 
 async def test_reopening_same_file_backed_db_does_not_fail_on_additive_column(tmp_path) -> None:
